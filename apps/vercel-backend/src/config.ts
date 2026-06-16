@@ -2,7 +2,7 @@ export const config = {
   port: Number(process.env.PORT ?? 3001),
   nodeEnv: process.env.NODE_ENV ?? "development",
 
-  // Database
+  // Database (Supabase)
   databaseUrl: process.env.DATABASE_URL ?? "",
 
   // Auth
@@ -13,7 +13,7 @@ export const config = {
 
   // Arc
   arcChainId: Number(process.env.ARC_CHAIN_ID ?? "5042002"),
-  arcRpcUrl: process.env.ARC_RPC_URL ?? "https://rpc.testnet.arc.network",
+  arcRpcUrl: process.env.ARC_RPC_URL ?? process.env.RPC ?? "https://rpc.testnet.arc.network",
   arcExplorerTxBase: process.env.ARC_EXPLORER_TX_BASE ?? "https://testnet.arcscan.app/tx/",
 
   // x402

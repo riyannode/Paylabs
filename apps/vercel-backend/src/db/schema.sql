@@ -1,12 +1,19 @@
-create extension if not exists pgcrypto;
+-- Paylabs schema — prefixed tables to avoid collision with ArcLayer
+-- Run via: npm run db:migrate
 
-create table if not exists users (
+-- ============================================================
+-- 1. USERS
+-- ============================================================
+create table if not exists paylabs_users (
   id uuid primary key default gen_random_uuid(),
   wallet_address text unique not null,
   created_at timestamptz not null default now()
 );
 
-create table if not exists auth_nonces (
+-- ============================================================
+-- 2. AUTH NONCES
+-- ============================================================
+create table if not exists paylabs_auth_nonces (
   id uuid primary key default gen_random_uuid(),
   wallet_address text not null,
   nonce text not null,
@@ -15,7 +22,10 @@ create table if not exists auth_nonces (
   created_at timestamptz not null default now()
 );
 
-create table if not exists supported_sites (
+-- ============================================================
+-- 3. SUPPORTED SITES
+-- ============================================================
+create table if not exists paylabs_supported_sites (
   id text primary key,
   name text not null,
   hosts text[] not null,
@@ -26,15 +36,12 @@ create table if not exists supported_sites (
   updated_at timestamptz not null default now()
 );
 
-insert into supported_sites (id, name, hosts, enabled, publish_target)
-values
-  ('arc-community', 'Arc Community', array['community.arc.io','community.arc.network'], true, true),
-  ('sepiasearch', 'SepiaSearch', array['sepiasearch.org'], true, false)
-on conflict (id) do nothing;
-
-create table if not exists content_items (
+-- ============================================================
+-- 4. CONTENT ITEMS
+-- ============================================================
+create table if not exists paylabs_content_items (
   id text primary key,
-  site_id text not null references supported_sites(id),
+  site_id text not null references paylabs_supported_sites(id),
   host text not null,
   content_url text not null,
   target_url text not null,
@@ -44,7 +51,10 @@ create table if not exists content_items (
   created_at timestamptz not null default now()
 );
 
-create table if not exists settlement_batches (
+-- ============================================================
+-- 5. SETTLEMENT BATCHES
+-- ============================================================
+create table if not exists paylabs_settlement_batches (
   id uuid primary key default gen_random_uuid(),
   status text not null check (status in ('open', 'closed', 'settlement_pending', 'settled', 'failed')) default 'open',
   threshold_count integer not null default 5,
@@ -58,11 +68,14 @@ create table if not exists settlement_batches (
   error text
 );
 
-create table if not exists payment_attempts (
+-- ============================================================
+-- 6. PAYMENT ATTEMPTS
+-- ============================================================
+create table if not exists paylabs_payment_attempts (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references users(id),
+  user_id uuid not null references paylabs_users(id),
   wallet_address text not null,
-  site_id text not null references supported_sites(id),
+  site_id text not null references paylabs_supported_sites(id),
   purpose text not null check (purpose in ('ai_search', 'content_access')),
   resource_id text not null,
   amount_usdc numeric(18, 6) not null,
@@ -73,7 +86,7 @@ create table if not exists payment_attempts (
   payment_id text,
   authorization_hash text,
   settlement_ref text,
-  batch_id uuid references settlement_batches(id),
+  batch_id uuid references paylabs_settlement_batches(id),
   batch_position integer,
   tx_hash text,
   explorer_url text,
@@ -85,24 +98,30 @@ create table if not exists payment_attempts (
   settled_at timestamptz
 );
 
-create table if not exists access_passes (
+-- ============================================================
+-- 7. ACCESS PASSES
+-- ============================================================
+create table if not exists paylabs_access_passes (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references users(id),
+  user_id uuid not null references paylabs_users(id),
   wallet_address text not null,
-  content_id text not null references content_items(id),
-  site_id text not null references supported_sites(id),
+  content_id text not null references paylabs_content_items(id),
+  site_id text not null references paylabs_supported_sites(id),
   target_url text not null,
-  payment_attempt_id uuid not null references payment_attempts(id),
+  payment_attempt_id uuid not null references paylabs_payment_attempts(id),
   expires_at timestamptz,
   created_at timestamptz not null default now(),
   unique(user_id, content_id)
 );
 
-create table if not exists receipts (
+-- ============================================================
+-- 8. RECEIPTS
+-- ============================================================
+create table if not exists paylabs_receipts (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references users(id),
-  payment_attempt_id uuid not null references payment_attempts(id),
-  batch_id uuid references settlement_batches(id),
+  user_id uuid not null references paylabs_users(id),
+  payment_attempt_id uuid not null references paylabs_payment_attempts(id),
+  batch_id uuid references paylabs_settlement_batches(id),
   batch_position integer,
   batch_status text,
   site_id text not null,
@@ -118,14 +137,17 @@ create table if not exists receipts (
   created_at timestamptz not null default now()
 );
 
-create table if not exists ai_requests (
+-- ============================================================
+-- 9. AI REQUESTS
+-- ============================================================
+create table if not exists paylabs_ai_requests (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references users(id),
+  user_id uuid not null references paylabs_users(id),
   wallet_address text not null,
-  site_id text not null references supported_sites(id),
+  site_id text not null references paylabs_supported_sites(id),
   query text not null,
   price_usdc numeric(18, 6) not null,
-  payment_attempt_id uuid references payment_attempts(id),
+  payment_attempt_id uuid references paylabs_payment_attempts(id),
   status text not null check (status in ('payment_required', 'paid', 'searching', 'answered', 'failed')),
   answer_text text,
   sources_json jsonb,
@@ -134,3 +156,14 @@ create table if not exists ai_requests (
   created_at timestamptz not null default now(),
   answered_at timestamptz
 );
+
+-- ============================================================
+-- 10. INDEXES
+-- ============================================================
+create index if not exists idx_paylabs_users_wallet on paylabs_users(wallet_address);
+create index if not exists idx_paylabs_auth_nonces_wallet on paylabs_auth_nonces(wallet_address, used);
+create index if not exists idx_paylabs_payment_attempts_user on paylabs_payment_attempts(user_id, status);
+create index if not exists idx_paylabs_payment_attempts_batch on paylabs_payment_attempts(batch_id);
+create index if not exists idx_paylabs_receipts_user on paylabs_receipts(user_id);
+create index if not exists idx_paylabs_access_passes_user on paylabs_access_passes(user_id, content_id);
+create index if not exists idx_paylabs_settlement_batches_status on paylabs_settlement_batches(status);
