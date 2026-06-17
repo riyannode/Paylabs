@@ -37,9 +37,9 @@ export interface X402SettlementResult {
 
 export function buildX402Requirements(purpose: string): X402Requirements {
   const amount = purpose === "ai_search"
-    ? config.x402DefaultAmountUsdc
-    : purpose === "content_access"
-    ? config.x402DefaultAmountUsdc
+    ? config.aiSearchPriceUsdc
+    : purpose === "thread_open"
+    ? config.threadOpenPriceUsdc
     : config.maxSinglePaymentUsdc;
 
   // Convert USDC amount to base units (6 decimals)

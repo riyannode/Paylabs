@@ -12,7 +12,10 @@ contentRoutes.post("/quote", async (c) => {
   return c.json({ error: "Not implemented yet" }, 501);
 });
 
-contentRoutes.post("/unlock", async (c) => {
-  // TODO: Unlock content after payment accepted
+// Renamed from /unlock → /open-thread
+// A "paid thread open" is one accepted payment that returns one redirect_url.
+// No content proxying, no access passes, no content body returned.
+contentRoutes.post("/open-thread", async (c) => {
+  // TODO: Accept x402 payment for thread_open purpose, return redirect_url
   return c.json({ error: "Not implemented yet" }, 501);
 });

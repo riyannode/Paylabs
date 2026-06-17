@@ -84,7 +84,7 @@ create table if not exists paylabs_payment_attempts (
   user_id uuid not null references paylabs_users(id),
   wallet_address text not null,
   site_id text not null references paylabs_supported_sites(id),
-  purpose text not null check (purpose in ('ai_search', 'content_access')),
+  purpose text not null check (purpose in ('ai_search', 'content_access', 'thread_open')),
   resource_id text not null,
   amount_usdc numeric(18, 6) not null,
   status text not null check (status in ('required', 'submitted', 'accepted', 'failed', 'settlement_pending', 'settled')),
@@ -175,3 +175,15 @@ create index if not exists idx_paylabs_payment_attempts_batch on paylabs_payment
 create index if not exists idx_paylabs_receipts_user on paylabs_receipts(user_id);
 create index if not exists idx_paylabs_access_passes_user on paylabs_access_passes(user_id, content_id);
 create index if not exists idx_paylabs_settlement_batches_status on paylabs_settlement_batches(status);
+
+-- ============================================================
+-- 11. MIGRATIONS (idempotent ALTERs for existing tables)
+-- ============================================================
+
+-- PR #2: add 'thread_open' to payment_attempts purpose CHECK
+ALTER TABLE paylabs_payment_attempts
+  DROP CONSTRAINT IF EXISTS paylabs_payment_attempts_purpose_check;
+
+ALTER TABLE paylabs_payment_attempts
+  ADD CONSTRAINT paylabs_payment_attempts_purpose_check
+  CHECK (purpose IN ('ai_search', 'content_access', 'thread_open'));
