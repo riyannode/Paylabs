@@ -25,10 +25,13 @@ export const config = {
   x402DefaultVideoAmountUsdc: process.env.X402_DEFAULT_VIDEO_AMOUNT_USDC ?? "0.000001",
 
   // Circle Gateway
+  // Gateway REST /v1/balances is permissionless — API key only needed for webhook management
   circleGatewayApiKey: process.env.CIRCLE_GATEWAY_API_KEY ?? "",
   circleGatewayFacilitatorUrl: process.env.CIRCLE_GATEWAY_FACILITATOR_URL ?? "",
+  // Deprecated: walletId not used in Gateway unified balance flow (depositor = JWT walletAddress)
   circleGatewayWalletId: process.env.CIRCLE_GATEWAY_WALLET_ID ?? "",
   circleGatewayReceiverAddress: process.env.CIRCLE_GATEWAY_RECEIVER_ADDRESS ?? "",
+  circleGatewayTestnet: process.env.CIRCLE_GATEWAY_TESTNET !== "false",
 
   // Settlement
   settlementBatchThreshold: Number(process.env.SETTLEMENT_BATCH_THRESHOLD ?? "5"),
