@@ -187,3 +187,22 @@ ALTER TABLE paylabs_payment_attempts
 ALTER TABLE paylabs_payment_attempts
   ADD CONSTRAINT paylabs_payment_attempts_purpose_check
   CHECK (purpose IN ('ai_search', 'content_access', 'thread_open'));
+
+-- ============================================================
+-- 12. SECURITY: ROW LEVEL SECURITY
+-- ============================================================
+
+-- Enable RLS for all Paylabs public tables.
+-- No public policies are added because Paylabs data must only be accessed
+-- through the backend API, not directly from Supabase anon/client access.
+-- Do NOT add FORCE RLS — backend uses service role which bypasses RLS.
+
+alter table if exists public.paylabs_users enable row level security;
+alter table if exists public.paylabs_auth_nonces enable row level security;
+alter table if exists public.paylabs_supported_sites enable row level security;
+alter table if exists public.paylabs_content_items enable row level security;
+alter table if exists public.paylabs_settlement_batches enable row level security;
+alter table if exists public.paylabs_payment_attempts enable row level security;
+alter table if exists public.paylabs_access_passes enable row level security;
+alter table if exists public.paylabs_receipts enable row level security;
+alter table if exists public.paylabs_ai_requests enable row level security;
