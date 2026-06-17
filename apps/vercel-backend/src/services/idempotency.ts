@@ -12,7 +12,7 @@ export function generateIdempotencyKey(walletAddress: string, resourceId: string
 
 export async function checkIdempotency(key: string): Promise<{ exists: boolean; paymentId?: string }> {
   const [row] = await sql`
-    SELECT id FROM payment_attempts WHERE idempotency_key = ${key} AND status IN ('accepted', 'settlement_pending', 'settled')
+    SELECT id FROM paylabs_payment_attempts WHERE idempotency_key = ${key} AND status IN ('accepted', 'settlement_pending', 'settled')
   `;
   return row ? { exists: true, paymentId: (row as { id: string }).id } : { exists: false };
 }

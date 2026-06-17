@@ -1,6 +1,8 @@
 -- Paylabs schema — prefixed tables to avoid collision with ArcLayer
 -- Run via: npm run db:migrate
 
+create extension if not exists pgcrypto;
+
 -- ============================================================
 -- 1. USERS
 -- ============================================================
@@ -35,6 +37,12 @@ create table if not exists paylabs_supported_sites (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+INSERT INTO paylabs_supported_sites (id, name, hosts, enabled, publish_target)
+VALUES
+  ('arc-community', 'Arc Community', ARRAY['community.arc.io', 'community.arc.network'], true, true),
+  ('sepiasearch', 'SepiaSearch', ARRAY['sepiasearch.org'], true, false)
+ON CONFLICT (id) DO NOTHING;
 
 -- ============================================================
 -- 4. CONTENT ITEMS

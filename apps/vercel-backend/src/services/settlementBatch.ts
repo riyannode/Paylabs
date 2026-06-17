@@ -26,7 +26,7 @@ export async function assignPaymentToBatch(paymentId: string): Promise<{
   // Find or create open batch
   const [openBatch] = await sql`
     SELECT id, current_count, threshold_count
-    FROM settlement_batches
+    FROM paylabs_settlement_batches
     WHERE status = 'open'
     ORDER BY created_at ASC
     LIMIT 1
@@ -41,7 +41,7 @@ export async function assignPaymentToBatch(paymentId: string): Promise<{
     newCount = openBatch.current_count + 1;
   } else {
     const [newBatch] = await sql`
-      INSERT INTO settlement_batches (status, threshold_count, current_count)
+      INSERT INTO paylabs_settlement_batches (status, threshold_count, current_count)
       VALUES ('open', ${config.settlementBatchThreshold}, 1)
       RETURNING id, current_count
     `;
@@ -55,7 +55,7 @@ export async function assignPaymentToBatch(paymentId: string): Promise<{
   // Update batch count
   if (closed) {
     await sql`
-      UPDATE settlement_batches
+      UPDATE paylabs_settlement_batches
       SET current_count = ${newCount},
           status = 'closed',
           closed_at = now()
@@ -63,7 +63,7 @@ export async function assignPaymentToBatch(paymentId: string): Promise<{
     `;
   } else {
     await sql`
-      UPDATE settlement_batches
+      UPDATE paylabs_settlement_batches
       SET current_count = ${newCount}
       WHERE id = ${batchId}
     `;
@@ -71,7 +71,7 @@ export async function assignPaymentToBatch(paymentId: string): Promise<{
 
   // Update payment attempt
   await sql`
-    UPDATE payment_attempts
+    UPDATE paylabs_payment_attempts
     SET batch_id = ${batchId},
         batch_position = ${newCount},
         status = CASE WHEN ${closed} THEN 'settlement_pending' ELSE 'accepted' END,
@@ -81,7 +81,7 @@ export async function assignPaymentToBatch(paymentId: string): Promise<{
 
   // Create receipt
   await sql`
-    INSERT INTO receipts (
+    INSERT INTO paylabs_receipts (
       user_id, payment_attempt_id, batch_id, batch_position,
       batch_status, site_id, purpose, title, amount_usdc,
       payment_id, authorization_hash, settlement_ref
@@ -91,8 +91,8 @@ export async function assignPaymentToBatch(paymentId: string): Promise<{
       ${batchStatus}, pa.site_id, pa.purpose,
       COALESCE(ci.title, pa.resource_id), pa.amount_usdc,
       pa.payment_id, pa.authorization_hash, pa.settlement_ref
-    FROM payment_attempts pa
-    LEFT JOIN content_items ci ON ci.id = pa.resource_id
+    FROM paylabs_payment_attempts pa
+    LEFT JOIN paylabs_content_items ci ON ci.id = pa.resource_id
     WHERE pa.id = ${paymentId}
   `;
 
