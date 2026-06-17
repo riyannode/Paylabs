@@ -142,10 +142,12 @@ export async function getBalance(
 ): Promise<GatewayBalanceResult> {
   const domains = getGatewayDomains();
   const depositor = walletAddress.toLowerCase();
-  const sources = Object.values(domains).map((domain) => ({
-    domain,
-    depositor,
-  }));
+  const isEvm = depositor.startsWith("0x");
+
+  // Filter out Solana domain for EVM addresses (Solana requires base58 pubkey)
+  const sources = Object.values(domains)
+    .filter((domain) => !(isEvm && domain === 5))
+    .map((domain) => ({ domain, depositor }));
 
   const response = await fetchGateway<{ token: string; balances: DomainBalance[] }>(
     "/balances",
@@ -178,10 +180,12 @@ export async function getPendingDeposits(
 ): Promise<PendingDeposit[]> {
   const domains = getGatewayDomains();
   const depositor = walletAddress.toLowerCase();
-  const sources = Object.values(domains).map((domain) => ({
-    domain,
-    depositor,
-  }));
+  const isEvm = depositor.startsWith("0x");
+
+  // Filter out Solana domain for EVM addresses (Solana requires base58 pubkey)
+  const sources = Object.values(domains)
+    .filter((domain) => !(isEvm && domain === 5))
+    .map((domain) => ({ domain, depositor }));
 
   const response = await fetchGateway<{ token: string; deposits: PendingDeposit[] }>(
     "/deposits",
