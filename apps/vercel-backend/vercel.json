@@ -1,5 +1,6 @@
 {
-  "installCommand": "npm install --legacy-peer-deps --no-audit --no-fund",
+  "installCommand": "npm install --legacy-peer-deps",
+  "buildCommand": "npx tsc -p tsconfig.json",
   "rewrites": [
     {
       "source": "/(.*)",
