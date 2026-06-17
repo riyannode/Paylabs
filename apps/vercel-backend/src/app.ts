@@ -30,7 +30,7 @@ app.use("*", cors({
 
 app.get("/", (c) => c.json({
   name: "Paylabs API",
-  purpose: "Live x402/Gateway content gating backend",
+  purpose: "Paid AI discovery + paid thread opening backend (x402 / Circle Gateway on Arc)",
   status: "ok"
 }));
 

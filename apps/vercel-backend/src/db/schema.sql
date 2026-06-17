@@ -84,7 +84,7 @@ create table if not exists paylabs_payment_attempts (
   user_id uuid not null references paylabs_users(id),
   wallet_address text not null,
   site_id text not null references paylabs_supported_sites(id),
-  purpose text not null check (purpose in ('ai_search', 'content_access')),
+  purpose text not null check (purpose in ('ai_search', 'content_access', 'thread_open')),
   resource_id text not null,
   amount_usdc numeric(18, 6) not null,
   status text not null check (status in ('required', 'submitted', 'accepted', 'failed', 'settlement_pending', 'settled')),

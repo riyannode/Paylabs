@@ -7,6 +7,7 @@ export const config = {
 
   // Auth
   jwtSecret: process.env.JWT_SECRET ?? "",
+  jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? "24h",
 
   // Public
   publicOrigin: process.env.PAYLABS_PUBLIC_ORIGIN ?? "https://api.paylabs.xyz",
@@ -42,12 +43,14 @@ export const config = {
   openaiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
   tavilyApiKey: process.env.TAVILY_API_KEY ?? "",
   aiSearchPriceUsdc: process.env.AI_SEARCH_PRICE_USDC ?? "0.000001",
-  contentOpenPriceUsdc: process.env.CONTENT_OPEN_PRICE_USDC ?? "0.000001",
+  // THREAD_OPEN_PRICE_USDC preferred; CONTENT_OPEN_PRICE_USDC kept for backward compat
+  threadOpenPriceUsdc: process.env.THREAD_OPEN_PRICE_USDC ?? process.env.CONTENT_OPEN_PRICE_USDC ?? "0.000001",
   maxSinglePaymentUsdc: process.env.MAX_SINGLE_PAYMENT_USDC ?? "0.000001",
 
   // Agent permissions
   agentAllowAiSearch: process.env.AGENT_ALLOW_AI_SEARCH === "true",
-  agentAllowContentAccess: process.env.AGENT_ALLOW_CONTENT_ACCESS === "true",
+  // AGENT_ALLOW_THREAD_OPEN preferred; AGENT_ALLOW_CONTENT_ACCESS kept for backward compat
+  agentAllowThreadOpen: (process.env.AGENT_ALLOW_THREAD_OPEN ?? process.env.AGENT_ALLOW_CONTENT_ACCESS) === "true",
   agentAllowWithdraw: false,
   agentAllowTransfer: false,
 };
