@@ -175,3 +175,15 @@ create index if not exists idx_paylabs_payment_attempts_batch on paylabs_payment
 create index if not exists idx_paylabs_receipts_user on paylabs_receipts(user_id);
 create index if not exists idx_paylabs_access_passes_user on paylabs_access_passes(user_id, content_id);
 create index if not exists idx_paylabs_settlement_batches_status on paylabs_settlement_batches(status);
+
+-- ============================================================
+-- 11. MIGRATIONS (idempotent ALTERs for existing tables)
+-- ============================================================
+
+-- PR #2: add 'thread_open' to payment_attempts purpose CHECK
+ALTER TABLE paylabs_payment_attempts
+  DROP CONSTRAINT IF EXISTS paylabs_payment_attempts_purpose_check;
+
+ALTER TABLE paylabs_payment_attempts
+  ADD CONSTRAINT paylabs_payment_attempts_purpose_check
+  CHECK (purpose IN ('ai_search', 'content_access', 'thread_open'));

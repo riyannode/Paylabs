@@ -17,12 +17,20 @@ type AuthVariables = {
 export const authRoutes = new Hono<{ Variables: AuthVariables }>();
 
 // POST /api/auth/nonce
-// Returns a random nonce and a SIWE message template for the wallet to sign.
+// Body: { walletAddress: string }
+// Returns a random nonce and the final SIWE message containing the real address.
 authRoutes.post("/nonce", async (c) => {
   try {
-    const { nonce, message, expiresAt } = await generateNonce();
+    const body = await c.req.json<{ walletAddress: string }>();
+    if (!body.walletAddress) {
+      return c.json({ error: "walletAddress is required" }, 400);
+    }
+    const { nonce, message, expiresAt } = await generateNonce(body.walletAddress);
     return c.json({ nonce, message, expiresAt });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return c.json({ error: err.message }, err.status as 400);
+    }
     console.error("[auth/nonce]", err);
     return c.json({ error: "Failed to generate nonce" }, 500);
   }

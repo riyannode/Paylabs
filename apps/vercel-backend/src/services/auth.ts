@@ -48,24 +48,28 @@ function parseSiweMessage(message: string): ParsedSiwe | null {
 
 const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-export async function generateNonce(): Promise<{
+export async function generateNonce(walletAddress: string): Promise<{
   nonce: string;
   message: string;
   expiresAt: string;
 }> {
+  // Validate wallet address format
+  if (!/^0x[0-9a-fA-F]{40}$/.test(walletAddress)) {
+    throw new AuthError("Invalid wallet address", 400);
+  }
+
   const nonce = crypto.randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + NONCE_TTL_MS);
 
   await sql`
     INSERT INTO paylabs_auth_nonces (wallet_address, nonce, used, expires_at)
-    VALUES ('0x0000000000000000000000000000000000000000', ${nonce}, false, ${expiresAt.toISOString()})
+    VALUES (${walletAddress.toLowerCase()}, ${nonce}, false, ${expiresAt.toISOString()})
   `;
 
-  // Build the SIWE message template the wallet should sign
-  // The wallet replaces <ADDRESS> with the actual signer address
+  // Build the final SIWE message with the real address — no placeholder
   const domain = new URL(config.publicOrigin).host;
   const message = `${domain} wants you to sign in with your Ethereum account:
-<ADDRESS>
+${walletAddress}
 
 Sign in to Paylabs
 
@@ -198,6 +202,10 @@ export function signJwt(payload: {
   sub: string;
   walletAddress: string;
 }): string {
+  if (!config.jwtSecret || config.jwtSecret.length < 32) {
+    throw new AuthError("JWT_SECRET is not configured or too short (min 32 chars)", 500);
+  }
+
   const header = { alg: "HS256", typ: "JWT" };
   const now = Math.floor(Date.now() / 1000);
   const exp = now + parseDuration(config.jwtExpiresIn);
@@ -220,6 +228,10 @@ export function verifyJwt(token: string): {
   sub: string;
   walletAddress: string;
 } {
+  if (!config.jwtSecret || config.jwtSecret.length < 32) {
+    throw new AuthError("JWT_SECRET is not configured or too short (min 32 chars)", 500);
+  }
+
   const parts = token.split(".");
   if (parts.length !== 3) throw new AuthError("Invalid JWT format", 401);
 
