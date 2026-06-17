@@ -25,7 +25,7 @@ export interface Receipt {
 
 export async function getReceiptsForUser(userId: string): Promise<Receipt[]> {
   const rows = await sql`
-    SELECT * FROM receipts
+    SELECT * FROM paylabs_receipts
     WHERE user_id = ${userId}
     ORDER BY created_at DESC
   `;
@@ -34,7 +34,7 @@ export async function getReceiptsForUser(userId: string): Promise<Receipt[]> {
 
 export async function getReceiptById(id: string): Promise<Receipt | null> {
   const [row] = await sql`
-    SELECT * FROM receipts WHERE id = ${id}
+    SELECT * FROM paylabs_receipts WHERE id = ${id}
   `;
   return (row as unknown as Receipt) ?? null;
 }

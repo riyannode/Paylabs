@@ -49,6 +49,9 @@ export function validateSite(url: string): { valid: boolean; siteId?: string; er
         if (targetUrl) {
           try {
             const target = new URL(targetUrl);
+            if (target.protocol !== "https:") {
+              return { valid: false, error: "SepiaSearch target must use HTTPS" };
+            }
             const isPeerTube = PEERTUBE_PATH_PATTERNS.some((p) => p.test(target.pathname));
             if (!isPeerTube) {
               return { valid: false, error: "SepiaSearch target must be a PeerTube video URL" };

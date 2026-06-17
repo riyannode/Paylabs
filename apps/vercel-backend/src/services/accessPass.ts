@@ -24,7 +24,7 @@ export async function createAccessPass(params: {
   paymentAttemptId: string;
 }): Promise<AccessPass> {
   const [pass] = await sql`
-    INSERT INTO access_passes (user_id, wallet_address, content_id, site_id, target_url, payment_attempt_id)
+    INSERT INTO paylabs_access_passes (user_id, wallet_address, content_id, site_id, target_url, payment_attempt_id)
     VALUES (${params.userId}, ${params.walletAddress}, ${params.contentId}, ${params.siteId}, ${params.targetUrl}, ${params.paymentAttemptId})
     RETURNING *
   `;
@@ -33,7 +33,7 @@ export async function createAccessPass(params: {
 
 export async function checkAccessPass(userId: string, contentId: string): Promise<boolean> {
   const [pass] = await sql`
-    SELECT id FROM access_passes
+    SELECT id FROM paylabs_access_passes
     WHERE user_id = ${userId} AND content_id = ${contentId}
     LIMIT 1
   `;
