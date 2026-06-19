@@ -10,35 +10,32 @@ import { createHash } from "node:crypto";
 import type { RouteConfig } from "./route-config";
 
 export interface VerificationInput {
-  lesson_id: string;
+  feed_item_id: string;
   title?: string;
-  source_id?: string;
-  canonical_url?: string;
-  publisher?: string;
-  source_type?: string;
-  normalized_sha256?: string;
+  route_id?: string;
+  route_path?: string;
+  route_title?: string;
   content_sha256?: string;
-  is_published?: boolean;
-  creator_wallet?: string;
-  creator_verified?: boolean;
+  published_at?: string;
+  route_is_active?: boolean;
 }
 
-export interface VerifiedLesson {
-  lesson_id: string;
+export interface VerifiedSource {
+  feed_item_id: string;
   order_index: number;
   source_ok: boolean;
-  creator_ok: boolean;
+  route_ok: boolean;
   verification_reason: string;
 }
 
-export interface RejectedLesson {
-  lesson_id: string;
+export interface RejectedSource {
+  feed_item_id: string;
   reason: string;
 }
 
 export interface VerificationResult {
-  verified: VerifiedLesson[];
-  rejected: RejectedLesson[];
+  verified: VerifiedSource[];
+  rejected: RejectedSource[];
   allVerified: boolean;
   outputHash: string;
 }
@@ -48,60 +45,57 @@ export interface VerificationResult {
  * Same logic used in source-verifier-agent.ts and the paid specialist endpoint.
  */
 export function runSourceVerification(
-  lessons: VerificationInput[],
+  sources: VerificationInput[],
   config: RouteConfig
 ): VerificationResult {
-  const verified: VerifiedLesson[] = [];
-  const rejected: RejectedLesson[] = [];
+  const verified: VerifiedSource[] = [];
+  const rejected: RejectedSource[] = [];
 
-  for (let i = 0; i < lessons.length; i++) {
-    const lesson = lessons[i];
+  for (let i = 0; i < sources.length; i++) {
+    const source = sources[i];
     const reasons: string[] = [];
 
     // Standard checks (all tiers)
-    if (!lesson.source_id) reasons.push("source_id missing");
-    if (!lesson.canonical_url) reasons.push("canonical_url missing");
-    if (!lesson.normalized_sha256) reasons.push("normalized_sha256 missing");
-    if (!lesson.content_sha256) reasons.push("content_sha256 missing");
-    if (!lesson.is_published) reasons.push("not published");
+    if (!source.route_id) reasons.push("route_id missing");
+    if (!source.route_path) reasons.push("route_path missing");
+    if (!source.content_sha256) reasons.push("content_sha256 missing");
+    if (!source.published_at) reasons.push("published_at missing");
 
     // High strictness (Advanced + Premium)
     if (config.sourceStrictness === "high" || config.sourceStrictness === "very_high") {
-      if (!lesson.publisher) reasons.push("publisher missing (high strictness)");
+      if (!source.route_title) reasons.push("route_title missing (high strictness)");
     }
 
     // Very high strictness (Premium)
     if (config.sourceStrictness === "very_high") {
-      if (!lesson.source_type) reasons.push("source_type missing (premium strictness)");
+      if (!source.route_is_active) reasons.push("route not active (premium strictness)");
     }
 
     const sourceOk = reasons.length === 0;
 
-    // Creator checks (all tiers)
-    if (!lesson.creator_wallet) reasons.push("creator wallet missing");
-    if (!lesson.creator_verified) reasons.push("creator not verified");
+    // Route checks (all tiers)
+    const routeOk = !!source.route_id && !!source.route_is_active;
+    if (!routeOk && sourceOk) reasons.push("RSSHub route inactive");
 
-    const creatorOk = !!lesson.creator_wallet && !!lesson.creator_verified;
-
-    if (sourceOk && creatorOk) {
+    if (sourceOk && routeOk) {
       verified.push({
-        lesson_id: lesson.lesson_id,
+        feed_item_id: source.feed_item_id,
         order_index: i,
         source_ok: true,
-        creator_ok: true,
+        route_ok: true,
         verification_reason: `Source verified [${config.sourceStrictness}]`,
       });
     } else {
       rejected.push({
-        lesson_id: lesson.lesson_id,
+        feed_item_id: source.feed_item_id,
         reason: reasons.join("; "),
       });
     }
   }
 
-  // Compute output hash over verified lesson IDs
+  // Compute output hash over verified feed item IDs
   const outputHash = createHash("sha256")
-    .update(JSON.stringify({ verified: verified.map(v => v.lesson_id), rejected: rejected.map(r => r.lesson_id) }))
+    .update(JSON.stringify({ verified: verified.map(v => v.feed_item_id), rejected: rejected.map(r => r.feed_item_id) }))
     .digest("hex");
 
   return { verified, rejected, allVerified: rejected.length === 0, outputHash };

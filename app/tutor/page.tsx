@@ -2,52 +2,27 @@
 import { useState, useEffect } from "react";
 import { short } from "@/lib/utils";
 
-interface ProposedLesson {
+interface ProposedSource {
   id: string;
-  slug: string;
   title: string;
   price_usdc: number;
   reason: string;
   source_ok?: boolean;
-  creator_ok?: boolean;
+  route_ok?: boolean;
   verification_reason?: string;
 }
 
 interface RouteOption {
   tier: string;
   label: string;
-  maxLessons: number;
+  maxSources: number;
   description: string;
 }
 
-interface AgentServiceCall {
-  id?: string;
-  buyer_agent_id?: string;
-  provider_agent_id?: string;
-  service_type?: string;
-  amount_usdc?: number;
-  payment_id?: string;
-  payment_ref?: string;
-  settlement_ref?: string;
-  output_hash?: string;
-  status?: string;
-}
-
-interface RouteTollProof {
-  route_toll_call_id: string;
-  route_payment_id: string;
-  route_payment_ref?: string;
-  route_settlement_ref?: string;
-  route_input_hash: string;
-  route_tier: string;
-  route_label: string;
-  route_toll_amount_usdc: number;
-}
-
 const ROUTE_OPTIONS: RouteOption[] = [
-  { tier: "normal", label: "Easy", maxLessons: 2, description: "Up to 2 source cards — cheapest and fastest" },
-  { tier: "advanced", label: "Normal", maxLessons: 5, description: "Up to 5 source cards — balanced path" },
-  { tier: "premium", label: "Advanced", maxLessons: 8, description: "Up to 8 source cards — deep research path" },
+  { tier: "normal", label: "Easy", maxSources: 2, description: "Up to 2 source cards — cheapest and fastest" },
+  { tier: "advanced", label: "Normal", maxSources: 5, description: "Up to 5 source cards — balanced path" },
+  { tier: "premium", label: "Advanced", maxSources: 8, description: "Up to 8 source cards — deep research path" },
 ];
 
 declare global {
@@ -70,32 +45,24 @@ export default function TutorPage() {
     normalized_goal: string;
     recommended_route_tier: string;
     route_label: string;
-    learning_level: string;
     suggested_budget_usdc: number;
     confidence: number;
     needs_clarification: boolean;
     clarification_question: string | null;
     reasoning: string;
-    route_toll_enabled?: boolean;
-    route_toll_required?: boolean;
-    route_toll_amount_usdc?: number;
   } | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
-  const [routeTollProof, setRouteTollProof] = useState<RouteTollProof | null>(null);
-  const [routeTollPaying, setRouteTollPaying] = useState(false);
-  const [routeTollError, setRouteTollError] = useState<string | null>(null);
-  const [path, setPath] = useState<ProposedLesson[] | null>(null);
-  const [pathId, setPathId] = useState<string | null>(null);
+  const [path, setPath] = useState<ProposedSource[] | null>(null);
+  const [sourcePathId, setSourcePathId] = useState<string | null>(null);
   const [pathStatus, setPathStatus] = useState<string>("none");
   const [routeTier, setRouteTier] = useState<string>("normal");
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [approving, setApproving] = useState(false);
-  const [buyStatus, setBuyStatus] = useState<string>("");
+  const [statusMsg, setStatusMsg] = useState<string>("");
   const [wallet, setWallet] = useState<string | null>(null);
-  const [buyingLessonId, setBuyingLessonId] = useState<string | null>(null);
-  const [unlockedIds, setUnlockedIds] = useState<Set<string>>(new Set());
-  const [agentServiceCalls, setAgentServiceCalls] = useState<AgentServiceCall[]>([]);
+  const [payingSourceId, setPayingSourceId] = useState<string | null>(null);
+  const [paidIds, setPaidIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (typeof window !== "undefined" && window.ethereum) {
@@ -111,7 +78,7 @@ export default function TutorPage() {
 
   async function connectWallet() {
     if (!window.ethereum) {
-      setBuyStatus("Install MetaMask or another EVM wallet");
+      setStatusMsg("Install MetaMask or another EVM wallet");
       return;
     }
     try {
@@ -121,7 +88,7 @@ export default function TutorPage() {
       if (accounts?.length > 0) setWallet(accounts[0]);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      setBuyStatus("Error: " + msg);
+      setStatusMsg("Error: " + msg);
     }
   }
 
@@ -132,8 +99,6 @@ export default function TutorPage() {
     setChatLoading(true);
     setChatResult(null);
     setChatError(null);
-    setRouteTollProof(null);
-    setRouteTollError(null);
     try {
       const res = await fetch("/api/paylabs/tutor/chat", {
         method: "POST",
@@ -158,45 +123,6 @@ export default function TutorPage() {
     setChatLoading(false);
   }
 
-  // ─── Pay Route Toll ──────────────────────────────────────────
-
-  async function payRouteToll() {
-    if (!chatResult || !wallet) return;
-    if (!chatResult.route_toll_enabled || !chatResult.route_toll_required) return;
-    if (!chatResult.recommended_route_tier) return;
-
-    setRouteTollPaying(true);
-    setRouteTollError(null);
-    setRouteTollProof(null);
-
-    try {
-      const res = await fetch("/api/paylabs/tutor/route-toll", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_wallet: wallet,
-          route_tier: chatResult.recommended_route_tier,
-          route_label: chatResult.route_label,
-          normalized_goal: chatResult.normalized_goal,
-          user_message: chatInput.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.route_payment_status === "completed") {
-        setRouteTollProof(data);
-        if (chatResult.normalized_goal) setGoal(chatResult.normalized_goal);
-        if (chatResult.recommended_route_tier) setSelectedRoute(chatResult.recommended_route_tier);
-        if (chatResult.suggested_budget_usdc) setBudget(chatResult.suggested_budget_usdc.toString());
-      } else {
-        setRouteTollError(data.error || "Route toll payment failed");
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setRouteTollError("Error: " + msg);
-    }
-    setRouteTollPaying(false);
-  }
-
   function useRecommendation() {
     if (!chatResult) return;
     if (chatResult.needs_clarification) return;
@@ -205,114 +131,102 @@ export default function TutorPage() {
     if (chatResult.suggested_budget_usdc) setBudget(chatResult.suggested_budget_usdc.toString());
   }
 
-  // ─── Propose Path ────────────────────────────────────────────
+  // ─── Propose Source Path ────────────────────────────────────
 
-  async function proposePath() {
-    if (!wallet) { setBuyStatus("Connect wallet first"); return; }
+  async function proposeSourcePath() {
+    if (!wallet) { setStatusMsg("Connect wallet first"); return; }
     setLoading(true);
     setPath(null);
-    setPathId(null);
+    setSourcePathId(null);
     setPathStatus("none");
-    setBuyStatus("");
-    setUnlockedIds(new Set());
-    setAgentServiceCalls([]);
-
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (routeTollProof) {
-      headers["x-route-payment-id"] = routeTollProof.route_payment_id;
-      if (routeTollProof.route_payment_ref) headers["x-route-payment-ref"] = routeTollProof.route_payment_ref;
-      if (routeTollProof.route_settlement_ref) headers["x-route-settlement-ref"] = routeTollProof.route_settlement_ref;
-      headers["x-route-input-hash"] = routeTollProof.route_input_hash;
-    }
+    setStatusMsg("");
+    setPaidIds(new Set());
 
     try {
-      const res = await fetch("/api/paylabs/learning-paths/propose", {
+      const res = await fetch("/api/paylabs/source-paths/propose", {
         method: "POST",
-        headers,
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal, budget_usdc: parseFloat(budget), user_wallet: wallet, route_tier: selectedRoute }),
       });
       const data = await res.json();
       if (data.path) {
         setPath(data.path);
-        setPathId(data.path_id || null);
-        setPathStatus(data.path_status || "none");
+        setSourcePathId(data.source_path_id || null);
+        setPathStatus(data.source_path_status || "none");
         setRouteTier(data.route_tier || selectedRoute);
         setTotal(data.total_usdc);
-        setAgentServiceCalls(data.agent_service_calls || []);
       } else {
-        setBuyStatus("Error: " + (data.error || "Could not propose path"));
+        setStatusMsg("Error: " + (data.error || "Could not propose source path"));
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      setBuyStatus("Error: " + msg);
+      setStatusMsg("Error: " + msg);
     }
     setLoading(false);
   }
 
   async function approvePath() {
-    if (!pathId || !wallet) return;
+    if (!sourcePathId || !wallet) return;
     setApproving(true);
-    setBuyStatus("");
+    setStatusMsg("");
     try {
-      const res = await fetch(`/api/paylabs/learning-paths/${pathId}/approve`, {
+      const res = await fetch(`/api/paylabs/source-paths/${sourcePathId}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_wallet: wallet }),
       });
       const data = await res.json();
       if (res.ok) {
-        setPathStatus(data.path_status || "approved");
-        setBuyStatus("Path approved. You can now buy lessons.");
+        setPathStatus(data.source_path_status || "approved");
+        setStatusMsg("Source path approved. You can now pay for sources.");
       } else {
-        setBuyStatus("Error: " + (data.error || "Approval failed"));
+        setStatusMsg("Error: " + (data.error || "Approval failed"));
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      setBuyStatus("Error: " + msg);
+      setStatusMsg("Error: " + msg);
     }
     setApproving(false);
   }
 
-  async function buyLesson(lessonId: string) {
-    if (!wallet) { setBuyStatus("Connect wallet first"); return; }
-    if (!pathId) { setBuyStatus("Error: No path_id. Propose and approve first."); return; }
-    if (pathStatus !== "approved") { setBuyStatus("Error: Path must be approved before buying."); return; }
-    setBuyingLessonId(lessonId);
-    setBuyStatus("Buying via ArcLayer Runner...");
+  async function payForSource(sourceId: string) {
+    if (!wallet) { setStatusMsg("Connect wallet first"); return; }
+    if (!sourcePathId) { setStatusMsg("Error: No source_path_id. Propose and approve first."); return; }
+    if (pathStatus !== "approved") { setStatusMsg("Error: Path must be approved before paying."); return; }
+    setPayingSourceId(sourceId);
+    setStatusMsg("Paying via ArcLayer Runner...");
     try {
-      const res = await fetch("/api/paylabs/agent/buy-lesson", {
+      const res = await fetch("/api/paylabs/source-payments/pay", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_wallet: wallet, lesson_id: lessonId, path_id: pathId }),
+        body: JSON.stringify({ user_wallet: wallet, source_path_id: sourcePathId, source_path_item_id: sourceId }),
       });
       const data = await res.json();
-      if (res.ok) {
-        setBuyStatus(`Unlocked! Payment: ${data.payment_id || "pending settlement"}`);
-        setUnlockedIds((prev) => new Set([...prev, lessonId]));
+      if (res.ok && data.ok) {
+        setStatusMsg(`Paid! Payment: ${data.source_payment_id || "pending settlement"}`);
+        setPaidIds((prev) => new Set([...prev, sourceId]));
       } else {
-        setBuyStatus("Error: " + (data.reason || data.error));
+        setStatusMsg("Error: " + (data.reason || data.error));
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      setBuyStatus("Error: " + msg);
+      setStatusMsg("Error: " + msg);
     }
-    setBuyingLessonId(null);
+    setPayingSourceId(null);
   }
 
   // ─── Derived state ──────────────────────────────────────────
 
   const isApproved = pathStatus === "approved";
   const isProposed = pathStatus === "proposed";
-  const tollNeeded = chatResult?.route_toll_enabled && chatResult?.route_toll_required && !chatResult?.needs_clarification;
-  const tollPaid = !!routeTollProof;
-  const canUseRecommendation = chatResult && !chatResult.needs_clarification && (!tollNeeded || tollPaid);
+  const canUseRecommendation = chatResult && !chatResult.needs_clarification;
 
   return (
     <div style={{ display: "grid", gap: 20 }}>
       <div>
         <h1 className="page-title">AI Tutor</h1>
         <p className="muted" style={{ marginTop: 8 }}>
-          Chat, pay route toll, propose path, unlock lessons.
+          Chat, propose source path, approve, pay per source citation.
         </p>
       </div>
 
@@ -359,12 +273,6 @@ export default function TutorPage() {
           </div>
         )}
 
-        {routeTollError && (
-          <div style={{ padding: "10px 12px", background: "var(--danger-soft)", borderRadius: 8, fontSize: 13, color: "var(--danger)", marginBottom: 12 }}>
-            {routeTollError}
-          </div>
-        )}
-
         {chatResult && (
           <div style={{ padding: 16, background: chatResult.needs_clarification ? "var(--warning-soft)" : "var(--success-soft)", borderRadius: 10, border: `1px solid ${chatResult.needs_clarification ? "var(--warning)" : "var(--success)"}20` }}>
             {!chatResult.needs_clarification && (
@@ -379,46 +287,13 @@ export default function TutorPage() {
 
             {!chatResult.needs_clarification && (
               <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-                Goal: {chatResult.normalized_goal} · Budget: {chatResult.suggested_budget_usdc} USDC · Level: {chatResult.learning_level} · Confidence: {Math.round(chatResult.confidence * 100)}%
+                Goal: {chatResult.normalized_goal} · Budget: {chatResult.suggested_budget_usdc} USDC · Confidence: {Math.round(chatResult.confidence * 100)}%
               </div>
             )}
 
             {chatResult.needs_clarification && chatResult.clarification_question && (
               <div style={{ fontSize: 13, color: "var(--warning)", fontWeight: 500, marginBottom: 8 }}>
                 {chatResult.clarification_question}
-              </div>
-            )}
-
-            {/* Toll needed */}
-            {!chatResult.needs_clarification && tollNeeded && !tollPaid && (
-              <div style={{ padding: 12, background: "var(--warning-soft)", borderRadius: 8, fontSize: 13, marginBottom: 8, border: "1px solid var(--warning)30" }}>
-                <div style={{ marginBottom: 8 }}>
-                  Route toll: <strong className="data-mono">{chatResult.route_toll_amount_usdc} USDC</strong> for {chatResult.route_label}
-                </div>
-                <button onClick={payRouteToll} disabled={routeTollPaying || !wallet} className="btn btn-primary" style={{ fontSize: 13 }}>
-                  {routeTollPaying ? "Paying…" : `Pay ${chatResult.route_toll_amount_usdc} USDC`}
-                </button>
-                {!wallet && <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>Connect wallet first</span>}
-              </div>
-            )}
-
-            {/* Toll paid */}
-            {!chatResult.needs_clarification && tollPaid && routeTollProof && (
-              <div style={{ padding: "10px 12px", background: "var(--success-soft)", borderRadius: 8, fontSize: 12, marginBottom: 8, border: "1px solid var(--success)20" }}>
-                <div style={{ marginBottom: 6 }}>
-                  <span style={{ color: "var(--success)", fontWeight: 600 }}>✓ Toll paid</span>{" "}
-                  {routeTollProof.route_label} · <strong className="data-mono">{routeTollProof.route_toll_amount_usdc} USDC</strong>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "2px 12px", color: "var(--muted)" }}>
-                  <span>Call ID</span>
-                  <span className="data-mono">{short(routeTollProof.route_toll_call_id)}</span>
-                  <span>Payment</span>
-                  <span className="data-mono">{short(routeTollProof.route_payment_id)}</span>
-                  {routeTollProof.route_payment_ref && (<><span>Payment Ref</span><span className="data-mono">{short(routeTollProof.route_payment_ref)}</span></>)}
-                  {routeTollProof.route_settlement_ref && (<><span>Settlement</span><span className="data-mono">{short(routeTollProof.route_settlement_ref)}</span></>)}
-                  <span>Input Hash</span>
-                  <span className="data-mono">{short(routeTollProof.route_input_hash)}</span>
-                </div>
               </div>
             )}
 
@@ -429,7 +304,7 @@ export default function TutorPage() {
                   Use Recommendation
                 </button>
                 <span className="muted" style={{ fontSize: 12 }}>
-                  {tollPaid ? "Toll paid. Click Propose Path next." : "No funds spent yet."}
+                  Click Propose Source Path next.
                 </span>
               </div>
             )}
@@ -437,17 +312,14 @@ export default function TutorPage() {
         )}
       </section>
 
-      {/* Step 2: Pay route toll (manual route selector) */}
+      {/* Step 2: Route selector */}
       <section className="card-soft">
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>Manual route override</div>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>Route override</div>
         <div className="grid-3">
           {ROUTE_OPTIONS.map((route) => (
             <button
               key={route.tier}
-              onClick={() => {
-                setSelectedRoute(route.tier);
-                if (routeTollProof && route.tier !== routeTollProof.route_tier) setRouteTollProof(null);
-              }}
+              onClick={() => setSelectedRoute(route.tier)}
               style={{
                 padding: "12px 14px",
                 borderRadius: 10,
@@ -465,7 +337,7 @@ export default function TutorPage() {
         </div>
       </section>
 
-      {/* Step 3: Propose path */}
+      {/* Step 3: Propose source path */}
       <section className="card">
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
           <span style={{
@@ -473,63 +345,33 @@ export default function TutorPage() {
             color: "white", display: "inline-flex", alignItems: "center", justifyContent: "center",
             fontSize: 12, fontWeight: 700, flexShrink: 0,
           }}>3</span>
-          <span style={{ fontWeight: 700, fontSize: 15 }}>Propose path</span>
+          <span style={{ fontWeight: 700, fontSize: 15 }}>Propose source path</span>
         </div>
 
         <div style={{ display: "grid", gap: 12 }}>
           <div>
-            <label className="muted" style={{ display: "block", fontSize: 12, marginBottom: 4 }}>Learning Goal</label>
-            <input className="input" value={goal} onChange={(e) => { setGoal(e.target.value); if (routeTollProof) setRouteTollProof(null); }} placeholder="e.g. Learn x402 nanopayments on Arc" />
+            <label className="muted" style={{ display: "block", fontSize: 12, marginBottom: 4 }}>Goal</label>
+            <input className="input" value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="e.g. Learn x402 nanopayments on Arc" />
           </div>
           <div>
             <label className="muted" style={{ display: "block", fontSize: 12, marginBottom: 4 }}>Budget (USDC)</label>
             <input className="input" type="number" step="0.001" value={budget} onChange={(e) => setBudget(e.target.value)} style={{ maxWidth: 160 }} />
           </div>
-          <button onClick={proposePath} disabled={loading || !goal || !wallet} className="btn btn-primary">
+          <button onClick={proposeSourcePath} disabled={loading || !goal || !wallet} className="btn btn-primary">
             {loading ? "Running workflow…" : `Propose ${ROUTE_OPTIONS.find(r => r.tier === selectedRoute)?.label || "Path"}`}
           </button>
         </div>
       </section>
 
-      {/* Agent Economy Trace */}
-      {agentServiceCalls.length > 0 && (
-        <section className="card" style={{ border: "1px solid var(--success)30" }}>
-          <h2 className="section-title" style={{ color: "var(--success)" }}>Agent Economy Trace</h2>
-          <div style={{ display: "grid", gap: 8 }}>
-            {agentServiceCalls.map((call, i) => (
-              <div key={call.id || i} className="card-soft" style={{ padding: "10px 14px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                  <span style={{ fontSize: 13 }}>
-                    <strong className="data-mono">{short(call.buyer_agent_id)}</strong>
-                    {" → "}
-                    <strong className="data-mono">{short(call.provider_agent_id)}</strong>
-                  </span>
-                  <span style={{ color: "var(--success)", fontWeight: 700, fontSize: 13 }} className="data-mono">
-                    {call.amount_usdc} USDC
-                  </span>
-                </div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  {call.service_type} ·{" "}
-                  <span className={`badge ${call.status === "completed" ? "badge-success" : "badge-warning"}`} style={{ fontSize: 11 }}>
-                    {call.status}
-                  </span>
-                  {call.payment_id && <> · <span className="data-mono">{short(call.payment_id)}</span></>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Proposed Path */}
+      {/* Proposed Source Path */}
       {path && (
         <section className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
             <h2 className="section-title" style={{ margin: 0 }}>
-              Proposed Path
-              {pathId && <span className="muted data-mono" style={{ fontSize: 12, marginLeft: 8 }}>{short(pathId)}</span>}
+              Proposed Source Path
+              {sourcePathId && <span className="muted data-mono" style={{ fontSize: 12, marginLeft: 8 }}>{short(sourcePathId)}</span>}
             </h2>
-            <span className="data-mono" style={{ fontWeight: 700, fontSize: 15 }}>{total.toFixed(4)} USDC</span>
+            <span className="data-mono" style={{ fontWeight: 700, fontSize: 15 }}>{total.toFixed(6)} USDC</span>
           </div>
 
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16 }}>
@@ -546,38 +388,38 @@ export default function TutorPage() {
           )}
 
           <div style={{ display: "grid", gap: 8 }}>
-            {path.map((l: ProposedLesson, i: number) => (
+            {path.map((s: ProposedSource, i: number) => (
               <div
-                key={l.id}
+                key={s.id}
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
                   padding: "12px 14px",
-                  background: unlockedIds.has(l.id) ? "var(--success-soft)" : "var(--card-soft)",
+                  background: paidIds.has(s.id) ? "var(--success-soft)" : "var(--card-soft)",
                   borderRadius: 10,
-                  border: `1px solid ${unlockedIds.has(l.id) ? "var(--success)30" : "var(--border)"}`,
+                  border: `1px solid ${paidIds.has(s.id) ? "var(--success)30" : "var(--border)"}`,
                 }}
               >
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 14 }}>
-                    {i + 1}. {l.title}
-                    {unlockedIds.has(l.id) && <span style={{ color: "var(--success)", marginLeft: 8, fontSize: 12 }}>✓ Unlocked</span>}
+                    {i + 1}. {s.title || "Untitled source"}
+                    {paidIds.has(s.id) && <span style={{ color: "var(--success)", marginLeft: 8, fontSize: 12 }}>✓ Paid</span>}
                   </div>
-                  {l.verification_reason && (
-                    <div style={{ fontSize: 12, color: "var(--success)", marginTop: 2 }}>✓ {l.verification_reason}</div>
+                  {s.verification_reason && (
+                    <div style={{ fontSize: 12, color: "var(--success)", marginTop: 2 }}>✓ {s.verification_reason}</div>
                   )}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <span className="data-mono" style={{ fontWeight: 700, color: "var(--success)" }}>{l.price_usdc} USDC</span>
-                  {!unlockedIds.has(l.id) && (
+                  <span className="data-mono" style={{ fontWeight: 700, color: "var(--success)" }}>{s.price_usdc} USDC</span>
+                  {!paidIds.has(s.id) && (
                     <button
-                      onClick={() => buyLesson(l.id)}
-                      disabled={!isApproved || buyingLessonId === l.id}
+                      onClick={() => payForSource(s.id)}
+                      disabled={!isApproved || payingSourceId === s.id}
                       className="btn btn-green"
                       style={{ fontSize: 13, opacity: isApproved ? 1 : 0.4 }}
                     >
-                      {buyingLessonId === l.id ? "Buying…" : isApproved ? "Buy" : "Approve first"}
+                      {payingSourceId === s.id ? "Paying…" : isApproved ? "Pay" : "Approve first"}
                     </button>
                   )}
                 </div>
@@ -585,9 +427,9 @@ export default function TutorPage() {
             ))}
           </div>
 
-          {buyStatus && (
-            <p style={{ marginTop: 12, fontSize: 13, color: buyStatus.startsWith("Error") ? "var(--danger)" : "var(--success)" }}>
-              {buyStatus}
+          {statusMsg && (
+            <p style={{ marginTop: 12, fontSize: 13, color: statusMsg.startsWith("Error") ? "var(--danger)" : "var(--success)" }}>
+              {statusMsg}
             </p>
           )}
         </section>

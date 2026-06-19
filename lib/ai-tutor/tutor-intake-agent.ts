@@ -2,7 +2,7 @@
  * Tutor Intake Agent Node
  *
  * Single LangGraph node that classifies user intent into a route recommendation.
- * Uses invokeJsonAgent (same LLM infra as the 5-agent workflow).
+ * Uses invokeJsonAgent (same LLM infra as the agent workflow).
  *
  * Hard rules:
  * - Cannot execute payment
@@ -10,7 +10,7 @@
  * - Cannot call Circle
  * - Cannot call wallet APIs
  * - Cannot call contracts
- * - Cannot create paths, receipts, unlocks
+ * - Cannot create source paths, payments
  * - Cannot write to DB
  * - Only classifies intent and prepares proposal inputs
  */
@@ -36,7 +36,7 @@ const TutorIntakeSchema = z.object({
     .describe("Friendly reply to the user explaining the recommendation"),
   normalized_goal: z
     .string()
-    .describe("Cleaned, normalized learning goal for the proposal form"),
+    .describe("Cleaned, normalized goal for the proposal form"),
   recommended_route_tier: z
     .enum(["normal", "advanced", "premium"])
     .describe("Recommended route tier"),

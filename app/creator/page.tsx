@@ -25,7 +25,7 @@ export default function CreatorPage() {
       <div>
         <h1 className="page-title">Creator Dashboard</h1>
         <p className="muted" style={{ marginTop: 8 }}>
-          Connect your wallet to see receipt-backed earnings.
+          Connect your wallet to see source payment earnings.
         </p>
       </div>
 
@@ -56,22 +56,22 @@ export default function CreatorPage() {
               {data.earnings.total_creator_usdc?.toFixed(6) || "0"} USDC
             </div>
             <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-              From {data.earnings.receipt_count || 0} lesson unlocks
+              From {data.earnings.payment_count || 0} source payments
             </div>
           </div>
 
-          {data.earnings.receipts?.length > 0 && (
+          {data.earnings.payments?.length > 0 && (
             <div style={{ display: "grid", gap: 8 }}>
-              {data.earnings.receipts.map((r: any) => (
-                <div key={r.id} className="card" style={{ padding: "12px 16px" }}>
+              {data.earnings.payments.map((p: any) => (
+                <div key={p.id} className="card" style={{ padding: "12px 16px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ fontWeight: 600, fontSize: 14 }}>{r.lesson_title || "Lesson"}</span>
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>{p.source_title || "Source"}</span>
                     <span className="data-mono" style={{ color: "var(--success)", fontWeight: 700 }}>
-                      {usdc(r.creator_amount_usdc)}
+                      {usdc(p.amount_usdc)}
                     </span>
                   </div>
                   <div className="muted data-mono" style={{ fontSize: 12, marginTop: 4 }}>
-                    {short(r.payment_ref)} · {new Date(r.created_at).toLocaleString()}
+                    {p.payment_kind} · {short(p.payment_ref)} · {new Date(p.created_at).toLocaleString()}
                   </div>
                 </div>
               ))}

@@ -1,77 +1,148 @@
 /**
  * PayLabs Tutor Tools
- * Read-only tools for lesson queries + privileged tools for Runner execution.
- * Trust boundary: privileged tools go through ArcLayer Runner only.
+ * Read-only tools for RSSHub/feed queries + privileged tools for Runner execution.
+ * Trust boundary: privileged tools go through Payment Adapter only.
+ *
+ * Phase 1: monetization gate — only verified+monetized sources pass.
  */
 
 import { supabaseAdmin } from "@/lib/supabase/server";
 
 // ─── Read-Only Tools ─────────────────────────────────────────────
 
-export async function listPublishedLessons() {
-  const { data, error } = await supabaseAdmin()
-    .from("paylabs_lessons")
+export async function listFeedItems(routeId?: string) {
+  let query = supabaseAdmin()
+    .from("paylabs_feed_items")
     .select(
-      `id, slug, title, summary, price_usdc, estimated_minutes, difficulty, tags,
-       content_sha256, is_published,
-       source:paylabs_sources(id, canonical_url, source_title, publisher, normalized_sha256),
-       creator:paylabs_creators(id, wallet_address, display_name, is_verified)`
+      `id, rsshub_route_id, canonical_url, title, summary, author_name, publisher,
+       published_at, tags, normalized_sha256, content_sha256, creator_wallet,
+       is_monetized, price_per_citation_usdc, price_per_unlock_usdc, is_active,
+       rsshub_route:paylabs_rsshub_routes(
+         id, rsshub_base_url, route_path, title, description, source_type,
+         creator_wallet, is_monetized, default_price_per_citation_usdc, default_price_per_unlock_usdc,
+         is_active, verification_status, verification_method, verified_at
+       )`
     )
-    .eq("is_published", true)
-    .order("price_usdc");
+    .eq("is_active", true)
+    .order("published_at", { ascending: false });
 
-  if (error) throw new Error(`Failed to fetch lessons: ${error.message}`);
+  if (routeId) {
+    query = query.eq("rsshub_route_id", routeId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(`Failed to fetch feed items: ${error.message}`);
   return data || [];
 }
 
-export async function getUserUnlocks(userWallet: string) {
-  const { data, error } = await supabaseAdmin()
-    .from("paylabs_unlocks")
-    .select("lesson_id")
-    .eq("user_wallet", userWallet.toLowerCase());
+/**
+ * List only monetized feed items that qualify for paid source paths.
+ * Deterministic filter — no LLM involvement.
+ */
+export async function listMonetizedFeedItems(routeId?: string) {
+  let query = supabaseAdmin()
+    .from("paylabs_feed_items")
+    .select(
+      `id, rsshub_route_id, canonical_url, title, summary, author_name, publisher,
+       published_at, tags, normalized_sha256, content_sha256, creator_wallet,
+       is_monetized, price_per_citation_usdc, price_per_unlock_usdc, is_active,
+       rsshub_route:paylabs_rsshub_routes(
+         id, rsshub_base_url, route_path, title, description, source_type,
+         creator_wallet, is_monetized, default_price_per_citation_usdc, default_price_per_unlock_usdc,
+         is_active, verification_status, verification_method, verified_at
+       )`
+    )
+    .eq("is_active", true)
+    .eq("is_monetized", true)
+    .not("creator_wallet", "is", null)
+    .gt("price_per_citation_usdc", 0)
+    .order("published_at", { ascending: false });
 
-  if (error) throw new Error(`Failed to fetch unlocks: ${error.message}`);
-  return (data || []).map((u: { lesson_id: string }) => u.lesson_id);
+  if (routeId) {
+    query = query.eq("rsshub_route_id", routeId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(`Failed to fetch monetized feed items: ${error.message}`);
+
+  // Additional filter: route must be verified + monetized
+  // Supabase returns joined relation as array — take first element
+  // Cast data to avoid Supabase join type inference issues
+  const filtered = ((data || []) as unknown as Record<string, unknown>[]).filter((item) => {
+    const routeRaw = item.rsshub_route as unknown;
+    const route = Array.isArray(routeRaw) ? routeRaw[0] as Record<string, unknown> : routeRaw as Record<string, unknown> | undefined;
+    return (
+      route?.verification_status === "verified" &&
+      route?.is_monetized === true &&
+      !!route?.creator_wallet
+    );
+  });
+
+  return filtered;
 }
 
-export async function getLessonById(lessonId: string) {
+export async function getFeedItemById(feedItemId: string) {
   const { data, error } = await supabaseAdmin()
-    .from("paylabs_lessons")
+    .from("paylabs_feed_items")
     .select(
-      `id, slug, title, summary, price_usdc, difficulty, tags, content_sha256, is_published,
-       source_id, creator_id,
-       source:paylabs_sources(id, canonical_url, normalized_sha256),
-       creator:paylabs_creators(wallet_address, is_verified)`
+      `id, rsshub_route_id, canonical_url, title, summary, author_name, publisher,
+       published_at, tags, normalized_sha256, content_sha256, creator_wallet,
+       is_monetized, price_per_citation_usdc, price_per_unlock_usdc, is_active,
+       rsshub_route:paylabs_rsshub_routes(
+         id, rsshub_base_url, route_path, title, description, source_type,
+         creator_wallet, is_monetized, default_price_per_citation_usdc, default_price_per_unlock_usdc,
+         is_active, verification_status, verification_method, verified_at
+       )`
     )
-    .eq("id", lessonId)
+    .eq("id", feedItemId)
     .single();
 
-  if (error) throw new Error(`Lesson not found: ${error.message}`);
+  if (error) throw new Error(`Feed item not found: ${error.message}`);
   return data;
 }
 
-export async function getPathById(pathId: string) {
+export async function getPaidSourcePathItemIds(userWallet: string): Promise<string[]> {
   const { data, error } = await supabaseAdmin()
-    .from("paylabs_learning_paths")
+    .from("paylabs_source_payments")
+    .select("source_path_item_id")
+    .eq("user_wallet", userWallet.toLowerCase())
+    .eq("status", "completed");
+
+  if (error) throw new Error(`Failed to fetch source payments: ${error.message}`);
+  return (data || []).map((p: { source_path_item_id: string }) => p.source_path_item_id);
+}
+
+export async function getSourcePathById(sourcePathId: string) {
+  const { data, error } = await supabaseAdmin()
+    .from("paylabs_source_paths")
     .select("*")
-    .eq("id", pathId)
+    .eq("id", sourcePathId)
     .single();
 
-  if (error) throw new Error(`Path not found: ${error.message}`);
+  if (error) throw new Error(`Source path not found: ${error.message}`);
   return data;
 }
 
-export async function getPathItems(pathId: string) {
+export async function getSourcePathItems(sourcePathId: string) {
   const { data, error } = await supabaseAdmin()
-    .from("paylabs_learning_path_items")
+    .from("paylabs_source_path_items")
     .select(
-      `id, path_id, lesson_id, order_index, reason, expected_value, status,
-       lesson:paylabs_lessons(id, slug, title, price_usdc)`
+      `id, source_path_id, feed_item_id, order_index, reason, expected_value,
+       source_url, source_title, publisher, author_name, normalized_sha256,
+       content_sha256, source_hash, creator_wallet, is_monetized,
+       citation_price_usdc, unlock_price_usdc, evidence_score,
+       marginal_value_score, status,
+       feed_item:paylabs_feed_items(
+         id, rsshub_route_id, canonical_url, title, summary, author_name,
+         publisher, published_at, normalized_sha256, content_sha256,
+         creator_wallet, is_monetized, price_per_citation_usdc, price_per_unlock_usdc, is_active,
+         rsshub_route:paylabs_rsshub_routes(id, route_path, title, is_active, verification_status, is_monetized, creator_wallet)
+       )`
     )
-    .eq("path_id", pathId)
+    .eq("source_path_id", sourcePathId)
     .order("order_index");
 
-  if (error) throw new Error(`Failed to fetch path items: ${error.message}`);
+  if (error) throw new Error(`Failed to fetch source path items: ${error.message}`);
   return data || [];
 }
 
@@ -85,79 +156,82 @@ export interface PolicyCheckResult {
 
 export async function runPolicyChecks(
   userWallet: string,
-  pathId: string,
-  lessonId: string
+  sourcePathId: string,
+  sourcePathItemId: string
 ): Promise<PolicyCheckResult> {
   const checks: Record<string, boolean> = {};
 
-  // 1. Path exists and belongs to user
-  const path = await getPathById(pathId);
-  checks.path_exists = !!path;
+  // 1. Source path exists and belongs to user
+  const sourcePath = await getSourcePathById(sourcePathId);
+  checks.path_exists = !!sourcePath;
   checks.path_owned_by_user =
-    path?.user_wallet?.toLowerCase() === userWallet.toLowerCase();
+    sourcePath?.user_wallet?.toLowerCase() === userWallet.toLowerCase();
   checks.path_approved =
-    path?.status === "approved" || path?.status === "active";
+    sourcePath?.status === "approved" || sourcePath?.status === "active";
 
   if (!checks.path_exists || !checks.path_owned_by_user || !checks.path_approved) {
     return {
       allowed: false,
-      reason: `Path validation failed: exists=${checks.path_exists}, owned=${checks.path_owned_by_user}, approved=${checks.path_approved}`,
+      reason: `Source path validation failed: exists=${checks.path_exists}, owned=${checks.path_owned_by_user}, approved=${checks.path_approved}`,
       checks,
     };
   }
 
-  // 2. Lesson in path
-  const pathItems = await getPathItems(pathId) as Record<string, unknown>[];
+  // 2. Source path item exists in path
+  const pathItems = await getSourcePathItems(sourcePathId) as Record<string, unknown>[];
   const pathItem = pathItems.find(
-    (pi) => pi.lesson_id === lessonId
+    (pi) => pi.id === sourcePathItemId
   );
-  checks.lesson_in_path = !!pathItem;
+  checks.item_in_path = !!pathItem;
 
-  if (!checks.lesson_in_path) {
-    return { allowed: false, reason: "Lesson is not in the approved path", checks };
+  if (!checks.item_in_path) {
+    return { allowed: false, reason: "Source path item not found in the approved path", checks };
   }
 
-  // 3. Lesson validation
-  const lesson = await getLessonById(lessonId);
-  // Supabase FK joins return objects at runtime, but TS types say array.
-  // Cast to Record for safe property access.
-  const source = lesson?.source as unknown as Record<string, unknown> | undefined;
-  const creator = lesson?.creator as unknown as Record<string, unknown> | undefined;
-  checks.lesson_published = lesson?.is_published === true;
-  checks.source_hash_present = !!source?.normalized_sha256;
-  checks.content_hash_present = !!lesson?.content_sha256;
-  checks.creator_verified = creator?.is_verified === true;
+  // 3. Feed item validation
+  const feedItem = pathItem?.feed_item as Record<string, unknown> | undefined;
+  checks.feed_item_present = !!feedItem;
+  checks.feed_item_active = feedItem?.is_active === true;
+  checks.feed_item_monetized = feedItem?.is_monetized === true;
+  checks.content_hash_present = !!feedItem?.content_sha256;
+  checks.source_url_present = !!pathItem?.source_url;
+  checks.creator_wallet_present = !!pathItem?.creator_wallet;
 
-  // 4. Not already unlocked
-  const unlockIds = await getUserUnlocks(userWallet);
-  checks.not_already_unlocked = !unlockIds.includes(lessonId);
+  // 4. Route validation
+  const route = feedItem?.rsshub_route as Record<string, unknown> | undefined;
+  checks.route_exists = !!route;
+  checks.route_active = route?.is_active === true;
+  checks.route_verified = route?.verification_status === "verified";
+  checks.route_monetized = route?.is_monetized === true;
 
-  // 5. Budget
-  const spent = pathItems
-    .filter((pi) => {
-      const s = pi.status as string;
-      return s === "unlocked" || s === "completed";
-    })
-    .reduce((sum: number, pi) => {
-      const l = pi.lesson as Record<string, unknown> | undefined;
-      return sum + Number((l?.price_usdc as number) || 0);
-    }, 0);
-  const remaining = Number(path.budget_usdc) - spent;
-  checks.within_remaining_budget = Number(lesson?.price_usdc || 999) <= remaining;
-
-  const maxLessonPrice = Number(
-    process.env.PAYLABS_MAX_LESSON_PRICE_USDC || "0.05"
-  );
-  checks.within_max_lesson_price =
-    Number(lesson?.price_usdc || 999) <= maxLessonPrice;
-
-  // 6. Runner availability
-  try {
-    const { isRunnerAvailable } = await import("@/lib/arclayer-runner/tools");
-    checks.runner_available = await isRunnerAvailable();
-  } catch {
-    checks.runner_available = false;
+  // 5. Creator wallet consistency — all three must match
+  if (feedItem && pathItem && route) {
+    const feedCreatorWallet = String(feedItem.creator_wallet || "").toLowerCase();
+    const itemCreatorWallet = String(pathItem.creator_wallet || "").toLowerCase();
+    const routeCreatorWallet = String(route.creator_wallet || "").toLowerCase();
+    checks.creator_wallet_consistent =
+      !!feedCreatorWallet &&
+      feedCreatorWallet === itemCreatorWallet &&
+      routeCreatorWallet === feedCreatorWallet;
+  } else {
+    checks.creator_wallet_consistent = false;
   }
+
+  // 6. Not already paid
+  const paidItemIds = await getPaidSourcePathItemIds(userWallet);
+  checks.not_already_paid = !paidItemIds.includes(sourcePathItemId);
+
+  // 7. Price from DB — amount comes from feed item, not LLM
+  const citationPrice = Number(feedItem?.price_per_citation_usdc || pathItem?.citation_price_usdc || 0);
+  checks.price_valid = citationPrice > 0;
+
+  const maxSourceCost = Number(
+    process.env.PAYLABS_MAX_SOURCE_COST_USDC || "0.05"
+  );
+  checks.within_max_source_cost = citationPrice <= maxSourceCost;
+
+  // 8. Payment adapter availability (replaces runner_available)
+  checks.payment_adapter_configured = !!process.env.PAYLABS_PAYMENT_EXECUTOR;
 
   // Final decision
   const allPassed = Object.values(checks).every((v) => v === true);

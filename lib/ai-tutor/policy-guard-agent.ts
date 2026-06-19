@@ -1,6 +1,6 @@
 /**
  * Agent 4: Policy Guard Agent (LLM reasoning + deterministic decision)
- * Gates every purchase before money can move.
+ * Gates every source payment before money can move.
  * No payment, no Runner — read-only validation.
  *
  * LLM provides policy reasoning/explanation, but final allow/block
@@ -31,28 +31,28 @@ type PolicyResult = z.infer<typeof PolicySchema>;
 export async function policyGuardAgent(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { userWallet, pathId, lessonId, routeTier, routePrompts } = state;
+  const { userWallet, sourcePathId, sourcePathItemId, routeTier, routePrompts } = state;
   const tier: RouteTier = routeTier || "normal";
   const prompts = (routePrompts as unknown as ReturnType<typeof getPromptsForRoute>) || getPromptsForRoute(tier);
 
-  if (!pathId) {
+  if (!sourcePathId) {
     return {
-      policyDecision: { allowed: false, reason: "path_id is required", route_tier: tier },
-      error: "Missing path_id",
+      policyDecision: { allowed: false, reason: "source_path_id is required", route_tier: tier },
+      error: "Missing source_path_id",
     };
   }
 
-  if (!lessonId) {
+  if (!sourcePathItemId) {
     return {
-      policyDecision: { allowed: false, reason: "lesson_id is required", route_tier: tier },
-      error: "Missing lesson_id",
+      policyDecision: { allowed: false, reason: "source_path_item_id is required", route_tier: tier },
+      error: "Missing source_path_item_id",
     };
   }
 
   // ── DETERMINISTIC policy checks — final decision ──
   let decision;
   try {
-    decision = await runPolicyChecks(userWallet, pathId, lessonId);
+    decision = await runPolicyChecks(userWallet, sourcePathId, sourcePathItemId);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return {
@@ -66,7 +66,7 @@ export async function policyGuardAgent(
     agentName: "policy_guard",
     routeTier: tier,
     prompt: prompts.policyGuard,
-    userMessage: `Route tier: ${tier}\nUser wallet: ${userWallet}\nPath ID: ${pathId}\nLesson ID: ${lessonId}\n\nDeterministic policy checks result:\n${JSON.stringify(decision, null, 2)}\n\nProvide policy reasoning and user-facing explanation.`,
+    userMessage: `Route tier: ${tier}\nUser wallet: ${userWallet}\nSource path ID: ${sourcePathId}\nSource path item ID: ${sourcePathItemId}\n\nDeterministic policy checks result:\n${JSON.stringify(decision, null, 2)}\n\nProvide policy reasoning and user-facing explanation.`,
     schema: PolicySchema,
   });
 
@@ -101,9 +101,9 @@ export async function policyGuardAgent(
       .insert({
         user_wallet: userWallet.toLowerCase(),
         agent_id: "paylabs-langgraph-v1",
-        action_type: "buy_lesson",
+        action_type: "source_payment",
         input_hash: createHash("sha256")
-          .update(`${lessonId}:${userWallet}`)
+          .update(`${sourcePathItemId}:${userWallet}`)
           .digest("hex"),
         output_hash: "",
         status: "blocked_by_policy",
