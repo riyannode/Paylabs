@@ -17,11 +17,23 @@ function sha256(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
+function replaceUntilStable(input: string, pattern: RegExp, replacement: string): string {
+  let current = input;
+  let previous: string;
+  do {
+    previous = current;
+    current = current.replace(pattern, replacement);
+  } while (current !== previous);
+  return current;
+}
+
 function normalizeText(html: string): string {
-  // Strip HTML tags, normalize whitespace, lowercase
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
+  // Strip script/style blocks robustly (loop handles nested/overlapping tags)
+  // Regex allows whitespace in closing tags: </script >, </style  >
+  let sanitized = replaceUntilStable(html, /<script[\s\S]*?<\/script\s*>/gi, "");
+  sanitized = replaceUntilStable(sanitized, /<style[\s\S]*?<\/style\s*>/gi, "");
+  // Strip remaining tags, normalize whitespace, lowercase
+  return sanitized
     .replace(/<[^>]+>/g, " ")
     .replace(/&[a-z]+;/gi, " ")
     .replace(/\s+/g, " ")
