@@ -73,6 +73,7 @@ export async function POST(req: NextRequest) {
       total_usdc: result.estimatedTotalUsdc || 0,
       remaining_usdc: result.remainingUsdc || 0,
       rejected: result.rejectedLessons || [],
+      agent_service_calls: result.agentServiceCalls || [],
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

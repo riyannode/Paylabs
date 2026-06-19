@@ -44,7 +44,7 @@ function buildHmacHeaders(
   };
 }
 
-async function runnerFetch<T>(
+export async function runnerFetch<T>(
   method: string,
   path: string,
   body?: unknown
