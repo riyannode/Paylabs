@@ -35,6 +35,7 @@ interface AgentServiceCall {
 }
 
 interface RouteTollProof {
+  route_toll_call_id: string;
   route_payment_id: string;
   route_payment_ref?: string;
   route_settlement_ref?: string;

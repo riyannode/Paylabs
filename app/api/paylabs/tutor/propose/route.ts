@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { proposeLearningPath } from "@/lib/ai-tutor/graph";
 import { isValidRouteTier } from "@/lib/ai-tutor/route-config";
+import { verifyRouteTollProof } from "@/lib/ai-tutor/route-toll-verify";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
@@ -38,27 +39,21 @@ export async function POST(req: NextRequest) {
   // ─── Route toll proof validation ──────────────────────────────
   const tollEnabled = process.env.PAYLABS_ROUTE_TOLL_ENABLED === "true";
   if (tollEnabled) {
-    const routePaymentId = req.headers.get("x-route-payment-id");
-    const routePaymentRef = req.headers.get("x-route-payment-ref");
-    const routeSettlementRef = req.headers.get("x-route-settlement-ref");
-    const routeInputHash = req.headers.get("x-route-input-hash");
+    const verifyResult = await verifyRouteTollProof(
+      {
+        routePaymentId: req.headers.get("x-route-payment-id") || "",
+        routePaymentRef: req.headers.get("x-route-payment-ref"),
+        routeSettlementRef: req.headers.get("x-route-settlement-ref"),
+        routeInputHash: req.headers.get("x-route-input-hash") || "",
+      },
+      user_wallet,
+      tier
+    );
 
-    if (!routePaymentId) {
+    if (!verifyResult.ok) {
       return NextResponse.json(
-        { error: "Route toll proof required: missing x-route-payment-id header. Pay route toll first via POST /api/paylabs/tutor/route-toll." },
-        { status: 402 }
-      );
-    }
-    if (!routePaymentRef && !routeSettlementRef) {
-      return NextResponse.json(
-        { error: "Route toll proof required: missing x-route-payment-ref or x-route-settlement-ref header." },
-        { status: 402 }
-      );
-    }
-    if (!routeInputHash) {
-      return NextResponse.json(
-        { error: "Route toll proof required: missing x-route-input-hash header." },
-        { status: 402 }
+        { error: verifyResult.error },
+        { status: verifyResult.status || 403 }
       );
     }
   }
