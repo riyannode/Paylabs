@@ -47,6 +47,25 @@ export async function POST(req: NextRequest) {
     });
 
     if (result.error && !result.sourcePathId) {
+      // Typed business-state errors: 409 Conflict
+      const noSourceErrors = [
+        "No verified monetized sources available",
+        "Cannot persist: no verified sources",
+      ];
+      const isNoSource = noSourceErrors.some(
+        (e) => result.error?.startsWith(e)
+      );
+      if (isNoSource) {
+        return NextResponse.json(
+          {
+            error: result.error,
+            code: "NO_VERIFIED_MONETIZED_SOURCES",
+            eligible_source_count: (result as Record<string, unknown>).eligibleSourceCount ?? 0,
+            source_path_status: "none",
+          },
+          { status: 409 }
+        );
+      }
       return NextResponse.json({ error: result.error }, { status: 500 });
     }
 
