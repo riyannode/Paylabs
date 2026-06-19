@@ -4,6 +4,12 @@
  * No payment, no Runner — read-only planning.
  *
  * Calls actual LLM via invokeJsonAgent with route-specific prompt.
+ *
+ * Safety rules:
+ * - Loads feed items directly from DB (never trusts state.availableFeedItems)
+ * - LLM can only output: feed_item_id, reason, expected_value
+ * - Backend computes total from price_per_citation_usdc (never from LLM)
+ * - Backend enforces budget and maxSourceCards
  */
 
 import type { PayLabsTutorStateType } from "./state";
@@ -11,9 +17,12 @@ import type { RouteTier } from "./route-config";
 import { getRouteConfig } from "./route-config";
 import { getPromptsForRoute } from "./route-prompts";
 import { invokeJsonAgent } from "./llm-json";
+import { listFeedItems } from "./tools";
 import { z } from "zod";
 
 // ─── Zod schema for LLM structured output ───────────────────────
+// LLM can ONLY output feed_item_id, reason, expected_value.
+// No price, no wallet, no source URL, no total.
 
 const SourcePlannerSchema = z.object({
   selected_sources: z.array(
@@ -24,7 +33,6 @@ const SourcePlannerSchema = z.object({
       expected_value: z.string().describe("What value the user gets from this source"),
     })
   ).describe("Selected feed items for the source path"),
-  estimated_total_usdc: z.number().describe("Estimated total cost in USDC"),
   notes: z.array(z.string()).describe("Planning notes"),
 });
 
@@ -35,14 +43,29 @@ type SourcePlannerResult = z.infer<typeof SourcePlannerSchema>;
 export async function sourcePlannerAgent(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { goal, budgetUsdc, topics, availableFeedItems, paidSourceIds, routeTier, routePrompts, routeConfig } = state;
+  const { goal, budgetUsdc, topics, paidSourceIds, routeTier, routePrompts, routeConfig } = state;
   const tier: RouteTier = routeTier || "normal";
   const config = routeConfig || getRouteConfig(tier);
   const prompts = (routePrompts as unknown as ReturnType<typeof getPromptsForRoute>) || getPromptsForRoute(tier);
 
+  // ── Load feed items directly from DB — never trust state ──
+  let allFeedItems: Record<string, unknown>[];
+  try {
+    allFeedItems = (await listFeedItems()) as Record<string, unknown>[];
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      selectedSources: [],
+      estimatedTotalUsdc: 0,
+      remainingUsdc: budgetUsdc || 0,
+      plannerNotes: [`Failed to load feed items: ${msg}`],
+      error: `Source Planner DB read failed: ${msg}`,
+    };
+  }
+
   // Filter out already-paid feed items
   const paidSet = new Set(paidSourceIds || []);
-  const candidateItems = (availableFeedItems as Record<string, unknown>[] || []).filter(
+  const candidateItems = allFeedItems.filter(
     (item) => !paidSet.has(item.id as string)
   );
 
@@ -55,15 +78,17 @@ export async function sourcePlannerAgent(
     };
   }
 
-  // Prepare safe metadata for LLM
+  // Prepare safe metadata for LLM — no price, no wallet, no source URL
   const feedMeta = candidateItems.map((item) => ({
     id: item.id,
     title: item.title,
     summary: item.summary,
-    route_title: (item.rsshub_route as Record<string, unknown> | undefined)?.route_title,
+    route_title: (item.rsshub_route as Record<string, unknown> | undefined)?.title,
     route_path: (item.rsshub_route as Record<string, unknown> | undefined)?.route_path,
     published_at: item.published_at,
     content_sha256: item.content_sha256,
+    author_name: item.author_name,
+    publisher: item.publisher,
   }));
 
   // Call LLM
@@ -71,7 +96,7 @@ export async function sourcePlannerAgent(
     agentName: "source_planner",
     routeTier: tier,
     prompt: prompts.sourcePlanner,
-    userMessage: `Goal: "${goal}"\nTopics: ${JSON.stringify(topics || [])}\nBudget: ${budgetUsdc || 0} USDC\nMax sources: ${config.maxSourceCards}\nRoute tier: ${tier}\n\nAvailable feed items (JSON):\n${JSON.stringify(feedMeta, null, 2)}\n\nSelect the best feed items for this goal. Stay within budget. Prefer items with valid content hashes and recent publication dates. Return structured JSON only.`,
+    userMessage: `Goal: "${goal}"\nTopics: ${JSON.stringify(topics || [])}\nBudget: ${budgetUsdc || 0} USDC\nMax sources: ${config.maxSourceCards}\nRoute tier: ${tier}\n\nAvailable feed items (JSON):\n${JSON.stringify(feedMeta, null, 2)}\n\nSelect the best feed items for this goal. Return structured JSON only.`,
     schema: SourcePlannerSchema,
   });
 
@@ -100,12 +125,31 @@ export async function sourcePlannerAgent(
   // Cap at maxSourceCards
   const cappedSelections = validSelections.slice(0, Number(config.maxSourceCards));
 
-  const estimatedTotal = data.estimated_total_usdc;
-  const remaining = (budgetUsdc || 0) - estimatedTotal;
+  // ── Compute total from DB prices — NEVER from LLM ──
+  let computedTotal = 0;
+  for (const sel of cappedSelections) {
+    const feedItem = itemMap.get(sel.feed_item_id);
+    if (feedItem) {
+      computedTotal += Number((feedItem.price_per_citation_usdc as number) || 0);
+    }
+  }
+
+  const remaining = (budgetUsdc || 0) - computedTotal;
+
+  // Enforce budget
+  if (computedTotal > (budgetUsdc || 0)) {
+    return {
+      selectedSources: [],
+      estimatedTotalUsdc: computedTotal,
+      remainingUsdc: remaining,
+      plannerNotes: [`Computed total ${computedTotal} USDC exceeds budget ${budgetUsdc || 0} USDC`],
+      agentTrace: { source_planner: meta },
+    };
+  }
 
   return {
     selectedSources: cappedSelections,
-    estimatedTotalUsdc: estimatedTotal,
+    estimatedTotalUsdc: computedTotal,
     remainingUsdc: remaining,
     plannerNotes: data.notes,
     agentTrace: { source_planner: meta },

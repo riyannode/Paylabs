@@ -12,9 +12,16 @@ export async function listFeedItems(routeId?: string) {
   let query = supabaseAdmin()
     .from("paylabs_feed_items")
     .select(
-      `id, rsshub_route_id, item_guid, title, summary, content_sha256, published_at, fetched_at,
-       rsshub_route:paylabs_rsshub_routes(id, route_path, route_title, description, price_usdc, is_active)`
+      `id, rsshub_route_id, canonical_url, title, summary, author_name, publisher,
+       published_at, tags, normalized_sha256, content_sha256, creator_wallet,
+       price_per_citation_usdc, price_per_unlock_usdc, is_active,
+       rsshub_route:paylabs_rsshub_routes(
+         id, rsshub_base_url, route_path, title, description, source_type,
+         creator_wallet, default_price_per_citation_usdc, default_price_per_unlock_usdc,
+         is_active, verification_status, verification_method, verified_at
+       )`
     )
+    .eq("is_active", true)
     .order("published_at", { ascending: false });
 
   if (routeId) {
@@ -30,8 +37,14 @@ export async function getFeedItemById(feedItemId: string) {
   const { data, error } = await supabaseAdmin()
     .from("paylabs_feed_items")
     .select(
-      `id, rsshub_route_id, item_guid, title, summary, content_sha256, published_at, fetched_at,
-       rsshub_route:paylabs_rsshub_routes(id, route_path, route_title, description, price_usdc, is_active)`
+      `id, rsshub_route_id, canonical_url, title, summary, author_name, publisher,
+       published_at, tags, normalized_sha256, content_sha256, creator_wallet,
+       price_per_citation_usdc, price_per_unlock_usdc, is_active,
+       rsshub_route:paylabs_rsshub_routes(
+         id, rsshub_base_url, route_path, title, description, source_type,
+         creator_wallet, default_price_per_citation_usdc, default_price_per_unlock_usdc,
+         is_active, verification_status, verification_method, verified_at
+       )`
     )
     .eq("id", feedItemId)
     .single();
@@ -66,8 +79,16 @@ export async function getSourcePathItems(sourcePathId: string) {
   const { data, error } = await supabaseAdmin()
     .from("paylabs_source_path_items")
     .select(
-      `id, source_path_id, feed_item_id, order_index, reason, expected_value, status,
-       feed_item:paylabs_feed_items(id, rsshub_route_id, item_guid, title, summary, content_sha256)`
+      `id, source_path_id, feed_item_id, order_index, reason, expected_value,
+       source_url, source_title, publisher, author_name, normalized_sha256,
+       content_sha256, source_hash, creator_wallet, citation_price_usdc,
+       unlock_price_usdc, status,
+       feed_item:paylabs_feed_items(
+         id, rsshub_route_id, canonical_url, title, summary, author_name,
+         publisher, published_at, normalized_sha256, content_sha256,
+         creator_wallet, price_per_citation_usdc, price_per_unlock_usdc, is_active,
+         rsshub_route:paylabs_rsshub_routes(id, route_path, title, is_active, verification_status)
+       )`
     )
     .eq("source_path_id", sourcePathId)
     .order("order_index");
@@ -121,29 +142,43 @@ export async function runPolicyChecks(
   // 3. Feed item validation
   const feedItem = pathItem?.feed_item as Record<string, unknown> | undefined;
   checks.feed_item_present = !!feedItem;
+  checks.feed_item_active = feedItem?.is_active === true;
   checks.content_hash_present = !!feedItem?.content_sha256;
+  checks.source_url_present = !!pathItem?.source_url;
+  checks.creator_wallet_present = !!pathItem?.creator_wallet;
 
-  // 4. Not already paid
+  // 4. Route validation
+  const route = feedItem?.rsshub_route as Record<string, unknown> | undefined;
+  checks.route_exists = !!route;
+  checks.route_active = route?.is_active === true;
+  checks.route_verified = route?.verification_status === "verified";
+
+  // 5. Creator wallet consistency
+  if (feedItem && pathItem) {
+    const feedCreatorWallet = String(feedItem.creator_wallet || "").toLowerCase();
+    const itemCreatorWallet = String(pathItem.creator_wallet || "").toLowerCase();
+    const routeCreatorWallet = String(route?.creator_wallet || "").toLowerCase();
+    checks.creator_wallet_consistent =
+      feedCreatorWallet === itemCreatorWallet &&
+      (routeCreatorWallet === "" || routeCreatorWallet === feedCreatorWallet);
+  } else {
+    checks.creator_wallet_consistent = false;
+  }
+
+  // 6. Not already paid
   const paidItemIds = await getPaidSourcePathItemIds(userWallet);
   checks.not_already_paid = !paidItemIds.includes(sourcePathItemId);
 
-  // 5. Budget
-  const spent = pathItems
-    .filter((pi) => {
-      const s = pi.status as string;
-      return s === "purchased" || s === "completed";
-    })
-    .reduce((sum: number) => sum + 0, 0); // Individual item costs are tracked via payments
-  const remaining = Number(sourcePath.budget_usdc) - spent;
-  const routePrice = Number(sourcePath?.route_config?.price_usdc || 0);
-  checks.within_remaining_budget = routePrice <= remaining;
+  // 7. Price from DB — amount comes from feed item, not LLM
+  const citationPrice = Number(feedItem?.price_per_citation_usdc || pathItem?.citation_price_usdc || 0);
+  checks.price_valid = citationPrice > 0;
 
   const maxSourceCost = Number(
     process.env.PAYLABS_MAX_SOURCE_COST_USDC || "0.05"
   );
-  checks.within_max_source_cost = routePrice <= maxSourceCost;
+  checks.within_max_source_cost = citationPrice <= maxSourceCost;
 
-  // 6. Runner availability
+  // 8. Runner availability
   try {
     const { isRunnerAvailable } = await import("@/lib/arclayer-runner/tools");
     checks.runner_available = await isRunnerAvailable();
