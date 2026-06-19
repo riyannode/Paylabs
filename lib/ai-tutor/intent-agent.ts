@@ -8,13 +8,16 @@
 import type { PayLabsTutorStateType } from "./state";
 import type { RouteTier } from "./route-config";
 import { getRouteConfig } from "./route-config";
+import { getPromptsForRoute } from "./route-prompts";
+import { createHash } from "node:crypto";
 
 export async function intentAgent(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { goal, budgetUsdc, userWallet, routeTier } = state;
+  const { goal, budgetUsdc, userWallet, routeTier, routePrompts } = state;
   const tier: RouteTier = routeTier || "normal";
   const config = getRouteConfig(tier);
+  const prompts = (routePrompts as unknown as ReturnType<typeof getPromptsForRoute>) || getPromptsForRoute(tier);
 
   // Validate wallet
   if (!userWallet?.startsWith("0x") || userWallet.length !== 42) {
@@ -93,10 +96,14 @@ export async function intentAgent(
     riskNotes.push("Premium route with very low budget — may not fill all 8 lesson slots");
   }
 
-  // Build agent trace
+  // Build agent trace — record which prompt persona was used
+  const promptText = prompts.intent;
+  const promptHash = createHash("sha256").update(promptText).digest("hex").slice(0, 16);
   const trace: Record<string, unknown> = {
     agent: "intent_agent",
     route_tier: tier,
+    prompt_persona: `${tier}_intent`,
+    prompt_hash: promptHash,
     reasoning_depth: config.reasoningDepth,
     topics_found: topics.length,
     learning_level: learningLevel,

@@ -6,6 +6,8 @@
  */
 
 import type { PayLabsTutorStateType } from "./state";
+import type { RouteTier } from "./route-config";
+import { getPromptsForRoute } from "./route-prompts";
 import { runPolicyChecks } from "./tools";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { createHash } from "node:crypto";
@@ -13,18 +15,24 @@ import { createHash } from "node:crypto";
 export async function policyGuardAgent(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { userWallet, pathId, lessonId, routeTier } = state;
+  const { userWallet, pathId, lessonId, routeTier, routePrompts } = state;
+  const tier: RouteTier = routeTier || "normal";
+  const prompts = (routePrompts as unknown as ReturnType<typeof getPromptsForRoute>) || getPromptsForRoute(tier);
+
+  // Build prompt trace
+  const promptText = prompts.policyGuard;
+  const promptHash = createHash("sha256").update(promptText).digest("hex").slice(0, 16);
 
   if (!pathId) {
     return {
-      policyDecision: { allowed: false, reason: "path_id is required", route_tier: routeTier || "normal" },
+      policyDecision: { allowed: false, reason: "path_id is required", route_tier: tier },
       error: "Missing path_id",
     };
   }
 
   if (!lessonId) {
     return {
-      policyDecision: { allowed: false, reason: "lesson_id is required", route_tier: routeTier || "normal" },
+      policyDecision: { allowed: false, reason: "lesson_id is required", route_tier: tier },
       error: "Missing lesson_id",
     };
   }
@@ -32,10 +40,12 @@ export async function policyGuardAgent(
   try {
     const decision = await runPolicyChecks(userWallet, pathId, lessonId);
 
-    // Attach route_tier to decision — does NOT affect outcome
+    // Attach route_tier and prompt trace to decision — does NOT affect outcome
     const decisionWithTier = {
       ...decision,
-      route_tier: routeTier || "normal",
+      route_tier: tier,
+      prompt_persona: `${tier}_policy_guard`,
+      prompt_hash: promptHash,
     };
 
     if (!decision.allowed) {
@@ -60,7 +70,7 @@ export async function policyGuardAgent(
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return {
-      policyDecision: { allowed: false, reason: `Policy check error: ${msg}`, route_tier: routeTier || "normal" },
+      policyDecision: { allowed: false, reason: `Policy check error: ${msg}`, route_tier: tier },
       error: msg,
     };
   }

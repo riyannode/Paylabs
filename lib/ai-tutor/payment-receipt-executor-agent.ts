@@ -7,6 +7,8 @@
  */
 
 import type { PayLabsTutorStateType } from "./state";
+import type { RouteTier } from "./route-config";
+import { getPromptsForRoute } from "./route-prompts";
 import { executeLessonPurchase } from "@/lib/arclayer-runner/tools";
 import { buildResourceUrl } from "@/lib/payments/x402";
 import { computeSplit } from "@/lib/payments/receipt";
@@ -16,7 +18,13 @@ import { createHash } from "node:crypto";
 export async function paymentReceiptExecutorAgent(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { userWallet, lessonId, policyDecision, routeTier } = state;
+  const { userWallet, lessonId, policyDecision, routeTier, routePrompts } = state;
+  const tier: RouteTier = routeTier || "normal";
+  const prompts = (routePrompts as unknown as ReturnType<typeof getPromptsForRoute>) || getPromptsForRoute(tier);
+
+  // Build prompt trace
+  const promptText = prompts.paymentExecutor;
+  const promptHash = createHash("sha256").update(promptText).digest("hex").slice(0, 16);
 
   // Gate: only run if policy allowed
   if (!policyDecision?.allowed) {
@@ -146,7 +154,7 @@ export async function paymentReceiptExecutorAgent(
         .then(() => {})).catch(() => {});
     }
 
-    // Log successful action — include route_tier for traceability
+    // Log successful action — include route_tier and prompt trace
     Promise.resolve(supabaseAdmin()
       .from("paylabs_agent_actions")
       .insert({
@@ -164,7 +172,9 @@ export async function paymentReceiptExecutorAgent(
           rail: "x402-gateway",
           runner: true,
           payment_id: result.paymentId,
-          route_tier: routeTier || "normal",
+          route_tier: tier,
+          prompt_persona: `${tier}_payment_executor`,
+          prompt_hash: promptHash,
         },
         payment_id: result.paymentId,
       })
