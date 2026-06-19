@@ -573,9 +573,9 @@ async function main() {
       console.log(`  Fetched: ${title} (${normalized.length} chars, hash: ${normalizedSha.slice(0, 16)}...)`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn(`  WARN: Could not fetch ${s.canonical_url}: ${msg}`);
-      // Still create the source, but with a hash of URL+title as fallback
-      normalizedSha = sha256(JSON.stringify({ url: s.canonical_url, title: s.source_title }));
+      console.error(`  FAIL: Could not fetch ${s.canonical_url}: ${msg}`);
+      console.error("  Seeder must not create sources with fallback hashes. Fix the fetch or remove the source.");
+      process.exit(1);
     }
 
     const { data, error } = await supabase

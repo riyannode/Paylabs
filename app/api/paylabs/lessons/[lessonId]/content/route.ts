@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { buildX402Challenge, verifyX402Authorization, buildResourceUrl } from "@/lib/payments/x402";
 import { computeSplit } from "@/lib/payments/receipt";
+import { submitToGateway } from "@/lib/payments/gateway";
 import type { Address } from "viem";
 
 /** Fire-and-forget: swallow errors on non-critical DB writes */
@@ -170,7 +171,31 @@ export async function POST(
   const split = computeSplit(lesson.price_usdc);
   const resourceUrl = buildResourceUrl(lessonId);
 
-  // Create unlock record
+  // Submit signed authorization to Circle Gateway for settlement
+  const gatewayResult = await submitToGateway(
+    { from, to, value, validAfter, validBefore, nonce, signature },
+    value,
+    receiverAddress
+  );
+
+  if (!gatewayResult.accepted) {
+    // Gateway rejected — do NOT create unlock/receipt
+    fireAndForget(supabaseAdmin().from("paylabs_agent_actions").insert({
+      user_wallet: from.toLowerCase(),
+      action_type: "gateway_rejected",
+      input_hash: paymentId,
+      output_hash: "",
+      status: "failed",
+      policy_decision: { error: gatewayResult.error, lesson_id: lessonId },
+    }).select("id").single());
+
+    return NextResponse.json(
+      { error: "Gateway settlement failed", detail: gatewayResult.error },
+      { status: 402 }
+    );
+  }
+
+  // Gateway accepted — now create unlock record
   const { data: unlock, error: unlockErr } = await supabaseAdmin()
     .from("paylabs_unlocks")
     .insert({
@@ -180,7 +205,8 @@ export async function POST(
       payment_rail: "x402-gateway",
       amount_usdc: lesson.price_usdc,
       payment_ref: resourceUrl,
-      tx_hash: null, // Gateway settlement ref filled later by Runner
+      tx_hash: gatewayResult.settlementRef || null,
+      gateway_settlement_ref: gatewayResult.settlementRef || null,
     })
     .select("id")
     .single();
@@ -189,7 +215,7 @@ export async function POST(
     return NextResponse.json({ error: unlockErr.message }, { status: 500 });
   }
 
-  // Create payout receipt
+  // Create payout receipt (only after Gateway accepted)
   await supabaseAdmin().from("paylabs_payout_receipts").insert({
     lesson_id: lessonId,
     unlock_id: unlock.id,
@@ -201,6 +227,7 @@ export async function POST(
     platform_amount_usdc: split.platform,
     treasury_amount_usdc: split.treasury,
     payment_ref: resourceUrl,
+    tx_hash: gatewayResult.settlementRef || null,
   });
 
   // Log successful action
@@ -214,6 +241,8 @@ export async function POST(
       lesson_id: lessonId,
       amount_usdc: lesson.price_usdc,
       rail: "x402-gateway",
+      gateway_ref: gatewayResult.settlementRef,
+      batch_id: gatewayResult.batchId,
     },
     payment_id: paymentId,
   }).select("id").single());
@@ -222,6 +251,7 @@ export async function POST(
     status: "unlocked",
     unlock_id: unlock.id,
     payment_id: paymentId,
+    settlement_ref: gatewayResult.settlementRef,
     lesson: {
       title: lesson.title,
       body_markdown: lesson.body_markdown,

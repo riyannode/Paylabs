@@ -7,7 +7,7 @@
 //   Server verifies signature + fields before creating unlock/receipt
 //   Settlement via Circle Gateway batch (server-side, through Runner)
 
-import { type Address, type Hex, isAddress, recoverAddress, keccak256, encodeAbiParameters, pad } from "viem";
+import { type Address, type Hex, isAddress, recoverAddress, keccak256, encodeAbiParameters, concat } from "viem";
 import type { X402PaymentChallenge } from "@/types/paylabs";
 import { createHash } from "node:crypto";
 
@@ -109,6 +109,7 @@ function computeEIP712Digest(
   chainId: number,
   verifyingContract: Address
 ): Hex {
+  // EIP-712: digest = keccak256("\x19\x01" || domainSeparator || structHash)
   const domainSeparator = keccak256(
     encodeAbiParameters(
       [
@@ -128,12 +129,13 @@ function computeEIP712Digest(
     )
   );
 
-  return keccak256(
-    encodeAbiParameters(
-      [{ type: "bytes32" }, { type: "bytes32" }],
-      [domainSeparator, structHash]
-    )
-  );
+  // Concatenate: 0x1901 (2 bytes) + domainSeparator (32 bytes) + structHash (32 bytes)
+  const encoded = concat([
+    "0x1901",
+    domainSeparator,
+    structHash,
+  ]);
+  return keccak256(encoded);
 }
 
 /**
