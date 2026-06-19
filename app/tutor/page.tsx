@@ -404,12 +404,21 @@ export default function TutorPage() {
 
             {/* Toll paid */}
             {!chatResult.needs_clarification && tollPaid && routeTollProof && (
-              <div style={{ padding: "8px 12px", background: "var(--success-soft)", borderRadius: 8, fontSize: 12, marginBottom: 8, border: "1px solid var(--success)20" }}>
-                <span style={{ color: "var(--success)", fontWeight: 600 }}>✓ Toll paid</span>{" "}
-                {routeTollProof.route_label} · <strong className="data-mono">{routeTollProof.route_toll_amount_usdc} USDC</strong>
-                {routeTollProof.route_payment_id && (
-                  <span className="muted"> · {short(routeTollProof.route_payment_id)}</span>
-                )}
+              <div style={{ padding: "10px 12px", background: "var(--success-soft)", borderRadius: 8, fontSize: 12, marginBottom: 8, border: "1px solid var(--success)20" }}>
+                <div style={{ marginBottom: 6 }}>
+                  <span style={{ color: "var(--success)", fontWeight: 600 }}>✓ Toll paid</span>{" "}
+                  {routeTollProof.route_label} · <strong className="data-mono">{routeTollProof.route_toll_amount_usdc} USDC</strong>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "2px 12px", color: "var(--muted)" }}>
+                  <span>Call ID</span>
+                  <span className="data-mono">{short(routeTollProof.route_toll_call_id)}</span>
+                  <span>Payment</span>
+                  <span className="data-mono">{short(routeTollProof.route_payment_id)}</span>
+                  {routeTollProof.route_payment_ref && (<><span>Payment Ref</span><span className="data-mono">{short(routeTollProof.route_payment_ref)}</span></>)}
+                  {routeTollProof.route_settlement_ref && (<><span>Settlement</span><span className="data-mono">{short(routeTollProof.route_settlement_ref)}</span></>)}
+                  <span>Input Hash</span>
+                  <span className="data-mono">{short(routeTollProof.route_input_hash)}</span>
+                </div>
               </div>
             )}
 

@@ -187,6 +187,7 @@ export default async function DashboardPage() {
                   <th>Route</th>
                   <th>Amount</th>
                   <th>Payment</th>
+                  <th>Proof</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -198,6 +199,12 @@ export default async function DashboardPage() {
                     <td>{r.route_label || r.route_tier}</td>
                     <td className="data-mono">{usdc(r.amount_usdc)}</td>
                     <td className="data-mono">{short(r.payment_id)}</td>
+                    <td className="data-mono" style={{ fontSize: 11 }}>
+                      {r.payment_ref && <div>ref: {short(r.payment_ref)}</div>}
+                      {r.settlement_ref && <div>settle: {short(r.settlement_ref)}</div>}
+                      {r.input_hash && <div>hash: {short(r.input_hash)}</div>}
+                      {!r.payment_ref && !r.settlement_ref && !r.input_hash && "—"}
+                    </td>
                     <td>
                       <span className={`badge ${r.status === "completed" ? "badge-success" : r.status === "failed" ? "badge-danger" : "badge-warning"}`}>
                         {r.status}
