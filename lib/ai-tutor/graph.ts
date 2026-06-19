@@ -2,11 +2,11 @@
  * PayLabs Tutor LangGraph Workflow
  *
  * Two separate graphs:
- * 1. proposeLearningPath: START -> intent -> curriculum_planner -> source_verifier -> persist -> END
- * 2. buyApprovedLesson: START -> policy_guard -> payment_executor -> END
+ * 1. proposeSourcePath: START -> intent -> source_planner -> source_verifier -> persist -> END
+ * 2. executeSourcePayment: START -> policy_guard -> payment_executor -> END
  *
- * Proposal and buying are separate invocations.
- * Buying is impossible until the user approves the path.
+ * Proposal and payment are separate invocations.
+ * Payment is impossible until the user approves the source path.
  * Route tier changes planning behavior and prompt persona only.
  * Route tier NEVER weakens safety checks.
  */
@@ -15,33 +15,33 @@ import { StateGraph, START, END } from "@langchain/langgraph";
 import { PayLabsTutorState } from "./state";
 import type { PayLabsTutorStateType } from "./state";
 import { intentAgent } from "./intent-agent";
-import { curriculumPlannerAgent } from "./curriculum-planner-agent";
+import { sourcePlannerAgent } from "./source-planner-agent";
 import { sourceVerifierAgent } from "./source-verifier-agent";
 import { policyGuardAgent } from "./policy-guard-agent";
-import { paymentReceiptExecutorAgent } from "./payment-receipt-executor-agent";
+import { paymentExecutorAgent } from "./payment-executor-agent";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import type { RouteTier } from "./route-config";
 import { getRouteConfig } from "./route-config";
 import { getPromptsForRoute } from "./route-prompts";
 
-// ─── Persist Proposed Path Node ──────────────────────────────────
+// ─── Persist Proposed Source Path Node ───────────────────────────
 
-async function persistProposedPathNode(
+async function persistProposedSourcePathNode(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { userWallet, goal, budgetUsdc, verifiedLessons, estimatedTotalUsdc, allVerified, routeTier, routeConfig, agentTrace, llmOutputs, llmErrors, agentServiceCalls } = state;
+  const { userWallet, goal, budgetUsdc, verifiedSources, estimatedTotalUsdc, allVerified, routeTier, routeConfig, agentTrace, llmOutputs, llmErrors, agentServiceCalls } = state;
   const tier: RouteTier = routeTier || "normal";
   const config = routeConfig || getRouteConfig(tier);
 
-  if (!allVerified || !verifiedLessons || verifiedLessons.length === 0) {
+  if (!allVerified || !verifiedSources || verifiedSources.length === 0) {
     return {
-      error: "Cannot persist: no verified lessons",
-      pathStatus: "none",
+      error: "Cannot persist: no verified sources",
+      sourcePathStatus: "none",
     };
   }
 
   try {
-    // Insert learning path — persist route_tier, route_config, agent_trace (includes LLM data)
+    // Insert source path — persist route_tier, route_config, agent_trace
     const fullAgentTrace = {
       ...(agentTrace || {}),
       ...(llmOutputs && Object.keys(llmOutputs).length > 0 ? { llm_outputs: llmOutputs } : {}),
@@ -50,13 +50,13 @@ async function persistProposedPathNode(
     };
 
     const { data: pathRow, error: pathErr } = await supabaseAdmin()
-      .from("paylabs_learning_paths")
+      .from("paylabs_source_paths")
       .insert({
         user_wallet: userWallet.toLowerCase(),
         goal: goal || "",
         budget_usdc: budgetUsdc || 0,
         estimated_total_usdc: estimatedTotalUsdc || 0,
-        agent_reasoning_summary: `5-agent LangGraph verified ${verifiedLessons.length} lessons for goal: ${(goal || "").slice(0, 100)}`,
+        agent_reasoning_summary: `LangGraph verified ${verifiedSources.length} sources for goal: ${(goal || "").slice(0, 100)}`,
         status: "proposed",
         created_by_agent_id: "paylabs-langgraph-v1",
         route_tier: tier,
@@ -68,44 +68,44 @@ async function persistProposedPathNode(
 
     if (pathErr || !pathRow) {
       return {
-        error: `Failed to create path: ${pathErr?.message}`,
-        pathStatus: "none",
+        error: `Failed to create source path: ${pathErr?.message}`,
+        sourcePathStatus: "none",
       };
     }
 
-    // Insert path items
-    const pathItems = (verifiedLessons as Record<string, unknown>[]).map((v, i) => ({
-      path_id: pathRow.id,
-      lesson_id: v.lesson_id as string,
+    // Insert source path items
+    const pathItems = (verifiedSources as Record<string, unknown>[]).map((v, i) => ({
+      source_path_id: pathRow.id,
+      feed_item_id: v.feed_item_id as string,
       order_index: i,
       reason: v.verification_reason as string,
-      expected_value: `Learn from verified source`,
+      expected_value: `Verified RSSHub source`,
       status: "proposed",
     }));
 
     const { error: itemsErr } = await supabaseAdmin()
-      .from("paylabs_learning_path_items")
+      .from("paylabs_source_path_items")
       .insert(pathItems);
 
     if (itemsErr) {
       // Clean up path if items fail
       await supabaseAdmin()
-        .from("paylabs_learning_paths")
+        .from("paylabs_source_paths")
         .delete()
         .eq("id", pathRow.id);
       return {
-        error: `Failed to create path items: ${itemsErr.message}`,
-        pathStatus: "none",
+        error: `Failed to create source path items: ${itemsErr.message}`,
+        sourcePathStatus: "none",
       };
     }
 
     return {
-      pathId: pathRow.id,
-      pathStatus: "proposed",
+      sourcePathId: pathRow.id,
+      sourcePathStatus: "proposed",
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    return { error: `Persist failed: ${msg}`, pathStatus: "none" };
+    return { error: `Persist failed: ${msg}`, sourcePathStatus: "none" };
   }
 }
 
@@ -113,29 +113,29 @@ async function persistProposedPathNode(
 
 const proposalGraph = new StateGraph(PayLabsTutorState)
   .addNode("intent_agent", intentAgent)
-  .addNode("curriculum_planner_agent", curriculumPlannerAgent)
+  .addNode("source_planner_agent", sourcePlannerAgent)
   .addNode("source_verifier_agent", sourceVerifierAgent)
-  .addNode("persist_proposed_path", persistProposedPathNode)
+  .addNode("persist_proposed_source_path", persistProposedSourcePathNode)
   .addEdge(START, "intent_agent")
-  .addEdge("intent_agent", "curriculum_planner_agent")
-  .addEdge("curriculum_planner_agent", "source_verifier_agent")
-  .addEdge("source_verifier_agent", "persist_proposed_path")
-  .addEdge("persist_proposed_path", END)
+  .addEdge("intent_agent", "source_planner_agent")
+  .addEdge("source_planner_agent", "source_verifier_agent")
+  .addEdge("source_verifier_agent", "persist_proposed_source_path")
+  .addEdge("persist_proposed_source_path", END)
   .compile();
 
-// ─── Buy Graph ───────────────────────────────────────────────────
+// ─── Source Payment Graph ────────────────────────────────────────
 
-const buyGraph = new StateGraph(PayLabsTutorState)
+const sourcePaymentGraph = new StateGraph(PayLabsTutorState)
   .addNode("policy_guard_agent", policyGuardAgent)
-  .addNode("payment_receipt_executor_agent", paymentReceiptExecutorAgent)
+  .addNode("payment_executor_agent", paymentExecutorAgent)
   .addEdge(START, "policy_guard_agent")
-  .addEdge("policy_guard_agent", "payment_receipt_executor_agent")
-  .addEdge("payment_receipt_executor_agent", END)
+  .addEdge("policy_guard_agent", "payment_executor_agent")
+  .addEdge("payment_executor_agent", END)
   .compile();
 
 // ─── Public API ──────────────────────────────────────────────────
 
-export async function proposeLearningPath(input: {
+export async function proposeSourcePath(input: {
   userWallet: string;
   goal: string;
   budgetUsdc: number;
@@ -155,25 +155,25 @@ export async function proposeLearningPath(input: {
     agentTrace: {},
     topics: [],
     riskNotes: [],
-    pathStatus: "none" as const,
-    publishedLessons: [],
-    unlockedLessonIds: [],
-    selectedLessons: [],
+    sourcePathStatus: "none" as const,
+    availableFeedItems: [],
+    paidSourceIds: [],
+    selectedSources: [],
     plannerNotes: [],
-    verifiedLessons: [],
-    rejectedLessons: [],
+    verifiedSources: [],
+    rejectedSources: [],
   } as unknown as PayLabsTutorStateType);
 
   return {
-    pathId: result.pathId,
-    pathStatus: result.pathStatus,
+    sourcePathId: result.sourcePathId,
+    sourcePathStatus: result.sourcePathStatus,
     goal: input.goal,
     budgetUsdc: input.budgetUsdc,
     routeTier: tier,
     routeConfig: config,
-    selectedLessons: result.selectedLessons,
-    verifiedLessons: result.verifiedLessons,
-    rejectedLessons: result.rejectedLessons,
+    selectedSources: result.selectedSources,
+    verifiedSources: result.verifiedSources,
+    rejectedSources: result.rejectedSources,
     estimatedTotalUsdc: result.estimatedTotalUsdc,
     remainingUsdc: result.remainingUsdc,
     agentServiceCalls: result.agentServiceCalls || [],
@@ -181,45 +181,44 @@ export async function proposeLearningPath(input: {
   };
 }
 
-export async function buyApprovedLesson(input: {
+export async function executeSourcePayment(input: {
   userWallet: string;
-  pathId: string;
-  lessonId: string;
+  sourcePathId: string;
+  sourcePathItemId: string;
 }) {
-  // Fetch path to get actual route_tier — NOT defaulting to "normal"
+  // Fetch source path to get actual route_tier
   const { data: pathRow } = await supabaseAdmin()
-    .from("paylabs_learning_paths")
+    .from("paylabs_source_paths")
     .select("route_tier, route_config, agent_trace")
-    .eq("id", input.pathId)
+    .eq("id", input.sourcePathId)
     .single();
 
   const tier: RouteTier = (pathRow?.route_tier as RouteTier) || "normal";
   const config = pathRow?.route_config || getRouteConfig(tier);
   const prompts = getPromptsForRoute(tier);
 
-  // Buy graph does NOT change behavior by tier — same safety for all routes
-  // But route_tier is now correctly propagated for logging
-  const result = await buyGraph.invoke({
+  // Payment graph does NOT change behavior by tier — same safety for all routes
+  const result = await sourcePaymentGraph.invoke({
     userWallet: input.userWallet,
-    pathId: input.pathId,
-    lessonId: input.lessonId,
+    sourcePathId: input.sourcePathId,
+    sourcePathItemId: input.sourcePathItemId,
     routeTier: tier,
     routeConfig: config as Record<string, unknown>,
     routePrompts: prompts as unknown as Record<string, unknown>,
     topics: [],
     riskNotes: [],
-    pathStatus: "none" as const,
-    publishedLessons: [],
-    unlockedLessonIds: [],
-    selectedLessons: [],
+    sourcePathStatus: "none" as const,
+    availableFeedItems: [],
+    paidSourceIds: [],
+    selectedSources: [],
     plannerNotes: [],
-    verifiedLessons: [],
-    rejectedLessons: [],
+    verifiedSources: [],
+    rejectedSources: [],
   } as unknown as PayLabsTutorStateType);
 
   return {
     allowed: result.policyDecision?.allowed,
-    unlockId: result.unlockId,
+    sourcePaymentId: result.sourcePaymentId,
     receiptId: result.receiptId,
     runnerPaymentResult: result.runnerPaymentResult,
     error: result.error,

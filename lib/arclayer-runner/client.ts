@@ -4,7 +4,6 @@
 
 import type {
   RunnerHealthResponse,
-  RunnerX402PayInput,
   RunnerX402PayResult,
   RunnerPaymentReceipt,
   RunnerX402Quote,
@@ -88,29 +87,6 @@ export async function runnerX402Quote(
     method,
     maxAmountUsdc: "0",
     reason: "inspect",
-  });
-}
-
-/**
- * Execute x402 lesson payment through Runner.
- * Runner handles Circle Developer-Controlled Wallet execution and Gateway settlement.
- */
-export async function runnerX402PayLesson(
-  input: RunnerX402PayInput
-): Promise<RunnerX402PayResult> {
-  return runnerFetch<RunnerX402PayResult>("POST", "/x402/pay", {
-    type: "x402_service_pay",
-    url: input.resourceUrl,
-    method: "GET",
-    maxAmountUsdc: input.amountUsdc,
-    reason: `lesson:${input.lessonId}`,
-    idempotencyKey: `paylabs:${input.lessonId}:${input.userWallet}`,
-    body: {
-      lessonId: input.lessonId,
-      userWallet: input.userWallet,
-      creatorWallet: input.creatorWallet,
-      signedAuthorization: input.signedAuthorization,
-    },
   });
 }
 
