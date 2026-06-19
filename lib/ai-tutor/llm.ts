@@ -35,6 +35,7 @@ export function getTutorModel(): ChatOpenAI | null {
 
   cachedModel = new ChatOpenAI({
     model: cachedModelName,
+    apiKey,
     temperature: 0,
     maxTokens: 2048,
   });
@@ -45,4 +46,8 @@ export function getTutorModel(): ChatOpenAI | null {
 export function getTutorModelName(): string {
   if (cachedModelName) return cachedModelName;
   return process.env.PAYLABS_TUTOR_MODEL || "gpt-4o-mini";
+}
+
+export function isLlmRequired(): boolean {
+  return process.env.PAYLABS_LLM_REQUIRED === "true";
 }
