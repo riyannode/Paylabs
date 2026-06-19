@@ -2,15 +2,20 @@
  * Tutor Intake Agent State
  *
  * Separate from PayLabsTutorState — this graph runs BEFORE the proposal flow.
- * It classifies user intent and prepares proposal inputs. It does NOT:
+ * It classifies user intent, optionally charges a route toll via x402/Runner,
+ * and prepares proposal inputs.
+ *
+ * The intake agent itself does NOT:
  * - create paths
  * - create receipts
  * - create unlocks
- * - call Runner
  * - call Circle
  * - call wallet APIs
  * - call contracts
  * - write to DB
+ *
+ * The route x402 guard agent DOES call Runner (via executeRouteTollPayment)
+ * to charge the route toll — this is the only payment allowed in this graph.
  */
 
 import { Annotation } from "@langchain/langgraph";
@@ -19,7 +24,7 @@ export const TutorIntakeState = Annotation.Root({
   // Input: user's natural language message
   userMessage: Annotation<string>,
 
-  // Input: optional wallet address (for context only, not used for payment)
+  // Input: wallet address (required for route toll when enabled)
   wallet: Annotation<string | undefined>,
 
   // Input: optional current goal/budget if user already filled them
@@ -62,6 +67,30 @@ export const TutorIntakeState = Annotation.Root({
 
   // Output: error message if something went wrong
   error: Annotation<string | undefined>,
+
+  // ─── Route x402 Guard state ──────────────────────────────────
+
+  // Whether route toll is enabled (from PAYLABS_ROUTE_TOLL_ENABLED env)
+  routeTollEnabled: Annotation<boolean | undefined>,
+
+  // Whether route toll payment was required and attempted
+  routeTollRequired: Annotation<boolean | undefined>,
+
+  // Route toll amount in USDC
+  routeTollAmountUsdc: Annotation<number | undefined>,
+
+  // Route toll wallet address (from PAYLABS_ROUTE_TOLL_WALLET env)
+  routeTollWallet: Annotation<string | undefined>,
+
+  // Payment proof fields from Runner
+  routePaymentId: Annotation<string | undefined>,
+  routePaymentRef: Annotation<string | undefined>,
+  routeSettlementRef: Annotation<string | undefined>,
+  routePaymentStatus: Annotation<string | undefined>,
+  routePaymentError: Annotation<string | undefined>,
+
+  // Deterministic input hash for audit trail
+  routeInputHash: Annotation<string | undefined>,
 });
 
 export type TutorIntakeStateType = typeof TutorIntakeState.State;
