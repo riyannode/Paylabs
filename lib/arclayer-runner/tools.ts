@@ -98,6 +98,20 @@ export async function executeLessonPurchase(
     );
   }
 
+  // CRITICAL: Validate Runner returned a complete payment proof
+  if (!result.paymentId) {
+    throw new RunnerError(
+      "Runner payment proof incomplete: missing paymentId",
+      502
+    );
+  }
+  if (!result.paymentRef && !result.settlementRef) {
+    throw new RunnerError(
+      "Runner payment proof incomplete: missing paymentRef and settlementRef",
+      502
+    );
+  }
+
   return result;
 }
 

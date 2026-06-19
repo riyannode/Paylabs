@@ -29,8 +29,12 @@ export interface RunnerX402PayResult {
   ok: boolean;
   paymentId?: string;
   authorizationHash?: string;
+  paymentRef?: string;
   settlementRef?: string;
   txHash?: string;
+  amountUsdc?: string;
+  resourceUrl?: string;
+  status?: string;
   error?: string;
 }
 

@@ -1,6 +1,7 @@
-// POST /api/paylabs/tutor/propose
-// Compatibility wrapper — redirects to /api/paylabs/learning-paths/propose
-// Uses the same LangGraph proposeLearningPath graph.
+// POST /api/paylabs/learning-paths/propose
+// Canonical route for LangGraph path proposal.
+// Calls proposeLearningPath graph: intent -> curriculum_planner -> source_verifier -> persist
+// Does NOT buy anything. Returns path_id for user approval.
 
 import { NextRequest, NextResponse } from "next/server";
 import { proposeLearningPath } from "@/lib/ai-tutor/graph";
@@ -33,6 +34,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: result.error }, { status: 500 });
     }
 
+    // Build path response from verified lessons
     const path = (result.verifiedLessons as Record<string, unknown>[] || []).map((v, i) => {
       const selected = (result.selectedLessons as Record<string, unknown>[] || []).find(
         (s) => s.lesson_id === v.lesson_id
