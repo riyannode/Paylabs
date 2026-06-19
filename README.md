@@ -1,59 +1,45 @@
 # PayLabs
 
-**Pay only for what you learn.**
+**AI source-feed learning paths with creator citation tolls.**
 
-AI micro-learning buyer. User sets goal + budget, AI Tutor picks source-backed lessons, pays via x402 on Arc testnet. Creators receive receipt-backed payouts.
+PayLabs ingests RSSHub/RSS feeds, turns feed items into source-backed learning cards, and prepares citation/unlock payments so creators can be paid when their sources are used, cited, or consumed.
 
-## Live Demo
+## RSSHub Distribution Bootstrap
 
-- Landing: `/` - live counters from database
-- Lessons: `/learn` - 8 source-backed micro-lessons
-- Lesson: `/learn/[slug]` - preview free, full content behind x402 unlock
-- AI Tutor: `/tutor` - goal + budget -> proposed path -> buy (via Runner)
-- Receipts: `/receipts` - public payment records
-- Creator: `/creator` - creator earnings dashboard
+RSSHub-style feeds are the distribution layer. PayLabs adds AI planning, source verification, payment proof, and creator payout receipts.
 
-## Tech Stack
+This maps to:
+- **RFB 06** — Creator & Publisher Monetization
+- **RFB 01** — Autonomous Paying Agents
+- **RFB 03** — Agent-to-Agent Nanopayment Networks
 
-- Next.js 15 (App Router)
-- Supabase (Postgres + RLS)
-- Circle Gateway + x402 (nanopayments on Arc testnet)
-- ArcLayer Runner (privileged payment execution)
-- Viem (EVM utilities, EIP-712 verification)
+```
+flowchart TD
+  RSS[RSSHub / RSS Feed] --> SYNC[RSSHub Sync]
+  SYNC --> ITEMS[(Feed Items)]
+  ITEMS --> SOURCES[Sources Catalog]
+  ITEMS --> TUTOR[AI Tutor]
+  TUTOR --> PLAN[Source Path]
+  PLAN --> VERIFY[Source Verifier]
+  VERIFY --> PAY[Citation / Unlock Toll]
+  PAY --> CREATOR[Creator Wallet]
+  PAY --> RECEIPT[(Citation Receipt)]
+  RECEIPT --> DASH[Dashboard]
+```
 
-## x402 Payment Flow (Verified)
+## Route Tiers
 
-1. Client requests lesson content
-2. Server returns HTTP 402 with EIP-3009 TransferWithAuthorization challenge
-3. Client signs the typed data with their wallet (MetaMask, etc.)
-4. Client sends signed authorization to server
-5. **Server verifies**: signature validity, amount, chain (5042002), USDC address, receiver, nonce uniqueness, authorization time window
-6. Only after verification: server creates unlock + receipt records
-7. Circle Gateway settles payment in batch (gas-free)
+PayLabs supports 3 user-selectable source paths. Internal DB values unchanged; public labels updated.
 
-### Verification checks (server-side, before any DB write)
+| Public Label | Internal Tier | Max Source Cards | Source Strictness | Best For |
+|-------------|---------------|-----------------|-------------------|----------|
+| **Easy** | `normal` | 2 | Standard | Quick intro, cheapest path |
+| **Normal** | `advanced` | 5 | High | Balanced source path |
+| **Advanced** | `premium` | 8 | Very High | Deep research path |
 
-- Receiver address matches `X402_RECEIVER_ADDRESS`
-- Amount matches lesson price in base units
-- Chain ID is 5042002 (Arc testnet)
-- USDC contract is `0x3600000000000000000000000000000000000000`
-- Authorization is currently valid (`validAfter <= now <= validBefore`)
-- Nonce/payment_id is unique (no duplicate payments)
-- EIP-712 signature recovers to the `from` address
+## Architecture
 
-## Route-Tiered Agent Workflows
-
-PayLabs supports 3 user-selectable learning routes. Each route has 5 route-specific agent prompts (15 total). All routes share one LangGraph orchestration engine, one shared Policy Guard, and one shared Payment & Receipt Executor.
-
-| Route | Max Lessons | Reasoning Depth | Source Strictness | Best For |
-|-------|-------------|-----------------|-------------------|----------|
-| **Normal** | 2 | Low | Standard | Quick intro, cheapest useful path |
-| **Advanced** | 5 | Medium | High | Technical builders, implementation-focused |
-| **Premium** | 8 | High | Very High | Full mastery, architecture + safety + monetization |
-
-### Architecture
-
-- **One shared LangGraph orchestration engine** — no 15 separate payment systems
+- **One shared LangGraph orchestration engine** — all tiers
 - **One shared Policy Guard core** — same safety checks for all tiers
 - **One shared Payment & Receipt Executor** — all payments through ArcLayer Runner
 - **Route tier changes planning behavior and prompt persona only**
@@ -66,107 +52,38 @@ Proposal: START -> intent_agent -> curriculum_planner_agent -> source_verifier_a
 Buy:      START -> policy_guard_agent -> payment_receipt_executor_agent -> END
 ```
 
-Proposal and buy remain separate invocations. User approval is required before any buy. Route tier does not bypass approval.
-
-### Database
-
-Route tier is persisted in `paylabs_learning_paths`:
-
-- `route_tier` — `normal` | `advanced` | `premium` (default: `normal`)
-- `route_config` — JSONB with tier config snapshot
-- `agent_trace` — JSONB with per-agent execution trace
-
-Migration: `supabase/migrations/003_route_tiered_agents.sql`
+Proposal and buy remain separate invocations. User approval is required before any buy.
 
 ## Per-Agent LLM Routing
 
-PayLabs supports per-agent model routing. Each LangGraph agent can be configured with its own provider, API key, base URL, and model through environment variables. The current budget-friendly deployment can route all agents to MiMo v2.5 Pro, while production deployments can selectively route planner, verifier, or policy agents to stronger models.
+PR #9 per-agent LLM routing remains runtime configuration. Each LangGraph agent can be configured with its own provider, API key, base URL, and model through environment variables. See `.env.example` for the full mapping.
 
-### Agent Key Mapping
+## x402 Payment Flow (Verified)
 
-| Agent | Env Key |
-|-------|---------|
-| `tutor_intake` | `INTAKE` |
-| `intent` | `INTENT` |
-| `curriculum_planner` | `PLANNER` |
-| `source_verifier` | `VERIFIER` |
-| `source_verifier_specialist` | `VERIFIER_SPECIALIST` |
-| `specialist_payment_decision` | `SPECIALIST_DECISION` |
-| `policy_guard` | `POLICY` |
-| `payment_executor` | `EXECUTOR` |
+1. Client requests lesson/content
+2. Server returns HTTP 402 with EIP-3009 TransferWithAuthorization challenge
+3. Client signs the typed data with their wallet
+4. **Server verifies**: signature validity, amount, chain (5042002), USDC address, receiver, nonce uniqueness
+5. Only after verification: server creates unlock + receipt records
+6. Circle Gateway settles payment in batch (gas-free)
 
-### Config Resolution Order
+## Tech Stack
 
-Each field resolves independently:
+- Next.js 15 (App Router)
+- Supabase (Postgres + RLS)
+- Circle Gateway + x402 (nanopayments on Arc testnet)
+- ArcLayer Runner (privileged payment execution)
+- rss-parser (RSSHub feed parsing)
+- Viem (EVM utilities, EIP-712 verification)
 
-- **provider:** `PAYLABS_LLM_PROVIDER_<AGENT_KEY>` → `PAYLABS_LLM_PROVIDER_DEFAULT` → `openai`
-- **api key:** `PAYLABS_LLM_API_KEY_<AGENT_KEY>` → `PAYLABS_LLM_API_KEY_DEFAULT` → `PAYLABS_OPENAI_API_KEY` → `OPENAI_API_KEY`
-- **base URL:** `PAYLABS_LLM_BASE_URL_<AGENT_KEY>` → `PAYLABS_LLM_BASE_URL_DEFAULT` → undefined
-- **model:** `PAYLABS_TUTOR_MODEL_<AGENT_KEY>` → `PAYLABS_TUTOR_MODEL_DEFAULT` → `PAYLABS_TUTOR_MODEL` → `gpt-4o-mini`
+## Live Demo
 
-If all agents should use the same model, only the DEFAULT variables are required. Per-agent variables override the default.
-
-### Example Environment Variables
-
-```bash
-# --- LLM (all agents route to MiMo v2.5 Pro by default) ---
-PAYLABS_LLM_REQUIRED=true
-
-# Default config (used by all agents unless overridden)
-PAYLABS_LLM_PROVIDER_DEFAULT=mimo
-PAYLABS_LLM_BASE_URL_DEFAULT=https://mimo-api.example/v1
-PAYLABS_LLM_API_KEY_DEFAULT=...
-PAYLABS_TUTOR_MODEL_DEFAULT=mimo-v2.5-pro
-
-# Per-agent overrides (optional — uncomment to use different models per agent)
-# PAYLABS_LLM_PROVIDER_PLANNER=openai
-# PAYLABS_LLM_BASE_URL_PLANNER=https://api.openai.com/v1
-# PAYLABS_LLM_API_KEY_PLANNER=sk-...
-# PAYLABS_TUTOR_MODEL_PLANNER=gpt-4o
-
-# PAYLABS_LLM_PROVIDER_VERIFIER=openai
-# PAYLABS_LLM_BASE_URL_VERIFIER=https://api.openai.com/v1
-# PAYLABS_LLM_API_KEY_VERIFIER=sk-...
-# PAYLABS_TUTOR_MODEL_VERIFIER=gpt-4o
-
-# PAYLABS_LLM_PROVIDER_POLICY=openai
-# PAYLABS_LLM_BASE_URL_POLICY=https://api.openai.com/v1
-# PAYLABS_LLM_API_KEY_POLICY=sk-...
-# PAYLABS_TUTOR_MODEL_POLICY=gpt-4o
-```
-
-## AI Tutor Budget Policy
-
-Before any agent-initiated purchase, these checks must pass:
-
-1. Learning path exists and belongs to user
-2. Lesson is in the approved path
-3. Lesson is published
-4. Lesson has valid source hash
-5. Creator wallet is verified
-6. Price <= remaining budget
-7. Price <= max lesson price (`PAYLABS_MAX_LESSON_PRICE_USDC`)
-8. Lesson not already unlocked
-9. ArcLayer Runner is available
-
-Failed checks log `blocked_by_policy` action with the reason.
-
-## ArcLayer Runner
-
-All privileged payment execution goes through ArcLayer Runner:
-
-- Runner handles Circle Developer-Controlled Wallet calls
-- Runner handles x402 payment flow
-- PayLabs never calls Circle, contracts, or wallet APIs directly
-- Runner URL and API key configured via `ARCLAYER_RUNNER_URL` and `ARCLAYER_RUNNER_API_KEY`
-
-## Source-Backed Lessons
-
-Every lesson has:
-- `source_url` - real public documentation URL (fetched and verified)
-- `normalized_sha256` - hash of fetched source content (not just URL)
-- `content_sha256` - hash of PayLabs-authored lesson content
-- Creator wallet - verified EVM address
+- `/` — Landing page
+- `/sources` — RSSHub feed items catalog
+- `/tutor` — AI tutor: goal + budget → source path → buy
+- `/dashboard` — RSSHub-first activity dashboard
+- `/receipts` — Public payment records
+- `/creator` — Creator earnings dashboard
 
 ## Running Locally
 
@@ -176,32 +93,42 @@ cd Paylabs
 pnpm install
 cp .env.example .env.local
 # Fill in .env.local with real values
-pnpm seed:lessons
 pnpm dev
 ```
 
-## Seeding Lessons
+## RSSHub Sync
 
+Create routes and sync feed items:
+
+```bash
+# Create a route (requires PAYLABS_RSSHUB_ADMIN_SECRET)
+curl -X POST http://localhost:3000/api/paylabs/rsshub/routes \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $PAYLABS_RSSHUB_ADMIN_SECRET" \
+  -d '{"rsshub_base_url":"https://rsshub.app","route_path":"/hackernews/best","title":"Hacker News Best","creator_wallet":"0x..."}'
+
+# Sync all routes (requires PAYLABS_RSSHUB_SYNC_SECRET)
+curl -X POST http://localhost:3000/api/paylabs/rsshub/sync \
+  -H "Authorization: Bearer $PAYLABS_RSSHUB_SYNC_SECRET"
 ```
-pnpm seed:lessons
+
+## Legacy Internal Lesson Cleanup
+
+Clear legacy internal lesson data (manual only):
+
+```bash
+pnpm clear:legacy-lessons                # Clear lesson data only
+pnpm clear:legacy-lessons --include-payments  # Also clear payment tables
 ```
 
-Creates 8 source-backed lessons. The seeder:
-1. Fetches each allowlisted source URL
-2. Extracts and normalizes the text
-3. Computes SHA-256 of normalized content
-4. Stores source metadata + hash
-5. Creates lesson with content hash
+## Database
 
-## Verifying Live Payments
+New tables (migration 006):
+- `paylabs_rsshub_routes` — RSSHub feed source configuration
+- `paylabs_feed_items` — Normalized feed items with content hashes
+- `paylabs_citation_receipts` — Citation/unlock payment records
 
-1. Open `/learn` - see 8 lessons with prices and source URLs
-2. Open a lesson - see preview for free
-3. Click "Connect Wallet to Unlock" - connects MetaMask
-4. Sign the EIP-3009 authorization in your wallet
-5. Server verifies signature before creating unlock
-6. Open `/receipts` - see the payment record
-7. Open `/creator` - check creator wallet earnings
+Existing tables preserved: `paylabs_lessons`, `paylabs_creators`, `paylabs_unlocks`, `paylabs_payout_receipts`, `paylabs_route_toll_calls`, `paylabs_agent_service_calls`, `paylabs_learning_paths`.
 
 ## Revenue Split
 
@@ -211,17 +138,15 @@ Creates 8 source-backed lessons. The seeder:
 
 ## No Fake Receipts
 
-PayLabs does not mark a lesson unlocked unless a valid EIP-3009 TransferWithAuthorization signature has been verified server-side. Receipt rows are created only after signature verification. There is no code path to create a receipt without a valid wallet signature.
+PayLabs does not create receipt records without valid EIP-3009 TransferWithAuthorization signature verification. No fake payments. No fake tx hashes. No secrets in logs.
 
 ## Environment Variables
 
 See `.env.example` for the full list. Critical variables:
 
-- `X402_RECEIVER_ADDRESS` - Where lesson payments go (must be valid EVM address)
-- `PAYLABS_CREATOR_1_WALLET` / `PAYLABS_CREATOR_2_WALLET` - Creator wallets
-- `PAYLABS_PLATFORM_WALLET` / `PAYLABS_TREASURY_WALLET` - Revenue split wallets
-- `ARCLAYER_RUNNER_URL` / `ARCLAYER_RUNNER_API_KEY` - Runner for agent purchases
-- `PAYLABS_MAX_LESSON_PRICE_USDC` - Max price an agent can pay (default 0.05)
-- `PAYLABS_LLM_REQUIRED` - Set to `true` to require LLM (throws if no API key)
-- `PAYLABS_LLM_PROVIDER_DEFAULT` / `PAYLABS_LLM_API_KEY_DEFAULT` - Default LLM config
-- `PAYLABS_TUTOR_MODEL_DEFAULT` - Default model (fallback: `PAYLABS_TUTOR_MODEL`, then `gpt-4o-mini`)
+- `X402_RECEIVER_ADDRESS` — Where payments go
+- `PAYLABS_RSSHUB_SYNC_SECRET` — Bearer token for sync endpoint
+- `PAYLABS_RSSHUB_ADMIN_SECRET` — Bearer token for creating routes (falls back to SYNC_SECRET)
+- `PAYLABS_RSSHUB_DEFAULT_BASE_URL` — Default RSSHub instance
+- `PAYLABS_LLM_PROVIDER_DEFAULT` / `PAYLABS_LLM_API_KEY_DEFAULT` — LLM config
+- `ARCLAYER_RUNNER_URL` / `ARCLAYER_RUNNER_API_KEY` — Runner for payments

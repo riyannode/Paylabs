@@ -45,9 +45,9 @@ interface RouteTollProof {
 }
 
 const ROUTE_OPTIONS: RouteOption[] = [
-  { tier: "normal", label: "Normal", maxLessons: 2, description: "Up to 2 lessons" },
-  { tier: "advanced", label: "Advanced", maxLessons: 5, description: "Up to 5 lessons" },
-  { tier: "premium", label: "Premium", maxLessons: 8, description: "Up to 8 lessons" },
+  { tier: "normal", label: "Easy", maxLessons: 2, description: "Up to 2 source cards — cheapest and fastest" },
+  { tier: "advanced", label: "Normal", maxLessons: 5, description: "Up to 5 source cards — balanced path" },
+  { tier: "premium", label: "Advanced", maxLessons: 8, description: "Up to 8 source cards — deep research path" },
 ];
 
 declare global {

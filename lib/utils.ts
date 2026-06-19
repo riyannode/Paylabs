@@ -22,6 +22,13 @@ export function short(value?: string | null): string {
   return `${value.slice(0, 8)}…${value.slice(-6)}`;
 }
 
+/** Shorten URLs for display with configurable max length */
+export function shortUrl(value?: string | null, maxLen = 40): string {
+  if (!value) return "—";
+  if (value.length <= maxLen) return value;
+  return `${value.slice(0, maxLen - 3)}…`;
+}
+
 /** Format USDC amount with 6 decimals */
 export function usdc(value?: number | string | null): string {
   const n = Number(value || 0);
