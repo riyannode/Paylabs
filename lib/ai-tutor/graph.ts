@@ -200,10 +200,7 @@ export async function proposeSourcePath(input: {
     topics: [],
     riskNotes: [],
     sourcePathStatus: "none" as const,
-    availableFeedItems: [],
-    paidSourceIds: [],
     selectedSources: [],
-    plannerNotes: [],
     verifiedSources: [],
     rejectedSources: [],
   } as unknown as PayLabsTutorStateType);
@@ -252,10 +249,7 @@ export async function executeSourcePayment(input: {
     topics: [],
     riskNotes: [],
     sourcePathStatus: "none" as const,
-    availableFeedItems: [],
-    paidSourceIds: [],
     selectedSources: [],
-    plannerNotes: [],
     verifiedSources: [],
     rejectedSources: [],
   } as unknown as PayLabsTutorStateType);
@@ -264,7 +258,7 @@ export async function executeSourcePayment(input: {
     allowed: result.policyDecision?.allowed,
     sourcePaymentId: result.sourcePaymentId,
     receiptId: result.receiptId,
-    runnerPaymentResult: result.runnerPaymentResult,
+    paymentAdapterResult: result.paymentAdapterResult,
     error: result.error,
     policyDecision: result.policyDecision,
   };

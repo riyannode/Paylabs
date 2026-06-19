@@ -56,14 +56,14 @@ export async function paymentExecutorAgent(
   if (!policyDecision || !policyDecision.allowed) {
     return {
       error: "Payment blocked: Policy Guard did not approve",
-      runnerPaymentResult: { ok: false, error: "Policy not approved" },
+      paymentAdapterResult: { ok: false, error: "Policy not approved" },
     };
   }
 
   if (!sourcePathId || !sourcePathItemId) {
     return {
       error: "Missing source_path_id or source_path_item_id",
-      runnerPaymentResult: { ok: false, error: "Missing required IDs" },
+      paymentAdapterResult: { ok: false, error: "Missing required IDs" },
     };
   }
 
@@ -163,7 +163,7 @@ export async function paymentExecutorAgent(
     if (!result.ok) {
       return {
         error: `Runner payment failed: ${result.error}`,
-        runnerPaymentResult: runnerResult,
+        paymentAdapterResult: runnerResult,
         agentTrace: { payment_executor: { ...llmMeta, runner_error: result.error } },
       };
     }
@@ -172,7 +172,7 @@ export async function paymentExecutorAgent(
     if (!result.paymentId) {
       return {
         error: "Runner returned no paymentId — cannot record payment",
-        runnerPaymentResult: runnerResult,
+        paymentAdapterResult: runnerResult,
         agentTrace: { payment_executor: { ...llmMeta, runner_error: "no paymentId" } },
       };
     }
@@ -180,7 +180,7 @@ export async function paymentExecutorAgent(
     if (!result.paymentRef && !result.settlementRef) {
       return {
         error: "Runner returned no paymentRef or settlementRef — proof incomplete",
-        runnerPaymentResult: runnerResult,
+        paymentAdapterResult: runnerResult,
         agentTrace: { payment_executor: { ...llmMeta, runner_error: "no payment proof" } },
       };
     }
@@ -188,7 +188,7 @@ export async function paymentExecutorAgent(
     const msg = e instanceof Error ? e.message : String(e);
     return {
       error: `Runner execution error: ${msg}`,
-      runnerPaymentResult: { ok: false, error: msg },
+      paymentAdapterResult: { ok: false, error: msg },
       agentTrace: { payment_executor: { ...llmMeta, runner_error: msg } },
     };
   }
@@ -219,7 +219,7 @@ export async function paymentExecutorAgent(
   if (insertErr || !paymentRow) {
     return {
       error: `Payment succeeded but failed to persist: ${insertErr?.message || "unknown"}. Audit trail required.`,
-      runnerPaymentResult: runnerResult,
+      paymentAdapterResult: runnerResult,
     };
   }
 
@@ -232,7 +232,7 @@ export async function paymentExecutorAgent(
   return {
     sourcePaymentId: paymentRow.id,
     receiptId: paymentRow.id,
-    runnerPaymentResult: runnerResult,
+    paymentAdapterResult: runnerResult,
     agentTrace: { payment_executor: { ...llmMeta, payment_id: runnerResult.paymentId, db_id: paymentRow.id } },
   };
 }

@@ -80,7 +80,7 @@ export async function intentAgent(
     normalizedGoal: data.normalized_goal,
     topics: data.topics,
     learningLevel: data.learning_level,
-    maxSourceCostUsdc,
+    // maxSourceCostUsdc removed — now in routeLimits
     riskNotes: data.risk_notes,
     sourcePathStatus: "none",
     routeConfig: config as unknown as Record<string, unknown>,
