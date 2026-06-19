@@ -3,6 +3,9 @@
  * Defines behavior parameters for each route tier.
  * Route tier changes planning behavior and prompt persona only.
  * Route tier NEVER weakens safety checks.
+ *
+ * Internal values (normal/advanced/premium) unchanged for DB compatibility.
+ * Public labels: Easy / Normal / Advanced.
  */
 
 export type RouteTier = "normal" | "advanced" | "premium";
@@ -10,6 +13,9 @@ export type RouteTier = "normal" | "advanced" | "premium";
 export interface RouteConfig {
   tier: RouteTier;
   label: string;
+  publicLabel: string;
+  maxSourceCards: number;
+  /** @deprecated Use maxSourceCards */
   maxLessons: number;
   reasoningDepth: "low" | "medium" | "high";
   sourceStrictness: "standard" | "high" | "very_high";
@@ -21,31 +27,40 @@ export const ROUTE_CONFIG: Record<RouteTier, RouteConfig> = {
   normal: {
     tier: "normal",
     label: "Normal Route",
+    publicLabel: "Easy",
+    maxSourceCards: 2,
     maxLessons: 2,
     reasoningDepth: "low",
     sourceStrictness: "standard",
     plannerStyle: "quick_intro",
-    description: "Quick, cheap, beginner-friendly path.",
+    description: "Cheapest and fastest source path. Standard verification.",
   },
   advanced: {
     tier: "advanced",
     label: "Advanced Route",
+    publicLabel: "Normal",
+    maxSourceCards: 5,
     maxLessons: 5,
     reasoningDepth: "medium",
     sourceStrictness: "high",
     plannerStyle: "builder_path",
-    description: "Technical builder path for implementation-focused users.",
+    description: "Balanced source path. Higher source strictness.",
   },
   premium: {
     tier: "premium",
-    label: "Premium Route",
+    label: "Advanced Route",
+    publicLabel: "Advanced",
+    maxSourceCards: 8,
     maxLessons: 8,
     reasoningDepth: "high",
     sourceStrictness: "very_high",
     plannerStyle: "deep_mastery",
-    description: "Deepest source-backed path for full mastery.",
+    description: "Deep source/research path. Highest strictness.",
   },
-} as const;
+} as const satisfies Record<RouteTier, RouteConfig>;
+
+// Backward compat alias
+export type { RouteConfig as RouteTierConfig };
 
 export function getRouteConfig(tier: string): RouteConfig {
   if (tier in ROUTE_CONFIG) {
@@ -56,4 +71,9 @@ export function getRouteConfig(tier: string): RouteConfig {
 
 export function isValidRouteTier(tier: string): tier is RouteTier {
   return tier === "normal" || tier === "advanced" || tier === "premium";
+}
+
+/** Get public label for a route tier */
+export function getPublicLabel(tier: string): string {
+  return getRouteConfig(tier).publicLabel;
 }

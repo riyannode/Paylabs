@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { short, usdc } from "@/lib/utils";
+import { short, shortUrl, usdc } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -64,69 +64,57 @@ function timeAgo(dateStr: string): string {
 
 export default async function DashboardPage() {
   const [
+    rsshubRoutes,
+    feedItems,
+    citationReceipts,
+    totalCitationPayoutUsdc,
+    routeRows,
+    feedItemRows,
+    citationRows,
+    // Legacy
     publishedLessons,
-    creators,
-    unlocks,
-    creatorPayouts,
-    routeTolls,
-    agentPayments,
-    learningPaths,
-    totalRouteTollUsdc,
-    totalAgentServiceUsdc,
-    totalCreatorPayoutUsdc,
-    routeTollRows,
-    agentServiceRows,
-    unlockRows,
-    payoutRows,
     lessonRows,
   ] = await Promise.all([
+    safeCount("paylabs_rsshub_routes", (q: any) => q.eq("is_active", true)),
+    safeCount("paylabs_feed_items", (q: any) => q.eq("is_active", true)),
+    safeCount("paylabs_citation_receipts", (q: any) =>
+      q.eq("status", "completed")
+    ),
+    safeSum("paylabs_citation_receipts", "amount_usdc", (q: any) =>
+      q.eq("status", "completed")
+    ),
+    safeQuery(() =>
+      supabaseAdmin()
+        .from("paylabs_rsshub_routes")
+        .select("*")
+        .eq("is_active", true)
+        .order("created_at", { ascending: false })
+        .limit(25)
+    ),
+    safeQuery(() =>
+      supabaseAdmin()
+        .from("paylabs_feed_items")
+        .select(
+          "id, title, summary, canonical_url, author_name, publisher, published_at, creator_wallet, price_per_citation_usdc, price_per_unlock_usdc, normalized_sha256, is_active"
+        )
+        .eq("is_active", true)
+        .order("published_at", { ascending: false, nullsFirst: false })
+        .limit(25)
+    ),
+    safeQuery(() =>
+      supabaseAdmin()
+        .from("paylabs_citation_receipts")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(25)
+    ),
+    // Legacy lesson counts
     safeCount("paylabs_lessons", (q: any) => q.eq("is_published", true)),
-    safeCount("paylabs_creators"),
-    safeCount("paylabs_unlocks"),
-    safeCount("paylabs_payout_receipts"),
-    safeCount("paylabs_route_toll_calls", (q: any) => q.eq("status", "completed")),
-    safeCount("paylabs_agent_service_calls", (q: any) => q.eq("status", "completed")),
-    safeCount("paylabs_learning_paths"),
-    safeSum("paylabs_route_toll_calls", "amount_usdc", (q: any) =>
-      q.eq("status", "completed")
-    ),
-    safeSum("paylabs_agent_service_calls", "amount_usdc", (q: any) =>
-      q.eq("status", "completed")
-    ),
-    safeSum("paylabs_payout_receipts", "creator_amount_usdc"),
-    safeQuery(() =>
-      supabaseAdmin()
-        .from("paylabs_route_toll_calls")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(25)
-    ),
-    safeQuery(() =>
-      supabaseAdmin()
-        .from("paylabs_agent_service_calls")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(25)
-    ),
-    safeQuery(() =>
-      supabaseAdmin()
-        .from("paylabs_unlocks")
-        .select("*, lesson:paylabs_lessons(title)")
-        .order("unlocked_at", { ascending: false })
-        .limit(25)
-    ),
-    safeQuery(() =>
-      supabaseAdmin()
-        .from("paylabs_payout_receipts")
-        .select("*, lesson:paylabs_lessons(title)")
-        .order("created_at", { ascending: false })
-        .limit(25)
-    ),
     safeQuery(() =>
       supabaseAdmin()
         .from("paylabs_lessons")
         .select(
-          "id, title, slug, price_usdc, difficulty, is_published, creator:paylabs_creators(display_name), source:paylabs_sources(source_title)"
+          "id, title, slug, price_usdc, difficulty, is_published, creator:paylabs_creators(display_name)"
         )
         .eq("is_published", true)
         .order("price_usdc", { ascending: true })
@@ -134,49 +122,151 @@ export default async function DashboardPage() {
     ),
   ]);
 
+  const hasLegacyLessons = publishedLessons > 0;
+
   return (
     <div style={{ display: "grid", gap: 24 }}>
       <div>
         <h1 className="page-title">Dashboard</h1>
         <p className="muted" style={{ marginTop: 8 }}>
-          Live PayLabs activity.
+          RSSHub-first source feed activity.
         </p>
       </div>
 
-      {/* KPI cards */}
+      {/* ─── RSSHub KPI Cards ──────────────────────────────── */}
       <div className="grid-4">
         {[
-          { label: "Lessons", value: publishedLessons },
-          { label: "Route Tolls", value: routeTolls },
-          { label: "Agent Payments", value: agentPayments },
-          { label: "Creator Payouts", value: creatorPayouts },
+          { label: "RSSHub Routes", value: rsshubRoutes },
+          { label: "Feed Items", value: feedItems },
+          { label: "Citation Receipts", value: citationReceipts },
+          { label: "Citation Payouts", value: usdc(totalCitationPayoutUsdc) },
         ].map((kpi) => (
           <div className="card" key={kpi.label}>
-            <div className="muted" style={{ fontSize: 13 }}>{kpi.label}</div>
-            <div className="kpi" style={{ marginTop: 4 }}>{kpi.value}</div>
+            <div className="muted" style={{ fontSize: 13 }}>
+              {kpi.label}
+            </div>
+            <div className="kpi" style={{ marginTop: 4 }}>
+              {kpi.value}
+            </div>
           </div>
         ))}
       </div>
 
-      {/* USDC totals */}
-      <div className="grid-3">
-        {[
-          { label: "Total Route Tolls", value: usdc(totalRouteTollUsdc) },
-          { label: "Total Agent Services", value: usdc(totalAgentServiceUsdc) },
-          { label: "Total Creator Payouts", value: usdc(totalCreatorPayoutUsdc) },
-        ].map((t) => (
-          <div className="card-soft" key={t.label}>
-            <div className="muted" style={{ fontSize: 12 }}>{t.label}</div>
-            <div className="data-mono" style={{ fontSize: 16, fontWeight: 700, marginTop: 4 }}>{t.value}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Route Toll Payments */}
+      {/* ─── RSSHub Routes Table ───────────────────────────── */}
       <section className="card">
-        <h2 className="section-title">Route Toll Payments</h2>
-        {routeTollRows.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>No records yet.</div>
+        <h2 className="section-title">RSSHub Routes</h2>
+        {routeRows.length === 0 ? (
+          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
+            No RSSHub routes configured.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Route Path</th>
+                  <th>Base URL</th>
+                  <th>Creator</th>
+                  <th>Citation Price</th>
+                  <th>Last Synced</th>
+                  <th>Active</th>
+                </tr>
+              </thead>
+              <tbody>
+                {routeRows.map((r: any) => (
+                  <tr key={r.id}>
+                    <td style={{ fontWeight: 600 }}>{r.title}</td>
+                    <td className="data-mono">{r.route_path}</td>
+                    <td className="muted">
+                      {shortUrl(r.rsshub_base_url, 30)}
+                    </td>
+                    <td className="data-mono">
+                      {short(r.creator_wallet)}
+                    </td>
+                    <td className="data-mono">
+                      {usdc(r.default_price_per_citation_usdc)}
+                    </td>
+                    <td className="muted">
+                      {r.last_synced_at ? timeAgo(r.last_synced_at) : "never"}
+                    </td>
+                    <td>
+                      <span
+                        className={`badge ${
+                          r.is_active ? "badge-success" : "badge-warning"
+                        }`}
+                      >
+                        {r.is_active ? "active" : "inactive"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* ─── Feed Items Table ──────────────────────────────── */}
+      <section className="card">
+        <h2 className="section-title">RSSHub Feed Items</h2>
+        {feedItemRows.length === 0 ? (
+          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
+            No feed items yet. Run sync to import from RSSHub.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Author</th>
+                  <th>Source URL</th>
+                  <th>Creator</th>
+                  <th>Citation Price</th>
+                  <th>Hash</th>
+                  <th>Published</th>
+                </tr>
+              </thead>
+              <tbody>
+                {feedItemRows.map((f: any) => (
+                  <tr key={f.id}>
+                    <td style={{ fontWeight: 600 }}>
+                      {f.title || "(untitled)"}
+                    </td>
+                    <td>{f.author_name || f.publisher || "—"}</td>
+                    <td className="muted" style={{ fontSize: 11 }}>
+                      {shortUrl(f.canonical_url, 35)}
+                    </td>
+                    <td className="data-mono">
+                      {short(f.creator_wallet)}
+                    </td>
+                    <td className="data-mono">
+                      {usdc(f.price_per_citation_usdc)}
+                    </td>
+                    <td className="data-mono" style={{ fontSize: 11 }}>
+                      {f.normalized_sha256
+                        ? short(f.normalized_sha256)
+                        : "—"}
+                    </td>
+                    <td className="muted">
+                      {f.published_at ? timeAgo(f.published_at) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* ─── Citation Receipts Table ───────────────────────── */}
+      <section className="card">
+        <h2 className="section-title">Citation Receipts</h2>
+        {citationRows.length === 0 ? (
+          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
+            No citation receipts yet.
+          </div>
         ) : (
           <div style={{ overflowX: "auto" }}>
             <table className="table">
@@ -184,29 +274,36 @@ export default async function DashboardPage() {
                 <tr>
                   <th>Time</th>
                   <th>User</th>
-                  <th>Route</th>
+                  <th>Source URL</th>
+                  <th>Creator</th>
                   <th>Amount</th>
                   <th>Payment</th>
-                  <th>Proof</th>
                   <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {routeTollRows.map((r: any) => (
+                {citationRows.map((r: any) => (
                   <tr key={r.id}>
                     <td className="muted">{timeAgo(r.created_at)}</td>
                     <td className="data-mono">{short(r.user_wallet)}</td>
-                    <td>{r.route_label || r.route_tier}</td>
+                    <td className="muted" style={{ fontSize: 11 }}>
+                      {shortUrl(r.source_url, 35)}
+                    </td>
+                    <td className="data-mono">
+                      {short(r.creator_wallet)}
+                    </td>
                     <td className="data-mono">{usdc(r.amount_usdc)}</td>
                     <td className="data-mono">{short(r.payment_id)}</td>
-                    <td className="data-mono" style={{ fontSize: 11 }}>
-                      {r.payment_ref && <div>ref: {short(r.payment_ref)}</div>}
-                      {r.settlement_ref && <div>settle: {short(r.settlement_ref)}</div>}
-                      {r.input_hash && <div>hash: {short(r.input_hash)}</div>}
-                      {!r.payment_ref && !r.settlement_ref && !r.input_hash && "—"}
-                    </td>
                     <td>
-                      <span className={`badge ${r.status === "completed" ? "badge-success" : r.status === "failed" ? "badge-danger" : "badge-warning"}`}>
+                      <span
+                        className={`badge ${
+                          r.status === "completed"
+                            ? "badge-success"
+                            : r.status === "failed"
+                            ? "badge-danger"
+                            : "badge-warning"
+                        }`}
+                      >
                         {r.status}
                       </span>
                     </td>
@@ -218,119 +315,12 @@ export default async function DashboardPage() {
         )}
       </section>
 
-      {/* Agent Service Payments */}
-      <section className="card">
-        <h2 className="section-title">Agent Service Payments</h2>
-        {agentServiceRows.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>No records yet.</div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Buyer Agent</th>
-                  <th>Provider Agent</th>
-                  <th>Amount</th>
-                  <th>Payment</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {agentServiceRows.map((r: any) => (
-                  <tr key={r.id}>
-                    <td className="muted">{timeAgo(r.created_at)}</td>
-                    <td className="data-mono">{short(r.buyer_agent_id)}</td>
-                    <td className="data-mono">{short(r.provider_agent_id)}</td>
-                    <td className="data-mono">{usdc(r.amount_usdc)}</td>
-                    <td className="data-mono">{short(r.payment_id)}</td>
-                    <td>
-                      <span className={`badge ${r.status === "completed" ? "badge-success" : r.status === "failed" ? "badge-danger" : "badge-warning"}`}>
-                        {r.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* Lesson Unlocks */}
-      <section className="card">
-        <h2 className="section-title">Lesson Unlocks</h2>
-        {unlockRows.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>No records yet.</div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>User</th>
-                  <th>Lesson</th>
-                  <th>Amount</th>
-                  <th>Payment</th>
-                </tr>
-              </thead>
-              <tbody>
-                {unlockRows.map((u: any) => (
-                  <tr key={u.id}>
-                    <td className="muted">{timeAgo(u.unlocked_at)}</td>
-                    <td className="data-mono">{short(u.user_wallet)}</td>
-                    <td>{u.lesson?.title || short(u.lesson_id)}</td>
-                    <td className="data-mono">{usdc(u.amount_usdc)}</td>
-                    <td className="data-mono">{short(u.payment_id)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* Creator Payouts */}
-      <section className="card">
-        <h2 className="section-title">Creator Payouts</h2>
-        {payoutRows.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>No records yet.</div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Lesson</th>
-                  <th>Creator</th>
-                  <th>Gross</th>
-                  <th>Creator Share</th>
-                  <th>Ref</th>
-                </tr>
-              </thead>
-              <tbody>
-                {payoutRows.map((p: any) => (
-                  <tr key={p.id}>
-                    <td className="muted">{timeAgo(p.created_at)}</td>
-                    <td>{p.lesson?.title || "—"}</td>
-                    <td className="data-mono">{short(p.creator_wallet)}</td>
-                    <td className="data-mono">{usdc(p.gross_amount_usdc)}</td>
-                    <td className="data-mono">{usdc(p.creator_amount_usdc)}</td>
-                    <td className="data-mono">{short(p.payment_ref)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* Published Lessons */}
-      <section className="card">
-        <h2 className="section-title">Published Lessons</h2>
-        {lessonRows.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>No records yet.</div>
-        ) : (
+      {/* ─── Legacy Internal Lessons ───────────────────────── */}
+      {hasLegacyLessons && (
+        <section className="card" style={{ opacity: 0.85 }}>
+          <h2 className="section-title" style={{ fontSize: 14 }}>
+            Legacy Internal Lessons
+          </h2>
           <div style={{ overflowX: "auto" }}>
             <table className="table">
               <thead>
@@ -339,28 +329,30 @@ export default async function DashboardPage() {
                   <th>Difficulty</th>
                   <th>Price</th>
                   <th>Creator</th>
-                  <th>Source</th>
                 </tr>
               </thead>
               <tbody>
                 {lessonRows.map((l: any) => (
                   <tr key={l.id}>
                     <td>
-                      <a href={`/learn/${l.slug}`} style={{ fontWeight: 600 }}>{l.title}</a>
+                      <a href={`/learn/${l.slug}`} style={{ fontWeight: 600 }}>
+                        {l.title}
+                      </a>
                     </td>
                     <td>
-                      <span className={`badge badge-${l.difficulty}`}>{l.difficulty}</span>
+                      <span className={`badge badge-${l.difficulty}`}>
+                        {l.difficulty}
+                      </span>
                     </td>
                     <td className="data-mono">{usdc(l.price_usdc)}</td>
                     <td>{l.creator?.display_name || "—"}</td>
-                    <td className="muted">{l.source?.source_title || "—"}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        )}
-      </section>
+        </section>
+      )}
     </div>
   );
 }
