@@ -18,7 +18,7 @@ import { z } from "zod";
 // ─── Zod schema for LLM structured output ───────────────────────
 
 const IntentSchema = z.object({
-  normalized_goal: z.string().describe("The cleaned, normalized learning goal"),
+  normalized_goal: z.string().describe("The cleaned, normalized goal"),
   topics: z.array(z.string()).describe("List of relevant topic keywords extracted from the goal"),
   learning_level: z.enum(["beginner", "intermediate", "advanced"]).describe("Inferred learning level"),
   risk_notes: z.array(z.string()).describe("Any risk notes about the goal or budget"),
@@ -50,8 +50,8 @@ export async function intentAgent(
     return { error: "Goal is required", riskNotes: ["Empty goal"] };
   }
 
-  const maxLessonPriceUsdc = Number(
-    process.env.PAYLABS_MAX_LESSON_PRICE_USDC || "0.05"
+  const maxSourceCostUsdc = Number(
+    process.env.PAYLABS_MAX_SOURCE_COST_USDC || "0.05"
   );
 
   // Call LLM
@@ -59,7 +59,7 @@ export async function intentAgent(
     agentName: "intent",
     routeTier: tier,
     prompt: prompts.intent,
-    userMessage: `User wallet: ${userWallet}\nGoal: "${goal}"\nBudget: ${budgetUsdc} USDC\nRoute tier: ${tier}\nRoute config: ${JSON.stringify(config)}\n\nNormalize the user's learning intent. Extract topics, learning level, and risk notes.`,
+    userMessage: `User wallet: ${userWallet}\nGoal: "${goal}"\nBudget: ${budgetUsdc} USDC\nRoute tier: ${tier}\nRoute config: ${JSON.stringify(config)}\n\nNormalize the user's intent. Extract topics, learning level, and risk notes.`,
     schema: IntentSchema,
   });
 
@@ -80,9 +80,9 @@ export async function intentAgent(
     normalizedGoal: data.normalized_goal,
     topics: data.topics,
     learningLevel: data.learning_level,
-    maxLessonPriceUsdc,
+    // maxSourceCostUsdc removed — now in routeLimits
     riskNotes: data.risk_notes,
-    pathStatus: "none",
+    sourcePathStatus: "none",
     routeConfig: config as unknown as Record<string, unknown>,
     agentTrace: { intent: meta },
     llmOutputs: { intent: data },

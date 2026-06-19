@@ -1,5 +1,5 @@
 /**
- * PayLabs Tutor LLM Factory — Per-Agent Routing
+ * PayLabs Tutor LLM Factory — Per-Agent Routing (15 Agents)
  *
  * Each LangGraph agent can be configured with its own provider, API key,
  * base URL, and model through environment variables.
@@ -10,15 +10,27 @@
  *   base URL: PAYLABS_LLM_BASE_URL_<AGENT_KEY> → PAYLABS_LLM_BASE_URL_DEFAULT → undefined
  *   model:    PAYLABS_TUTOR_MODEL_<AGENT_KEY>   → PAYLABS_TUTOR_MODEL_DEFAULT  → PAYLABS_TUTOR_MODEL → "gpt-4o-mini"
  *
- * Agent key mapping (from invokeJsonAgent agentName):
- *   tutor_intake              → INTAKE
- *   intent                    → INTENT
- *   curriculum_planner        → PLANNER
- *   source_verifier           → VERIFIER
- *   source_verifier_specialist→ VERIFIER_SPECIALIST
- *   specialist_payment_decision → SPECIALIST_DECISION
- *   policy_guard              → POLICY
- *   payment_executor          → EXECUTOR
+ * 15 agents:
+ *   tutor_intake              → TUTOR_INTAKE
+ *   intent_classifier         → INTENT_CLASSIFIER
+ *   query_expander            → QUERY_EXPANDER
+ *   feed_discovery_agent      → FEED_DISCOVERY
+ *   source_ranker             → SOURCE_RANKER
+ *   evidence_allocator        → EVIDENCE_ALLOCATOR
+ *   stop_limit_controller     → STOP_LIMIT
+ *   budget_optimizer          → BUDGET_OPTIMIZER
+ *   source_quality_verifier   → SOURCE_QUALITY
+ *   provenance_verifier       → PROVENANCE
+ *   creator_ownership_verifier→ CREATOR_OWNERSHIP
+ *   policy_guard              → POLICY_GUARD
+ *   payment_quote_agent       → PAYMENT_QUOTE
+ *   payment_executor          → PAYMENT_EXECUTOR
+ *   receipt_auditor           → RECEIPT_AUDITOR
+ *
+ * Recommended routing:
+ *   cheap/planning agents: MiMo or cheaper model
+ *   critical verification/policy/receipt: strongest model
+ *   every agent: deterministic backend checks still apply
  *
  * If PAYLABS_LLM_REQUIRED=true and no API key, throws.
  * No secrets printed.
@@ -29,14 +41,21 @@ import { ChatOpenAI } from "@langchain/openai";
 // ─── Agent name → env key mapping ──────────────────────────────
 
 const AGENT_KEY_MAP: Record<string, string> = {
-  tutor_intake: "INTAKE",
-  intent: "INTENT",
-  curriculum_planner: "PLANNER",
-  source_verifier: "VERIFIER",
-  source_verifier_specialist: "VERIFIER_SPECIALIST",
-  specialist_payment_decision: "SPECIALIST_DECISION",
-  policy_guard: "POLICY",
-  payment_executor: "EXECUTOR",
+  tutor_intake: "TUTOR_INTAKE",
+  intent_classifier: "INTENT_CLASSIFIER",
+  query_expander: "QUERY_EXPANDER",
+  feed_discovery_agent: "FEED_DISCOVERY",
+  source_ranker: "SOURCE_RANKER",
+  evidence_allocator: "EVIDENCE_ALLOCATOR",
+  stop_limit_controller: "STOP_LIMIT",
+  budget_optimizer: "BUDGET_OPTIMIZER",
+  source_quality_verifier: "SOURCE_QUALITY",
+  provenance_verifier: "PROVENANCE",
+  creator_ownership_verifier: "CREATOR_OWNERSHIP",
+  policy_guard: "POLICY_GUARD",
+  payment_quote_agent: "PAYMENT_QUOTE",
+  payment_executor: "PAYMENT_EXECUTOR",
+  receipt_auditor: "RECEIPT_AUDITOR",
 };
 
 // ─── Per-config cache ──────────────────────────────────────────
@@ -152,4 +171,11 @@ export function getTutorModelConfig(agentName?: string): {
 
 export function isLlmRequired(): boolean {
   return process.env.PAYLABS_LLM_REQUIRED === "true";
+}
+
+/**
+ * Get all registered agent names (for iteration/diagnostics).
+ */
+export function getRegisteredAgentNames(): string[] {
+  return Object.keys(AGENT_KEY_MAP);
 }

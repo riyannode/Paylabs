@@ -6,15 +6,14 @@
  * and prepares proposal inputs.
  *
  * The intake agent itself does NOT:
- * - create paths
- * - create receipts
- * - create unlocks
+ * - create source paths
+ * - create payments
  * - call Circle
  * - call wallet APIs
  * - call contracts
  * - write to DB
  *
- * The route x402 guard agent DOES call Runner (via executeRouteTollPayment)
+ * The route toll payment is handled separately via executeRouteTollPayment
  * to charge the route toll — this is the only payment allowed in this graph.
  */
 
@@ -68,7 +67,7 @@ export const TutorIntakeState = Annotation.Root({
   // Output: error message if something went wrong
   error: Annotation<string | undefined>,
 
-  // ─── Route x402 Guard state ──────────────────────────────────
+  // ─── Route Toll state ────────────────────────────────────────
 
   // Whether route toll is enabled (from PAYLABS_ROUTE_TOLL_ENABLED env)
   routeTollEnabled: Annotation<boolean | undefined>,

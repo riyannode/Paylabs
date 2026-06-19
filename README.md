@@ -1,152 +1,131 @@
 # PayLabs
 
-**AI source-feed learning paths with creator citation tolls.**
+RSSHub-first source discovery, AI source paths, and x402 source payments on [Arc](https://arc.network).
 
-PayLabs ingests RSSHub/RSS feeds, turns feed items into source-backed learning cards, and prepares citation/unlock payments so creators can be paid when their sources are used, cited, or consumed.
+## What it does
 
-## RSSHub Distribution Bootstrap
+PayLabs discovers content through [RSSHub](https://docs.rsshub.app/) routes, builds AI-curated source paths, and executes per-citation payments via [Circle Gateway](https://www.circle.com/en/gateway) on Arc testnet.
 
-RSSHub-style feeds are the distribution layer. PayLabs adds AI planning, source verification, payment proof, and creator payout receipts.
-
-This maps to:
-- **RFB 06** — Creator & Publisher Monetization
-- **RFB 01** — Autonomous Paying Agents
-- **RFB 03** — Agent-to-Agent Nanopayment Networks
-
+```mermaid
+flowchart LR
+  RSSHub[RSSHub Routes] --> Sync[Sync]
+  Sync --> FeedItems[Feed Items]
+  FeedItems --> Intent[Intent Agent]
+  Intent --> Planner[Source Planner]
+  Planner --> Verifier[Source Verifier]
+  Verifier --> Path[Source Path]
+  Path --> User[User Approval]
+  User --> Policy[Policy Guard]
+  Policy --> Runner[ArcLayer Runner]
+  Runner --> Payment[Source Payment]
+  Payment --> Creator[Creator Wallet]
 ```
-flowchart TD
-  RSS[RSSHub / RSS Feed] --> SYNC[RSSHub Sync]
-  SYNC --> ITEMS[(Feed Items)]
-  ITEMS --> SOURCES[Sources Catalog]
-  ITEMS --> TUTOR[AI Tutor]
-  TUTOR --> PLAN[Source Path]
-  PLAN --> VERIFY[Source Verifier]
-  VERIFY --> PAY[Citation / Unlock Toll]
-  PAY --> CREATOR[Creator Wallet]
-  PAY --> RECEIPT[(Citation Receipt)]
-  RECEIPT --> DASH[Dashboard]
-```
-
-## Route Tiers
-
-PayLabs supports 3 user-selectable source paths. Internal DB values unchanged; public labels updated.
-
-| Public Label | Internal Tier | Max Source Cards | Source Strictness | Best For |
-|-------------|---------------|-----------------|-------------------|----------|
-| **Easy** | `normal` | 2 | Standard | Quick intro, cheapest path |
-| **Normal** | `advanced` | 5 | High | Balanced source path |
-| **Advanced** | `premium` | 8 | Very High | Deep research path |
 
 ## Architecture
 
-- **One shared LangGraph orchestration engine** — all tiers
-- **One shared Policy Guard core** — same safety checks for all tiers
-- **One shared Payment & Receipt Executor** — all payments through ArcLayer Runner
-- **Route tier changes planning behavior and prompt persona only**
-- **Route tier NEVER weakens safety checks**
+| Layer | Role |
+|---|---|
+| **RSSHub Routes** | Source registry — any RSSHub-compatible feed |
+| **Feed Items** | Normalized content with SHA-256 hashes |
+| **Source Paths** | AI-curated ordered lists of feed items |
+| **Source Payments** | Per-citation/unlock payments to creators |
+| **Route Payments** | Tiny x402 tolls before AI proposal |
+| **Agent Payments** | Agent-to-agent service payments (RFB 03) |
+| **Agent Actions** | Policy audit trail |
 
-### Flow
+## Agent Workflow
 
-```
-Proposal: START -> intent_agent -> curriculum_planner_agent -> source_verifier_agent -> persist -> END
-Buy:      START -> policy_guard_agent -> payment_receipt_executor_agent -> END
-```
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant T as Tutor Intake
+  participant I as Intent Agent
+  participant SP as Source Planner
+  participant SV as Source Verifier
+  participant PG as Policy Guard
+  participant PE as Payment Executor
+  participant R as ArcLayer Runner
 
-Proposal and buy remain separate invocations. User approval is required before any buy.
-
-## Per-Agent LLM Routing
-
-PR #9 per-agent LLM routing remains runtime configuration. Each LangGraph agent can be configured with its own provider, API key, base URL, and model through environment variables. See `.env.example` for the full mapping.
-
-## x402 Payment Flow (Verified)
-
-1. Client requests lesson/content
-2. Server returns HTTP 402 with EIP-3009 TransferWithAuthorization challenge
-3. Client signs the typed data with their wallet
-4. **Server verifies**: signature validity, amount, chain (5042002), USDC address, receiver, nonce uniqueness
-5. Only after verification: server creates unlock + receipt records
-6. Circle Gateway settles payment in batch (gas-free)
-
-## Tech Stack
-
-- Next.js 15 (App Router)
-- Supabase (Postgres + RLS)
-- Circle Gateway + x402 (nanopayments on Arc testnet)
-- ArcLayer Runner (privileged payment execution)
-- rss-parser (RSSHub feed parsing)
-- Viem (EVM utilities, EIP-712 verification)
-
-## Live Demo
-
-- `/` — Landing page
-- `/sources` — RSSHub feed items catalog
-- `/tutor` — AI tutor: goal + budget → source path → buy
-- `/dashboard` — RSSHub-first activity dashboard
-- `/receipts` — Public payment records
-- `/creator` — Creator earnings dashboard
-
-## Running Locally
-
-```
-git clone https://github.com/riyannode/Paylabs.git
-cd Paylabs
-pnpm install
-cp .env.example .env.local
-# Fill in .env.local with real values
-pnpm dev
+  U->>T: Chat (free)
+  T->>T: Classify intent, recommend route
+  U->>I: Propose source path
+  I->>SP: Normalize goal, extract topics
+  SP->>SV: Select feed items within budget
+  SV->>SV: Verify source integrity (deterministic)
+  SV-->>U: Proposed source path
+  U->>PG: Approve + pay per source
+  PG->>PG: Policy checks (deterministic)
+  PG->>PE: Execute payment
+  PE->>R: x402 payment
+  R-->>PE: Payment proof
+  PE-->>U: Receipt
 ```
 
-## RSSHub Sync
+## Safety Rules
 
-Create routes and sync feed items:
+- **Runner is the only payment executor** — no local private keys, no direct Circle calls
+- **No fake payment IDs** — every payment must come from Runner with complete proof
+- **No fake tx hashes** — Runner returns real settlement refs
+- **No DB-only unlocks** — payment must complete before status changes
+- **No secrets in logs** — API keys, wallet keys, HMAC secrets are never printed
+- **Backend loads price/wallet/URL from DB** — LLM never sets financial fields
 
-```bash
-# Create a route (requires PAYLABS_RSSHUB_ADMIN_SECRET)
-curl -X POST http://localhost:3000/api/paylabs/rsshub/routes \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $PAYLABS_RSSHUB_ADMIN_SECRET" \
-  -d '{"rsshub_base_url":"https://rsshub.app","route_path":"/hackernews/best","title":"Hacker News Best","creator_wallet":"0x..."}'
+## API Endpoints
 
-# Sync all routes (requires PAYLABS_RSSHUB_SYNC_SECRET)
-curl -X POST http://localhost:3000/api/paylabs/rsshub/sync \
-  -H "Authorization: Bearer $PAYLABS_RSSHUB_SYNC_SECRET"
-```
-
-## Legacy Internal Lesson Cleanup
-
-Clear legacy internal lesson data (manual only):
-
-```bash
-pnpm clear:legacy-lessons                # Clear lesson data only
-pnpm clear:legacy-lessons --include-payments  # Also clear payment tables
-```
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/paylabs/health` | Health check |
+| `GET` | `/api/paylabs/feed-items` | List active feed items |
+| `POST` | `/api/paylabs/rsshub/routes` | Register RSSHub route |
+| `POST` | `/api/paylabs/rsshub/sync` | Sync feed items from RSSHub |
+| `POST` | `/api/paylabs/tutor/chat` | Free intent classification |
+| `POST` | `/api/paylabs/source-paths/propose` | Propose AI source path |
+| `POST` | `/api/paylabs/source-paths/:id/approve` | Approve source path |
+| `POST` | `/api/paylabs/source-payments/pay` | Pay for source citation |
+| `GET` | `/api/paylabs/creator` | Creator earnings |
+| `GET` | `/api/paylabs/dashboard` | Dashboard data |
 
 ## Database
 
-New tables (migration 006):
-- `paylabs_rsshub_routes` — RSSHub feed source configuration
-- `paylabs_feed_items` — Normalized feed items with content hashes
-- `paylabs_citation_receipts` — Citation/unlock payment records
+Single migration: `supabase/migrations/1_rsshub.sql`
 
-Existing tables preserved: `paylabs_lessons`, `paylabs_creators`, `paylabs_unlocks`, `paylabs_payout_receipts`, `paylabs_route_toll_calls`, `paylabs_agent_service_calls`, `paylabs_learning_paths`.
+| Table | Purpose |
+|---|---|
+| `paylabs_rsshub_routes` | RSSHub source registry |
+| `paylabs_feed_items` | Normalized content items |
+| `paylabs_source_paths` | AI-curated source paths |
+| `paylabs_source_path_items` | Items in a source path |
+| `paylabs_route_payments` | Route toll payments |
+| `paylabs_source_payments` | Per-citation source payments |
+| `paylabs_agent_payments` | Agent-to-agent service payments |
+| `paylabs_agent_actions` | Policy audit trail |
 
-## Revenue Split
+## Route Tiers
 
-- Creator: 85%
-- Platform: 10%
-- Treasury: 5%
+| Tier | Max Sources | Description |
+|---|---|---|
+| `normal` | 2 | Easy path — cheapest and fastest |
+| `advanced` | 5 | Builder path — balanced |
+| `premium` | 8 | Expert path — deep research |
 
-## No Fake Receipts
+## Tech Stack
 
-PayLabs does not create receipt records without valid EIP-3009 TransferWithAuthorization signature verification. No fake payments. No fake tx hashes. No secrets in logs.
+- **Next.js 15** — App Router
+- **LangGraph** — Multi-agent workflow
+- **Supabase** — Postgres + RLS
+- **Circle Gateway** — USDC settlement on Arc
+- **ArcLayer Runner** — Payment execution boundary
+- **RSSHub** — Open-source content source
+
+## Development
+
+```bash
+pnpm install
+pnpm dev          # http://localhost:3000
+pnpm typecheck
+pnpm build
+```
 
 ## Environment Variables
 
-See `.env.example` for the full list. Critical variables:
-
-- `X402_RECEIVER_ADDRESS` — Where payments go
-- `PAYLABS_RSSHUB_SYNC_SECRET` — Bearer token for sync endpoint
-- `PAYLABS_RSSHUB_ADMIN_SECRET` — Bearer token for creating routes (falls back to SYNC_SECRET)
-- `PAYLABS_RSSHUB_DEFAULT_BASE_URL` — Default RSSHub instance
-- `PAYLABS_LLM_PROVIDER_DEFAULT` / `PAYLABS_LLM_API_KEY_DEFAULT` — LLM config
-- `ARCLAYER_RUNNER_URL` / `ARCLAYER_RUNNER_API_KEY` — Runner for payments
+See `.env.example` for required configuration.

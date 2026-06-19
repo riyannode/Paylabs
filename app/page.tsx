@@ -18,21 +18,20 @@ async function safeCount(
 }
 
 async function getCounts() {
-  const [lessons, unlocks, payouts, routeTolls, agentPayments] = await Promise.all([
-    safeCount("paylabs_lessons", (q) => q.eq("is_published", true)),
-    safeCount("paylabs_unlocks"),
-    safeCount("paylabs_payout_receipts"),
-    safeCount("paylabs_route_toll_calls", (q) => q.eq("status", "completed")),
-    safeCount("paylabs_agent_service_calls", (q) => q.eq("status", "completed")),
+  const [routes, feedItems, sourcePayments, agentPayments] = await Promise.all([
+    safeCount("paylabs_rsshub_routes", (q) => q.eq("is_active", true)),
+    safeCount("paylabs_feed_items", (q) => q.eq("is_active", true)),
+    safeCount("paylabs_source_payments", (q) => q.eq("status", "completed")),
+    safeCount("paylabs_agent_payments", (q) => q.eq("status", "completed")),
   ]);
-  return { lessons, unlocks, payouts, routeTolls, agentPayments };
+  return { routes, feedItems, sourcePayments, agentPayments };
 }
 
 const FLOW_STEPS = [
-  { num: "1", label: "Chat", desc: "Describe your learning goal" },
-  { num: "2", label: "Pay route toll", desc: "Tiny x402 fee to unlock the route" },
-  { num: "3", label: "Propose path", desc: "AI picks source-backed lessons" },
-  { num: "4", label: "Unlock lesson", desc: "Pay per lesson, creator gets receipt" },
+  { num: "1", label: "RSSHub Sync", desc: "Import content from RSSHub routes into feed items" },
+  { num: "2", label: "AI Source Path", desc: "AI picks source-backed feed items for your goal" },
+  { num: "3", label: "Review & Approve", desc: "Review the proposed source path and approve" },
+  { num: "4", label: "Pay & Cite", desc: "Pay per source citation, creator gets paid" },
 ];
 
 export default async function LandingPage() {
@@ -51,7 +50,7 @@ export default async function LandingPage() {
             margin: "0 0 12px",
           }}
         >
-          AI learning paths
+          RSSHub source paths
           <br />
           with x402 payments.
         </h1>
@@ -64,7 +63,7 @@ export default async function LandingPage() {
             lineHeight: 1.5,
           }}
         >
-          Chat with the tutor, pay a tiny route toll, approve a path, unlock lessons.
+          Discover sources via RSSHub, build AI source paths, pay per citation.
         </p>
         <div style={{ display: "flex", justifyContent: "center", gap: 12 }}>
           <a href="/tutor" className="btn btn-primary" style={{ height: 44, padding: "0 24px", fontSize: 15 }}>
@@ -80,9 +79,9 @@ export default async function LandingPage() {
       <section>
         <div className="grid-4">
           {[
-            { label: "Published Lessons", value: counts.lessons },
-            { label: "Lesson Unlocks", value: counts.unlocks },
-            { label: "Route Tolls", value: counts.routeTolls },
+            { label: "RSSHub Routes", value: counts.routes },
+            { label: "Feed Items", value: counts.feedItems },
+            { label: "Source Payments", value: counts.sourcePayments },
             { label: "Agent Payments", value: counts.agentPayments },
           ].map((stat) => (
             <div className="card" key={stat.label} style={{ textAlign: "center" }}>

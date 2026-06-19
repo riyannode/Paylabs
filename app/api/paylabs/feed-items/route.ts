@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
   const { data, error } = await supabaseAdmin()
     .from("paylabs_feed_items")
     .select(
-      "id, title, summary, canonical_url, author_name, publisher, published_at, tags, creator_wallet, price_per_citation_usdc, price_per_unlock_usdc, normalized_sha256, is_active"
+      "id, title, summary, canonical_url, author_name, publisher, published_at, tags, creator_wallet, is_monetized, price_per_citation_usdc, price_per_unlock_usdc, normalized_sha256, is_active"
     )
     .eq("is_active", true)
     .order("published_at", { ascending: false, nullsFirst: false })

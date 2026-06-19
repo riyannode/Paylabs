@@ -15,16 +15,6 @@ export interface RunnerX402Quote {
   challenge: Record<string, unknown>;
 }
 
-export interface RunnerX402PayInput {
-  userWallet: string;
-  lessonId: string;
-  resourceUrl: string;
-  amountUsdc: string;
-  creatorWallet: string;
-  paymentChallenge: Record<string, unknown>;
-  signedAuthorization: Record<string, unknown>;
-}
-
 export interface RunnerX402PayResult {
   ok: boolean;
   paymentId?: string;

@@ -1,6 +1,6 @@
 /**
  * Agent 3: Source Verifier Agent (LLM reasoning + deterministic decision)
- * Verifies planned lessons are real source-backed content.
+ * Verifies planned sources are real RSSHub-backed content.
  *
  * Two paths:
  * - PAYLABS_AGENT_TO_AGENT_PAYMENTS=true: pay specialist via Runner, call endpoint with proof
@@ -19,10 +19,8 @@ import { getPromptsForRoute } from "./route-prompts";
 import { invokeJsonAgent } from "./llm-json";
 import { getActiveAgentProvider, validateAgentServiceBudget, hashAgentServiceInput } from "./agent-providers";
 import { executeAgentServicePurchase } from "@/lib/arclayer-runner/agent-services";
-import { getSpecialistPaymentDecision, validateSpecialistDecision } from "./specialist-payment-decision";
 import { runSourceVerification, type VerificationInput } from "./source-verifier-service";
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { createHash } from "node:crypto";
 import { z } from "zod";
 
 // ─── Zod schema for LLM structured output ───────────────────────
@@ -30,12 +28,12 @@ import { z } from "zod";
 const VerifierSchema = z.object({
   verification_notes: z.array(
     z.object({
-      lesson_id: z.string().describe("The lesson being reviewed"),
+      feed_item_id: z.string().describe("The feed item being reviewed"),
       source_reasoning: z.string().describe("Reasoning about source integrity"),
-      creator_reasoning: z.string().describe("Reasoning about creator trustworthiness"),
+      route_reasoning: z.string().describe("Reasoning about RSSHub route trustworthiness"),
       risk_flags: z.array(z.string()).describe("Any risk flags found"),
     })
-  ).describe("Per-lesson verification reasoning"),
+  ).describe("Per-source verification reasoning"),
 });
 
 type VerifierResult = z.infer<typeof VerifierSchema>;
@@ -51,43 +49,43 @@ function isAgentToAgentPaymentsEnabled(): boolean {
 export async function sourceVerifierAgent(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { selectedLessons, publishedLessons, routeTier, routePrompts, budgetUsdc, estimatedTotalUsdc, userWallet } = state;
+  const { selectedSources, routeTier, routePrompts, budgetUsdc, estimatedTotalUsdc, userWallet } = state;
   const tier: RouteTier = routeTier || "normal";
   const config = getRouteConfig(tier);
   const prompts = (routePrompts as unknown as ReturnType<typeof getPromptsForRoute>) || getPromptsForRoute(tier);
 
-  if (!selectedLessons || selectedLessons.length === 0) {
+  if (!selectedSources || selectedSources.length === 0) {
     return {
-      verifiedLessons: [],
-      rejectedLessons: [],
+      verifiedSources: [],
+      rejectedSources: [],
       allVerified: false,
-      error: "No lessons to verify",
+      error: "No sources to verify",
     };
   }
 
+  // Load feed items from DB — never trust state
+  const { listFeedItems } = await import("./tools");
+  const availableFeedItems = await listFeedItems() as Record<string, unknown>[];
+
   // Build lookup map
-  const lessonMap = new Map<string, Record<string, unknown>>();
-  for (const l of publishedLessons as Record<string, unknown>[]) {
-    lessonMap.set(l.id as string, l);
+  const feedItemMap = new Map<string, Record<string, unknown>>();
+  for (const item of availableFeedItems as Record<string, unknown>[]) {
+    feedItemMap.set(item.id as string, item);
   }
 
   // Prepare safe metadata for LLM
-  const lessonMeta = (selectedLessons as Record<string, unknown>[]).map((s) => {
-    const lesson = lessonMap.get(s.lesson_id as string);
-    const source = lesson?.source as Record<string, unknown> | undefined;
-    const creator = lesson?.creator as Record<string, unknown> | undefined;
+  const sourceMeta = (selectedSources as Record<string, unknown>[]).map((s) => {
+    const feedItem = feedItemMap.get(s.feed_item_id as string);
+    const route = feedItem?.rsshub_route as Record<string, unknown> | undefined;
     return {
-      lesson_id: s.lesson_id,
-      title: lesson?.title,
-      source_id: source?.id,
-      canonical_url: source?.canonical_url,
-      publisher: source?.publisher,
-      source_type: source?.source_type,
-      normalized_sha256: source?.normalized_sha256,
-      content_sha256: lesson?.content_sha256,
-      is_published: lesson?.is_published,
-      creator_wallet: creator?.wallet_address,
-      creator_verified: creator?.is_verified,
+      feed_item_id: s.feed_item_id,
+      title: feedItem?.title,
+      route_id: route?.id,
+      route_path: route?.route_path,
+      route_title: route?.title,
+      content_sha256: feedItem?.content_sha256,
+      published_at: feedItem?.published_at,
+      is_active: route?.is_active,
     };
   });
 
@@ -97,9 +95,9 @@ export async function sourceVerifierAgent(
       tier,
       config,
       prompts,
-      lessonMeta,
-      lessonMap,
-      selectedLessons: selectedLessons as Record<string, unknown>[],
+      sourceMeta,
+      feedItemMap,
+      selectedSources: selectedSources as Record<string, unknown>[],
       budgetUsdc: budgetUsdc || 0,
       estimatedTotalUsdc: estimatedTotalUsdc || 0,
       userWallet: userWallet || "",
@@ -111,9 +109,9 @@ export async function sourceVerifierAgent(
     tier,
     config,
     prompts,
-    lessonMeta,
-    lessonMap,
-    selectedLessons: selectedLessons as Record<string, unknown>[],
+    sourceMeta,
+    feedItemMap,
+    selectedSources: selectedSources as Record<string, unknown>[],
   });
 }
 
@@ -123,31 +121,31 @@ async function localSourceVerification(input: {
   tier: RouteTier;
   config: ReturnType<typeof getRouteConfig>;
   prompts: ReturnType<typeof getPromptsForRoute>;
-  lessonMeta: Record<string, unknown>[];
-  lessonMap: Map<string, Record<string, unknown>>;
-  selectedLessons: Record<string, unknown>[];
+  sourceMeta: Record<string, unknown>[];
+  feedItemMap: Map<string, Record<string, unknown>>;
+  selectedSources: Record<string, unknown>[];
 }): Promise<Partial<PayLabsTutorStateType>> {
-  const { tier, config, prompts, lessonMeta, lessonMap, selectedLessons } = input;
+  const { tier, config, prompts, sourceMeta, feedItemMap, selectedSources } = input;
 
   // Call LLM for reasoning
   const llmResult = await invokeJsonAgent<VerifierResult>({
     agentName: "source_verifier",
     routeTier: tier,
     prompt: prompts.sourceVerifier,
-    userMessage: `Route tier: ${tier}\nSource strictness: ${config.sourceStrictness}\n\nLesson metadata to verify (JSON):\n${JSON.stringify(lessonMeta, null, 2)}\n\nReview each lesson's source integrity and creator trustworthiness. Flag any concerns.`,
+    userMessage: `Route tier: ${tier}\nSource strictness: ${config.sourceStrictness}\n\nSource metadata to verify (JSON):\n${JSON.stringify(sourceMeta, null, 2)}\n\nReview each source's integrity and RSSHub route trustworthiness. Flag any concerns.`,
     schema: VerifierSchema,
   });
 
-  const llmNotes: Record<string, { source: string; creator: string; flags: string[] }> = {};
+  const llmNotes: Record<string, { source: string; route: string; flags: string[] }> = {};
   let llmMeta: Record<string, unknown> = {};
 
   if (llmResult.ok) {
     const data = (llmResult as { ok: true; data: VerifierResult; meta: Record<string, unknown> }).data;
     llmMeta = (llmResult as { ok: true; data: VerifierResult; meta: Record<string, unknown> }).meta;
     for (const note of data.verification_notes) {
-      llmNotes[note.lesson_id] = {
+      llmNotes[note.feed_item_id] = {
         source: note.source_reasoning,
-        creator: note.creator_reasoning,
+        route: note.route_reasoning,
         flags: note.risk_flags,
       };
     }
@@ -157,22 +155,18 @@ async function localSourceVerification(input: {
   }
 
   // Deterministic verification using shared service
-  const verificationInputs: VerificationInput[] = selectedLessons.map((s) => {
-    const lesson = lessonMap.get(s.lesson_id as string);
-    const source = lesson?.source as Record<string, unknown> | undefined;
-    const creator = lesson?.creator as Record<string, unknown> | undefined;
+  const verificationInputs: VerificationInput[] = selectedSources.map((s) => {
+    const feedItem = feedItemMap.get(s.feed_item_id as string);
+    const route = feedItem?.rsshub_route as Record<string, unknown> | undefined;
     return {
-      lesson_id: s.lesson_id as string,
-      title: lesson?.title as string,
-      source_id: source?.id as string,
-      canonical_url: source?.canonical_url as string,
-      publisher: source?.publisher as string,
-      source_type: source?.source_type as string,
-      normalized_sha256: source?.normalized_sha256 as string,
-      content_sha256: lesson?.content_sha256 as string,
-      is_published: lesson?.is_published as boolean,
-      creator_wallet: creator?.wallet_address as string,
-      creator_verified: creator?.is_verified as boolean,
+      feed_item_id: s.feed_item_id as string,
+      title: feedItem?.title as string,
+      route_id: route?.id as string,
+      route_path: route?.route_path as string,
+      route_title: route?.title as string,
+      content_sha256: feedItem?.content_sha256 as string,
+      published_at: feedItem?.published_at as string,
+      route_is_active: route?.is_active as boolean,
     };
   });
 
@@ -186,8 +180,8 @@ async function localSourceVerification(input: {
   };
 
   return {
-    verifiedLessons: result.verified,
-    rejectedLessons: result.rejected,
+    verifiedSources: result.verified,
+    rejectedSources: result.rejected,
     allVerified: result.allVerified,
     agentTrace: { source_verifier: trace },
     ...(llmResult.ok ? { llmOutputs: { source_verifier: (llmResult as { data: unknown }).data } } : { llmErrors: { source_verifier: llmResult } }),
@@ -200,22 +194,22 @@ async function paidSourceVerification(input: {
   tier: RouteTier;
   config: ReturnType<typeof getRouteConfig>;
   prompts: ReturnType<typeof getPromptsForRoute>;
-  lessonMeta: Record<string, unknown>[];
-  lessonMap: Map<string, Record<string, unknown>>;
-  selectedLessons: Record<string, unknown>[];
+  sourceMeta: Record<string, unknown>[];
+  feedItemMap: Map<string, Record<string, unknown>>;
+  selectedSources: Record<string, unknown>[];
   budgetUsdc: number;
   estimatedTotalUsdc: number;
   userWallet: string;
 }): Promise<Partial<PayLabsTutorStateType>> {
-  const { tier, config, lessonMeta, lessonMap, selectedLessons, budgetUsdc, estimatedTotalUsdc, userWallet } = input;
+  const { tier, config, sourceMeta, feedItemMap, selectedSources, budgetUsdc, estimatedTotalUsdc, userWallet } = input;
 
   // 1. Get provider (wallet resolved from env — zero address rejected)
   const provider = await getActiveAgentProvider("source_verification", tier);
   if (!provider) {
     return {
       error: "Agent-to-agent payments enabled but no active source_verification provider found (check PAYLABS_SOURCE_VERIFIER_WALLET env)",
-      verifiedLessons: [],
-      rejectedLessons: [],
+      verifiedSources: [],
+      rejectedSources: [],
       allVerified: false,
     };
   }
@@ -229,52 +223,17 @@ async function paidSourceVerification(input: {
   if (budgetError) {
     return {
       error: `Agent service budget check failed: ${budgetError}`,
-      verifiedLessons: [],
-      rejectedLessons: [],
+      verifiedSources: [],
+      rejectedSources: [],
       allVerified: false,
     };
   }
 
-  // 3. LLM decision (advisory only — deterministic validation follows)
-  const decisionResult = await getSpecialistPaymentDecision({
-    routeTier: tier,
-    budgetUsdc,
-    estimatedLessonCostUsdc: estimatedTotalUsdc,
-    lessonCount: selectedLessons.length,
-    providerPriceUsdc: provider.price_usdc,
-    providerAgentId: provider.agent_id,
-  });
+  // 3. Determine if payment is required (premium always requires)
+  const shouldPay = tier === "premium";
 
-  // 4. Deterministic validation (final word)
-  const validation = validateSpecialistDecision({
-    decision: decisionResult.ok ? decisionResult.decision : {
-      should_pay: tier === "premium", // premium always requires
-      service_type: "source_verification",
-      provider_agent_id: provider.agent_id,
-      max_price_usdc: provider.price_usdc,
-      reason: "LLM decision unavailable",
-      expected_value: "source verification",
-    },
-    providerAgentId: provider.agent_id,
-    providerPriceUsdc: provider.price_usdc,
-    providerActive: provider.is_active,
-    budgetUsdc,
-    alreadySpentUsdc: estimatedTotalUsdc,
-    agentToAgentEnabled: true,
-    routeTier: tier,
-  });
-
-  if (!validation.valid) {
-    return {
-      error: `Agent-to-agent payment validation failed: ${validation.reason}`,
-      verifiedLessons: [],
-      rejectedLessons: [],
-      allVerified: false,
-    };
-  }
-
-  // 5. Execute payment via Runner
-  const inputHash = hashAgentServiceInput(lessonMeta);
+  // 4. Execute payment via Runner
+  const inputHash = hashAgentServiceInput(sourceMeta);
   const resourceUrl = provider.endpoint_url;
 
   const paymentResult = await executeAgentServicePurchase({
@@ -290,8 +249,8 @@ async function paidSourceVerification(input: {
   if (!paymentResult.ok) {
     return {
       error: `Agent-to-agent payment failed: ${paymentResult.error}`,
-      verifiedLessons: [],
-      rejectedLessons: [],
+      verifiedSources: [],
+      rejectedSources: [],
       allVerified: false,
     };
   }
@@ -300,8 +259,8 @@ async function paidSourceVerification(input: {
   if (!paymentResult.paymentId) {
     return {
       error: "Agent-to-agent payment returned no paymentId — cannot use service output",
-      verifiedLessons: [],
-      rejectedLessons: [],
+      verifiedSources: [],
+      rejectedSources: [],
       allVerified: false,
     };
   }
@@ -309,13 +268,13 @@ async function paidSourceVerification(input: {
   if (!paymentResult.paymentRef && !paymentResult.settlementRef) {
     return {
       error: "Agent-to-agent payment returned no paymentRef or settlementRef — proof incomplete",
-      verifiedLessons: [],
-      rejectedLessons: [],
+      verifiedSources: [],
+      rejectedSources: [],
       allVerified: false,
     };
   }
 
-  // 6. Call specialist endpoint with payment proof headers
+  // 5. Call specialist endpoint with payment proof headers
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   const endpointUrl = `${baseUrl}${resourceUrl}`;
 
@@ -331,7 +290,7 @@ async function paidSourceVerification(input: {
     },
     body: JSON.stringify({
       route_tier: tier,
-      lessons: lessonMeta,
+      sources: sourceMeta,
       input_hash: inputHash,
     }),
   });
@@ -340,16 +299,16 @@ async function paidSourceVerification(input: {
     const errBody = await serviceRes.text().catch(() => "unknown");
     return {
       error: `Specialist service returned ${serviceRes.status}: ${errBody}`,
-      verifiedLessons: [],
-      rejectedLessons: [],
+      verifiedSources: [],
+      rejectedSources: [],
       allVerified: false,
     };
   }
 
   const serviceData = await serviceRes.json() as {
     ok: boolean;
-    verified_lessons: { lesson_id: string; order_index: number; source_ok: boolean; creator_ok: boolean; verification_reason: string }[];
-    rejected_lessons: { lesson_id: string; reason: string }[];
+    verified_sources: { feed_item_id: string; order_index: number; source_ok: boolean; route_ok: boolean; verification_reason: string }[];
+    rejected_sources: { feed_item_id: string; reason: string }[];
     output_hash: string;
     error?: string;
   };
@@ -357,22 +316,21 @@ async function paidSourceVerification(input: {
   if (!serviceData.ok) {
     return {
       error: `Specialist service failed: ${serviceData.error || "unknown"}`,
-      verifiedLessons: [],
-      rejectedLessons: [],
+      verifiedSources: [],
+      rejectedSources: [],
       allVerified: false,
     };
   }
 
   const outputHash = serviceData.output_hash;
 
-  // 7. Record service call in DB — BLOCK proposal if insert fails
+  // 6. Record service call in DB — BLOCK proposal if insert fails
   const { data: serviceCall, error: serviceCallErr } = await supabaseAdmin()
-    .from("paylabs_agent_service_calls")
+    .from("paylabs_agent_payments")
     .insert({
       buyer_agent_id: "paylabs-langgraph-v1",
       provider_agent_id: provider.agent_id,
       user_wallet: userWallet.toLowerCase(),
-      route_tier: tier,
       service_type: "source_verification",
       resource_url: resourceUrl,
       input_hash: inputHash,
@@ -388,14 +346,14 @@ async function paidSourceVerification(input: {
 
   if (serviceCallErr || !serviceCall?.id) {
     return {
-      error: `Failed to persist agent service call: ${serviceCallErr?.message || "no id returned"}. Audit trail required.`,
-      verifiedLessons: [],
-      rejectedLessons: [],
+      error: `Failed to persist agent payment: ${serviceCallErr?.message || "no id returned"}. Audit trail required.`,
+      verifiedSources: [],
+      rejectedSources: [],
       allVerified: false,
     };
   }
 
-  // 8. Build service call record for state — includes DB id
+  // 7. Build service call record for state — includes DB id
   const serviceCallRecord = {
     id: serviceCall.id,
     buyer_agent_id: "paylabs-langgraph-v1",
@@ -411,8 +369,8 @@ async function paidSourceVerification(input: {
   };
 
   const trace = {
-    deterministic_verified: serviceData.verified_lessons.length,
-    deterministic_rejected: serviceData.rejected_lessons.length,
+    deterministic_verified: serviceData.verified_sources.length,
+    deterministic_rejected: serviceData.rejected_sources.length,
     agent_to_agent: true,
     provider_agent_id: provider.agent_id,
     payment_id: paymentResult.paymentId,
@@ -421,9 +379,9 @@ async function paidSourceVerification(input: {
   };
 
   return {
-    verifiedLessons: serviceData.verified_lessons,
-    rejectedLessons: serviceData.rejected_lessons,
-    allVerified: serviceData.rejected_lessons.length === 0,
+    verifiedSources: serviceData.verified_sources,
+    rejectedSources: serviceData.rejected_sources,
+    allVerified: serviceData.rejected_sources.length === 0,
     agentTrace: { source_verifier: trace },
     agentServiceCalls: [serviceCallRecord],
   };
