@@ -29,7 +29,7 @@ import { getPromptsForRoute } from "./route-prompts";
 async function persistProposedSourcePathNode(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { userWallet, goal, budgetUsdc, verifiedSources, estimatedTotalUsdc, allVerified, routeTier, routeConfig, agentTrace, llmOutputs, llmErrors, agentServiceCalls } = state;
+  const { userWallet, goal, budgetUsdc, verifiedSources, allVerified, routeTier, routeConfig, agentTrace, llmOutputs, llmErrors, agentServiceCalls, selectedSources } = state;
   const tier: RouteTier = routeTier || "normal";
   const config = routeConfig || getRouteConfig(tier);
 
@@ -55,8 +55,7 @@ async function persistProposedSourcePathNode(
         user_wallet: userWallet.toLowerCase(),
         goal: goal || "",
         budget_usdc: budgetUsdc || 0,
-        estimated_total_usdc: estimatedTotalUsdc || 0,
-        agent_reasoning_summary: `LangGraph verified ${verifiedSources.length} sources for goal: ${(goal || "").slice(0, 100)}`,
+        estimated_total_usdc: 0,
         status: "proposed",
         created_by_agent_id: "paylabs-langgraph-v1",
         route_tier: tier,
@@ -74,15 +73,60 @@ async function persistProposedSourcePathNode(
     }
 
     // Insert source path items
-    const pathItems = (verifiedSources as Record<string, unknown>[]).map((v, i) => ({
-      source_path_id: pathRow.id,
-      feed_item_id: v.feed_item_id as string,
-      order_index: i,
-      reason: v.verification_reason as string,
-      expected_value: `Verified RSSHub source`,
-      status: "proposed",
-    }));
+    // Build lookup from selectedSources for LLM reason/expected_value
+    const selectedMap = new Map<string, Record<string, unknown>>();
+    for (const s of (selectedSources as Record<string, unknown>[] || [])) {
+      selectedMap.set(s.feed_item_id as string, s);
+    }
 
+    // Load feed items from DB to get real price/wallet/URL fields
+    const { listFeedItems: loadFeedItems } = await import("./tools");
+    const allFeedItems = await loadFeedItems() as Record<string, unknown>[];
+    const feedItemMap = new Map<string, Record<string, unknown>>();
+    for (const fi of allFeedItems) {
+      feedItemMap.set(fi.id as string, fi);
+    }
+
+    let computedTotal = 0;
+    const pathItems: Record<string, unknown>[] = [];
+    const verifiedList = verifiedSources as Record<string, unknown>[];
+    for (let i = 0; i < verifiedList.length; i++) {
+      const v = verifiedList[i];
+      const feedItemId = v.feed_item_id as string;
+      const feedItem = feedItemMap.get(feedItemId);
+      const selected = selectedMap.get(feedItemId);
+      const citationPrice = Number((feedItem?.price_per_citation_usdc as number) || 0);
+      const unlockPrice = Number((feedItem?.price_per_unlock_usdc as number) || 0);
+      computedTotal += citationPrice;
+
+      pathItems.push({
+        source_path_id: pathRow.id,
+        feed_item_id: feedItemId,
+        order_index: i,
+        reason: (selected?.reason as string) || (v.verification_reason as string) || "",
+        expected_value: (selected?.expected_value as string) || "Verified RSSHub source",
+        source_url: String(feedItem?.canonical_url || ""),
+        source_title: String(feedItem?.title || ""),
+        publisher: String(feedItem?.publisher || ""),
+        author_name: String(feedItem?.author_name || ""),
+        normalized_sha256: String(feedItem?.normalized_sha256 || ""),
+        content_sha256: String(feedItem?.content_sha256 || ""),
+        source_hash: String(feedItem?.content_sha256 || ""),
+        creator_wallet: String(feedItem?.creator_wallet || "").toLowerCase(),
+        citation_price_usdc: citationPrice,
+        unlock_price_usdc: unlockPrice,
+        status: "proposed",
+      });
+    }
+
+    // Update estimated_total_usdc with computed total
+    await supabaseAdmin()
+      .from("paylabs_source_paths")
+      .update({
+        estimated_total_usdc: computedTotal,
+        agent_reasoning_summary: `LangGraph verified ${verifiedList.length} sources for goal: ${(goal || "").slice(0, 100)}. Total: ${computedTotal} USDC`,
+      })
+      .eq("id", pathRow.id);
     const { error: itemsErr } = await supabaseAdmin()
       .from("paylabs_source_path_items")
       .insert(pathItems);

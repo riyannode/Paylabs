@@ -198,7 +198,7 @@ export async function paymentExecutorAgent(
     .from("paylabs_source_payments")
     .insert({
       user_wallet: userWallet.toLowerCase(),
-      path_id: sourcePathId,
+      source_path_id: sourcePathId,
       source_path_item_id: sourcePathItemId,
       feed_item_id: feedItem?.id || null,
       payment_kind: "citation",

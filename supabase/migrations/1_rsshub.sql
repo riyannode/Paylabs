@@ -15,6 +15,12 @@ create table if not exists paylabs_rsshub_routes (
   default_price_per_unlock_usdc numeric not null default 0.00001,
   is_active boolean not null default true,
   last_synced_at timestamptz,
+  verification_status text not null default 'unverified' check (verification_status in ('verified', 'pending_claim', 'unverified', 'rejected', 'disputed')),
+  verification_method text,
+  verified_at timestamptz,
+  verified_by text,
+  ownership_proof_url text,
+  ownership_proof_hash text,
   created_at timestamptz not null default now(),
   unique(rsshub_base_url, route_path)
 );
@@ -48,6 +54,7 @@ create table if not exists paylabs_source_paths (
   route_tier text not null check (route_tier in ('normal', 'advanced', 'premium')),
   route_config jsonb,
   status text not null default 'proposed' check (status in ('proposed', 'approved', 'active', 'completed', 'cancelled')),
+  agent_reasoning_summary text,
   agent_trace jsonb,
   created_by_agent_id text not null default 'paylabs-langgraph-v1',
   created_at timestamptz not null default now()
@@ -55,7 +62,7 @@ create table if not exists paylabs_source_paths (
 
 create table if not exists paylabs_source_path_items (
   id uuid primary key default gen_random_uuid(),
-  path_id uuid not null references paylabs_source_paths(id) on delete cascade,
+  source_path_id uuid not null references paylabs_source_paths(id) on delete cascade,
   feed_item_id uuid references paylabs_feed_items(id) on delete set null,
   order_index int not null,
   reason text,
@@ -92,7 +99,7 @@ create table if not exists paylabs_route_payments (
 create table if not exists paylabs_source_payments (
   id uuid primary key default gen_random_uuid(),
   user_wallet text not null,
-  path_id uuid references paylabs_source_paths(id) on delete set null,
+  source_path_id uuid references paylabs_source_paths(id) on delete set null,
   source_path_item_id uuid references paylabs_source_path_items(id) on delete set null,
   feed_item_id uuid references paylabs_feed_items(id) on delete set null,
   payment_kind text not null check (payment_kind in ('citation', 'unlock')),
@@ -152,7 +159,7 @@ create index if not exists idx_feed_items_published_at on paylabs_feed_items(pub
 create index if not exists idx_feed_items_sha on paylabs_feed_items(normalized_sha256);
 create index if not exists idx_source_paths_user on paylabs_source_paths(user_wallet);
 create index if not exists idx_source_paths_status on paylabs_source_paths(status);
-create index if not exists idx_source_path_items_path on paylabs_source_path_items(path_id);
+create index if not exists idx_source_path_items_source_path on paylabs_source_path_items(source_path_id);
 create index if not exists idx_source_path_items_feed_item on paylabs_source_path_items(feed_item_id);
 create index if not exists idx_source_path_items_status on paylabs_source_path_items(status);
 create index if not exists idx_route_payments_user on paylabs_route_payments(user_wallet);
