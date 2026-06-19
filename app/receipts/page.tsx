@@ -1,83 +1,127 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { shortAddress, formatUsdc } from "@/lib/utils";
+import { short, usdc } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-async function getReceipts() {
-  const { data } = await supabaseAdmin()
-    .from("paylabs_payout_receipts")
-    .select("*, lesson:paylabs_lessons(title, source:paylabs_sources(source_title))")
-    .order("created_at", { ascending: false })
-    .limit(50);
-  return data ?? [];
+async function safeQuery<T>(
+  fn: () => PromiseLike<{ data: T[] | null; error: unknown }>
+): Promise<T[]> {
+  try {
+    const { data, error } = await fn();
+    if (error) return [];
+    return data ?? [];
+  } catch {
+    return [];
+  }
 }
 
-async function getUnlocks() {
-  const { data } = await supabaseAdmin()
-    .from("paylabs_unlocks")
-    .select("*, lesson:paylabs_lessons(title)")
-    .order("unlocked_at", { ascending: false })
-    .limit(50);
-  return data ?? [];
+function timeAgo(dateStr: string): string {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH}h ago`;
+  const diffD = Math.floor(diffH / 24);
+  return `${diffD}d ago`;
 }
 
 export default async function ReceiptsPage() {
-  const [receipts, unlocks] = await Promise.all([getReceipts(), getUnlocks()]);
+  const [payouts, unlocks] = await Promise.all([
+    safeQuery(() =>
+      supabaseAdmin()
+        .from("paylabs_payout_receipts")
+        .select("*, lesson:paylabs_lessons(title)")
+        .order("created_at", { ascending: false })
+        .limit(50)
+    ),
+    safeQuery(() =>
+      supabaseAdmin()
+        .from("paylabs_unlocks")
+        .select("*, lesson:paylabs_lessons(title)")
+        .order("unlocked_at", { ascending: false })
+        .limit(50)
+    ),
+  ]);
 
   return (
-    <div>
-      <h1 style={{ fontSize: "2rem", fontWeight: 700, marginBottom: "0.5rem" }}>Public Receipts</h1>
-      <p style={{ color: "var(--muted)", marginBottom: "2rem" }}>
-        All payment records from live x402 transactions on Arc testnet. No fake data.
-      </p>
+    <div style={{ display: "grid", gap: 24 }}>
+      <div>
+        <h1 className="page-title">Payments</h1>
+        <p className="muted" style={{ marginTop: 8 }}>
+          Live payment records from x402 transactions on Arc testnet.
+        </p>
+      </div>
 
-      {receipts.length === 0 ? (
-        <div className="card" style={{ textAlign: "center", color: "var(--muted)" }}>
-          No receipts yet. Payments will appear here after lesson unlocks.
-        </div>
-      ) : (
-        <div style={{ display: "grid", gap: "0.75rem" }}>
-          {receipts.map((r: any) => (
-            <div key={r.id} className="card" style={{ padding: "1rem" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <div style={{ fontWeight: 600 }}>{r.lesson?.title || "Lesson"}</div>
-                  <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.25rem" }}>
-                    Ref: {r.payment_ref}
-                  </div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontWeight: 700, color: "var(--accent-green)" }}>{formatUsdc(r.gross_amount_usdc)}</div>
-                  <div style={{ fontSize: "0.7rem", color: "var(--muted)" }}>
-                    Creator: {formatUsdc(r.creator_amount_usdc)} (85%)
-                  </div>
-                </div>
-              </div>
-              <div style={{ fontSize: "0.7rem", color: "var(--muted)", marginTop: "0.5rem" }}>
-                Creator: {shortAddress(r.creator_wallet)} | Platform: {shortAddress(r.platform_wallet)} | {new Date(r.created_at).toLocaleString()}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {unlocks.length > 0 && (
-        <>
-          <h2 style={{ fontSize: "1.25rem", fontWeight: 600, marginTop: "2rem", marginBottom: "1rem" }}>
-            Recent Unlocks
-          </h2>
-          <div style={{ display: "grid", gap: "0.5rem" }}>
-            {unlocks.map((u: any) => (
-              <div key={u.id} style={{ display: "flex", justifyContent: "space-between", padding: "0.5rem 1rem", background: "rgba(255,255,255,0.02)", borderRadius: 8, fontSize: "0.875rem" }}>
-                <span>{u.lesson?.title || u.lesson_id}</span>
-                <span style={{ color: "var(--muted)" }}>
-                  {shortAddress(u.user_wallet)} | {formatUsdc(u.amount_usdc)} | {new Date(u.unlocked_at).toLocaleString()}
-                </span>
-              </div>
-            ))}
+      {/* Creator Payouts */}
+      <section className="card">
+        <h2 className="section-title">Creator Payouts</h2>
+        {payouts.length === 0 ? (
+          <div className="muted" style={{ textAlign: "center", padding: 24 }}>No payouts yet.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Lesson</th>
+                  <th>Creator</th>
+                  <th>Gross</th>
+                  <th>Creator Share</th>
+                  <th>Ref</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payouts.map((p: any) => (
+                  <tr key={p.id}>
+                    <td className="muted">{timeAgo(p.created_at)}</td>
+                    <td>{p.lesson?.title || "—"}</td>
+                    <td className="data-mono">{short(p.creator_wallet)}</td>
+                    <td className="data-mono">{usdc(p.gross_amount_usdc)}</td>
+                    <td className="data-mono">{usdc(p.creator_amount_usdc)}</td>
+                    <td className="data-mono">{short(p.payment_ref)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </>
-      )}
+        )}
+      </section>
+
+      {/* Lesson Unlocks */}
+      <section className="card">
+        <h2 className="section-title">Lesson Unlocks</h2>
+        {unlocks.length === 0 ? (
+          <div className="muted" style={{ textAlign: "center", padding: 24 }}>No unlocks yet.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>User</th>
+                  <th>Lesson</th>
+                  <th>Amount</th>
+                  <th>Payment</th>
+                </tr>
+              </thead>
+              <tbody>
+                {unlocks.map((u: any) => (
+                  <tr key={u.id}>
+                    <td className="muted">{timeAgo(u.unlocked_at)}</td>
+                    <td className="data-mono">{short(u.user_wallet)}</td>
+                    <td>{u.lesson?.title || short(u.lesson_id)}</td>
+                    <td className="data-mono">{usdc(u.amount_usdc)}</td>
+                    <td className="data-mono">{short(u.payment_id)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

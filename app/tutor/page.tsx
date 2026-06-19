@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import { short } from "@/lib/utils";
 
 interface ProposedLesson {
   id: string;
@@ -17,7 +18,6 @@ interface RouteOption {
   label: string;
   maxLessons: number;
   description: string;
-  detail: string;
 }
 
 interface AgentServiceCall {
@@ -29,7 +29,6 @@ interface AgentServiceCall {
   payment_id?: string;
   payment_ref?: string;
   settlement_ref?: string;
-  tx_hash?: string;
   output_hash?: string;
   status?: string;
 }
@@ -46,27 +45,9 @@ interface RouteTollProof {
 }
 
 const ROUTE_OPTIONS: RouteOption[] = [
-  {
-    tier: "normal",
-    label: "Normal Route",
-    maxLessons: 2,
-    description: "Quick intro",
-    detail: "Up to 2 lessons. Cheapest useful path.",
-  },
-  {
-    tier: "advanced",
-    label: "Advanced Route",
-    maxLessons: 5,
-    description: "Builder path",
-    detail: "Up to 5 lessons. Technical sequencing.",
-  },
-  {
-    tier: "premium",
-    label: "Premium Route",
-    maxLessons: 8,
-    description: "Deep mastery",
-    detail: "Up to 8 lessons. Strictest source verification.",
-  },
+  { tier: "normal", label: "Normal", maxLessons: 2, description: "Up to 2 lessons" },
+  { tier: "advanced", label: "Advanced", maxLessons: 5, description: "Up to 5 lessons" },
+  { tier: "premium", label: "Premium", maxLessons: 8, description: "Up to 8 lessons" },
 ];
 
 declare global {
@@ -82,7 +63,6 @@ export default function TutorPage() {
   const [goal, setGoal] = useState("");
   const [budget, setBudget] = useState("0.01");
   const [selectedRoute, setSelectedRoute] = useState("normal");
-  // Tutor Intake Agent chat state
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [chatResult, setChatResult] = useState<{
@@ -96,13 +76,11 @@ export default function TutorPage() {
     needs_clarification: boolean;
     clarification_question: string | null;
     reasoning: string;
-    // Route toll quote (informational only — no payment)
     route_toll_enabled?: boolean;
     route_toll_required?: boolean;
     route_toll_amount_usdc?: number;
   } | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
-  // Route toll payment state
   const [routeTollProof, setRouteTollProof] = useState<RouteTollProof | null>(null);
   const [routeTollPaying, setRouteTollPaying] = useState(false);
   const [routeTollError, setRouteTollError] = useState<string | null>(null);
@@ -110,7 +88,6 @@ export default function TutorPage() {
   const [pathId, setPathId] = useState<string | null>(null);
   const [pathStatus, setPathStatus] = useState<string>("none");
   const [routeTier, setRouteTier] = useState<string>("normal");
-  const [routeDescription, setRouteDescription] = useState<string>("");
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [approving, setApproving] = useState(false);
@@ -134,7 +111,7 @@ export default function TutorPage() {
 
   async function connectWallet() {
     if (!window.ethereum) {
-      setBuyStatus("Error: Install MetaMask or another EVM wallet");
+      setBuyStatus("Install MetaMask or another EVM wallet");
       return;
     }
     try {
@@ -144,18 +121,18 @@ export default function TutorPage() {
       if (accounts?.length > 0) setWallet(accounts[0]);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      setBuyStatus("Error connecting wallet: " + msg);
+      setBuyStatus("Error: " + msg);
     }
   }
 
-  // ─── Ask Tutor Agent (FREE — no payment) ──────────────────────
+  // ─── Ask Tutor Agent (FREE) ──────────────────────────────────
 
   async function askTutorAgent() {
     if (!chatInput.trim()) return;
     setChatLoading(true);
     setChatResult(null);
     setChatError(null);
-    setRouteTollProof(null); // Clear any previous toll proof
+    setRouteTollProof(null);
     setRouteTollError(null);
     try {
       const res = await fetch("/api/paylabs/tutor/chat", {
@@ -181,7 +158,7 @@ export default function TutorPage() {
     setChatLoading(false);
   }
 
-  // ─── Pay Route Toll (explicit user action) ────────────────────
+  // ─── Pay Route Toll ──────────────────────────────────────────
 
   async function payRouteToll() {
     if (!chatResult || !wallet) return;
@@ -207,12 +184,9 @@ export default function TutorPage() {
       const data = await res.json();
       if (res.ok && data.route_payment_status === "completed") {
         setRouteTollProof(data);
-        // Auto-fill form after successful toll payment
         if (chatResult.normalized_goal) setGoal(chatResult.normalized_goal);
-        if (chatResult.recommended_route_tier)
-          setSelectedRoute(chatResult.recommended_route_tier);
-        if (chatResult.suggested_budget_usdc)
-          setBudget(chatResult.suggested_budget_usdc.toString());
+        if (chatResult.recommended_route_tier) setSelectedRoute(chatResult.recommended_route_tier);
+        if (chatResult.suggested_budget_usdc) setBudget(chatResult.suggested_budget_usdc.toString());
       } else {
         setRouteTollError(data.error || "Route toll payment failed");
       }
@@ -223,25 +197,18 @@ export default function TutorPage() {
     setRouteTollPaying(false);
   }
 
-  // ─── Use Recommendation (when no toll needed) ─────────────────
-
   function useRecommendation() {
     if (!chatResult) return;
     if (chatResult.needs_clarification) return;
     if (chatResult.normalized_goal) setGoal(chatResult.normalized_goal);
-    if (chatResult.recommended_route_tier)
-      setSelectedRoute(chatResult.recommended_route_tier);
-    if (chatResult.suggested_budget_usdc)
-      setBudget(chatResult.suggested_budget_usdc.toString());
+    if (chatResult.recommended_route_tier) setSelectedRoute(chatResult.recommended_route_tier);
+    if (chatResult.suggested_budget_usdc) setBudget(chatResult.suggested_budget_usdc.toString());
   }
 
-  // ─── Propose Path (sends route toll proof as headers) ─────────
+  // ─── Propose Path ────────────────────────────────────────────
 
   async function proposePath() {
-    if (!wallet) {
-      setBuyStatus("Connect wallet first");
-      return;
-    }
+    if (!wallet) { setBuyStatus("Connect wallet first"); return; }
     setLoading(true);
     setPath(null);
     setPathId(null);
@@ -250,16 +217,11 @@ export default function TutorPage() {
     setUnlockedIds(new Set());
     setAgentServiceCalls([]);
 
-    // Build headers — include route toll proof if available
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (routeTollProof) {
       headers["x-route-payment-id"] = routeTollProof.route_payment_id;
-      if (routeTollProof.route_payment_ref)
-        headers["x-route-payment-ref"] = routeTollProof.route_payment_ref;
-      if (routeTollProof.route_settlement_ref)
-        headers["x-route-settlement-ref"] = routeTollProof.route_settlement_ref;
+      if (routeTollProof.route_payment_ref) headers["x-route-payment-ref"] = routeTollProof.route_payment_ref;
+      if (routeTollProof.route_settlement_ref) headers["x-route-settlement-ref"] = routeTollProof.route_settlement_ref;
       headers["x-route-input-hash"] = routeTollProof.route_input_hash;
     }
 
@@ -267,12 +229,7 @@ export default function TutorPage() {
       const res = await fetch("/api/paylabs/learning-paths/propose", {
         method: "POST",
         headers,
-        body: JSON.stringify({
-          goal,
-          budget_usdc: parseFloat(budget),
-          user_wallet: wallet,
-          route_tier: selectedRoute,
-        }),
+        body: JSON.stringify({ goal, budget_usdc: parseFloat(budget), user_wallet: wallet, route_tier: selectedRoute }),
       });
       const data = await res.json();
       if (data.path) {
@@ -280,7 +237,6 @@ export default function TutorPage() {
         setPathId(data.path_id || null);
         setPathStatus(data.path_status || "none");
         setRouteTier(data.route_tier || selectedRoute);
-        setRouteDescription(data.route_config?.description || "");
         setTotal(data.total_usdc);
         setAgentServiceCalls(data.agent_service_calls || []);
       } else {
@@ -306,7 +262,7 @@ export default function TutorPage() {
       const data = await res.json();
       if (res.ok) {
         setPathStatus(data.path_status || "approved");
-        setBuyStatus("Path approved! You can now buy lessons.");
+        setBuyStatus("Path approved. You can now buy lessons.");
       } else {
         setBuyStatus("Error: " + (data.error || "Approval failed"));
       }
@@ -318,35 +274,20 @@ export default function TutorPage() {
   }
 
   async function buyLesson(lessonId: string) {
-    if (!wallet) {
-      setBuyStatus("Connect wallet first");
-      return;
-    }
-    if (!pathId) {
-      setBuyStatus("Error: No path_id. Propose and approve a path first.");
-      return;
-    }
-    if (pathStatus !== "approved") {
-      setBuyStatus("Error: Path must be approved before buying.");
-      return;
-    }
+    if (!wallet) { setBuyStatus("Connect wallet first"); return; }
+    if (!pathId) { setBuyStatus("Error: No path_id. Propose and approve first."); return; }
+    if (pathStatus !== "approved") { setBuyStatus("Error: Path must be approved before buying."); return; }
     setBuyingLessonId(lessonId);
     setBuyStatus("Buying via ArcLayer Runner...");
     try {
       const res = await fetch("/api/paylabs/agent/buy-lesson", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_wallet: wallet,
-          lesson_id: lessonId,
-          path_id: pathId,
-        }),
+        body: JSON.stringify({ user_wallet: wallet, lesson_id: lessonId, path_id: pathId }),
       });
       const data = await res.json();
       if (res.ok) {
-        setBuyStatus(
-          `Unlocked! Payment: ${data.payment_id || "pending settlement"}`
-        );
+        setBuyStatus(`Unlocked! Payment: ${data.payment_id || "pending settlement"}`);
         setUnlockedIds((prev) => new Set([...prev, lessonId]));
       } else {
         setBuyStatus("Error: " + (data.reason || data.error));
@@ -358,538 +299,244 @@ export default function TutorPage() {
     setBuyingLessonId(null);
   }
 
-  // ─── Derived state ────────────────────────────────────────────
+  // ─── Derived state ──────────────────────────────────────────
 
   const isApproved = pathStatus === "approved";
   const isProposed = pathStatus === "proposed";
-
-  // Whether toll is needed but not yet paid
-  const tollNeeded =
-    chatResult?.route_toll_enabled &&
-    chatResult?.route_toll_required &&
-    !chatResult?.needs_clarification;
+  const tollNeeded = chatResult?.route_toll_enabled && chatResult?.route_toll_required && !chatResult?.needs_clarification;
   const tollPaid = !!routeTollProof;
-
-  // Whether "Use Recommendation" should be available (no toll, or toll paid)
-  const canUseRecommendation =
-    chatResult &&
-    !chatResult.needs_clarification &&
-    (!tollNeeded || tollPaid);
+  const canUseRecommendation = chatResult && !chatResult.needs_clarification && (!tollNeeded || tollPaid);
 
   return (
-    <div>
-      <h1 style={{ fontSize: "2rem", fontWeight: 700, marginBottom: "0.5rem" }}>
-        AI Tutor
-      </h1>
-      <p style={{ color: "var(--muted)", marginBottom: "2rem" }}>
-        5-agent LangGraph workflow: Intent → Curriculum Planner → Source Verifier
-        → Policy Guard → Payment Executor. All payments through ArcLayer Runner.
-      </p>
+    <div style={{ display: "grid", gap: 20 }}>
+      <div>
+        <h1 className="page-title">AI Tutor</h1>
+        <p className="muted" style={{ marginTop: 8 }}>
+          Chat, pay route toll, propose path, unlock lessons.
+        </p>
+      </div>
 
-      {/* Wallet connection */}
-      <div className="card" style={{ marginBottom: "1.5rem" }}>
+      {/* Wallet */}
+      <div className="card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         {wallet ? (
-          <div style={{ fontSize: "0.875rem" }}>
-            <span style={{ color: "var(--accent-green)" }}>Connected:</span>{" "}
-            {wallet.slice(0, 6)}...{wallet.slice(-4)}
-          </div>
+          <span style={{ fontSize: 14 }}>
+            <span style={{ color: "var(--success)", fontWeight: 600 }}>Connected</span>{" "}
+            <span className="data-mono">{wallet.slice(0, 6)}…{wallet.slice(-4)}</span>
+          </span>
         ) : (
-          <button onClick={connectWallet} className="btn btn-primary">
-            Connect Wallet
-          </button>
+          <button onClick={connectWallet} className="btn btn-primary">Connect Wallet</button>
         )}
       </div>
 
-      {/* Tutor Intake Agent chat panel */}
-      <div className="card" style={{ marginBottom: "1.5rem" }}>
-        <label
-          style={{
-            display: "block",
-            fontSize: "0.875rem",
-            color: "var(--muted)",
-            marginBottom: "0.75rem",
-          }}
-        >
-          💬 Describe what you want to learn — the Tutor Agent will recommend a
-          route
-        </label>
-        <div style={{ display: "flex", gap: "0.75rem", marginBottom: "0.75rem" }}>
+      {/* Step 1: Ask */}
+      <section className="card">
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <span style={{
+            width: 24, height: 24, borderRadius: "50%", background: "var(--foreground)",
+            color: "white", display: "inline-flex", alignItems: "center", justifyContent: "center",
+            fontSize: 12, fontWeight: 700, flexShrink: 0,
+          }}>1</span>
+          <span style={{ fontWeight: 700, fontSize: 15 }}>Ask</span>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
           <input
             className="input"
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
             placeholder='e.g. "I want to build an x402 paying agent on Arc"'
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !chatLoading) askTutorAgent();
-            }}
+            onKeyDown={(e) => { if (e.key === "Enter" && !chatLoading) askTutorAgent(); }}
             style={{ flex: 1 }}
           />
-          <button
-            onClick={askTutorAgent}
-            disabled={chatLoading || !chatInput.trim()}
-            className="btn btn-primary"
-            style={{ whiteSpace: "nowrap" }}
-          >
-            {chatLoading ? "Thinking..." : "Ask Tutor Agent"}
+          <button onClick={askTutorAgent} disabled={chatLoading || !chatInput.trim()} className="btn btn-primary" style={{ whiteSpace: "nowrap" }}>
+            {chatLoading ? "Thinking…" : "Ask"}
           </button>
         </div>
 
-        {/* Chat error */}
         {chatError && (
-          <div
-            style={{
-              padding: "0.75rem",
-              background: "rgba(239,68,68,0.08)",
-              borderRadius: 8,
-              fontSize: "0.85rem",
-              color: "#ef4444",
-              marginBottom: "0.75rem",
-            }}
-          >
+          <div style={{ padding: "10px 12px", background: "var(--danger-soft)", borderRadius: 8, fontSize: 13, color: "var(--danger)", marginBottom: 12 }}>
             {chatError}
           </div>
         )}
 
-        {/* Route toll error */}
         {routeTollError && (
-          <div
-            style={{
-              padding: "0.75rem",
-              background: "rgba(239,68,68,0.08)",
-              borderRadius: 8,
-              fontSize: "0.85rem",
-              color: "#ef4444",
-              marginBottom: "0.75rem",
-            }}
-          >
+          <div style={{ padding: "10px 12px", background: "var(--danger-soft)", borderRadius: 8, fontSize: 13, color: "var(--danger)", marginBottom: 12 }}>
             {routeTollError}
           </div>
         )}
 
-        {/* Chat result */}
         {chatResult && (
-          <div
-            style={{
-              padding: "1rem",
-              background: chatResult.needs_clarification
-                ? "rgba(245,158,11,0.08)"
-                : "rgba(34,197,94,0.08)",
-              borderRadius: 8,
-              border: chatResult.needs_clarification
-                ? "1px solid rgba(245,158,11,0.3)"
-                : "1px solid rgba(34,197,94,0.3)",
-            }}
-          >
-            {/* Route recommendation badge */}
+          <div style={{ padding: 16, background: chatResult.needs_clarification ? "var(--warning-soft)" : "var(--success-soft)", borderRadius: 10, border: `1px solid ${chatResult.needs_clarification ? "var(--warning)" : "var(--success)"}20` }}>
             {!chatResult.needs_clarification && (
-              <div
-                style={{
-                  display: "inline-block",
-                  padding: "0.25rem 0.6rem",
-                  background: "rgba(34,197,94,0.15)",
-                  borderRadius: 6,
-                  fontSize: "0.8rem",
-                  fontWeight: 600,
-                  color: "var(--accent-green)",
-                  marginBottom: "0.5rem",
-                }}
-              >
-                Tutor Intake Agent recommends: {chatResult.route_label}
-              </div>
+              <span className="badge badge-success" style={{ marginBottom: 8 }}>
+                {chatResult.route_label}
+              </span>
             )}
 
-            {/* Assistant message */}
-            <div
-              style={{
-                fontSize: "0.9rem",
-                lineHeight: 1.5,
-                marginBottom: "0.5rem",
-              }}
-            >
+            <div style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 8 }}>
               {chatResult.assistant_message}
             </div>
 
-            {/* Reasoning */}
-            {chatResult.reasoning && (
-              <div
-                style={{
-                  fontSize: "0.8rem",
-                  color: "var(--muted)",
-                  marginBottom: "0.5rem",
-                  fontStyle: "italic",
-                }}
-              >
-                Reason: {chatResult.reasoning}
-              </div>
-            )}
-
-            {/* Clarification question */}
-            {chatResult.needs_clarification &&
-              chatResult.clarification_question && (
-                <div
-                  style={{
-                    fontSize: "0.85rem",
-                    color: "#f59e0b",
-                    marginBottom: "0.5rem",
-                    fontWeight: 500,
-                  }}
-                >
-                  ❓ {chatResult.clarification_question}
-                </div>
-              )}
-
-            {/* Suggested details (when not clarification) */}
             {!chatResult.needs_clarification && (
-              <div
-                style={{
-                  fontSize: "0.8rem",
-                  color: "var(--muted)",
-                  marginBottom: "0.75rem",
-                }}
-              >
-                Goal: {chatResult.normalized_goal} • Budget:{" "}
-                {chatResult.suggested_budget_usdc} USDC • Level:{" "}
-                {chatResult.learning_level} • Confidence:{" "}
-                {Math.round(chatResult.confidence * 100)}%
+              <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+                Goal: {chatResult.normalized_goal} · Budget: {chatResult.suggested_budget_usdc} USDC · Level: {chatResult.learning_level} · Confidence: {Math.round(chatResult.confidence * 100)}%
               </div>
             )}
 
-            {/* Route toll quote + pay button (when toll needed, not yet paid) */}
-            {!chatResult.needs_clarification &&
-              tollNeeded &&
-              !tollPaid && (
-                <div
-                  style={{
-                    padding: "0.75rem",
-                    background: "rgba(245,158,11,0.08)",
-                    borderRadius: 6,
-                    fontSize: "0.8rem",
-                    marginBottom: "0.75rem",
-                    border: "1px solid rgba(245,158,11,0.3)",
-                  }}
-                >
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    🔒 Route toll required:{" "}
-                    <strong>{chatResult.route_toll_amount_usdc} USDC</strong> for{" "}
-                    {chatResult.route_label}
-                  </div>
-                  <button
-                    onClick={payRouteToll}
-                    disabled={routeTollPaying || !wallet}
-                    className="btn btn-primary"
-                    style={{ fontSize: "0.85rem", marginRight: "0.75rem" }}
-                  >
-                    {routeTollPaying
-                      ? "Paying..."
-                      : `Pay route toll ${chatResult.route_toll_amount_usdc} USDC & use recommendation`}
-                  </button>
-                  {!wallet && (
-                    <span style={{ fontSize: "0.75rem", color: "#ef4444" }}>
-                      Connect wallet first
-                    </span>
-                  )}
-                </div>
-              )}
+            {chatResult.needs_clarification && chatResult.clarification_question && (
+              <div style={{ fontSize: 13, color: "var(--warning)", fontWeight: 500, marginBottom: 8 }}>
+                {chatResult.clarification_question}
+              </div>
+            )}
 
-            {/* Route toll proof display (when toll paid) */}
+            {/* Toll needed */}
+            {!chatResult.needs_clarification && tollNeeded && !tollPaid && (
+              <div style={{ padding: 12, background: "var(--warning-soft)", borderRadius: 8, fontSize: 13, marginBottom: 8, border: "1px solid var(--warning)30" }}>
+                <div style={{ marginBottom: 8 }}>
+                  Route toll: <strong className="data-mono">{chatResult.route_toll_amount_usdc} USDC</strong> for {chatResult.route_label}
+                </div>
+                <button onClick={payRouteToll} disabled={routeTollPaying || !wallet} className="btn btn-primary" style={{ fontSize: 13 }}>
+                  {routeTollPaying ? "Paying…" : `Pay ${chatResult.route_toll_amount_usdc} USDC`}
+                </button>
+                {!wallet && <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>Connect wallet first</span>}
+              </div>
+            )}
+
+            {/* Toll paid */}
             {!chatResult.needs_clarification && tollPaid && routeTollProof && (
-              <div
-                style={{
-                  padding: "0.6rem 0.75rem",
-                  background: "rgba(34,197,94,0.1)",
-                  borderRadius: 6,
-                  fontSize: "0.8rem",
-                  marginBottom: "0.75rem",
-                  border: "1px solid rgba(34,197,94,0.3)",
-                }}
-              >
-                ✅ Route Guard paid {routeTollProof.route_label} Agent{" "}
-                <strong>{routeTollProof.route_toll_amount_usdc} USDC</strong>{" "}
-                via x402 before running the path workflow.
+              <div style={{ padding: "8px 12px", background: "var(--success-soft)", borderRadius: 8, fontSize: 12, marginBottom: 8, border: "1px solid var(--success)20" }}>
+                <span style={{ color: "var(--success)", fontWeight: 600 }}>✓ Toll paid</span>{" "}
+                {routeTollProof.route_label} · <strong className="data-mono">{routeTollProof.route_toll_amount_usdc} USDC</strong>
                 {routeTollProof.route_payment_id && (
-                  <span style={{ color: "var(--muted)" }}>
-                    {" "}
-                    • Payment: {routeTollProof.route_payment_id.slice(0, 12)}...
-                  </span>
+                  <span className="muted"> · {short(routeTollProof.route_payment_id)}</span>
                 )}
               </div>
             )}
 
-            {/* Use recommendation button (no toll needed, or toll paid) */}
+            {/* Use recommendation */}
             {!chatResult.needs_clarification && canUseRecommendation && (
-              <div>
-                <button
-                  onClick={useRecommendation}
-                  className="btn btn-green"
-                  style={{ fontSize: "0.85rem", marginRight: "0.75rem" }}
-                >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button onClick={useRecommendation} className="btn btn-green" style={{ fontSize: 13 }}>
                   Use Recommendation
                 </button>
-                <span
-                  style={{ fontSize: "0.75rem", color: "var(--muted)" }}
-                >
-                  {tollPaid
-                    ? "Route toll paid. Click Propose Path to run the paid workflow."
-                    : "This does not spend funds yet. Use recommendation, then click Propose Path."}
+                <span className="muted" style={{ fontSize: 12 }}>
+                  {tollPaid ? "Toll paid. Click Propose Path next." : "No funds spent yet."}
                 </span>
-              </div>
-            )}
-
-            {/* When clarification needed, let user know they can reply */}
-            {chatResult.needs_clarification && (
-              <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
-                Reply in the chat above to clarify, then ask again.
               </div>
             )}
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Route selector cards */}
-      <div className="card" style={{ marginBottom: "1.5rem" }}>
-        <label
-          style={{
-            display: "block",
-            fontSize: "0.875rem",
-            color: "var(--muted)",
-            marginBottom: "0.75rem",
-          }}
-        >
-          Select Route
-        </label>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.75rem" }}>
+      {/* Step 2: Pay route toll (manual route selector) */}
+      <section className="card-soft">
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>Manual route override</div>
+        <div className="grid-3">
           {ROUTE_OPTIONS.map((route) => (
             <button
               key={route.tier}
               onClick={() => {
                 setSelectedRoute(route.tier);
-                // Clear route toll proof if user manually changes route after toll was paid
-                if (routeTollProof && route.tier !== routeTollProof.route_tier) {
-                  setRouteTollProof(null);
-                }
+                if (routeTollProof && route.tier !== routeTollProof.route_tier) setRouteTollProof(null);
               }}
               style={{
-                padding: "1rem",
-                borderRadius: 8,
-                border: selectedRoute === route.tier
-                  ? "2px solid var(--accent-green)"
-                  : "2px solid rgba(255,255,255,0.1)",
-                background: selectedRoute === route.tier
-                  ? "rgba(34,197,94,0.08)"
-                  : "rgba(255,255,255,0.03)",
+                padding: "12px 14px",
+                borderRadius: 10,
+                border: `2px solid ${selectedRoute === route.tier ? "var(--foreground)" : "var(--border)"}`,
+                background: selectedRoute === route.tier ? "var(--accent-soft)" : "white",
                 cursor: "pointer",
                 textAlign: "left",
                 transition: "all 0.15s",
               }}
             >
-              <div style={{ fontWeight: 600, fontSize: "0.9rem", marginBottom: "0.25rem" }}>
-                {route.label}
-              </div>
-              <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginBottom: "0.5rem" }}>
-                {route.description}
-              </div>
-              <div style={{ fontSize: "0.7rem", color: "var(--muted)" }}>
-                {route.detail}
-              </div>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>{route.label}</div>
+              <div className="muted" style={{ fontSize: 12 }}>{route.description}</div>
             </button>
           ))}
         </div>
-      </div>
+      </section>
 
-      {/* Goal + budget input */}
-      <div className="card" style={{ marginBottom: "1.5rem" }}>
-        <div style={{ display: "grid", gap: "1rem" }}>
+      {/* Step 3: Propose path */}
+      <section className="card">
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <span style={{
+            width: 24, height: 24, borderRadius: "50%", background: "var(--foreground)",
+            color: "white", display: "inline-flex", alignItems: "center", justifyContent: "center",
+            fontSize: 12, fontWeight: 700, flexShrink: 0,
+          }}>3</span>
+          <span style={{ fontWeight: 700, fontSize: 15 }}>Propose path</span>
+        </div>
+
+        <div style={{ display: "grid", gap: 12 }}>
           <div>
-            <label
-              style={{
-                display: "block",
-                fontSize: "0.875rem",
-                color: "var(--muted)",
-                marginBottom: "0.25rem",
-              }}
-            >
-              Learning Goal
-            </label>
-            <input
-              className="input"
-              value={goal}
-              onChange={(e) => {
-                setGoal(e.target.value);
-                // Clear route toll proof if user changes goal after toll was paid
-                if (routeTollProof) setRouteTollProof(null);
-              }}
-              placeholder="e.g. Learn x402 nanopayments and agentic commerce on Arc"
-            />
+            <label className="muted" style={{ display: "block", fontSize: 12, marginBottom: 4 }}>Learning Goal</label>
+            <input className="input" value={goal} onChange={(e) => { setGoal(e.target.value); if (routeTollProof) setRouteTollProof(null); }} placeholder="e.g. Learn x402 nanopayments on Arc" />
           </div>
           <div>
-            <label
-              style={{
-                display: "block",
-                fontSize: "0.875rem",
-                color: "var(--muted)",
-                marginBottom: "0.25rem",
-              }}
-            >
-              Budget (USDC)
-            </label>
-            <input
-              className="input"
-              type="number"
-              step="0.001"
-              value={budget}
-              onChange={(e) => setBudget(e.target.value)}
-              style={{ maxWidth: 200 }}
-            />
+            <label className="muted" style={{ display: "block", fontSize: 12, marginBottom: 4 }}>Budget (USDC)</label>
+            <input className="input" type="number" step="0.001" value={budget} onChange={(e) => setBudget(e.target.value)} style={{ maxWidth: 160 }} />
           </div>
-          <button
-            onClick={proposePath}
-            disabled={loading || !goal || !wallet}
-            className="btn btn-primary"
-          >
-            {loading ? "Running 5-agent workflow..." : `Propose ${ROUTE_OPTIONS.find(r => r.tier === selectedRoute)?.label || "Learning Path"}`}
+          <button onClick={proposePath} disabled={loading || !goal || !wallet} className="btn btn-primary">
+            {loading ? "Running workflow…" : `Propose ${ROUTE_OPTIONS.find(r => r.tier === selectedRoute)?.label || "Path"}`}
           </button>
         </div>
-      </div>
+      </section>
 
-      {/* Agent Economy Trace panel */}
+      {/* Agent Economy Trace */}
       {agentServiceCalls.length > 0 && (
-        <div
-          className="card"
-          style={{
-            marginBottom: "1.5rem",
-            border: "1px solid rgba(34,197,94,0.3)",
-          }}
-        >
-          <h2
-            style={{
-              fontSize: "1.1rem",
-              fontWeight: 600,
-              marginBottom: "0.75rem",
-              color: "var(--accent-green)",
-            }}
-          >
-            ⚡ Agent Economy Trace
-          </h2>
-          <p
-            style={{
-              fontSize: "0.8rem",
-              color: "var(--muted)",
-              marginBottom: "0.75rem",
-            }}
-          >
-            Agent-to-agent payments executed via x402/ArcLayer Runner (RFB 03)
-          </p>
-          <div style={{ display: "grid", gap: "0.5rem" }}>
+        <section className="card" style={{ border: "1px solid var(--success)30" }}>
+          <h2 className="section-title" style={{ color: "var(--success)" }}>Agent Economy Trace</h2>
+          <div style={{ display: "grid", gap: 8 }}>
             {agentServiceCalls.map((call, i) => (
-              <div
-                key={call.id || i}
-                style={{
-                  padding: "0.6rem 0.75rem",
-                  background: "rgba(255,255,255,0.03)",
-                  borderRadius: 6,
-                  fontSize: "0.8rem",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.25rem" }}>
-                  <span>
-                    <strong>{call.buyer_agent_id?.slice(0, 20) || "orchestrator"}</strong>
+              <div key={call.id || i} className="card-soft" style={{ padding: "10px 14px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ fontSize: 13 }}>
+                    <strong className="data-mono">{short(call.buyer_agent_id)}</strong>
                     {" → "}
-                    <strong>{call.provider_agent_id?.slice(0, 25) || "specialist"}</strong>
+                    <strong className="data-mono">{short(call.provider_agent_id)}</strong>
                   </span>
-                  <span style={{ color: "var(--accent-green)", fontWeight: 700 }}>
+                  <span style={{ color: "var(--success)", fontWeight: 700, fontSize: 13 }} className="data-mono">
                     {call.amount_usdc} USDC
                   </span>
                 </div>
-                <div style={{ color: "var(--muted)", fontSize: "0.75rem" }}>
-                  {call.service_type} •{" "}
-                  <span style={{ color: call.status === "completed" ? "var(--accent-green)" : "#f59e0b" }}>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  {call.service_type} ·{" "}
+                  <span className={`badge ${call.status === "completed" ? "badge-success" : "badge-warning"}`} style={{ fontSize: 11 }}>
                     {call.status}
                   </span>
-                  {call.payment_id && (
-                    <> • Payment: {call.payment_id.slice(0, 12)}...</>
-                  )}
-                  {call.output_hash && (
-                    <> • Output: {call.output_hash.slice(0, 12)}...</>
-                  )}
+                  {call.payment_id && <> · <span className="data-mono">{short(call.payment_id)}</span></>}
                 </div>
               </div>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
-      {/* Proposed path */}
+      {/* Proposed Path */}
       {path && (
-        <div className="card">
-          <h2
-            style={{
-              fontSize: "1.25rem",
-              fontWeight: 600,
-              marginBottom: "0.5rem",
-            }}
-          >
-            Proposed Path (Total: {total.toFixed(4)} USDC)
-            {pathId && (
-              <span
-                style={{
-                  fontSize: "0.75rem",
-                  color: "var(--muted)",
-                  marginLeft: "0.5rem",
-                }}
-              >
-                ID: {pathId.slice(0, 8)}...
-              </span>
-            )}
-          </h2>
-
-          {/* Route tier badge */}
-          <div
-            style={{
-              fontSize: "0.8rem",
-              color: "var(--accent-green)",
-              marginBottom: "0.5rem",
-              padding: "0.35rem 0.6rem",
-              background: "rgba(34,197,94,0.08)",
-              borderRadius: 6,
-              display: "inline-block",
-            }}
-          >
-            Route: <strong>{routeTier}</strong>
-            {routeDescription && ` — ${routeDescription}`}
+        <section className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+            <h2 className="section-title" style={{ margin: 0 }}>
+              Proposed Path
+              {pathId && <span className="muted data-mono" style={{ fontSize: 12, marginLeft: 8 }}>{short(pathId)}</span>}
+            </h2>
+            <span className="data-mono" style={{ fontWeight: 700, fontSize: 15 }}>{total.toFixed(4)} USDC</span>
           </div>
 
-          <div
-            style={{
-              fontSize: "0.8rem",
-              color: isApproved
-                ? "var(--accent-green)"
-                : isProposed
-                ? "#f59e0b"
-                : "var(--muted)",
-              marginBottom: "1rem",
-              padding: "0.5rem 0.75rem",
-              background: "rgba(255,255,255,0.03)",
-              borderRadius: 6,
-            }}
-          >
-            Status: <strong>{pathStatus}</strong>
-            {isProposed && " — Approve budget to enable purchases"}
-            {isApproved && " — Ready to buy"}
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16 }}>
+            <span className="badge badge-success">{routeTier}</span>
+            <span className={`badge ${isApproved ? "badge-success" : isProposed ? "badge-warning" : "badge-neutral"}`}>
+              {pathStatus}
+            </span>
           </div>
 
-          {/* Approve button — only shown when proposed */}
           {isProposed && (
-            <button
-              onClick={approvePath}
-              disabled={approving}
-              className="btn btn-primary"
-              style={{ marginBottom: "1rem" }}
-            >
-              {approving ? "Approving..." : "Approve Budget"}
+            <button onClick={approvePath} disabled={approving} className="btn btn-primary" style={{ marginBottom: 16 }}>
+              {approving ? "Approving…" : "Approve Budget"}
             </button>
           )}
 
-          <div style={{ display: "grid", gap: "0.75rem" }}>
+          <div style={{ display: "grid", gap: 8 }}>
             {path.map((l: ProposedLesson, i: number) => (
               <div
                 key={l.id}
@@ -897,96 +544,44 @@ export default function TutorPage() {
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
-                  padding: "0.75rem",
-                  background: unlockedIds.has(l.id)
-                    ? "rgba(34,197,94,0.1)"
-                    : "rgba(255,255,255,0.03)",
-                  borderRadius: 8,
+                  padding: "12px 14px",
+                  background: unlockedIds.has(l.id) ? "var(--success-soft)" : "var(--card-soft)",
+                  borderRadius: 10,
+                  border: `1px solid ${unlockedIds.has(l.id) ? "var(--success)30" : "var(--border)"}`,
                 }}
               >
                 <div>
-                  <div style={{ fontWeight: 600 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>
                     {i + 1}. {l.title}
-                    {unlockedIds.has(l.id) && (
-                      <span
-                        style={{
-                          color: "var(--accent-green)",
-                          marginLeft: "0.5rem",
-                          fontSize: "0.75rem",
-                        }}
-                      >
-                        ✓ Unlocked
-                      </span>
-                    )}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "0.8rem",
-                      color: "var(--muted)",
-                      marginTop: "0.25rem",
-                    }}
-                  >
-                    {l.reason}
+                    {unlockedIds.has(l.id) && <span style={{ color: "var(--success)", marginLeft: 8, fontSize: 12 }}>✓ Unlocked</span>}
                   </div>
                   {l.verification_reason && (
-                    <div
-                      style={{
-                        fontSize: "0.75rem",
-                        color: "var(--accent-green)",
-                        marginTop: "0.15rem",
-                      }}
-                    >
-                      ✓ {l.verification_reason}
-                    </div>
+                    <div style={{ fontSize: 12, color: "var(--success)", marginTop: 2 }}>✓ {l.verification_reason}</div>
                   )}
                 </div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "1rem",
-                  }}
-                >
-                  <span
-                    style={{ fontWeight: 700, color: "var(--accent-green)" }}
-                  >
-                    {l.price_usdc} USDC
-                  </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <span className="data-mono" style={{ fontWeight: 700, color: "var(--success)" }}>{l.price_usdc} USDC</span>
                   {!unlockedIds.has(l.id) && (
                     <button
                       onClick={() => buyLesson(l.id)}
                       disabled={!isApproved || buyingLessonId === l.id}
                       className="btn btn-green"
-                      style={{
-                        fontSize: "0.8rem",
-                        opacity: isApproved ? 1 : 0.4,
-                      }}
+                      style={{ fontSize: 13, opacity: isApproved ? 1 : 0.4 }}
                     >
-                      {buyingLessonId === l.id
-                        ? "Buying..."
-                        : isApproved
-                        ? "Buy via Runner"
-                        : "Approve first"}
+                      {buyingLessonId === l.id ? "Buying…" : isApproved ? "Buy" : "Approve first"}
                     </button>
                   )}
                 </div>
               </div>
             ))}
           </div>
+
           {buyStatus && (
-            <p
-              style={{
-                marginTop: "1rem",
-                fontSize: "0.875rem",
-                color: buyStatus.startsWith("Error")
-                  ? "#ef4444"
-                  : "var(--accent-green)",
-              }}
-            >
+            <p style={{ marginTop: 12, fontSize: 13, color: buyStatus.startsWith("Error") ? "var(--danger)" : "var(--success)" }}>
               {buyStatus}
             </p>
           )}
-        </div>
+        </section>
       )}
     </div>
   );
