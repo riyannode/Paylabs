@@ -14,6 +14,7 @@ import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/m
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import type { ChatOpenAI } from "@langchain/openai";
+import { zodToJsonSchema } from "zod-to-json-schema";
 import { getTutorModel, getTutorModelName, getTutorModelConfig, isLlmRequired } from "./llm";
 import type { RouteTier } from "./route-config";
 
@@ -233,9 +234,27 @@ export async function generateStructuredJson<T>(
       }
     }
 
-    // Strategy 2: Raw invoke + JSON extraction
+    // Strategy 2: Raw invoke + JSON extraction (with schema-in-prompt for non-native providers)
     try {
-      const result = await (model as ChatOpenAI).invoke(messages);
+      // For non-native providers (MiMo, etc.), append JSON schema to system prompt
+      // so the LLM knows exactly what structure to produce
+      const strategyMessages: BaseMessage[] = [...messages];
+      if (!supportsNativeStructured(modelConfig.provider)) {
+        try {
+          const jsonSchema = zodToJsonSchema(schema, { target: "openApi3" });
+          // Remove OpenAPI wrapper, get just the schema properties
+          const schemaObj = (jsonSchema as Record<string, unknown>)?.schema as Record<string, unknown> || jsonSchema;
+          const schemaStr = JSON.stringify(schemaObj, null, 2);
+          const enhancedSystemPrompt = systemPrompt
+            + "\n\nYou MUST respond with valid JSON matching this exact schema:\n```json\n" + schemaStr + "\n```\n"
+            + "Do NOT add fields not in the schema. Do NOT omit required fields. Return ONLY the JSON object, no other text.";
+          strategyMessages[0] = new SystemMessage(enhancedSystemPrompt);
+        } catch {
+          // Schema conversion failed — proceed with original prompt
+        }
+      }
+
+      const result = await (model as ChatOpenAI).invoke(strategyMessages);
       const jsonStr = extractJsonFromResponse(result);
 
       // Debug: log response shape for provider debugging (no secrets)
