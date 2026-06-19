@@ -46,6 +46,43 @@ AI micro-learning buyer. User sets goal + budget, AI Tutor picks source-backed l
 - Nonce/payment_id is unique (no duplicate payments)
 - EIP-712 signature recovers to the `from` address
 
+## Route-Tiered Agent Workflows
+
+PayLabs supports 3 user-selectable learning routes. Each route has 5 route-specific agent prompts (15 total). All routes share one LangGraph orchestration engine, one shared Policy Guard, and one shared Payment & Receipt Executor.
+
+| Route | Max Lessons | Reasoning Depth | Source Strictness | Best For |
+|-------|-------------|-----------------|-------------------|----------|
+| **Normal** | 2 | Low | Standard | Quick intro, cheapest useful path |
+| **Advanced** | 5 | Medium | High | Technical builders, implementation-focused |
+| **Premium** | 8 | High | Very High | Full mastery, architecture + safety + monetization |
+
+### Architecture
+
+- **One shared LangGraph orchestration engine** — no 15 separate payment systems
+- **One shared Policy Guard core** — same safety checks for all tiers
+- **One shared Payment & Receipt Executor** — all payments through ArcLayer Runner
+- **Route tier changes planning behavior and prompt persona only**
+- **Route tier NEVER weakens safety checks**
+
+### Flow
+
+```
+Proposal: START -> intent_agent -> curriculum_planner_agent -> source_verifier_agent -> persist -> END
+Buy:      START -> policy_guard_agent -> payment_receipt_executor_agent -> END
+```
+
+Proposal and buy remain separate invocations. User approval is required before any buy. Route tier does not bypass approval.
+
+### Database
+
+Route tier is persisted in `paylabs_learning_paths`:
+
+- `route_tier` — `normal` | `advanced` | `premium` (default: `normal`)
+- `route_config` — JSONB with tier config snapshot
+- `agent_trace` — JSONB with per-agent execution trace
+
+Migration: `supabase/migrations/003_route_tiered_agents.sql`
+
 ## AI Tutor Budget Policy
 
 Before any agent-initiated purchase, these checks must pass:

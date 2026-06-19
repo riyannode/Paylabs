@@ -3,6 +3,7 @@
  * Executes purchase only after Policy Guard approval.
  * ALL payment goes through ArcLayer Runner — never Circle/contracts/wallets directly.
  * No fake payment IDs, no fake tx hashes, no DB-only unlocks.
+ * Payment behavior is identical across all route tiers.
  */
 
 import type { PayLabsTutorStateType } from "./state";
@@ -15,7 +16,7 @@ import { createHash } from "node:crypto";
 export async function paymentReceiptExecutorAgent(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { userWallet, lessonId, policyDecision } = state;
+  const { userWallet, lessonId, policyDecision, routeTier } = state;
 
   // Gate: only run if policy allowed
   if (!policyDecision?.allowed) {
@@ -47,7 +48,7 @@ export async function paymentReceiptExecutorAgent(
     const creator = lesson.creator as unknown as { wallet_address: string } | null;
     const resourceUrl = buildResourceUrl(lessonId);
 
-    // Execute through Runner — NO fallback payment ID
+    // Execute through Runner — NO fallback payment ID, same for all tiers
     const result = await executeLessonPurchase(
       userWallet,
       lessonId,
@@ -145,7 +146,7 @@ export async function paymentReceiptExecutorAgent(
         .then(() => {})).catch(() => {});
     }
 
-    // Log successful action
+    // Log successful action — include route_tier for traceability
     Promise.resolve(supabaseAdmin()
       .from("paylabs_agent_actions")
       .insert({
@@ -163,6 +164,7 @@ export async function paymentReceiptExecutorAgent(
           rail: "x402-gateway",
           runner: true,
           payment_id: result.paymentId,
+          route_tier: routeTier || "normal",
         },
         payment_id: result.paymentId,
       })

@@ -2,9 +2,12 @@
  * Agent 2: Curriculum Planner Agent
  * Picks source-backed lessons that fit the goal and budget.
  * No payment, no Runner — read-only.
+ * Route tier controls max lessons and planner style.
  */
 
 import type { PayLabsTutorStateType } from "./state";
+import type { RouteTier } from "./route-config";
+import { getRouteConfig } from "./route-config";
 import { listPublishedLessons, getUserUnlocks } from "./tools";
 
 function scoreLesson(
@@ -47,10 +50,13 @@ function scoreLesson(
 export async function curriculumPlannerAgent(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { userWallet, topics, budgetUsdc, maxLessonPriceUsdc } = state;
+  const { userWallet, topics, budgetUsdc, maxLessonPriceUsdc, routeTier } = state;
   const goal = state.normalizedGoal || state.goal || "";
   const budget = budgetUsdc || 0;
   const maxPrice = maxLessonPriceUsdc || 0.05;
+  const tier: RouteTier = routeTier || "normal";
+  const config = getRouteConfig(tier);
+  const maxLessons = config.maxLessons;
 
   try {
     // Fetch published lessons and user unlocks
@@ -77,21 +83,21 @@ export async function curriculumPlannerAgent(
     }));
     scored.sort((a, b) => b._score - a._score);
 
-    // Greedy selection within budget
+    // Greedy selection within budget — max lessons from route config
     const selected: Record<string, unknown>[] = [];
     let remaining = budget;
 
     for (const lesson of scored) {
       const price = Number(lesson.price_usdc) || 0;
-      if (price <= remaining && price <= maxPrice && selected.length < 5) {
+      if (price <= remaining && price <= maxPrice && selected.length < maxLessons) {
         selected.push({
-          lesson_id: lesson.id,
+          lesson_id: lesson.id as string,
           order_index: selected.length,
           price_usdc: price,
-          title: lesson.title,
-          slug: lesson.slug,
+          title: lesson.title as string,
+          slug: lesson.slug as string,
           reason: generateReason(lesson, goal, topics || []),
-          expected_value: `Learn ${lesson.title}`,
+          expected_value: `Learn ${lesson.title as string}`,
         });
         remaining -= price;
       }
@@ -109,6 +115,7 @@ export async function curriculumPlannerAgent(
       estimatedTotalUsdc: estimatedTotal,
       remainingUsdc: budget - estimatedTotal,
       plannerNotes: [
+        `Route: ${config.label} (max ${maxLessons} lessons)`,
         `Selected ${selected.length} of ${available.length} available lessons`,
         `Total: ${estimatedTotal.toFixed(6)} USDC of ${budget} budget`,
       ],

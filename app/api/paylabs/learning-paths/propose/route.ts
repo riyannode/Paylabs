@@ -2,13 +2,15 @@
 // Canonical route for LangGraph path proposal.
 // Calls proposeLearningPath graph: intent -> curriculum_planner -> source_verifier -> persist
 // Does NOT buy anything. Returns path_id for user approval.
+// Accepts route_tier: normal (default), advanced, premium.
 
 import { NextRequest, NextResponse } from "next/server";
 import { proposeLearningPath } from "@/lib/ai-tutor/graph";
+import { isValidRouteTier } from "@/lib/ai-tutor/route-config";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { goal, budget_usdc, user_wallet } = body;
+  const { goal, budget_usdc, user_wallet, route_tier } = body;
 
   if (!goal || !budget_usdc || budget_usdc <= 0) {
     return NextResponse.json(
@@ -23,11 +25,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Validate route_tier — reject unknown values
+  const tier = route_tier || "normal";
+  if (!isValidRouteTier(tier)) {
+    return NextResponse.json(
+      { error: `Invalid route_tier: "${tier}". Must be normal, advanced, or premium.` },
+      { status: 400 }
+    );
+  }
+
   try {
     const result = await proposeLearningPath({
       userWallet: user_wallet,
       goal,
       budgetUsdc: Number(budget_usdc),
+      routeTier: tier,
     });
 
     if (result.error && !result.pathId) {
@@ -57,6 +69,8 @@ export async function POST(req: NextRequest) {
       path_status: result.pathStatus,
       goal,
       budget_usdc,
+      route_tier: result.routeTier,
+      route_config: result.routeConfig,
       path,
       total_usdc: result.estimatedTotalUsdc || 0,
       remaining_usdc: result.remainingUsdc || 0,
