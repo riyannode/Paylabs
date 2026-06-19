@@ -6,15 +6,15 @@
  * - Validates with zod
  * - Max 1 retry on invalid output
  * - Returns structured result or structured error
- * - Records model, route_tier, agent_name, prompt_persona, prompt_hash, mode, token usage
+ * - If PAYLABS_LLM_REQUIRED=true and LLM fails, THROWS (no silent bypass)
+ * - Records model, route_tier, agent_name, prompt_persona, prompt_hash, mode
  * - No secrets printed
  */
 
-import { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/messages";
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import { getTutorModel, getTutorModelName } from "./llm";
+import { getTutorModel, getTutorModelName, isLlmRequired } from "./llm";
 import type { RouteTier } from "./route-config";
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -28,9 +28,8 @@ export interface InvokeJsonAgentInput {
 }
 
 export interface LlmAgentResult<T = Record<string, unknown>> {
-  ok: boolean;
-  data?: T;
-  error?: string;
+  ok: true;
+  data: T;
   meta: {
     mode: "llm";
     model: string;
@@ -38,7 +37,6 @@ export interface LlmAgentResult<T = Record<string, unknown>> {
     agent_name: string;
     prompt_persona: string;
     prompt_hash: string;
-    token_usage?: { input?: number; output?: number; total?: number };
     retry_count: number;
   };
 }
@@ -63,30 +61,18 @@ function hashPrompt(prompt: string): string {
   return createHash("sha256").update(prompt).digest("hex").slice(0, 16);
 }
 
-function extractTokenUsage(response: unknown): { input?: number; output?: number; total?: number } | undefined {
-  try {
-    const r = response as Record<string, unknown>;
-    const usage = r?.usage as Record<string, number> | undefined;
-    if (usage) {
-      return {
-        input: usage.input_tokens ?? usage.prompt_tokens,
-        output: usage.output_tokens ?? usage.completion_tokens,
-        total: usage.total_tokens,
-      };
-    }
-  } catch { /* ignore */ }
-  return undefined;
-}
-
 // ─── Main invoke ────────────────────────────────────────────────
 
 export async function invokeJsonAgent<T = Record<string, unknown>>(
   input: InvokeJsonAgentInput
 ): Promise<LlmAgentResult<T> | LlmAgentError> {
   const { agentName, routeTier, prompt, userMessage, schema } = input;
+  const required = isLlmRequired();
 
   const model = getTutorModel();
   if (!model) {
+    // No model available — this path only reached if NOT required
+    // (getTutorModel throws if required + no key)
     return {
       ok: false,
       error: "No LLM model available (no API key)",
@@ -148,9 +134,19 @@ export async function invokeJsonAgent<T = Record<string, unknown>>(
     }
   }
 
+  // LLM failed after retries
+  const errorMsg = `LLM call failed after ${maxAttempts} attempts: ${lastError}`;
+
+  // If LLM is required, throw — do NOT allow silent bypass
+  if (required) {
+    throw new Error(
+      `PAYLABS_LLM_REQUIRED=true but ${agentName} agent LLM failed: ${errorMsg}`
+    );
+  }
+
   return {
     ok: false,
-    error: `LLM call failed after ${maxAttempts} attempts: ${lastError}`,
+    error: errorMsg,
     meta: {
       mode: "llm_error",
       model: modelName,

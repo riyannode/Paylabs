@@ -23,14 +23,13 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import type { RouteTier } from "./route-config";
 import { getRouteConfig } from "./route-config";
 import { getPromptsForRoute } from "./route-prompts";
-import { createHash } from "node:crypto";
 
 // ─── Persist Proposed Path Node ──────────────────────────────────
 
 async function persistProposedPathNode(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { userWallet, goal, budgetUsdc, verifiedLessons, estimatedTotalUsdc, allVerified, routeTier, routeConfig, routePrompts, agentTrace } = state;
+  const { userWallet, goal, budgetUsdc, verifiedLessons, estimatedTotalUsdc, allVerified, routeTier, routeConfig, agentTrace, llmOutputs, llmErrors } = state;
   const tier: RouteTier = routeTier || "normal";
   const config = routeConfig || getRouteConfig(tier);
 
@@ -42,7 +41,13 @@ async function persistProposedPathNode(
   }
 
   try {
-    // Insert learning path — persist route_tier, route_config, agent_trace
+    // Insert learning path — persist route_tier, route_config, agent_trace (includes LLM data)
+    const fullAgentTrace = {
+      ...(agentTrace || {}),
+      ...(llmOutputs && Object.keys(llmOutputs).length > 0 ? { llm_outputs: llmOutputs } : {}),
+      ...(llmErrors && Object.keys(llmErrors).length > 0 ? { llm_errors: llmErrors } : {}),
+    };
+
     const { data: pathRow, error: pathErr } = await supabaseAdmin()
       .from("paylabs_learning_paths")
       .insert({
@@ -55,7 +60,7 @@ async function persistProposedPathNode(
         created_by_agent_id: "paylabs-langgraph-v1",
         route_tier: tier,
         route_config: config,
-        agent_trace: agentTrace || {},
+        agent_trace: fullAgentTrace,
       })
       .select("id, status")
       .single();
@@ -126,12 +131,6 @@ const buyGraph = new StateGraph(PayLabsTutorState)
   .addEdge("policy_guard_agent", "payment_receipt_executor_agent")
   .addEdge("payment_receipt_executor_agent", END)
   .compile();
-
-// ─── Helper: hash prompt for trace ───────────────────────────────
-
-function hashPrompt(prompt: string): string {
-  return createHash("sha256").update(prompt).digest("hex").slice(0, 16);
-}
 
 // ─── Public API ──────────────────────────────────────────────────
 
