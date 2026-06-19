@@ -100,6 +100,8 @@ export type RouteTier = "normal" | "advanced" | "premium";
 export interface RouteConfig {
   tier: RouteTier;
   label: string;
+  publicLabel: string;
+  maxSourceCards: number;
   maxLessons: number;
   reasoningDepth: "low" | "medium" | "high";
   sourceStrictness: "standard" | "high" | "very_high";
