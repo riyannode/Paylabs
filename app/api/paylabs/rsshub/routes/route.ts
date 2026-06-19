@@ -1,6 +1,6 @@
 /**
  * GET /api/paylabs/rsshub/routes — list active routes
- * POST /api/paylabs/rsshub/routes — create route (admin)
+ * POST /api/paylabs/rsshub/routes — create route (admin, Bearer auth required)
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -9,6 +9,24 @@ import { isValidFeedUrl } from "@/lib/rsshub/rsshub-client";
 import { isAddress } from "viem";
 
 export const dynamic = "force-dynamic";
+
+function requireRsshubAdmin(req: NextRequest): NextResponse | null {
+  const adminSecret =
+    process.env.PAYLABS_RSSHUB_ADMIN_SECRET ||
+    process.env.PAYLABS_RSSHUB_SYNC_SECRET;
+  if (!adminSecret) {
+    return NextResponse.json(
+      { error: "RSSHub admin not configured" },
+      { status: 503 }
+    );
+  }
+  const authHeader = req.headers.get("authorization") ?? "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (token !== adminSecret) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  return null;
+}
 
 export async function GET() {
   const { data, error } = await supabaseAdmin()
@@ -25,6 +43,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = requireRsshubAdmin(req);
+  if (authError) return authError;
+
   let body: Record<string, unknown>;
   try {
     body = await req.json();
