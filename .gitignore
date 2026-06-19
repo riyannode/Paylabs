@@ -31,3 +31,5 @@ next-env.d.ts
 # OS
 .DS_Store
 Thumbs.db
+check-schema.mjs
+run-migration.mjs
