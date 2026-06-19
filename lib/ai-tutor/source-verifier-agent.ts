@@ -8,6 +8,8 @@
 import type { PayLabsTutorStateType } from "./state";
 import type { RouteTier } from "./route-config";
 import { getRouteConfig } from "./route-config";
+import { getPromptsForRoute } from "./route-prompts";
+import { createHash } from "node:crypto";
 
 interface VerifiedLesson {
   lesson_id: string;
@@ -25,9 +27,10 @@ interface RejectedLesson {
 export async function sourceVerifierAgent(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { selectedLessons, publishedLessons, routeTier } = state;
+  const { selectedLessons, publishedLessons, routeTier, routePrompts } = state;
   const tier: RouteTier = routeTier || "normal";
   const config = getRouteConfig(tier);
+  const prompts = (routePrompts as unknown as ReturnType<typeof getPromptsForRoute>) || getPromptsForRoute(tier);
 
   if (!selectedLessons || selectedLessons.length === 0) {
     return {
@@ -101,9 +104,24 @@ export async function sourceVerifierAgent(
     }
   }
 
+  // Build agent trace — record which prompt persona was used
+  const promptText = prompts.sourceVerifier;
+  const promptHash = createHash("sha256").update(promptText).digest("hex").slice(0, 16);
+
   return {
     verifiedLessons: verified,
     rejectedLessons: rejected,
     allVerified: rejected.length === 0,
+    agentTrace: {
+      source_verifier: {
+        agent: "source_verifier_agent",
+        route_tier: tier,
+        prompt_persona: `${tier}_source_verifier`,
+        prompt_hash: promptHash,
+        source_strictness: config.sourceStrictness,
+        verified_count: verified.length,
+        rejected_count: rejected.length,
+      },
+    },
   };
 }

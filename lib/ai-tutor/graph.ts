@@ -22,13 +22,15 @@ import { paymentReceiptExecutorAgent } from "./payment-receipt-executor-agent";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import type { RouteTier } from "./route-config";
 import { getRouteConfig } from "./route-config";
+import { getPromptsForRoute } from "./route-prompts";
+import { createHash } from "node:crypto";
 
 // ─── Persist Proposed Path Node ──────────────────────────────────
 
 async function persistProposedPathNode(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { userWallet, goal, budgetUsdc, verifiedLessons, estimatedTotalUsdc, allVerified, routeTier, routeConfig, agentTrace } = state;
+  const { userWallet, goal, budgetUsdc, verifiedLessons, estimatedTotalUsdc, allVerified, routeTier, routeConfig, routePrompts, agentTrace } = state;
   const tier: RouteTier = routeTier || "normal";
   const config = routeConfig || getRouteConfig(tier);
 
@@ -125,6 +127,12 @@ const buyGraph = new StateGraph(PayLabsTutorState)
   .addEdge("payment_receipt_executor_agent", END)
   .compile();
 
+// ─── Helper: hash prompt for trace ───────────────────────────────
+
+function hashPrompt(prompt: string): string {
+  return createHash("sha256").update(prompt).digest("hex").slice(0, 16);
+}
+
 // ─── Public API ──────────────────────────────────────────────────
 
 export async function proposeLearningPath(input: {
@@ -135,6 +143,7 @@ export async function proposeLearningPath(input: {
 }) {
   const tier: RouteTier = input.routeTier || "normal";
   const config = getRouteConfig(tier);
+  const prompts = getPromptsForRoute(tier);
 
   const result = await proposalGraph.invoke({
     userWallet: input.userWallet,
@@ -142,6 +151,7 @@ export async function proposeLearningPath(input: {
     budgetUsdc: input.budgetUsdc,
     routeTier: tier,
     routeConfig: config as unknown as Record<string, unknown>,
+    routePrompts: prompts as unknown as Record<string, unknown>,
     agentTrace: {},
     topics: [],
     riskNotes: [],
@@ -175,11 +185,26 @@ export async function buyApprovedLesson(input: {
   pathId: string;
   lessonId: string;
 }) {
+  // Fetch path to get actual route_tier — NOT defaulting to "normal"
+  const { data: pathRow } = await supabaseAdmin()
+    .from("paylabs_learning_paths")
+    .select("route_tier, route_config, agent_trace")
+    .eq("id", input.pathId)
+    .single();
+
+  const tier: RouteTier = (pathRow?.route_tier as RouteTier) || "normal";
+  const config = pathRow?.route_config || getRouteConfig(tier);
+  const prompts = getPromptsForRoute(tier);
+
   // Buy graph does NOT change behavior by tier — same safety for all routes
+  // But route_tier is now correctly propagated for logging
   const result = await buyGraph.invoke({
     userWallet: input.userWallet,
     pathId: input.pathId,
     lessonId: input.lessonId,
+    routeTier: tier,
+    routeConfig: config as Record<string, unknown>,
+    routePrompts: prompts as unknown as Record<string, unknown>,
     topics: [],
     riskNotes: [],
     pathStatus: "none" as const,

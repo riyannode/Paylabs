@@ -14,6 +14,7 @@ export const PayLabsTutorState = Annotation.Root({
   // Route tier
   routeTier: Annotation<"normal" | "advanced" | "premium" | undefined>,
   routeConfig: Annotation<Record<string, unknown> | undefined>,
+  routePrompts: Annotation<Record<string, unknown> | undefined>,
   agentTrace: Annotation<Record<string, unknown> | undefined>,
 
   // Agent 1: Intent Agent output

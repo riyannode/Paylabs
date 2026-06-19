@@ -8,7 +8,9 @@
 import type { PayLabsTutorStateType } from "./state";
 import type { RouteTier } from "./route-config";
 import { getRouteConfig } from "./route-config";
+import { getPromptsForRoute } from "./route-prompts";
 import { listPublishedLessons, getUserUnlocks } from "./tools";
+import { createHash } from "node:crypto";
 
 function scoreLesson(
   lesson: Record<string, unknown>,
@@ -50,13 +52,14 @@ function scoreLesson(
 export async function curriculumPlannerAgent(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { userWallet, topics, budgetUsdc, maxLessonPriceUsdc, routeTier } = state;
+  const { userWallet, topics, budgetUsdc, maxLessonPriceUsdc, routeTier, routePrompts } = state;
   const goal = state.normalizedGoal || state.goal || "";
   const budget = budgetUsdc || 0;
   const maxPrice = maxLessonPriceUsdc || 0.05;
   const tier: RouteTier = routeTier || "normal";
   const config = getRouteConfig(tier);
   const maxLessons = config.maxLessons;
+  const prompts = (routePrompts as unknown as ReturnType<typeof getPromptsForRoute>) || getPromptsForRoute(tier);
 
   try {
     // Fetch published lessons and user unlocks
@@ -108,6 +111,10 @@ export async function curriculumPlannerAgent(
       0
     );
 
+    // Build agent trace — record which prompt persona was used
+    const promptText = prompts.curriculumPlanner;
+    const promptHash = createHash("sha256").update(promptText).digest("hex").slice(0, 16);
+
     return {
       publishedLessons: lessons,
       unlockedLessonIds: unlockedIds,
@@ -118,7 +125,19 @@ export async function curriculumPlannerAgent(
         `Route: ${config.label} (max ${maxLessons} lessons)`,
         `Selected ${selected.length} of ${available.length} available lessons`,
         `Total: ${estimatedTotal.toFixed(6)} USDC of ${budget} budget`,
+        `Prompt persona: ${tier}_curriculum_planner (${promptHash})`,
       ],
+      agentTrace: {
+        curriculum_planner: {
+          agent: "curriculum_planner_agent",
+          route_tier: tier,
+          prompt_persona: `${tier}_curriculum_planner`,
+          prompt_hash: promptHash,
+          planner_style: config.plannerStyle,
+          max_lessons: maxLessons,
+          selected_count: selected.length,
+        },
+      },
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
