@@ -2,14 +2,14 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "PayLabs — AI learning paths with x402 payments",
+  title: "PayLabs — AI source-feed learning paths with creator citation tolls",
   description:
-    "Chat with the tutor, pay a tiny route toll, approve a path, unlock lessons. x402 payments on Arc testnet.",
+    "Ingests RSSHub/RSS feeds, turns feed items into source-backed learning cards, prepares citation/unlock payments for creators.",
 };
 
 const NAV_LINKS = [
+  { href: "/sources", label: "Sources" },
   { href: "/tutor", label: "Tutor" },
-  { href: "/learn", label: "Lessons" },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/receipts", label: "Payments" },
 ];
