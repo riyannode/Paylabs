@@ -2,10 +2,17 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "PayLabs — Pay only for what you learn",
+  title: "PayLabs — AI learning paths with x402 payments",
   description:
-    "AI micro-learning buyer. User sets goal + budget, AI Tutor picks source-backed lessons, pays via x402 on Arc testnet.",
+    "Chat with the tutor, pay a tiny route toll, approve a path, unlock lessons. x402 payments on Arc testnet.",
 };
+
+const NAV_LINKS = [
+  { href: "/tutor", label: "Tutor" },
+  { href: "/learn", label: "Lessons" },
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/receipts", label: "Payments" },
+];
 
 export default function RootLayout({
   children,
@@ -17,23 +24,58 @@ export default function RootLayout({
       <body style={{ margin: 0, minHeight: "100vh" }}>
         <nav
           style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "1rem 2rem",
             borderBottom: "1px solid var(--border)",
+            background: "white",
+            position: "sticky",
+            top: 0,
+            zIndex: 10,
           }}
         >
-          <a href="/" style={{ fontWeight: 700, fontSize: "1.25rem", color: "var(--foreground)" }}>
-            PayLabs
-          </a>
-          <div style={{ display: "flex", gap: "1.5rem" }}>
-            <a href="/learn">Lessons</a>
-            <a href="/tutor">AI Tutor</a>
-            <a href="/receipts">Receipts</a>
+          <div
+            className="container"
+            style={{
+              height: 56,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <a
+              href="/"
+              style={{
+                fontWeight: 800,
+                fontSize: 18,
+                letterSpacing: "-0.03em",
+                color: "var(--foreground)",
+              }}
+            >
+              PayLabs
+            </a>
+            <div
+              style={{
+                display: "flex",
+                gap: 20,
+                fontSize: 14,
+                color: "var(--muted)",
+                overflowX: "auto",
+              }}
+            >
+              {NAV_LINKS.map((link) => (
+                <a
+                  key={link.href}
+                  href={link.href}
+                  style={{ whiteSpace: "nowrap" }}
+                >
+                  {link.label}
+                </a>
+              ))}
+            </div>
           </div>
         </nav>
-        <main style={{ maxWidth: 960, margin: "0 auto", padding: "2rem" }}>
+        <main
+          className="container"
+          style={{ paddingTop: 32, paddingBottom: 64 }}
+        >
           {children}
         </main>
       </body>
