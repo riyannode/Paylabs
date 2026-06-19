@@ -119,10 +119,14 @@ export async function runPolicyChecks(
 
   // 3. Lesson validation
   const lesson = await getLessonById(lessonId);
+  // Supabase FK joins return objects at runtime, but TS types say array.
+  // Cast to Record for safe property access.
+  const source = lesson?.source as unknown as Record<string, unknown> | undefined;
+  const creator = lesson?.creator as unknown as Record<string, unknown> | undefined;
   checks.lesson_published = lesson?.is_published === true;
-  checks.source_hash_present = !!lesson?.source?.[0]?.normalized_sha256;
+  checks.source_hash_present = !!source?.normalized_sha256;
   checks.content_hash_present = !!lesson?.content_sha256;
-  checks.creator_verified = lesson?.creator?.[0]?.is_verified === true;
+  checks.creator_verified = creator?.is_verified === true;
 
   // 4. Not already unlocked
   const unlockIds = await getUserUnlocks(userWallet);
