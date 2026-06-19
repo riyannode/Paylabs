@@ -164,9 +164,9 @@ export async function POST(req: NextRequest) {
   const { user_wallet, lesson_id, path_id, signed_authorization } = body;
 
   // Validate inputs
-  if (!user_wallet || !lesson_id) {
+  if (!user_wallet || !lesson_id || !path_id) {
     return NextResponse.json(
-      { error: "user_wallet and lesson_id required" },
+      { error: "user_wallet, lesson_id, and path_id all required. Agent must not buy without approved path." },
       { status: 400 }
     );
   }
