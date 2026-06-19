@@ -28,62 +28,54 @@ export default async function LessonPage({ params }: { params: Promise<{ slug: s
   const challenge = buildX402Challenge(receiverAddress, lesson.price_usdc);
   const split = computeSplit(lesson.price_usdc);
 
-  // Preview: first 3 paragraphs
   const paragraphs = lesson.body_markdown.split("\n\n");
   const preview = paragraphs.slice(0, 3).join("\n\n");
-  const remaining = paragraphs.slice(3).join("\n\n");
 
   return (
-    <div>
-      <a href="/learn" style={{ fontSize: "0.875rem" }}>&larr; Back to catalog</a>
+    <div style={{ display: "grid", gap: 20 }}>
+      <a href="/learn" className="muted" style={{ fontSize: 14 }}>← Back to catalog</a>
 
-      <div className="card" style={{ marginTop: "1rem" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
-          <h1 style={{ fontSize: "1.5rem", fontWeight: 700, margin: 0 }}>{lesson.title}</h1>
-          <span style={{ fontWeight: 700, color: "var(--accent-green)", fontSize: "1.25rem" }}>
+      <div className="card">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{lesson.title}</h1>
+          <span className="data-mono" style={{ fontWeight: 700, color: "var(--success)", fontSize: 20 }}>
             {formatUsdc(lesson.price_usdc)}
           </span>
         </div>
 
-        <p style={{ color: "var(--muted)", marginBottom: "1rem" }}>{lesson.summary}</p>
+        <p className="muted" style={{ marginBottom: 12 }}>{lesson.summary}</p>
 
-        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "1rem" }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
           <span className={`badge badge-${lesson.difficulty}`}>{lesson.difficulty}</span>
           {lesson.tags?.map((t: string) => (
-            <span key={t} style={{ fontSize: "0.75rem", color: "var(--muted)" }}>#{t}</span>
+            <span key={t} className="muted" style={{ fontSize: 12 }}>#{t}</span>
           ))}
         </div>
 
         {lesson.source && (
-          <div style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.5rem" }}>
-            Source: <a href={lesson.source.canonical_url} target="_blank">{lesson.source.source_title}</a>
-            {lesson.source.normalized_sha256 && (
-              <span> | hash: {lesson.source.normalized_sha256.slice(0, 16)}...</span>
-            )}
+          <div className="muted" style={{ fontSize: 13, marginBottom: 8 }}>
+            Source: <a href={lesson.source.canonical_url} target="_blank" style={{ textDecoration: "underline" }}>{lesson.source.source_title}</a>
           </div>
         )}
 
         {lesson.creator && (
-          <div style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "1rem" }}>
+          <div className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
             Creator: {lesson.creator.display_name} ({shortAddress(lesson.creator.wallet_address)})
           </div>
         )}
 
-        {/* Revenue split preview */}
-        <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginBottom: "1.5rem", padding: "0.5rem", background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
-          Revenue split: Creator {split.creator.toFixed(6)} (85%) | Platform {split.platform.toFixed(6)} (10%) | Treasury {split.treasury.toFixed(6)} (5%)
+        <div className="card-soft data-mono" style={{ fontSize: 12, marginBottom: 20 }}>
+          Revenue split: Creator {split.creator.toFixed(6)} (85%) · Platform {split.platform.toFixed(6)} (10%) · Treasury {split.treasury.toFixed(6)} (5%)
         </div>
 
-        {/* Preview (always visible) */}
-        <div style={{ marginBottom: "1.5rem" }}>
-          <h3 style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--muted)", marginBottom: "0.5rem" }}>PREVIEW</h3>
-          <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.7, fontSize: "0.9rem" }}>{preview}</div>
+        <div style={{ marginBottom: 20 }}>
+          <div className="muted" style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.04em" }}>Preview</div>
+          <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.7, fontSize: 14 }}>{preview}</div>
         </div>
 
-        {/* Locked content */}
-        <div style={{ borderTop: "1px solid var(--border)", paddingTop: "1.5rem" }}>
-          <div style={{ textAlign: "center", padding: "2rem", background: "rgba(255,255,255,0.02)", borderRadius: 8 }}>
-            <p style={{ color: "var(--muted)", marginBottom: "1rem" }}>
+        <div style={{ borderTop: "1px solid var(--border)", paddingTop: 20 }}>
+          <div style={{ textAlign: "center", padding: 24, background: "var(--card-soft)", borderRadius: 12 }}>
+            <p className="muted" style={{ marginBottom: 16, fontSize: 14 }}>
               Full lesson locked. Pay {formatUsdc(lesson.price_usdc)} via x402 to unlock.
             </p>
             <UnlockButton
