@@ -112,13 +112,13 @@ curl -X POST http://localhost:3000/api/paylabs/rsshub/sync \
   -H "Authorization: Bearer $PAYLABS_RSSHUB_SYNC_SECRET"
 ```
 
-## Demo Reset
+## Legacy Internal Lesson Cleanup
 
-Clear internal demo lesson data (manual only):
+Clear legacy internal lesson data (manual only):
 
 ```bash
-pnpm clear:demo-lessons                # Clear lesson data only
-pnpm clear:demo-lessons --include-payments  # Also clear payment tables
+pnpm clear:legacy-lessons                # Clear lesson data only
+pnpm clear:legacy-lessons --include-payments  # Also clear payment tables
 ```
 
 ## Database

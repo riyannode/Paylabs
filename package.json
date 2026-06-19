@@ -10,7 +10,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "seed:lessons": "tsx scripts/seed-lessons.ts",
-    "clear:demo-lessons": "tsx scripts/clear-demo-lessons.ts"
+    "clear:legacy-lessons": "tsx scripts/clear-legacy-lessons.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.2.0",

@@ -1,9 +1,9 @@
 /**
- * clear-demo-lessons.ts
+ * clear-legacy-lessons.ts
  *
- * Clears internal demo lesson catalog data.
- * Run manually: pnpm clear:demo-lessons
- * With payment tables: pnpm clear:demo-lessons --include-payments
+ * Clears legacy internal lesson catalog data.
+ * Run manually: pnpm clear:legacy-lessons
+ * With payment tables: pnpm clear:legacy-lessons --include-payments
  *
  * NEVER runs automatically. NEVER truncates citation receipts.
  * Prints counts only, never secrets.
@@ -51,7 +51,7 @@ async function truncateTable(
 }
 
 async function main() {
-  console.log("=== PayLabs Demo Lesson Cleanup ===\n");
+  console.log("=== PayLabs Legacy Internal Lesson Cleanup ===\n");
 
   // Order matters: children first
   const tables = [
