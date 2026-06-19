@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --accent: #3b82f6;
+  --accent-green: #22c55e;
+  --muted: #a1a1aa;
+  --card: #18181b;
+  --border: #27272a;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.badge-beginner { background: #166534; color: #bbf7d0; }
+.badge-intermediate { background: #854d0e; color: #fef08a; }
+.badge-advanced { background: #991b1b; color: #fecaca; }
+.badge-locked { background: #7c2d12; color: #fed7aa; }
+.badge-unlocked { background: #166534; color: #bbf7d0; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.875rem;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.btn:hover { opacity: 0.85; }
+.btn-primary { background: var(--accent); color: white; }
+.btn-secondary { background: var(--border); color: var(--foreground); }
+.btn-green { background: var(--accent-green); color: white; }
+
+.input {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  color: var(--foreground);
+  font-size: 0.875rem;
+  width: 100%;
+}
+.input:focus { outline: none; border-color: var(--accent); }
