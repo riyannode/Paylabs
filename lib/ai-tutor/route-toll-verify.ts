@@ -40,7 +40,8 @@ export interface RouteTollVerifyResult {
 export async function verifyRouteTollProof(
   headers: RouteTollProofHeaders,
   userWallet: string,
-  routeTier: string
+  routeTier: string,
+  goal: string
 ): Promise<RouteTollVerifyResult> {
   const { routePaymentId, routePaymentRef, routeSettlementRef, routeInputHash } = headers;
 
@@ -70,7 +71,7 @@ export async function verifyRouteTollProof(
   // Step 2-7: Verify against DB record
   const { data: tollRow, error: queryErr } = await supabaseAdmin()
     .from("paylabs_route_toll_calls")
-    .select("id, user_wallet, route_tier, input_hash, payment_ref, settlement_ref, status")
+    .select("id, user_wallet, route_tier, normalized_goal, input_hash, payment_ref, settlement_ref, status")
     .eq("payment_id", routePaymentId)
     .eq("status", "completed")
     .maybeSingle();
@@ -114,6 +115,15 @@ export async function verifyRouteTollProof(
     return {
       ok: false,
       error: "Route toll proof invalid: route_tier mismatch.",
+      status: 403,
+    };
+  }
+
+  // Check normalized_goal match
+  if (tollRow.normalized_goal !== goal) {
+    return {
+      ok: false,
+      error: "Route toll proof invalid: goal mismatch. Pay route toll again for the updated goal.",
       status: 403,
     };
   }
