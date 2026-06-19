@@ -49,7 +49,7 @@ function isAgentToAgentPaymentsEnabled(): boolean {
 export async function sourceVerifierAgent(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { selectedSources, availableFeedItems, routeTier, routePrompts, budgetUsdc, estimatedTotalUsdc, userWallet } = state;
+  const { selectedSources, routeTier, routePrompts, budgetUsdc, estimatedTotalUsdc, userWallet } = state;
   const tier: RouteTier = routeTier || "normal";
   const config = getRouteConfig(tier);
   const prompts = (routePrompts as unknown as ReturnType<typeof getPromptsForRoute>) || getPromptsForRoute(tier);
@@ -62,6 +62,10 @@ export async function sourceVerifierAgent(
       error: "No sources to verify",
     };
   }
+
+  // Load feed items from DB — never trust state
+  const { listFeedItems } = await import("./tools");
+  const availableFeedItems = await listFeedItems() as Record<string, unknown>[];
 
   // Build lookup map
   const feedItemMap = new Map<string, Record<string, unknown>>();

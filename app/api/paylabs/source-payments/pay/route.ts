@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       source_payment_id: result.sourcePaymentId,
       receipt_id: result.receiptId,
-      runner_payment_result: result.runnerPaymentResult,
+      payment_adapter_result: result.paymentAdapterResult,
       policy_decision: result.policyDecision,
     });
   } catch (e: unknown) {

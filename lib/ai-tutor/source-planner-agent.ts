@@ -43,7 +43,7 @@ type SourcePlannerResult = z.infer<typeof SourcePlannerSchema>;
 export async function sourcePlannerAgent(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { goal, budgetUsdc, topics, paidSourceIds, routeTier, routePrompts, routeConfig } = state;
+  const { goal, budgetUsdc, topics, routeTier, routePrompts, routeConfig } = state;
   const tier: RouteTier = routeTier || "normal";
   const config = routeConfig || getRouteConfig(tier);
   const prompts = (routePrompts as unknown as ReturnType<typeof getPromptsForRoute>) || getPromptsForRoute(tier);
@@ -58,13 +58,13 @@ export async function sourcePlannerAgent(
       selectedSources: [],
       estimatedTotalUsdc: 0,
       remainingUsdc: budgetUsdc || 0,
-      plannerNotes: [`Failed to load feed items: ${msg}`],
+      // plannerNotes removed — use error field
       error: `Source Planner DB read failed: ${msg}`,
     };
   }
 
   // Filter out already-paid feed items
-  const paidSet = new Set(paidSourceIds || []);
+  const paidSet = new Set<string>(); // paidSourceIds removed from state
   const candidateItems = allFeedItems.filter(
     (item) => !paidSet.has(item.id as string)
   );
@@ -74,7 +74,7 @@ export async function sourcePlannerAgent(
       selectedSources: [],
       estimatedTotalUsdc: 0,
       remainingUsdc: budgetUsdc || 0,
-      plannerNotes: ["No available feed items to select from"],
+      // plannerNotes removed: ["No available feed items to select from"],
     };
   }
 
@@ -104,7 +104,7 @@ export async function sourcePlannerAgent(
     const errResult = llmResult as { ok: false; error: string; meta: Record<string, unknown> };
     return {
       error: `Source Planner LLM failed: ${errResult.error}`,
-      plannerNotes: ["LLM call failed"],
+      // plannerNotes removed: ["LLM call failed"],
       llmErrors: { source_planner: errResult },
       agentTrace: { source_planner: errResult.meta },
     };
@@ -142,7 +142,7 @@ export async function sourcePlannerAgent(
       selectedSources: [],
       estimatedTotalUsdc: computedTotal,
       remainingUsdc: remaining,
-      plannerNotes: [`Computed total ${computedTotal} USDC exceeds budget ${budgetUsdc || 0} USDC`],
+      // plannerNotes removed: [`Computed total ${computedTotal} USDC exceeds budget ${budgetUsdc || 0} USDC`],
       agentTrace: { source_planner: meta },
     };
   }
@@ -151,7 +151,7 @@ export async function sourcePlannerAgent(
     selectedSources: cappedSelections,
     estimatedTotalUsdc: computedTotal,
     remainingUsdc: remaining,
-    plannerNotes: data.notes,
+    // plannerNotes removed: data.notes,
     agentTrace: { source_planner: meta },
     llmOutputs: { source_planner: data },
   };
