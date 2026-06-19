@@ -7,6 +7,9 @@ interface ProposedLesson {
   title: string;
   price_usdc: number;
   reason: string;
+  source_ok?: boolean;
+  creator_ok?: boolean;
+  verification_reason?: string;
 }
 
 declare global {
@@ -23,10 +26,14 @@ export default function TutorPage() {
   const [budget, setBudget] = useState("0.01");
   const [path, setPath] = useState<ProposedLesson[] | null>(null);
   const [pathId, setPathId] = useState<string | null>(null);
+  const [pathStatus, setPathStatus] = useState<string>("none");
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [approving, setApproving] = useState(false);
   const [buyStatus, setBuyStatus] = useState<string>("");
   const [wallet, setWallet] = useState<string | null>(null);
+  const [buyingLessonId, setBuyingLessonId] = useState<string | null>(null);
+  const [unlockedIds, setUnlockedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (typeof window !== "undefined" && window.ethereum) {
@@ -64,9 +71,11 @@ export default function TutorPage() {
     setLoading(true);
     setPath(null);
     setPathId(null);
+    setPathStatus("none");
     setBuyStatus("");
+    setUnlockedIds(new Set());
     try {
-      const res = await fetch("/api/paylabs/tutor/propose", {
+      const res = await fetch("/api/paylabs/learning-paths/propose", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -79,6 +88,7 @@ export default function TutorPage() {
       if (data.path) {
         setPath(data.path);
         setPathId(data.path_id || null);
+        setPathStatus(data.path_status || "none");
         setTotal(data.total_usdc);
       } else {
         setBuyStatus("Error: " + (data.error || "Could not propose path"));
@@ -90,11 +100,44 @@ export default function TutorPage() {
     setLoading(false);
   }
 
+  async function approvePath() {
+    if (!pathId || !wallet) return;
+    setApproving(true);
+    setBuyStatus("");
+    try {
+      const res = await fetch(`/api/paylabs/learning-paths/${pathId}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_wallet: wallet }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setPathStatus(data.path_status || "approved");
+        setBuyStatus("Path approved! You can now buy lessons.");
+      } else {
+        setBuyStatus("Error: " + (data.error || "Approval failed"));
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setBuyStatus("Error: " + msg);
+    }
+    setApproving(false);
+  }
+
   async function buyLesson(lessonId: string) {
     if (!wallet) {
       setBuyStatus("Connect wallet first");
       return;
     }
+    if (!pathId) {
+      setBuyStatus("Error: No path_id. Propose and approve a path first.");
+      return;
+    }
+    if (pathStatus !== "approved") {
+      setBuyStatus("Error: Path must be approved before buying.");
+      return;
+    }
+    setBuyingLessonId(lessonId);
     setBuyStatus("Buying via ArcLayer Runner...");
     try {
       const res = await fetch("/api/paylabs/agent/buy-lesson", {
@@ -108,7 +151,10 @@ export default function TutorPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        setBuyStatus(`Unlocked: ${data.unlock_id} (payment: ${data.payment_id || "pending settlement"})`);
+        setBuyStatus(
+          `Unlocked! Payment: ${data.payment_id || "pending settlement"}`
+        );
+        setUnlockedIds((prev) => new Set([...prev, lessonId]));
       } else {
         setBuyStatus("Error: " + (data.reason || data.error));
       }
@@ -116,14 +162,20 @@ export default function TutorPage() {
       const msg = e instanceof Error ? e.message : String(e);
       setBuyStatus("Error: " + msg);
     }
+    setBuyingLessonId(null);
   }
+
+  const isApproved = pathStatus === "approved";
+  const isProposed = pathStatus === "proposed";
 
   return (
     <div>
-      <h1 style={{ fontSize: "2rem", fontWeight: 700, marginBottom: "0.5rem" }}>AI Tutor</h1>
+      <h1 style={{ fontSize: "2rem", fontWeight: 700, marginBottom: "0.5rem" }}>
+        AI Tutor
+      </h1>
       <p style={{ color: "var(--muted)", marginBottom: "2rem" }}>
-        Set a goal and budget. The tutor proposes a learning path from real lessons.
-        Purchases go through ArcLayer Runner with budget policy enforcement.
+        5-agent LangGraph workflow: Intent → Curriculum Planner → Source Verifier
+        → Policy Guard → Payment Executor. All payments through ArcLayer Runner.
       </p>
 
       {/* Wallet connection */}
@@ -144,7 +196,14 @@ export default function TutorPage() {
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <div style={{ display: "grid", gap: "1rem" }}>
           <div>
-            <label style={{ display: "block", fontSize: "0.875rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
+            <label
+              style={{
+                display: "block",
+                fontSize: "0.875rem",
+                color: "var(--muted)",
+                marginBottom: "0.25rem",
+              }}
+            >
               Learning Goal
             </label>
             <input
@@ -155,7 +214,14 @@ export default function TutorPage() {
             />
           </div>
           <div>
-            <label style={{ display: "block", fontSize: "0.875rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
+            <label
+              style={{
+                display: "block",
+                fontSize: "0.875rem",
+                color: "var(--muted)",
+                marginBottom: "0.25rem",
+              }}
+            >
               Budget (USDC)
             </label>
             <input
@@ -167,8 +233,12 @@ export default function TutorPage() {
               style={{ maxWidth: 200 }}
             />
           </div>
-          <button onClick={proposePath} disabled={loading || !goal || !wallet} className="btn btn-primary">
-            {loading ? "Thinking..." : "Propose Learning Path"}
+          <button
+            onClick={proposePath}
+            disabled={loading || !goal || !wallet}
+            className="btn btn-primary"
+          >
+            {loading ? "Running 5-agent workflow..." : "Propose Learning Path"}
           </button>
         </div>
       </div>
@@ -176,35 +246,152 @@ export default function TutorPage() {
       {/* Proposed path */}
       {path && (
         <div className="card">
-          <h2 style={{ fontSize: "1.25rem", fontWeight: 600, marginBottom: "1rem" }}>
+          <h2
+            style={{
+              fontSize: "1.25rem",
+              fontWeight: 600,
+              marginBottom: "0.5rem",
+            }}
+          >
             Proposed Path (Total: {total.toFixed(4)} USDC)
-            {pathId && <span style={{ fontSize: "0.75rem", color: "var(--muted)", marginLeft: "0.5rem" }}>ID: {pathId.slice(0, 8)}...</span>}
+            {pathId && (
+              <span
+                style={{
+                  fontSize: "0.75rem",
+                  color: "var(--muted)",
+                  marginLeft: "0.5rem",
+                }}
+              >
+                ID: {pathId.slice(0, 8)}...
+              </span>
+            )}
           </h2>
-          <p style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "1rem" }}>
-            Purchases enforced by budget policy. All payments go through ArcLayer Runner.
-          </p>
+
+          <div
+            style={{
+              fontSize: "0.8rem",
+              color: isApproved
+                ? "var(--accent-green)"
+                : isProposed
+                ? "#f59e0b"
+                : "var(--muted)",
+              marginBottom: "1rem",
+              padding: "0.5rem 0.75rem",
+              background: "rgba(255,255,255,0.03)",
+              borderRadius: 6,
+            }}
+          >
+            Status: <strong>{pathStatus}</strong>
+            {isProposed && " — Approve budget to enable purchases"}
+            {isApproved && " — Ready to buy"}
+          </div>
+
+          {/* Approve button — only shown when proposed */}
+          {isProposed && (
+            <button
+              onClick={approvePath}
+              disabled={approving}
+              className="btn btn-primary"
+              style={{ marginBottom: "1rem" }}
+            >
+              {approving ? "Approving..." : "Approve Budget"}
+            </button>
+          )}
+
           <div style={{ display: "grid", gap: "0.75rem" }}>
-            {path.map((l, i) => (
-              <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.75rem", background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
+            {path.map((l: ProposedLesson, i: number) => (
+              <div
+                key={l.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "0.75rem",
+                  background: unlockedIds.has(l.id)
+                    ? "rgba(34,197,94,0.1)"
+                    : "rgba(255,255,255,0.03)",
+                  borderRadius: 8,
+                }}
+              >
                 <div>
                   <div style={{ fontWeight: 600 }}>
                     {i + 1}. {l.title}
+                    {unlockedIds.has(l.id) && (
+                      <span
+                        style={{
+                          color: "var(--accent-green)",
+                          marginLeft: "0.5rem",
+                          fontSize: "0.75rem",
+                        }}
+                      >
+                        ✓ Unlocked
+                      </span>
+                    )}
                   </div>
-                  <div style={{ fontSize: "0.8rem", color: "var(--muted)", marginTop: "0.25rem" }}>
+                  <div
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "var(--muted)",
+                      marginTop: "0.25rem",
+                    }}
+                  >
                     {l.reason}
                   </div>
+                  {l.verification_reason && (
+                    <div
+                      style={{
+                        fontSize: "0.75rem",
+                        color: "var(--accent-green)",
+                        marginTop: "0.15rem",
+                      }}
+                    >
+                      ✓ {l.verification_reason}
+                    </div>
+                  )}
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-                  <span style={{ fontWeight: 700, color: "var(--accent-green)" }}>{l.price_usdc} USDC</span>
-                  <button onClick={() => buyLesson(l.id)} className="btn btn-green" style={{ fontSize: "0.8rem" }}>
-                    Buy via Runner
-                  </button>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "1rem",
+                  }}
+                >
+                  <span
+                    style={{ fontWeight: 700, color: "var(--accent-green)" }}
+                  >
+                    {l.price_usdc} USDC
+                  </span>
+                  {!unlockedIds.has(l.id) && (
+                    <button
+                      onClick={() => buyLesson(l.id)}
+                      disabled={!isApproved || buyingLessonId === l.id}
+                      className="btn btn-green"
+                      style={{
+                        fontSize: "0.8rem",
+                        opacity: isApproved ? 1 : 0.4,
+                      }}
+                    >
+                      {buyingLessonId === l.id
+                        ? "Buying..."
+                        : isApproved
+                        ? "Buy via Runner"
+                        : "Approve first"}
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
           </div>
           {buyStatus && (
-            <p style={{ marginTop: "1rem", fontSize: "0.875rem", color: buyStatus.startsWith("Error") ? "#ef4444" : "var(--accent-green)" }}>
+            <p
+              style={{
+                marginTop: "1rem",
+                fontSize: "0.875rem",
+                color: buyStatus.startsWith("Error")
+                  ? "#ef4444"
+                  : "var(--accent-green)",
+              }}
+            >
               {buyStatus}
             </p>
           )}
