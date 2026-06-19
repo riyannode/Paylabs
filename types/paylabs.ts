@@ -1,84 +1,141 @@
-export interface PaylabsSource {
-  id: string;
-  canonical_url: string;
-  source_title: string;
-  publisher: string;
-  source_type: string;
-  fetched_at: string;
-  normalized_sha256: string;
-  excerpt: string;
-  license_note: string | null;
+/**
+ * PayLabs Type Definitions
+ * RSSHub-only types for source paths, feed items, payments, and agent actions.
+ */
+
+// ─── Route Tier ─────────────────────────────────────────────────
+
+export type RouteTier = "normal" | "advanced" | "premium";
+
+export interface RouteConfig {
+  tier: RouteTier;
+  label: string;
+  publicLabel: string;
+  maxSourceCards: number;
+  reasoningDepth: "low" | "medium" | "high";
+  sourceStrictness: "standard" | "high" | "very_high";
+  plannerStyle: "quick_intro" | "builder_path" | "deep_mastery";
+  description: string;
 }
 
-export interface PaylabsCreator {
-  id: string;
-  display_name: string;
-  wallet_address: string;
-  profile_url: string | null;
-  is_verified: boolean;
-}
+// ─── RSSHub ─────────────────────────────────────────────────────
 
-export interface PaylabsLesson {
+export interface PaylabsRsshubRoute {
   id: string;
-  slug: string;
-  title: string;
-  summary: string;
-  body_markdown: string;
-  source_id: string;
-  creator_id: string;
+  route_path: string;
+  route_title: string;
+  description: string | null;
+  route_tier: RouteTier;
   price_usdc: number;
-  estimated_minutes: number;
-  difficulty: "beginner" | "intermediate" | "advanced";
-  tags: string[];
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface PaylabsFeedItem {
+  id: string;
+  rsshub_route_id: string;
+  item_guid: string;
+  title: string;
+  summary: string | null;
   content_sha256: string;
-  is_published: boolean;
-  created_at: string;
+  published_at: string | null;
+  fetched_at: string;
   // joined
-  source?: PaylabsSource;
-  creator?: PaylabsCreator;
+  rsshub_route?: PaylabsRsshubRoute;
 }
 
-export interface PaylabsUnlock {
+// ─── Source Paths ───────────────────────────────────────────────
+
+export interface PaylabsSourcePath {
   id: string;
-  lesson_id: string;
   user_wallet: string;
-  payment_id: string;
-  payment_rail: string;
+  goal: string;
+  budget_usdc: number;
+  estimated_total_usdc: number;
+  agent_reasoning_summary: string;
+  status: "proposed" | "approved" | "active" | "completed" | "cancelled";
+  route_tier: RouteTier;
+  route_config: Record<string, unknown>;
+  agent_trace: Record<string, unknown>;
+  created_by_agent_id: string;
+  created_at: string;
+}
+
+export interface PaylabsSourcePathItem {
+  id: string;
+  source_path_id: string;
+  feed_item_id: string;
+  order_index: number;
+  reason: string;
+  expected_value: string;
+  status: "proposed" | "approved" | "purchased" | "completed";
+  // joined
+  feed_item?: PaylabsFeedItem;
+}
+
+// ─── Payments ───────────────────────────────────────────────────
+
+export interface PaylabsRoutePayment {
+  id: string;
+  user_wallet: string;
+  route_tier: string;
   amount_usdc: number;
-  payment_ref: string;
+  payment_id: string;
+  payment_ref: string | null;
+  settlement_ref: string | null;
   tx_hash: string | null;
-  gateway_settlement_ref: string | null;
-  unlocked_at: string;
-}
-
-export interface PaylabsPayoutReceipt {
-  id: string;
-  lesson_id: string;
-  unlock_id: string;
-  creator_wallet: string;
-  platform_wallet: string;
-  treasury_wallet: string;
-  gross_amount_usdc: number;
-  creator_amount_usdc: number;
-  platform_amount_usdc: number;
-  treasury_amount_usdc: number;
-  payment_ref: string;
-  tx_hash: string | null;
+  input_hash: string;
+  normalized_goal: string;
+  status: "pending" | "completed" | "failed";
   created_at: string;
-  // joined
-  lesson_title?: string;
-  source_url?: string;
 }
 
-export interface PaylabsCompletion {
+export interface PaylabsSourcePayment {
   id: string;
-  lesson_id: string;
   user_wallet: string;
-  unlock_id: string;
-  proof_type: string;
-  proof_hash: string;
-  completed_at: string;
+  source_path_id: string;
+  source_path_item_id: string;
+  feed_item_id: string;
+  amount_usdc: number;
+  payment_id: string;
+  payment_ref: string | null;
+  settlement_ref: string | null;
+  tx_hash: string | null;
+  status: "pending" | "completed" | "failed";
+  created_at: string;
 }
+
+export interface PaylabsAgentPayment {
+  id: string;
+  buyer_agent_id: string;
+  provider_agent_id: string;
+  user_wallet: string;
+  service_type: string;
+  resource_url: string;
+  input_hash: string;
+  output_hash: string;
+  amount_usdc: number;
+  payment_id: string;
+  payment_ref: string | null;
+  settlement_ref: string | null;
+  tx_hash: string | null;
+  status: "pending" | "completed" | "failed";
+  created_at: string;
+}
+
+export interface PaylabsAgentAction {
+  id: string;
+  user_wallet: string;
+  agent_id: string;
+  action_type: string;
+  input_hash: string;
+  output_hash: string;
+  status: string;
+  policy_decision: Record<string, unknown> | null;
+  created_at: string;
+}
+
+// ─── x402 Payment Challenge ────────────────────────────────────
 
 export interface X402PaymentChallenge {
   network: string;
@@ -93,18 +150,4 @@ export interface X402PaymentChallenge {
     verifyingContract: string;
   };
   typedData: Record<string, unknown>;
-}
-
-export type RouteTier = "normal" | "advanced" | "premium";
-
-export interface RouteConfig {
-  tier: RouteTier;
-  label: string;
-  publicLabel: string;
-  maxSourceCards: number;
-  maxLessons: number;
-  reasoningDepth: "low" | "medium" | "high";
-  sourceStrictness: "standard" | "high" | "very_high";
-  plannerStyle: "quick_intro" | "builder_path" | "deep_mastery";
-  description: string;
 }

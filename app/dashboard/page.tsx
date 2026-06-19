@@ -66,21 +66,18 @@ export default async function DashboardPage() {
   const [
     rsshubRoutes,
     feedItems,
-    citationReceipts,
-    totalCitationPayoutUsdc,
+    sourcePayments,
+    totalSourcePaymentUsdc,
     routeRows,
     feedItemRows,
-    citationRows,
-    // Legacy
-    publishedLessons,
-    lessonRows,
+    sourcePaymentRows,
   ] = await Promise.all([
     safeCount("paylabs_rsshub_routes", (q: any) => q.eq("is_active", true)),
     safeCount("paylabs_feed_items", (q: any) => q.eq("is_active", true)),
-    safeCount("paylabs_citation_receipts", (q: any) =>
+    safeCount("paylabs_source_payments", (q: any) =>
       q.eq("status", "completed")
     ),
-    safeSum("paylabs_citation_receipts", "amount_usdc", (q: any) =>
+    safeSum("paylabs_source_payments", "amount_usdc", (q: any) =>
       q.eq("status", "completed")
     ),
     safeQuery(() =>
@@ -103,26 +100,13 @@ export default async function DashboardPage() {
     ),
     safeQuery(() =>
       supabaseAdmin()
-        .from("paylabs_citation_receipts")
+        .from("paylabs_source_payments")
         .select("*")
+        .eq("status", "completed")
         .order("created_at", { ascending: false })
         .limit(25)
     ),
-    // Legacy lesson counts
-    safeCount("paylabs_lessons", (q: any) => q.eq("is_published", true)),
-    safeQuery(() =>
-      supabaseAdmin()
-        .from("paylabs_lessons")
-        .select(
-          "id, title, slug, price_usdc, difficulty, is_published, creator:paylabs_creators(display_name)"
-        )
-        .eq("is_published", true)
-        .order("price_usdc", { ascending: true })
-        .limit(50)
-    ),
   ]);
-
-  const hasLegacyLessons = publishedLessons > 0;
 
   return (
     <div style={{ display: "grid", gap: 24 }}>
@@ -138,8 +122,8 @@ export default async function DashboardPage() {
         {[
           { label: "RSSHub Routes", value: rsshubRoutes },
           { label: "Feed Items", value: feedItems },
-          { label: "Citation Receipts", value: citationReceipts },
-          { label: "Citation Payouts", value: usdc(totalCitationPayoutUsdc) },
+          { label: "Source Payments", value: sourcePayments },
+          { label: "Source Payouts", value: usdc(totalSourcePaymentUsdc) },
         ].map((kpi) => (
           <div className="card" key={kpi.label}>
             <div className="muted" style={{ fontSize: 13 }}>
@@ -260,12 +244,12 @@ export default async function DashboardPage() {
         )}
       </section>
 
-      {/* ─── Citation Receipts Table ───────────────────────── */}
+      {/* ─── Source Payments Table ──────────────────────────── */}
       <section className="card">
-        <h2 className="section-title">Citation Receipts</h2>
-        {citationRows.length === 0 ? (
+        <h2 className="section-title">Source Payments</h2>
+        {sourcePaymentRows.length === 0 ? (
           <div className="muted" style={{ textAlign: "center", padding: 24 }}>
-            No citation receipts yet.
+            No source payments yet.
           </div>
         ) : (
           <div style={{ overflowX: "auto" }}>
@@ -277,12 +261,13 @@ export default async function DashboardPage() {
                   <th>Source URL</th>
                   <th>Creator</th>
                   <th>Amount</th>
+                  <th>Kind</th>
                   <th>Payment</th>
                   <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {citationRows.map((r: any) => (
+                {sourcePaymentRows.map((r: any) => (
                   <tr key={r.id}>
                     <td className="muted">{timeAgo(r.created_at)}</td>
                     <td className="data-mono">{short(r.user_wallet)}</td>
@@ -293,6 +278,7 @@ export default async function DashboardPage() {
                       {short(r.creator_wallet)}
                     </td>
                     <td className="data-mono">{usdc(r.amount_usdc)}</td>
+                    <td>{r.payment_kind}</td>
                     <td className="data-mono">{short(r.payment_id)}</td>
                     <td>
                       <span
@@ -314,45 +300,6 @@ export default async function DashboardPage() {
           </div>
         )}
       </section>
-
-      {/* ─── Legacy Internal Lessons ───────────────────────── */}
-      {hasLegacyLessons && (
-        <section className="card" style={{ opacity: 0.85 }}>
-          <h2 className="section-title" style={{ fontSize: 14 }}>
-            Legacy Internal Lessons
-          </h2>
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Difficulty</th>
-                  <th>Price</th>
-                  <th>Creator</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lessonRows.map((l: any) => (
-                  <tr key={l.id}>
-                    <td>
-                      <a href={`/learn/${l.slug}`} style={{ fontWeight: 600 }}>
-                        {l.title}
-                      </a>
-                    </td>
-                    <td>
-                      <span className={`badge badge-${l.difficulty}`}>
-                        {l.difficulty}
-                      </span>
-                    </td>
-                    <td className="data-mono">{usdc(l.price_usdc)}</td>
-                    <td>{l.creator?.display_name || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
     </div>
   );
 }

@@ -15,8 +15,6 @@ export interface RouteConfig {
   label: string;
   publicLabel: string;
   maxSourceCards: number;
-  /** @deprecated Use maxSourceCards */
-  maxLessons: number;
   reasoningDepth: "low" | "medium" | "high";
   sourceStrictness: "standard" | "high" | "very_high";
   plannerStyle: "quick_intro" | "builder_path" | "deep_mastery";
@@ -29,7 +27,6 @@ export const ROUTE_CONFIG: Record<RouteTier, RouteConfig> = {
     label: "Normal Route",
     publicLabel: "Easy",
     maxSourceCards: 2,
-    maxLessons: 2,
     reasoningDepth: "low",
     sourceStrictness: "standard",
     plannerStyle: "quick_intro",
@@ -40,7 +37,6 @@ export const ROUTE_CONFIG: Record<RouteTier, RouteConfig> = {
     label: "Advanced Route",
     publicLabel: "Normal",
     maxSourceCards: 5,
-    maxLessons: 5,
     reasoningDepth: "medium",
     sourceStrictness: "high",
     plannerStyle: "builder_path",
@@ -51,7 +47,6 @@ export const ROUTE_CONFIG: Record<RouteTier, RouteConfig> = {
     label: "Advanced Route",
     publicLabel: "Advanced",
     maxSourceCards: 8,
-    maxLessons: 8,
     reasoningDepth: "high",
     sourceStrictness: "very_high",
     plannerStyle: "deep_mastery",

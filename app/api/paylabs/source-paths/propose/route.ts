@@ -1,14 +1,13 @@
-// POST /api/paylabs/tutor/propose
-// Compatibility wrapper — redirects to /api/paylabs/learning-paths/propose
-// Uses the same LangGraph proposeLearningPath graph.
-// Accepts route_tier: normal (default), advanced, premium.
+// POST /api/paylabs/source-paths/propose
 //
-// When PAYLABS_ROUTE_TOLL_ENABLED=true, requires route toll proof in headers.
+// Propose a source path using the LangGraph workflow.
+// RSSHub-first: picks from paylabs_feed_items, not lessons.
+//
+// Flow: intent → source_planner → source_verifier → persist
 
 import { NextRequest, NextResponse } from "next/server";
-import { proposeLearningPath } from "@/lib/ai-tutor/graph";
+import { proposeSourcePath } from "@/lib/ai-tutor/graph";
 import { isValidRouteTier } from "@/lib/ai-tutor/route-config";
-import { verifyRouteTollProof } from "@/lib/ai-tutor/route-toll-verify";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
@@ -27,7 +26,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Validate route_tier — reject unknown values
   const tier = route_tier || "normal";
   if (!isValidRouteTier(tier)) {
     return NextResponse.json(
@@ -36,61 +34,37 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ─── Route toll proof validation ──────────────────────────────
-  const tollEnabled = process.env.PAYLABS_ROUTE_TOLL_ENABLED === "true";
-  if (tollEnabled) {
-    const verifyResult = await verifyRouteTollProof(
-      {
-        routePaymentId: req.headers.get("x-route-payment-id") || "",
-        routePaymentRef: req.headers.get("x-route-payment-ref"),
-        routeSettlementRef: req.headers.get("x-route-settlement-ref"),
-        routeInputHash: req.headers.get("x-route-input-hash") || "",
-      },
-      user_wallet,
-      tier,
-      goal
-    );
-
-    if (!verifyResult.ok) {
-      return NextResponse.json(
-        { error: verifyResult.error },
-        { status: verifyResult.status || 403 }
-      );
-    }
-  }
-
   try {
-    const result = await proposeLearningPath({
+    const result = await proposeSourcePath({
       userWallet: user_wallet,
       goal,
       budgetUsdc: Number(budget_usdc),
       routeTier: tier,
     });
 
-    if (result.error && !result.pathId) {
+    if (result.error && !result.sourcePathId) {
       return NextResponse.json({ error: result.error }, { status: 500 });
     }
 
-    const path = (result.verifiedLessons as Record<string, unknown>[] || []).map((v, i) => {
-      const selected = (result.selectedLessons as Record<string, unknown>[] || []).find(
-        (s) => s.lesson_id === v.lesson_id
+    const path = (result.verifiedSources as Record<string, unknown>[] || []).map((v, i) => {
+      const selected = (result.selectedSources as Record<string, unknown>[] || []).find(
+        (s) => s.feed_item_id === v.feed_item_id
       );
       return {
-        id: v.lesson_id,
+        id: v.feed_item_id,
         order_index: i,
         source_ok: v.source_ok,
-        creator_ok: v.creator_ok,
+        route_ok: v.route_ok,
         verification_reason: v.verification_reason,
         price_usdc: selected?.price_usdc || 0,
         reason: selected?.reason || "",
         title: selected?.title || "",
-        slug: selected?.slug || "",
       };
     });
 
     return NextResponse.json({
-      path_id: result.pathId,
-      path_status: result.pathStatus,
+      source_path_id: result.sourcePathId,
+      source_path_status: result.sourcePathStatus,
       goal,
       budget_usdc,
       route_tier: result.routeTier,
@@ -98,7 +72,7 @@ export async function POST(req: NextRequest) {
       path,
       total_usdc: result.estimatedTotalUsdc || 0,
       remaining_usdc: result.remainingUsdc || 0,
-      rejected: result.rejectedLessons || [],
+      rejected: result.rejectedSources || [],
       agent_service_calls: result.agentServiceCalls || [],
     });
   } catch (e: unknown) {

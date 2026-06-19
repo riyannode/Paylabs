@@ -2,10 +2,10 @@ import { Annotation } from "@langchain/langgraph";
 
 /**
  * PayLabs Tutor Agent State
- * Shared state across all 5 agents in the LangGraph workflow.
+ * Shared state across all agents in the LangGraph workflow.
  * Route tier changes planning behavior and prompt persona only.
  *
- * All 5 agents are real LLM agents. Source verifier, policy guard, and
+ * All agents are real LLM agents. Source verifier, policy guard, and
  * payment executor use LLM for reasoning/audit only — final decisions
  * remain deterministic.
  */
@@ -49,35 +49,35 @@ export const PayLabsTutorState = Annotation.Root({
   normalizedGoal: Annotation<string | undefined>,
   topics: Annotation<string[]>,
   learningLevel: Annotation<string | undefined>,
-  maxLessonPriceUsdc: Annotation<number | undefined>,
+  maxSourceCostUsdc: Annotation<number | undefined>,
   riskNotes: Annotation<string[]>,
 
-  // Path management
-  pathId: Annotation<string | undefined>,
-  pathStatus: Annotation<
+  // Source path management
+  sourcePathId: Annotation<string | undefined>,
+  sourcePathStatus: Annotation<
     "none" | "proposed" | "approved" | "active" | "completed" | "cancelled"
   >,
 
-  // Agent 2: Curriculum Planner output
-  publishedLessons: Annotation<unknown[]>,
-  unlockedLessonIds: Annotation<string[]>,
-  selectedLessons: Annotation<unknown[]>,
+  // Agent 2: Source Planner output
+  availableFeedItems: Annotation<unknown[]>,
+  paidSourceIds: Annotation<string[]>,
+  selectedSources: Annotation<unknown[]>,
   estimatedTotalUsdc: Annotation<number | undefined>,
   remainingUsdc: Annotation<number | undefined>,
   plannerNotes: Annotation<string[]>,
 
   // Agent 3: Source Verifier output
-  verifiedLessons: Annotation<unknown[]>,
-  rejectedLessons: Annotation<unknown[]>,
+  verifiedSources: Annotation<unknown[]>,
+  rejectedSources: Annotation<unknown[]>,
   allVerified: Annotation<boolean | undefined>,
 
   // Agent 4: Policy Guard output
-  lessonId: Annotation<string | undefined>,
+  sourcePathItemId: Annotation<string | undefined>,
   policyDecision: Annotation<Record<string, unknown> | undefined>,
 
-  // Agent 5: Payment & Receipt Executor output
+  // Agent 5: Payment Executor output
   runnerPaymentResult: Annotation<Record<string, unknown> | undefined>,
-  unlockId: Annotation<string | undefined>,
+  sourcePaymentId: Annotation<string | undefined>,
   receiptId: Annotation<string | undefined>,
 
   // Agent service calls — merged across nodes via reducer (RFB 03)

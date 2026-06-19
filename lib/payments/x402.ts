@@ -32,7 +32,7 @@ export interface X402VerifyResult {
 }
 
 /**
- * Build x402 payment challenge for a lesson.
+ * Build x402 payment challenge for a source.
  */
 export function buildX402Challenge(
   receiverAddress: string,
@@ -143,7 +143,7 @@ function computeEIP712Digest(
  *
  * Checks:
  * 1. Receiver matches X402_RECEIVER_ADDRESS
- * 2. Amount matches expected lesson price
+ * 2. Amount matches expected source price
  * 3. Chain ID is 5042002 (Arc testnet)
  * 4. USDC contract address correct
  * 5. Authorization is currently valid (validAfter <= now <= validBefore)
@@ -235,9 +235,9 @@ export async function verifyX402Authorization(
 
 /**
  * Build the resource URL for x402 verification.
- * This binds the payment to a specific lesson content endpoint.
+ * This binds the payment to a specific source content endpoint.
  */
-export function buildResourceUrl(lessonId: string): string {
+export function buildResourceUrl(sourceUrl: string): string {
   const base = process.env.NEXT_PUBLIC_PAYLABS_APP_URL || "https://paylabs.vercel.app";
-  return `${base}/api/paylabs/lessons/${lessonId}/content`;
+  return `${base}/api/paylabs/feed-items?url=${encodeURIComponent(sourceUrl)}`;
 }

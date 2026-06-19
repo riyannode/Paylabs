@@ -13,10 +13,9 @@
  * Agent key mapping (from invokeJsonAgent agentName):
  *   tutor_intake              → INTAKE
  *   intent                    → INTENT
- *   curriculum_planner        → PLANNER
+ *   source_planner            → PLANNER
  *   source_verifier           → VERIFIER
  *   source_verifier_specialist→ VERIFIER_SPECIALIST
- *   specialist_payment_decision → SPECIALIST_DECISION
  *   policy_guard              → POLICY
  *   payment_executor          → EXECUTOR
  *
@@ -31,10 +30,9 @@ import { ChatOpenAI } from "@langchain/openai";
 const AGENT_KEY_MAP: Record<string, string> = {
   tutor_intake: "INTAKE",
   intent: "INTENT",
-  curriculum_planner: "PLANNER",
+  source_planner: "PLANNER",
   source_verifier: "VERIFIER",
   source_verifier_specialist: "VERIFIER_SPECIALIST",
-  specialist_payment_decision: "SPECIALIST_DECISION",
   policy_guard: "POLICY",
   payment_executor: "EXECUTOR",
 };
