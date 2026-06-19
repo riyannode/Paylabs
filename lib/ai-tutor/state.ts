@@ -3,12 +3,18 @@ import { Annotation } from "@langchain/langgraph";
 /**
  * PayLabs Tutor Agent State
  * Shared state across all 5 agents in the LangGraph workflow.
+ * Route tier changes planning behavior and prompt persona only.
  */
 export const PayLabsTutorState = Annotation.Root({
   // User input
   userWallet: Annotation<string>,
   goal: Annotation<string | undefined>,
   budgetUsdc: Annotation<number | undefined>,
+
+  // Route tier
+  routeTier: Annotation<"normal" | "advanced" | "premium" | undefined>,
+  routeConfig: Annotation<Record<string, unknown> | undefined>,
+  agentTrace: Annotation<Record<string, unknown> | undefined>,
 
   // Agent 1: Intent Agent output
   normalizedGoal: Annotation<string | undefined>,

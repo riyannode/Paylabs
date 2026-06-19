@@ -2,9 +2,12 @@
  * Agent 3: Source Verifier Agent
  * Verifies planned lessons are real source-backed content.
  * No payment, no Runner — read-only.
+ * Route tier controls source strictness level.
  */
 
 import type { PayLabsTutorStateType } from "./state";
+import type { RouteTier } from "./route-config";
+import { getRouteConfig } from "./route-config";
 
 interface VerifiedLesson {
   lesson_id: string;
@@ -22,7 +25,9 @@ interface RejectedLesson {
 export async function sourceVerifierAgent(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { selectedLessons, publishedLessons } = state;
+  const { selectedLessons, publishedLessons, routeTier } = state;
+  const tier: RouteTier = routeTier || "normal";
+  const config = getRouteConfig(tier);
 
   if (!selectedLessons || selectedLessons.length === 0) {
     return {
@@ -53,7 +58,7 @@ export async function sourceVerifierAgent(
 
     const reasons: string[] = [];
 
-    // Check source
+    // ── Standard checks (all tiers) ──
     const source = lesson.source as Record<string, unknown> | undefined;
     if (!source?.id) reasons.push("source_id missing");
     if (!source?.canonical_url) reasons.push("canonical_url missing");
@@ -61,9 +66,19 @@ export async function sourceVerifierAgent(
     if (!lesson.content_sha256) reasons.push("content_sha256 missing");
     if (!lesson.is_published) reasons.push("not published");
 
+    // ── High strictness checks (Advanced + Premium) ──
+    if (config.sourceStrictness === "high" || config.sourceStrictness === "very_high") {
+      if (!source?.publisher) reasons.push("publisher missing (high strictness)");
+    }
+
+    // ── Very high strictness checks (Premium only) ──
+    if (config.sourceStrictness === "very_high") {
+      if (!source?.source_type) reasons.push("source_type missing (premium strictness)");
+    }
+
     const sourceOk = reasons.length === 0;
 
-    // Check creator
+    // Check creator (all tiers require verified creator)
     const creator = lesson.creator as Record<string, unknown> | undefined;
     if (!creator?.wallet_address) reasons.push("creator wallet missing");
     if (!creator?.is_verified) reasons.push("creator not verified");
@@ -76,7 +91,7 @@ export async function sourceVerifierAgent(
         order_index: selected.order_index as number,
         source_ok: true,
         creator_ok: true,
-        verification_reason: `Source: ${source?.source_title || "verified"}, Creator verified`,
+        verification_reason: `Source: ${source?.source_title || "verified"}, Creator verified [${config.sourceStrictness}]`,
       });
     } else {
       rejected.push({

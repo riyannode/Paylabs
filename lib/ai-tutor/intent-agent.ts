@@ -2,14 +2,19 @@
  * Agent 1: Intent Agent
  * Normalizes user's goal and budget into a safe planning intent.
  * No payment, no Runner, no Circle — read-only.
+ * Route tier affects topic extraction depth and learning level inference.
  */
 
 import type { PayLabsTutorStateType } from "./state";
+import type { RouteTier } from "./route-config";
+import { getRouteConfig } from "./route-config";
 
 export async function intentAgent(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { goal, budgetUsdc, userWallet } = state;
+  const { goal, budgetUsdc, userWallet, routeTier } = state;
+  const tier: RouteTier = routeTier || "normal";
+  const config = getRouteConfig(tier);
 
   // Validate wallet
   if (!userWallet?.startsWith("0x") || userWallet.length !== 42) {
@@ -28,7 +33,7 @@ export async function intentAgent(
   // Normalize goal
   const normalizedGoal = goal.trim().toLowerCase().replace(/\s+/g, " ");
 
-  // Extract topics from goal
+  // Extract topics from goal — depth varies by route tier
   const topicKeywords = [
     "x402", "nanopayment", "gateway", "arc", "erc8004", "erc8183",
     "creator", "monetization", "revenue", "split", "receipt",
@@ -37,13 +42,32 @@ export async function intentAgent(
     "subscription", "pay-per-piece", "content",
     "learning", "education", "course", "lesson",
   ];
-  const topics = topicKeywords.filter((k) => normalizedGoal.includes(k));
+
+  // Premium and Advanced extract more topics
+  const premiumAdvancedKeywords = [
+    "architecture", "safety", "trust", "boundary", "payout",
+    "implementation", "integration", "deployment", "testing",
+  ];
+
+  let allKeywords = topicKeywords;
+  if (tier === "premium" || tier === "advanced") {
+    allKeywords = [...topicKeywords, ...premiumAdvancedKeywords];
+  }
+
+  const topics = allKeywords.filter((k) => normalizedGoal.includes(k));
   if (topics.length === 0) {
     topics.push("general-learning");
   }
 
-  // Infer level
+  // Infer level — route tier biases the default
   let learningLevel: "beginner" | "intermediate" | "advanced" = "beginner";
+  if (tier === "premium") {
+    learningLevel = "advanced";
+  } else if (tier === "advanced") {
+    learningLevel = "intermediate";
+  }
+
+  // Override if goal explicitly mentions level
   if (
     normalizedGoal.includes("advanced") ||
     normalizedGoal.includes("erc8183") ||
@@ -55,7 +79,7 @@ export async function intentAgent(
     normalizedGoal.includes("x402") ||
     normalizedGoal.includes("agent")
   ) {
-    learningLevel = "intermediate";
+    if (tier !== "premium") learningLevel = "intermediate";
   }
 
   const maxLessonPriceUsdc = Number(
@@ -65,6 +89,18 @@ export async function intentAgent(
   const riskNotes: string[] = [];
   if (budgetUsdc < 0.001) riskNotes.push("Budget very low — may not find lessons");
   if (budgetUsdc > 0.1) riskNotes.push("Budget above typical range");
+  if (tier === "premium" && budgetUsdc < 0.02) {
+    riskNotes.push("Premium route with very low budget — may not fill all 8 lesson slots");
+  }
+
+  // Build agent trace
+  const trace: Record<string, unknown> = {
+    agent: "intent_agent",
+    route_tier: tier,
+    reasoning_depth: config.reasoningDepth,
+    topics_found: topics.length,
+    learning_level: learningLevel,
+  };
 
   return {
     normalizedGoal,
@@ -73,5 +109,7 @@ export async function intentAgent(
     maxLessonPriceUsdc,
     riskNotes,
     pathStatus: "none",
+    routeConfig: config as unknown as Record<string, unknown>,
+    agentTrace: { intent: trace },
   };
 }
