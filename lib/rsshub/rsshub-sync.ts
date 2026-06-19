@@ -3,6 +3,11 @@
  *
  * Loads active routes, fetches each, upserts into paylabs_feed_items.
  * Uses creator wallet and prices from route config (not LLM).
+ *
+ * Monetization gate:
+ * - If route is verified AND monetized: feed items inherit wallet + prices
+ * - Otherwise: creator_wallet=null, prices=0, is_monetized=false
+ *
  * Returns sync summary.
  */
 
@@ -16,6 +21,8 @@ export interface SyncSummary {
   routes_synced: number;
   items_seen: number;
   items_upserted: number;
+  monetized_items: number;
+  unmonetized_items: number;
   errors: string[];
 }
 
@@ -24,9 +31,11 @@ interface RsshubRoute {
   rsshub_base_url: string;
   route_path: string;
   title: string;
-  creator_wallet: string;
+  creator_wallet: string | null;
+  is_monetized: boolean;
   default_price_per_citation_usdc: number;
   default_price_per_unlock_usdc: number;
+  verification_status: string;
 }
 
 function sha256(input: string): string {
@@ -44,6 +53,18 @@ function computeContentSha(item: NormalizedFeedItem): string {
 }
 
 /**
+ * Check if a route qualifies for monetization.
+ * Route must be: verification_status='verified' AND is_monetized=true AND creator_wallet present.
+ */
+function isRouteMonetized(route: RsshubRoute): boolean {
+  return (
+    route.verification_status === "verified" &&
+    route.is_monetized === true &&
+    !!route.creator_wallet
+  );
+}
+
+/**
  * Sync all active routes, or a single route by id.
  */
 export async function syncRsshub(
@@ -54,12 +75,14 @@ export async function syncRsshub(
   let routesSynced = 0;
   let itemsSeen = 0;
   let itemsUpserted = 0;
+  let monetizedItems = 0;
+  let unmonetizedItems = 0;
 
-  // Load routes
+  // Load routes — include monetization fields
   let query = supabaseAdmin()
     .from("paylabs_rsshub_routes")
     .select(
-      "id, rsshub_base_url, route_path, title, creator_wallet, default_price_per_citation_usdc, default_price_per_unlock_usdc"
+      "id, rsshub_base_url, route_path, title, creator_wallet, is_monetized, default_price_per_citation_usdc, default_price_per_unlock_usdc, verification_status"
     )
     .eq("is_active", true);
 
@@ -76,6 +99,8 @@ export async function syncRsshub(
       routes_synced: 0,
       items_seen: 0,
       items_upserted: 0,
+      monetized_items: 0,
+      unmonetized_items: 0,
       errors: [`Failed to load routes: ${routeError.message}`],
     };
   }
@@ -87,6 +112,8 @@ export async function syncRsshub(
       routes_synced: 0,
       items_seen: 0,
       items_upserted: 0,
+      monetized_items: 0,
+      unmonetized_items: 0,
       errors: routeId ? [`Route ${routeId} not found or inactive`] : [],
     };
   }
@@ -108,6 +135,9 @@ export async function syncRsshub(
     routesSynced++;
     itemsSeen += result.items.length;
 
+    // Monetization gate: only verified + monetized routes get wallet + prices
+    const monetized = isRouteMonetized(route);
+
     for (const item of result.items) {
       const normalizedSha = computeNormalizedSha(item);
       const contentSha = computeContentSha(item);
@@ -123,9 +153,11 @@ export async function syncRsshub(
         tags: item.tags,
         normalized_sha256: normalizedSha,
         content_sha256: contentSha,
-        creator_wallet: route.creator_wallet,
-        price_per_citation_usdc: route.default_price_per_citation_usdc,
-        price_per_unlock_usdc: route.default_price_per_unlock_usdc,
+        // Monetization gate: wallet and prices only for verified+monetized routes
+        creator_wallet: monetized ? route.creator_wallet : null,
+        is_monetized: monetized,
+        price_per_citation_usdc: monetized ? route.default_price_per_citation_usdc : 0,
+        price_per_unlock_usdc: monetized ? route.default_price_per_unlock_usdc : 0,
         source_payload: item.raw,
         is_active: true,
       };
@@ -140,6 +172,11 @@ export async function syncRsshub(
         );
       } else {
         itemsUpserted++;
+        if (monetized) {
+          monetizedItems++;
+        } else {
+          unmonetizedItems++;
+        }
       }
     }
 
@@ -156,6 +193,8 @@ export async function syncRsshub(
     routes_synced: routesSynced,
     items_seen: itemsSeen,
     items_upserted: itemsUpserted,
+    monetized_items: monetizedItems,
+    unmonetized_items: unmonetizedItems,
     errors,
   };
 }
