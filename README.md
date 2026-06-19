@@ -120,13 +120,6 @@ Creates 8 source-backed lessons. The seeder:
 - Platform: 10%
 - Treasury: 5%
 
-## Known Limitations
-
-- **ERC-8183 is disabled**: Circle SDK bytes params blocked on ARC-TESTNET
-- **Runner integration is WIP**: `ARCLAYER_RUNNER_URL` and `ARCLAYER_RUNNER_API_KEY` must be configured for agent buy-lesson
-- **Settlement is pending**: Receipts are created after signature verification; Gateway batch settlement ref filled when Runner processes payment
-- **Wallet connection only**: Requires MetaMask or compatible EVM wallet; no social login or email wallet yet
-
 ## No Fake Receipts
 
 PayLabs does not mark a lesson unlocked unless a valid EIP-3009 TransferWithAuthorization signature has been verified server-side. Receipt rows are created only after signature verification. There is no code path to create a receipt without a valid wallet signature.
