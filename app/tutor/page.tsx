@@ -12,6 +12,38 @@ interface ProposedLesson {
   verification_reason?: string;
 }
 
+interface RouteOption {
+  tier: string;
+  label: string;
+  maxLessons: number;
+  description: string;
+  detail: string;
+}
+
+const ROUTE_OPTIONS: RouteOption[] = [
+  {
+    tier: "normal",
+    label: "Normal Route",
+    maxLessons: 2,
+    description: "Quick intro",
+    detail: "Up to 2 lessons. Cheapest useful path.",
+  },
+  {
+    tier: "advanced",
+    label: "Advanced Route",
+    maxLessons: 5,
+    description: "Builder path",
+    detail: "Up to 5 lessons. Technical sequencing.",
+  },
+  {
+    tier: "premium",
+    label: "Premium Route",
+    maxLessons: 8,
+    description: "Deep mastery",
+    detail: "Up to 8 lessons. Strictest source verification.",
+  },
+];
+
 declare global {
   interface Window {
     ethereum?: {
@@ -24,9 +56,12 @@ declare global {
 export default function TutorPage() {
   const [goal, setGoal] = useState("");
   const [budget, setBudget] = useState("0.01");
+  const [selectedRoute, setSelectedRoute] = useState("normal");
   const [path, setPath] = useState<ProposedLesson[] | null>(null);
   const [pathId, setPathId] = useState<string | null>(null);
   const [pathStatus, setPathStatus] = useState<string>("none");
+  const [routeTier, setRouteTier] = useState<string>("normal");
+  const [routeDescription, setRouteDescription] = useState<string>("");
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [approving, setApproving] = useState(false);
@@ -82,6 +117,7 @@ export default function TutorPage() {
           goal,
           budget_usdc: parseFloat(budget),
           user_wallet: wallet,
+          route_tier: selectedRoute,
         }),
       });
       const data = await res.json();
@@ -89,6 +125,8 @@ export default function TutorPage() {
         setPath(data.path);
         setPathId(data.path_id || null);
         setPathStatus(data.path_status || "none");
+        setRouteTier(data.route_tier || selectedRoute);
+        setRouteDescription(data.route_config?.description || "");
         setTotal(data.total_usdc);
       } else {
         setBuyStatus("Error: " + (data.error || "Could not propose path"));
@@ -192,6 +230,51 @@ export default function TutorPage() {
         )}
       </div>
 
+      {/* Route selector cards */}
+      <div className="card" style={{ marginBottom: "1.5rem" }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: "0.875rem",
+            color: "var(--muted)",
+            marginBottom: "0.75rem",
+          }}
+        >
+          Select Route
+        </label>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.75rem" }}>
+          {ROUTE_OPTIONS.map((route) => (
+            <button
+              key={route.tier}
+              onClick={() => setSelectedRoute(route.tier)}
+              style={{
+                padding: "1rem",
+                borderRadius: 8,
+                border: selectedRoute === route.tier
+                  ? "2px solid var(--accent-green)"
+                  : "2px solid rgba(255,255,255,0.1)",
+                background: selectedRoute === route.tier
+                  ? "rgba(34,197,94,0.08)"
+                  : "rgba(255,255,255,0.03)",
+                cursor: "pointer",
+                textAlign: "left",
+                transition: "all 0.15s",
+              }}
+            >
+              <div style={{ fontWeight: 600, fontSize: "0.9rem", marginBottom: "0.25rem" }}>
+                {route.label}
+              </div>
+              <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginBottom: "0.5rem" }}>
+                {route.description}
+              </div>
+              <div style={{ fontSize: "0.7rem", color: "var(--muted)" }}>
+                {route.detail}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Goal + budget input */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <div style={{ display: "grid", gap: "1rem" }}>
@@ -238,7 +321,7 @@ export default function TutorPage() {
             disabled={loading || !goal || !wallet}
             className="btn btn-primary"
           >
-            {loading ? "Running 5-agent workflow..." : "Propose Learning Path"}
+            {loading ? "Running 5-agent workflow..." : `Propose ${ROUTE_OPTIONS.find(r => r.tier === selectedRoute)?.label || "Learning Path"}`}
           </button>
         </div>
       </div>
@@ -266,6 +349,22 @@ export default function TutorPage() {
               </span>
             )}
           </h2>
+
+          {/* Route tier badge */}
+          <div
+            style={{
+              fontSize: "0.8rem",
+              color: "var(--accent-green)",
+              marginBottom: "0.5rem",
+              padding: "0.35rem 0.6rem",
+              background: "rgba(34,197,94,0.08)",
+              borderRadius: 6,
+              display: "inline-block",
+            }}
+          >
+            Route: <strong>{routeTier}</strong>
+            {routeDescription && ` — ${routeDescription}`}
+          </div>
 
           <div
             style={{

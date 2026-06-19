@@ -7,6 +7,8 @@
  *
  * Proposal and buying are separate invocations.
  * Buying is impossible until the user approves the path.
+ * Route tier changes planning behavior and prompt persona only.
+ * Route tier NEVER weakens safety checks.
  */
 
 import { StateGraph, START, END } from "@langchain/langgraph";
@@ -18,13 +20,18 @@ import { sourceVerifierAgent } from "./source-verifier-agent";
 import { policyGuardAgent } from "./policy-guard-agent";
 import { paymentReceiptExecutorAgent } from "./payment-receipt-executor-agent";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import type { RouteTier } from "./route-config";
+import { getRouteConfig } from "./route-config";
+import { getPromptsForRoute } from "./route-prompts";
 
 // ─── Persist Proposed Path Node ──────────────────────────────────
 
 async function persistProposedPathNode(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { userWallet, goal, budgetUsdc, verifiedLessons, estimatedTotalUsdc, allVerified } = state;
+  const { userWallet, goal, budgetUsdc, verifiedLessons, estimatedTotalUsdc, allVerified, routeTier, routeConfig, agentTrace, llmOutputs, llmErrors } = state;
+  const tier: RouteTier = routeTier || "normal";
+  const config = routeConfig || getRouteConfig(tier);
 
   if (!allVerified || !verifiedLessons || verifiedLessons.length === 0) {
     return {
@@ -34,7 +41,13 @@ async function persistProposedPathNode(
   }
 
   try {
-    // Insert learning path
+    // Insert learning path — persist route_tier, route_config, agent_trace (includes LLM data)
+    const fullAgentTrace = {
+      ...(agentTrace || {}),
+      ...(llmOutputs && Object.keys(llmOutputs).length > 0 ? { llm_outputs: llmOutputs } : {}),
+      ...(llmErrors && Object.keys(llmErrors).length > 0 ? { llm_errors: llmErrors } : {}),
+    };
+
     const { data: pathRow, error: pathErr } = await supabaseAdmin()
       .from("paylabs_learning_paths")
       .insert({
@@ -45,6 +58,9 @@ async function persistProposedPathNode(
         agent_reasoning_summary: `5-agent LangGraph verified ${verifiedLessons.length} lessons for goal: ${(goal || "").slice(0, 100)}`,
         status: "proposed",
         created_by_agent_id: "paylabs-langgraph-v1",
+        route_tier: tier,
+        route_config: config,
+        agent_trace: fullAgentTrace,
       })
       .select("id, status")
       .single();
@@ -122,11 +138,20 @@ export async function proposeLearningPath(input: {
   userWallet: string;
   goal: string;
   budgetUsdc: number;
+  routeTier?: RouteTier;
 }) {
+  const tier: RouteTier = input.routeTier || "normal";
+  const config = getRouteConfig(tier);
+  const prompts = getPromptsForRoute(tier);
+
   const result = await proposalGraph.invoke({
     userWallet: input.userWallet,
     goal: input.goal,
     budgetUsdc: input.budgetUsdc,
+    routeTier: tier,
+    routeConfig: config as unknown as Record<string, unknown>,
+    routePrompts: prompts as unknown as Record<string, unknown>,
+    agentTrace: {},
     topics: [],
     riskNotes: [],
     pathStatus: "none" as const,
@@ -143,6 +168,8 @@ export async function proposeLearningPath(input: {
     pathStatus: result.pathStatus,
     goal: input.goal,
     budgetUsdc: input.budgetUsdc,
+    routeTier: tier,
+    routeConfig: config,
     selectedLessons: result.selectedLessons,
     verifiedLessons: result.verifiedLessons,
     rejectedLessons: result.rejectedLessons,
@@ -157,10 +184,26 @@ export async function buyApprovedLesson(input: {
   pathId: string;
   lessonId: string;
 }) {
+  // Fetch path to get actual route_tier — NOT defaulting to "normal"
+  const { data: pathRow } = await supabaseAdmin()
+    .from("paylabs_learning_paths")
+    .select("route_tier, route_config, agent_trace")
+    .eq("id", input.pathId)
+    .single();
+
+  const tier: RouteTier = (pathRow?.route_tier as RouteTier) || "normal";
+  const config = pathRow?.route_config || getRouteConfig(tier);
+  const prompts = getPromptsForRoute(tier);
+
+  // Buy graph does NOT change behavior by tier — same safety for all routes
+  // But route_tier is now correctly propagated for logging
   const result = await buyGraph.invoke({
     userWallet: input.userWallet,
     pathId: input.pathId,
     lessonId: input.lessonId,
+    routeTier: tier,
+    routeConfig: config as Record<string, unknown>,
+    routePrompts: prompts as unknown as Record<string, unknown>,
     topics: [],
     riskNotes: [],
     pathStatus: "none" as const,
