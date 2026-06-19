@@ -94,3 +94,15 @@ export interface X402PaymentChallenge {
   };
   typedData: Record<string, unknown>;
 }
+
+export type RouteTier = "normal" | "advanced" | "premium";
+
+export interface RouteConfig {
+  tier: RouteTier;
+  label: string;
+  maxLessons: number;
+  reasoningDepth: "low" | "medium" | "high";
+  sourceStrictness: "standard" | "high" | "very_high";
+  plannerStyle: "quick_intro" | "builder_path" | "deep_mastery";
+  description: string;
+}
