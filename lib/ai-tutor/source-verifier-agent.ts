@@ -3,7 +3,7 @@
  * Verifies planned lessons are real source-backed content.
  *
  * Two paths:
- * - PAYLABS_AGENT_TO_AGENT_PAYMENTS=true: pay specialist via Runner, use paid output
+ * - PAYLABS_AGENT_TO_AGENT_PAYMENTS=true: pay specialist via Runner, call endpoint with proof
  * - PAYLABS_AGENT_TO_AGENT_PAYMENTS=false: local verification (current path)
  *
  * If agent-to-agent payments are enabled and payment fails, BLOCK proposal.
@@ -209,11 +209,11 @@ async function paidSourceVerification(input: {
 }): Promise<Partial<PayLabsTutorStateType>> {
   const { tier, config, lessonMeta, lessonMap, selectedLessons, budgetUsdc, estimatedTotalUsdc, userWallet } = input;
 
-  // 1. Get provider
+  // 1. Get provider (wallet resolved from env — zero address rejected)
   const provider = await getActiveAgentProvider("source_verification", tier);
   if (!provider) {
     return {
-      error: "Agent-to-agent payments enabled but no active source_verification provider found",
+      error: "Agent-to-agent payments enabled but no active source_verification provider found (check PAYLABS_SOURCE_VERIFIER_WALLET env)",
       verifiedLessons: [],
       rejectedLessons: [],
       allVerified: false,
@@ -315,40 +315,57 @@ async function paidSourceVerification(input: {
     };
   }
 
-  // 6. Call specialist service (internal refactor — same verification logic)
-  // In production this would be an HTTP call to the provider's endpoint.
-  // For now, use shared service logic directly.
-  const verificationInputs: VerificationInput[] = selectedLessons.map((s) => {
-    const lesson = lessonMap.get(s.lesson_id as string);
-    const source = lesson?.source as Record<string, unknown> | undefined;
-    const creator = lesson?.creator as Record<string, unknown> | undefined;
-    return {
-      lesson_id: s.lesson_id as string,
-      title: lesson?.title as string,
-      source_id: source?.id as string,
-      canonical_url: source?.canonical_url as string,
-      publisher: source?.publisher as string,
-      source_type: source?.source_type as string,
-      normalized_sha256: source?.normalized_sha256 as string,
-      content_sha256: lesson?.content_sha256 as string,
-      is_published: lesson?.is_published as boolean,
-      creator_wallet: creator?.wallet_address as string,
-      creator_verified: creator?.is_verified as boolean,
-    };
+  // 6. Call specialist endpoint with payment proof headers
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const endpointUrl = `${baseUrl}${resourceUrl}`;
+
+  const serviceRes = await fetch(endpointUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-payment-id": paymentResult.paymentId,
+      ...(paymentResult.paymentRef ? { "x-payment-ref": paymentResult.paymentRef } : {}),
+      ...(paymentResult.settlementRef ? { "x-settlement-ref": paymentResult.settlementRef } : {}),
+      "x-input-hash": inputHash,
+      "x-provider-agent-id": provider.agent_id,
+    },
+    body: JSON.stringify({
+      route_tier: tier,
+      lessons: lessonMeta,
+      input_hash: inputHash,
+    }),
   });
 
-  const result = runSourceVerification(verificationInputs, config);
+  if (!serviceRes.ok) {
+    const errBody = await serviceRes.text().catch(() => "unknown");
+    return {
+      error: `Specialist service returned ${serviceRes.status}: ${errBody}`,
+      verifiedLessons: [],
+      rejectedLessons: [],
+      allVerified: false,
+    };
+  }
 
-  // 7. Compute output hash
-  const outputHash = createHash("sha256")
-    .update(JSON.stringify({
-      provider_agent_id: provider.agent_id,
-      verified: result.verified,
-      rejected: result.rejected,
-    }))
-    .digest("hex");
+  const serviceData = await serviceRes.json() as {
+    ok: boolean;
+    verified_lessons: { lesson_id: string; order_index: number; source_ok: boolean; creator_ok: boolean; verification_reason: string }[];
+    rejected_lessons: { lesson_id: string; reason: string }[];
+    output_hash: string;
+    error?: string;
+  };
 
-  // 8. Record service call in DB
+  if (!serviceData.ok) {
+    return {
+      error: `Specialist service failed: ${serviceData.error || "unknown"}`,
+      verifiedLessons: [],
+      rejectedLessons: [],
+      allVerified: false,
+    };
+  }
+
+  const outputHash = serviceData.output_hash;
+
+  // 7. Record service call in DB — BLOCK proposal if insert fails
   const { data: serviceCall, error: serviceCallErr } = await supabaseAdmin()
     .from("paylabs_agent_service_calls")
     .insert({
@@ -369,14 +386,18 @@ async function paidSourceVerification(input: {
     .select("id")
     .single();
 
-  if (serviceCallErr) {
-    // Payment succeeded but recording failed — log but don't block
-    console.error("Failed to record agent service call:", serviceCallErr.message);
+  if (serviceCallErr || !serviceCall?.id) {
+    return {
+      error: `Failed to persist agent service call: ${serviceCallErr?.message || "no id returned"}. Audit trail required.`,
+      verifiedLessons: [],
+      rejectedLessons: [],
+      allVerified: false,
+    };
   }
 
-  // 9. Build service call record for state
+  // 8. Build service call record for state — includes DB id
   const serviceCallRecord = {
-    id: serviceCall?.id,
+    id: serviceCall.id,
     buyer_agent_id: "paylabs-langgraph-v1",
     provider_agent_id: provider.agent_id,
     service_type: "source_verification",
@@ -390,8 +411,8 @@ async function paidSourceVerification(input: {
   };
 
   const trace = {
-    deterministic_verified: result.verified.length,
-    deterministic_rejected: result.rejected.length,
+    deterministic_verified: serviceData.verified_lessons.length,
+    deterministic_rejected: serviceData.rejected_lessons.length,
     agent_to_agent: true,
     provider_agent_id: provider.agent_id,
     payment_id: paymentResult.paymentId,
@@ -400,9 +421,9 @@ async function paidSourceVerification(input: {
   };
 
   return {
-    verifiedLessons: result.verified,
-    rejectedLessons: result.rejected,
-    allVerified: result.allVerified,
+    verifiedLessons: serviceData.verified_lessons,
+    rejectedLessons: serviceData.rejected_lessons,
+    allVerified: serviceData.rejected_lessons.length === 0,
     agentTrace: { source_verifier: trace },
     agentServiceCalls: [serviceCallRecord],
   };

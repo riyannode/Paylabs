@@ -7,7 +7,6 @@
 
 import { runnerFetch } from "./client";
 import { RunnerError } from "./types";
-import { randomUUID } from "node:crypto";
 
 export interface AgentServicePurchaseInput {
   buyerAgentId: string;
@@ -46,6 +45,10 @@ export async function executeAgentServicePurchase(
   if (!input.providerWallet.startsWith("0x") || input.providerWallet.length !== 42) {
     return { ok: false, error: "Invalid provider wallet address" };
   }
+  // Block zero address — never send payment to 0x000...000
+  if (input.providerWallet.toLowerCase() === "0x0000000000000000000000000000000000000000") {
+    return { ok: false, error: "Provider wallet is zero address — payment blocked" };
+  }
   if (!input.resourceUrl) {
     return { ok: false, error: "Missing resourceUrl" };
   }
@@ -53,7 +56,8 @@ export async function executeAgentServicePurchase(
     return { ok: false, error: "Invalid amount" };
   }
 
-  const idempotencyKey = randomUUID();
+  // Deterministic idempotency key — same input always produces same key
+  const idempotencyKey = `agent-service:${input.buyerAgentId}:${input.providerAgentId}:${input.inputHash}:${input.amountUsdc}`;
 
   try {
     // Use existing Runner fetch boundary — same HMAC auth, same trust boundary
