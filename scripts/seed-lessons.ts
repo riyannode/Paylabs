@@ -29,9 +29,9 @@ function replaceUntilStable(input: string, pattern: RegExp, replacement: string)
 
 function normalizeText(html: string): string {
   // Strip script/style blocks robustly (loop handles nested/overlapping tags)
-  // Regex allows whitespace in closing tags: </script >, </style  >
-  let sanitized = replaceUntilStable(html, /<script[\s\S]*?<\/script\s*>/gi, "");
-  sanitized = replaceUntilStable(sanitized, /<style[\s\S]*?<\/style\s*>/gi, "");
+  // Closing tags allow optional malformed trailing content (forgiving HTML parsers)
+  let sanitized = replaceUntilStable(html, /<script[\s\S]*?<\/script(?:\s+[^>]*)?>/gi, "");
+  sanitized = replaceUntilStable(sanitized, /<style[\s\S]*?<\/style(?:\s+[^>]*)?>/gi, "");
   // Strip remaining tags, normalize whitespace, lowercase
   return sanitized
     .replace(/<[^>]+>/g, " ")
