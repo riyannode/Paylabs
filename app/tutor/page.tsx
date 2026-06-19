@@ -71,6 +71,22 @@ export default function TutorPage() {
   const [goal, setGoal] = useState("");
   const [budget, setBudget] = useState("0.01");
   const [selectedRoute, setSelectedRoute] = useState("normal");
+  // Tutor Intake Agent chat state
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatResult, setChatResult] = useState<{
+    assistant_message: string;
+    normalized_goal: string;
+    recommended_route_tier: string;
+    route_label: string;
+    learning_level: string;
+    suggested_budget_usdc: number;
+    confidence: number;
+    needs_clarification: boolean;
+    clarification_question: string | null;
+    reasoning: string;
+  } | null>(null);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [path, setPath] = useState<ProposedLesson[] | null>(null);
   const [pathId, setPathId] = useState<string | null>(null);
   const [pathStatus, setPathStatus] = useState<string>("none");
@@ -111,6 +127,48 @@ export default function TutorPage() {
       const msg = e instanceof Error ? e.message : String(e);
       setBuyStatus("Error connecting wallet: " + msg);
     }
+  }
+
+  async function askTutorAgent() {
+    if (!chatInput.trim()) return;
+    setChatLoading(true);
+    setChatResult(null);
+    setChatError(null);
+    try {
+      const res = await fetch("/api/paylabs/tutor/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: chatInput.trim(),
+          wallet: wallet || undefined,
+          current_goal: goal || undefined,
+          current_budget_usdc: budget ? parseFloat(budget) : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setChatResult(data);
+        if (data.needs_clarification) {
+          setChatError(null);
+        }
+      } else {
+        setChatError(data.error || "Failed to get recommendation");
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setChatError("Error: " + msg);
+    }
+    setChatLoading(false);
+  }
+
+  function useRecommendation() {
+    if (!chatResult) return;
+    if (chatResult.needs_clarification) return; // Don't auto-fill if clarification needed
+    if (chatResult.normalized_goal) setGoal(chatResult.normalized_goal);
+    if (chatResult.recommended_route_tier)
+      setSelectedRoute(chatResult.recommended_route_tier);
+    if (chatResult.suggested_budget_usdc)
+      setBudget(chatResult.suggested_budget_usdc.toString());
   }
 
   async function proposePath() {
@@ -244,6 +302,173 @@ export default function TutorPage() {
           <button onClick={connectWallet} className="btn btn-primary">
             Connect Wallet
           </button>
+        )}
+      </div>
+
+      {/* Tutor Intake Agent chat panel */}
+      <div className="card" style={{ marginBottom: "1.5rem" }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: "0.875rem",
+            color: "var(--muted)",
+            marginBottom: "0.75rem",
+          }}
+        >
+          💬 Describe what you want to learn — the Tutor Agent will recommend a
+          route
+        </label>
+        <div style={{ display: "flex", gap: "0.75rem", marginBottom: "0.75rem" }}>
+          <input
+            className="input"
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            placeholder='e.g. "I want to build an x402 paying agent on Arc"'
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !chatLoading) askTutorAgent();
+            }}
+            style={{ flex: 1 }}
+          />
+          <button
+            onClick={askTutorAgent}
+            disabled={chatLoading || !chatInput.trim()}
+            className="btn btn-primary"
+            style={{ whiteSpace: "nowrap" }}
+          >
+            {chatLoading ? "Thinking..." : "Ask Tutor Agent"}
+          </button>
+        </div>
+
+        {/* Chat error */}
+        {chatError && (
+          <div
+            style={{
+              padding: "0.75rem",
+              background: "rgba(239,68,68,0.08)",
+              borderRadius: 8,
+              fontSize: "0.85rem",
+              color: "#ef4444",
+              marginBottom: "0.75rem",
+            }}
+          >
+            {chatError}
+          </div>
+        )}
+
+        {/* Chat result */}
+        {chatResult && (
+          <div
+            style={{
+              padding: "1rem",
+              background: chatResult.needs_clarification
+                ? "rgba(245,158,11,0.08)"
+                : "rgba(34,197,94,0.08)",
+              borderRadius: 8,
+              border: chatResult.needs_clarification
+                ? "1px solid rgba(245,158,11,0.3)"
+                : "1px solid rgba(34,197,94,0.3)",
+            }}
+          >
+            {/* Route recommendation badge */}
+            {!chatResult.needs_clarification && (
+              <div
+                style={{
+                  display: "inline-block",
+                  padding: "0.25rem 0.6rem",
+                  background: "rgba(34,197,94,0.15)",
+                  borderRadius: 6,
+                  fontSize: "0.8rem",
+                  fontWeight: 600,
+                  color: "var(--accent-green)",
+                  marginBottom: "0.5rem",
+                }}
+              >
+                Tutor Intake Agent recommends: {chatResult.route_label}
+              </div>
+            )}
+
+            {/* Assistant message */}
+            <div
+              style={{
+                fontSize: "0.9rem",
+                lineHeight: 1.5,
+                marginBottom: "0.5rem",
+              }}
+            >
+              {chatResult.assistant_message}
+            </div>
+
+            {/* Reasoning */}
+            {chatResult.reasoning && (
+              <div
+                style={{
+                  fontSize: "0.8rem",
+                  color: "var(--muted)",
+                  marginBottom: "0.5rem",
+                  fontStyle: "italic",
+                }}
+              >
+                Reason: {chatResult.reasoning}
+              </div>
+            )}
+
+            {/* Clarification question */}
+            {chatResult.needs_clarification &&
+              chatResult.clarification_question && (
+                <div
+                  style={{
+                    fontSize: "0.85rem",
+                    color: "#f59e0b",
+                    marginBottom: "0.5rem",
+                    fontWeight: 500,
+                  }}
+                >
+                  ❓ {chatResult.clarification_question}
+                </div>
+              )}
+
+            {/* Suggested details (when not clarification) */}
+            {!chatResult.needs_clarification && (
+              <div
+                style={{
+                  fontSize: "0.8rem",
+                  color: "var(--muted)",
+                  marginBottom: "0.75rem",
+                }}
+              >
+                Goal: {chatResult.normalized_goal} • Budget:{" "}
+                {chatResult.suggested_budget_usdc} USDC • Level:{" "}
+                {chatResult.learning_level} • Confidence:{" "}
+                {Math.round(chatResult.confidence * 100)}%
+              </div>
+            )}
+
+            {/* Use recommendation button — only when not clarification */}
+            {!chatResult.needs_clarification && (
+              <div>
+                <button
+                  onClick={useRecommendation}
+                  className="btn btn-green"
+                  style={{ fontSize: "0.85rem", marginRight: "0.75rem" }}
+                >
+                  Use Recommendation
+                </button>
+                <span
+                  style={{ fontSize: "0.75rem", color: "var(--muted)" }}
+                >
+                  This does not spend funds yet. Use recommendation, then click
+                  Propose Path.
+                </span>
+              </div>
+            )}
+
+            {/* When clarification needed, let user know they can reply */}
+            {chatResult.needs_clarification && (
+              <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                Reply in the chat above to clarify, then ask again.
+              </div>
+            )}
+          </div>
         )}
       </div>
 
