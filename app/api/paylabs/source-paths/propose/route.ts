@@ -5,6 +5,8 @@
 //
 // Flow: intent → source_planner → source_verifier → persist
 
+export const maxDuration = 300;
+
 import { NextRequest, NextResponse } from "next/server";
 import { proposeSourcePath } from "@/lib/ai-tutor/graph";
 import { isValidRouteTier } from "@/lib/ai-tutor/route-config";
