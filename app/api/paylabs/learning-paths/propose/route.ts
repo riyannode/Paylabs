@@ -3,6 +3,9 @@
 // Calls proposeLearningPath graph: intent -> curriculum_planner -> source_verifier -> persist
 // Does NOT buy anything. Returns path_id for user approval.
 // Accepts route_tier: normal (default), advanced, premium.
+//
+// When PAYLABS_ROUTE_TOLL_ENABLED=true, requires route toll proof in headers:
+// x-route-payment-id, x-route-payment-ref OR x-route-settlement-ref, x-route-input-hash
 
 import { NextRequest, NextResponse } from "next/server";
 import { proposeLearningPath } from "@/lib/ai-tutor/graph";
@@ -32,6 +35,34 @@ export async function POST(req: NextRequest) {
       { error: `Invalid route_tier: "${tier}". Must be normal, advanced, or premium.` },
       { status: 400 }
     );
+  }
+
+  // ─── Route toll proof validation ──────────────────────────────
+  const tollEnabled = process.env.PAYLABS_ROUTE_TOLL_ENABLED === "true";
+  if (tollEnabled) {
+    const routePaymentId = req.headers.get("x-route-payment-id");
+    const routePaymentRef = req.headers.get("x-route-payment-ref");
+    const routeSettlementRef = req.headers.get("x-route-settlement-ref");
+    const routeInputHash = req.headers.get("x-route-input-hash");
+
+    if (!routePaymentId) {
+      return NextResponse.json(
+        { error: "Route toll proof required: missing x-route-payment-id header. Pay route toll first via POST /api/paylabs/tutor/route-toll." },
+        { status: 402 }
+      );
+    }
+    if (!routePaymentRef && !routeSettlementRef) {
+      return NextResponse.json(
+        { error: "Route toll proof required: missing x-route-payment-ref or x-route-settlement-ref header." },
+        { status: 402 }
+      );
+    }
+    if (!routeInputHash) {
+      return NextResponse.json(
+        { error: "Route toll proof required: missing x-route-input-hash header." },
+        { status: 402 }
+      );
+    }
   }
 
   try {

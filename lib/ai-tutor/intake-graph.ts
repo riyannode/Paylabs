@@ -1,58 +1,60 @@
 /**
- * Tutor Intake LangGraph
+ * Tutor Intake LangGraph — Classification Only
  *
- * Two-node graph that runs BEFORE the proposal flow:
- * 1. tutor_intake_agent — classifies user intent
- * 2. route_x402_guard_agent — charges route toll via x402/Runner (when enabled)
+ * Single-node graph: START → tutor_intake_agent → END
+ * Classifies user intent and returns route recommendation + toll quote.
+ * Does NOT execute any payment. Does NOT call Runner.
  *
- * Graph: START → tutor_intake_agent → [conditional] → route_x402_guard_agent → END
- *
- * Conditional routing:
- * - If PAYLABS_ROUTE_TOLL_ENABLED=true AND needsClarification=false AND route exists → run guard
- * - Otherwise → skip guard, go to END
- *
- * This graph does NOT:
- * - create paths
- * - create receipts
- * - create unlocks
- * - call Circle
- * - call wallet APIs
- * - call contracts
- * - write to DB
- *
- * The only payment allowed: route toll via executeRouteTollPayment (Runner).
+ * Route toll payment is handled separately by:
+ * POST /api/paylabs/tutor/route-toll (explicit user confirmation required)
  */
 
 import { START, END, StateGraph } from "@langchain/langgraph";
 import { TutorIntakeState } from "./intake-state";
 import type { TutorIntakeStateType } from "./intake-state";
 import { tutorIntakeAgent } from "./tutor-intake-agent";
-import { routeX402GuardAgent } from "./route-x402-guard-agent";
 
-// ─── Conditional routing ────────────────────────────────────────
+// ─── Route toll amounts from env ─────────────────────────────────
 
-function shouldRunGuard(state: TutorIntakeStateType): string {
-  const tollEnabled = process.env.PAYLABS_ROUTE_TOLL_ENABLED === "true";
-  const hasRoute = !!state.recommendedRouteTier;
-  const needsClar = state.needsClarification === true;
+const ROUTE_TOLL_DEFAULTS: Record<string, number> = {
+  normal: 0.000001,
+  advanced: 0.000002,
+  premium: 0.000003,
+};
 
-  if (tollEnabled && hasRoute && !needsClar) {
-    return "route_x402_guard_agent";
+function getRouteTollQuote(tier: string | undefined): {
+  enabled: boolean;
+  required: boolean;
+  amountUsdc: number;
+} {
+  const enabled = process.env.PAYLABS_ROUTE_TOLL_ENABLED === "true";
+  if (!enabled) return { enabled: false, required: false, amountUsdc: 0 };
+  if (!tier) return { enabled: true, required: false, amountUsdc: 0 };
+
+  let amount: number;
+  switch (tier) {
+    case "normal":
+      amount = Number(process.env.PAYLABS_ROUTE_TOLL_NORMAL_USDC) || ROUTE_TOLL_DEFAULTS.normal;
+      break;
+    case "advanced":
+      amount = Number(process.env.PAYLABS_ROUTE_TOLL_ADVANCED_USDC) || ROUTE_TOLL_DEFAULTS.advanced;
+      break;
+    case "premium":
+      amount = Number(process.env.PAYLABS_ROUTE_TOLL_PREMIUM_USDC) || ROUTE_TOLL_DEFAULTS.premium;
+      break;
+    default:
+      amount = ROUTE_TOLL_DEFAULTS.normal;
   }
-  return "skip_guard";
+
+  return { enabled: true, required: true, amountUsdc: amount };
 }
 
-// ─── Intake Graph ───────────────────────────────────────────────
+// ─── Intake Graph (classification only) ─────────────────────────
 
 const intakeGraph = new StateGraph(TutorIntakeState)
   .addNode("tutor_intake_agent", tutorIntakeAgent)
-  .addNode("route_x402_guard_agent", routeX402GuardAgent)
   .addEdge(START, "tutor_intake_agent")
-  .addConditionalEdges("tutor_intake_agent", shouldRunGuard, {
-    route_x402_guard_agent: "route_x402_guard_agent",
-    skip_guard: END,
-  })
-  .addEdge("route_x402_guard_agent", END)
+  .addEdge("tutor_intake_agent", END)
   .compile();
 
 // ─── Public API ─────────────────────────────────────────────────
@@ -70,6 +72,13 @@ export async function runTutorIntake(input: {
     currentBudgetUsdc: input.currentBudgetUsdc,
   } as TutorIntakeStateType);
 
+  // Compute toll quote (does NOT execute payment)
+  const tollQuote = getRouteTollQuote(result.recommendedRouteTier);
+  const tollRequired =
+    tollQuote.enabled &&
+    tollQuote.required &&
+    !result.needsClarification;
+
   return {
     assistantMessage: result.assistantMessage,
     normalizedGoal: result.normalizedGoal,
@@ -82,15 +91,9 @@ export async function runTutorIntake(input: {
     clarificationQuestion: result.clarificationQuestion,
     reasoning: result.reasoning,
     error: result.error,
-    // Route toll fields
-    routeTollEnabled: result.routeTollEnabled,
-    routeTollRequired: result.routeTollRequired,
-    routeTollAmountUsdc: result.routeTollAmountUsdc,
-    routePaymentId: result.routePaymentId,
-    routePaymentRef: result.routePaymentRef,
-    routeSettlementRef: result.routeSettlementRef,
-    routePaymentStatus: result.routePaymentStatus,
-    routePaymentError: result.routePaymentError,
-    routeInputHash: result.routeInputHash,
+    // Route toll quote (NOT payment — just informational)
+    routeTollEnabled: tollQuote.enabled,
+    routeTollRequired: tollRequired,
+    routeTollAmountUsdc: tollRequired ? tollQuote.amountUsdc : 0,
   };
 }
