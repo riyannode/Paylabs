@@ -77,11 +77,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verify input_hash matches request body
+    // Verify input_hash is present and matches request body
+    if (!proofInputHash) {
+      return NextResponse.json(
+        { error: "Payment proof required: x-input-hash header missing" },
+        { status: 402 }
+      );
+    }
     const bodyHash = createHash("sha256")
       .update(JSON.stringify(lessons))
       .digest("hex");
-    if (proofInputHash && proofInputHash !== bodyHash) {
+    if (proofInputHash !== bodyHash) {
       return NextResponse.json(
         { error: "Input hash mismatch — proof does not match request body" },
         { status: 403 }
