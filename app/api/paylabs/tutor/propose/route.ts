@@ -2,10 +2,13 @@
 // Compatibility wrapper — redirects to /api/paylabs/learning-paths/propose
 // Uses the same LangGraph proposeLearningPath graph.
 // Accepts route_tier: normal (default), advanced, premium.
+//
+// When PAYLABS_ROUTE_TOLL_ENABLED=true, requires route toll proof in headers.
 
 import { NextRequest, NextResponse } from "next/server";
 import { proposeLearningPath } from "@/lib/ai-tutor/graph";
 import { isValidRouteTier } from "@/lib/ai-tutor/route-config";
+import { verifyRouteTollProof } from "@/lib/ai-tutor/route-toll-verify";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
@@ -31,6 +34,29 @@ export async function POST(req: NextRequest) {
       { error: `Invalid route_tier: "${tier}". Must be normal, advanced, or premium.` },
       { status: 400 }
     );
+  }
+
+  // ─── Route toll proof validation ──────────────────────────────
+  const tollEnabled = process.env.PAYLABS_ROUTE_TOLL_ENABLED === "true";
+  if (tollEnabled) {
+    const verifyResult = await verifyRouteTollProof(
+      {
+        routePaymentId: req.headers.get("x-route-payment-id") || "",
+        routePaymentRef: req.headers.get("x-route-payment-ref"),
+        routeSettlementRef: req.headers.get("x-route-settlement-ref"),
+        routeInputHash: req.headers.get("x-route-input-hash") || "",
+      },
+      user_wallet,
+      tier,
+      goal
+    );
+
+    if (!verifyResult.ok) {
+      return NextResponse.json(
+        { error: verifyResult.error },
+        { status: verifyResult.status || 403 }
+      );
+    }
   }
 
   try {

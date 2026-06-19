@@ -34,6 +34,17 @@ interface AgentServiceCall {
   status?: string;
 }
 
+interface RouteTollProof {
+  route_toll_call_id: string;
+  route_payment_id: string;
+  route_payment_ref?: string;
+  route_settlement_ref?: string;
+  route_input_hash: string;
+  route_tier: string;
+  route_label: string;
+  route_toll_amount_usdc: number;
+}
+
 const ROUTE_OPTIONS: RouteOption[] = [
   {
     tier: "normal",
@@ -71,6 +82,30 @@ export default function TutorPage() {
   const [goal, setGoal] = useState("");
   const [budget, setBudget] = useState("0.01");
   const [selectedRoute, setSelectedRoute] = useState("normal");
+  // Tutor Intake Agent chat state
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatResult, setChatResult] = useState<{
+    assistant_message: string;
+    normalized_goal: string;
+    recommended_route_tier: string;
+    route_label: string;
+    learning_level: string;
+    suggested_budget_usdc: number;
+    confidence: number;
+    needs_clarification: boolean;
+    clarification_question: string | null;
+    reasoning: string;
+    // Route toll quote (informational only — no payment)
+    route_toll_enabled?: boolean;
+    route_toll_required?: boolean;
+    route_toll_amount_usdc?: number;
+  } | null>(null);
+  const [chatError, setChatError] = useState<string | null>(null);
+  // Route toll payment state
+  const [routeTollProof, setRouteTollProof] = useState<RouteTollProof | null>(null);
+  const [routeTollPaying, setRouteTollPaying] = useState(false);
+  const [routeTollError, setRouteTollError] = useState<string | null>(null);
   const [path, setPath] = useState<ProposedLesson[] | null>(null);
   const [pathId, setPathId] = useState<string | null>(null);
   const [pathStatus, setPathStatus] = useState<string>("none");
@@ -113,6 +148,95 @@ export default function TutorPage() {
     }
   }
 
+  // ─── Ask Tutor Agent (FREE — no payment) ──────────────────────
+
+  async function askTutorAgent() {
+    if (!chatInput.trim()) return;
+    setChatLoading(true);
+    setChatResult(null);
+    setChatError(null);
+    setRouteTollProof(null); // Clear any previous toll proof
+    setRouteTollError(null);
+    try {
+      const res = await fetch("/api/paylabs/tutor/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: chatInput.trim(),
+          wallet: wallet || undefined,
+          current_goal: goal || undefined,
+          current_budget_usdc: budget ? parseFloat(budget) : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setChatResult(data);
+      } else {
+        setChatError(data.error || "Failed to get recommendation");
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setChatError("Error: " + msg);
+    }
+    setChatLoading(false);
+  }
+
+  // ─── Pay Route Toll (explicit user action) ────────────────────
+
+  async function payRouteToll() {
+    if (!chatResult || !wallet) return;
+    if (!chatResult.route_toll_enabled || !chatResult.route_toll_required) return;
+    if (!chatResult.recommended_route_tier) return;
+
+    setRouteTollPaying(true);
+    setRouteTollError(null);
+    setRouteTollProof(null);
+
+    try {
+      const res = await fetch("/api/paylabs/tutor/route-toll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_wallet: wallet,
+          route_tier: chatResult.recommended_route_tier,
+          route_label: chatResult.route_label,
+          normalized_goal: chatResult.normalized_goal,
+          user_message: chatInput.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.route_payment_status === "completed") {
+        setRouteTollProof(data);
+        // Auto-fill form after successful toll payment
+        if (chatResult.normalized_goal) setGoal(chatResult.normalized_goal);
+        if (chatResult.recommended_route_tier)
+          setSelectedRoute(chatResult.recommended_route_tier);
+        if (chatResult.suggested_budget_usdc)
+          setBudget(chatResult.suggested_budget_usdc.toString());
+      } else {
+        setRouteTollError(data.error || "Route toll payment failed");
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setRouteTollError("Error: " + msg);
+    }
+    setRouteTollPaying(false);
+  }
+
+  // ─── Use Recommendation (when no toll needed) ─────────────────
+
+  function useRecommendation() {
+    if (!chatResult) return;
+    if (chatResult.needs_clarification) return;
+    if (chatResult.normalized_goal) setGoal(chatResult.normalized_goal);
+    if (chatResult.recommended_route_tier)
+      setSelectedRoute(chatResult.recommended_route_tier);
+    if (chatResult.suggested_budget_usdc)
+      setBudget(chatResult.suggested_budget_usdc.toString());
+  }
+
+  // ─── Propose Path (sends route toll proof as headers) ─────────
+
   async function proposePath() {
     if (!wallet) {
       setBuyStatus("Connect wallet first");
@@ -125,10 +249,24 @@ export default function TutorPage() {
     setBuyStatus("");
     setUnlockedIds(new Set());
     setAgentServiceCalls([]);
+
+    // Build headers — include route toll proof if available
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (routeTollProof) {
+      headers["x-route-payment-id"] = routeTollProof.route_payment_id;
+      if (routeTollProof.route_payment_ref)
+        headers["x-route-payment-ref"] = routeTollProof.route_payment_ref;
+      if (routeTollProof.route_settlement_ref)
+        headers["x-route-settlement-ref"] = routeTollProof.route_settlement_ref;
+      headers["x-route-input-hash"] = routeTollProof.route_input_hash;
+    }
+
     try {
       const res = await fetch("/api/paylabs/learning-paths/propose", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           goal,
           budget_usdc: parseFloat(budget),
@@ -220,8 +358,23 @@ export default function TutorPage() {
     setBuyingLessonId(null);
   }
 
+  // ─── Derived state ────────────────────────────────────────────
+
   const isApproved = pathStatus === "approved";
   const isProposed = pathStatus === "proposed";
+
+  // Whether toll is needed but not yet paid
+  const tollNeeded =
+    chatResult?.route_toll_enabled &&
+    chatResult?.route_toll_required &&
+    !chatResult?.needs_clarification;
+  const tollPaid = !!routeTollProof;
+
+  // Whether "Use Recommendation" should be available (no toll, or toll paid)
+  const canUseRecommendation =
+    chatResult &&
+    !chatResult.needs_clarification &&
+    (!tollNeeded || tollPaid);
 
   return (
     <div>
@@ -247,6 +400,251 @@ export default function TutorPage() {
         )}
       </div>
 
+      {/* Tutor Intake Agent chat panel */}
+      <div className="card" style={{ marginBottom: "1.5rem" }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: "0.875rem",
+            color: "var(--muted)",
+            marginBottom: "0.75rem",
+          }}
+        >
+          💬 Describe what you want to learn — the Tutor Agent will recommend a
+          route
+        </label>
+        <div style={{ display: "flex", gap: "0.75rem", marginBottom: "0.75rem" }}>
+          <input
+            className="input"
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            placeholder='e.g. "I want to build an x402 paying agent on Arc"'
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !chatLoading) askTutorAgent();
+            }}
+            style={{ flex: 1 }}
+          />
+          <button
+            onClick={askTutorAgent}
+            disabled={chatLoading || !chatInput.trim()}
+            className="btn btn-primary"
+            style={{ whiteSpace: "nowrap" }}
+          >
+            {chatLoading ? "Thinking..." : "Ask Tutor Agent"}
+          </button>
+        </div>
+
+        {/* Chat error */}
+        {chatError && (
+          <div
+            style={{
+              padding: "0.75rem",
+              background: "rgba(239,68,68,0.08)",
+              borderRadius: 8,
+              fontSize: "0.85rem",
+              color: "#ef4444",
+              marginBottom: "0.75rem",
+            }}
+          >
+            {chatError}
+          </div>
+        )}
+
+        {/* Route toll error */}
+        {routeTollError && (
+          <div
+            style={{
+              padding: "0.75rem",
+              background: "rgba(239,68,68,0.08)",
+              borderRadius: 8,
+              fontSize: "0.85rem",
+              color: "#ef4444",
+              marginBottom: "0.75rem",
+            }}
+          >
+            {routeTollError}
+          </div>
+        )}
+
+        {/* Chat result */}
+        {chatResult && (
+          <div
+            style={{
+              padding: "1rem",
+              background: chatResult.needs_clarification
+                ? "rgba(245,158,11,0.08)"
+                : "rgba(34,197,94,0.08)",
+              borderRadius: 8,
+              border: chatResult.needs_clarification
+                ? "1px solid rgba(245,158,11,0.3)"
+                : "1px solid rgba(34,197,94,0.3)",
+            }}
+          >
+            {/* Route recommendation badge */}
+            {!chatResult.needs_clarification && (
+              <div
+                style={{
+                  display: "inline-block",
+                  padding: "0.25rem 0.6rem",
+                  background: "rgba(34,197,94,0.15)",
+                  borderRadius: 6,
+                  fontSize: "0.8rem",
+                  fontWeight: 600,
+                  color: "var(--accent-green)",
+                  marginBottom: "0.5rem",
+                }}
+              >
+                Tutor Intake Agent recommends: {chatResult.route_label}
+              </div>
+            )}
+
+            {/* Assistant message */}
+            <div
+              style={{
+                fontSize: "0.9rem",
+                lineHeight: 1.5,
+                marginBottom: "0.5rem",
+              }}
+            >
+              {chatResult.assistant_message}
+            </div>
+
+            {/* Reasoning */}
+            {chatResult.reasoning && (
+              <div
+                style={{
+                  fontSize: "0.8rem",
+                  color: "var(--muted)",
+                  marginBottom: "0.5rem",
+                  fontStyle: "italic",
+                }}
+              >
+                Reason: {chatResult.reasoning}
+              </div>
+            )}
+
+            {/* Clarification question */}
+            {chatResult.needs_clarification &&
+              chatResult.clarification_question && (
+                <div
+                  style={{
+                    fontSize: "0.85rem",
+                    color: "#f59e0b",
+                    marginBottom: "0.5rem",
+                    fontWeight: 500,
+                  }}
+                >
+                  ❓ {chatResult.clarification_question}
+                </div>
+              )}
+
+            {/* Suggested details (when not clarification) */}
+            {!chatResult.needs_clarification && (
+              <div
+                style={{
+                  fontSize: "0.8rem",
+                  color: "var(--muted)",
+                  marginBottom: "0.75rem",
+                }}
+              >
+                Goal: {chatResult.normalized_goal} • Budget:{" "}
+                {chatResult.suggested_budget_usdc} USDC • Level:{" "}
+                {chatResult.learning_level} • Confidence:{" "}
+                {Math.round(chatResult.confidence * 100)}%
+              </div>
+            )}
+
+            {/* Route toll quote + pay button (when toll needed, not yet paid) */}
+            {!chatResult.needs_clarification &&
+              tollNeeded &&
+              !tollPaid && (
+                <div
+                  style={{
+                    padding: "0.75rem",
+                    background: "rgba(245,158,11,0.08)",
+                    borderRadius: 6,
+                    fontSize: "0.8rem",
+                    marginBottom: "0.75rem",
+                    border: "1px solid rgba(245,158,11,0.3)",
+                  }}
+                >
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    🔒 Route toll required:{" "}
+                    <strong>{chatResult.route_toll_amount_usdc} USDC</strong> for{" "}
+                    {chatResult.route_label}
+                  </div>
+                  <button
+                    onClick={payRouteToll}
+                    disabled={routeTollPaying || !wallet}
+                    className="btn btn-primary"
+                    style={{ fontSize: "0.85rem", marginRight: "0.75rem" }}
+                  >
+                    {routeTollPaying
+                      ? "Paying..."
+                      : `Pay route toll ${chatResult.route_toll_amount_usdc} USDC & use recommendation`}
+                  </button>
+                  {!wallet && (
+                    <span style={{ fontSize: "0.75rem", color: "#ef4444" }}>
+                      Connect wallet first
+                    </span>
+                  )}
+                </div>
+              )}
+
+            {/* Route toll proof display (when toll paid) */}
+            {!chatResult.needs_clarification && tollPaid && routeTollProof && (
+              <div
+                style={{
+                  padding: "0.6rem 0.75rem",
+                  background: "rgba(34,197,94,0.1)",
+                  borderRadius: 6,
+                  fontSize: "0.8rem",
+                  marginBottom: "0.75rem",
+                  border: "1px solid rgba(34,197,94,0.3)",
+                }}
+              >
+                ✅ Route Guard paid {routeTollProof.route_label} Agent{" "}
+                <strong>{routeTollProof.route_toll_amount_usdc} USDC</strong>{" "}
+                via x402 before running the path workflow.
+                {routeTollProof.route_payment_id && (
+                  <span style={{ color: "var(--muted)" }}>
+                    {" "}
+                    • Payment: {routeTollProof.route_payment_id.slice(0, 12)}...
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Use recommendation button (no toll needed, or toll paid) */}
+            {!chatResult.needs_clarification && canUseRecommendation && (
+              <div>
+                <button
+                  onClick={useRecommendation}
+                  className="btn btn-green"
+                  style={{ fontSize: "0.85rem", marginRight: "0.75rem" }}
+                >
+                  Use Recommendation
+                </button>
+                <span
+                  style={{ fontSize: "0.75rem", color: "var(--muted)" }}
+                >
+                  {tollPaid
+                    ? "Route toll paid. Click Propose Path to run the paid workflow."
+                    : "This does not spend funds yet. Use recommendation, then click Propose Path."}
+                </span>
+              </div>
+            )}
+
+            {/* When clarification needed, let user know they can reply */}
+            {chatResult.needs_clarification && (
+              <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                Reply in the chat above to clarify, then ask again.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Route selector cards */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <label
@@ -263,7 +661,13 @@ export default function TutorPage() {
           {ROUTE_OPTIONS.map((route) => (
             <button
               key={route.tier}
-              onClick={() => setSelectedRoute(route.tier)}
+              onClick={() => {
+                setSelectedRoute(route.tier);
+                // Clear route toll proof if user manually changes route after toll was paid
+                if (routeTollProof && route.tier !== routeTollProof.route_tier) {
+                  setRouteTollProof(null);
+                }
+              }}
               style={{
                 padding: "1rem",
                 borderRadius: 8,
@@ -309,7 +713,11 @@ export default function TutorPage() {
             <input
               className="input"
               value={goal}
-              onChange={(e) => setGoal(e.target.value)}
+              onChange={(e) => {
+                setGoal(e.target.value);
+                // Clear route toll proof if user changes goal after toll was paid
+                if (routeTollProof) setRouteTollProof(null);
+              }}
               placeholder="e.g. Learn x402 nanopayments and agentic commerce on Arc"
             />
           </div>
