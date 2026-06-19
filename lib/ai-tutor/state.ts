@@ -4,7 +4,18 @@ import { Annotation } from "@langchain/langgraph";
  * PayLabs Tutor Agent State
  * Shared state across all 5 agents in the LangGraph workflow.
  * Route tier changes planning behavior and prompt persona only.
+ *
+ * All 5 agents are real LLM agents. Source verifier, policy guard, and
+ * payment executor use LLM for reasoning/audit only — final decisions
+ * remain deterministic.
  */
+
+// Shared reducer: shallow-merge objects so each node adds its own key
+const mergeReducer = (existing: Record<string, unknown>, update: Record<string, unknown>) => ({
+  ...(existing || {}),
+  ...(update || {}),
+});
+
 export const PayLabsTutorState = Annotation.Root({
   // User input
   userWallet: Annotation<string>,
@@ -15,8 +26,22 @@ export const PayLabsTutorState = Annotation.Root({
   routeTier: Annotation<"normal" | "advanced" | "premium" | undefined>,
   routeConfig: Annotation<Record<string, unknown> | undefined>,
   routePrompts: Annotation<Record<string, unknown> | undefined>,
+
+  // Agent traces — merged across nodes via reducer
   agentTrace: Annotation<Record<string, unknown>>({
-    reducer: (existing, update) => ({ ...(existing || {}), ...(update || {}) }),
+    reducer: mergeReducer,
+    default: () => ({}),
+  }),
+
+  // LLM outputs — merged across nodes via reducer
+  llmOutputs: Annotation<Record<string, unknown>>({
+    reducer: mergeReducer,
+    default: () => ({}),
+  }),
+
+  // LLM errors — merged across nodes via reducer
+  llmErrors: Annotation<Record<string, unknown>>({
+    reducer: mergeReducer,
     default: () => ({}),
   }),
 
