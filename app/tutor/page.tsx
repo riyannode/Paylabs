@@ -85,6 +85,16 @@ export default function TutorPage() {
     needs_clarification: boolean;
     clarification_question: string | null;
     reasoning: string;
+    // Route toll fields
+    route_toll_enabled?: boolean;
+    route_toll_required?: boolean;
+    route_toll_amount_usdc?: number;
+    route_payment_id?: string;
+    route_payment_ref?: string;
+    route_settlement_ref?: string;
+    route_payment_status?: string;
+    route_payment_error?: string;
+    route_input_hash?: string;
   } | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
   const [path, setPath] = useState<ProposedLesson[] | null>(null);
@@ -164,6 +174,13 @@ export default function TutorPage() {
   function useRecommendation() {
     if (!chatResult) return;
     if (chatResult.needs_clarification) return; // Don't auto-fill if clarification needed
+    // If route toll is enabled and required, payment must be completed
+    if (
+      chatResult.route_toll_enabled &&
+      chatResult.route_toll_required &&
+      chatResult.route_payment_status !== "completed"
+    )
+      return;
     if (chatResult.normalized_goal) setGoal(chatResult.normalized_goal);
     if (chatResult.recommended_route_tier)
       setSelectedRoute(chatResult.recommended_route_tier);
@@ -443,13 +460,71 @@ export default function TutorPage() {
               </div>
             )}
 
+            {/* Route toll proof display */}
+            {!chatResult.needs_clarification &&
+              chatResult.route_toll_enabled &&
+              chatResult.route_toll_required && (
+                <div
+                  style={{
+                    padding: "0.6rem 0.75rem",
+                    background:
+                      chatResult.route_payment_status === "completed"
+                        ? "rgba(34,197,94,0.1)"
+                        : "rgba(239,68,68,0.08)",
+                    borderRadius: 6,
+                    fontSize: "0.8rem",
+                    marginBottom: "0.75rem",
+                    border:
+                      chatResult.route_payment_status === "completed"
+                        ? "1px solid rgba(34,197,94,0.3)"
+                        : "1px solid rgba(239,68,68,0.3)",
+                  }}
+                >
+                  {chatResult.route_payment_status === "completed" ? (
+                    <>
+                      ✅ Route Guard paid {chatResult.route_label} Agent{" "}
+                      <strong>{chatResult.route_toll_amount_usdc} USDC</strong>{" "}
+                      via x402 before running the path workflow.
+                      {chatResult.route_payment_id && (
+                        <span style={{ color: "var(--muted)" }}>
+                          {" "}
+                          • Payment: {chatResult.route_payment_id.slice(0, 12)}
+                          ...
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      ❌ Route toll payment failed:{" "}
+                      {chatResult.route_payment_error || "Unknown error"}
+                    </>
+                  )}
+                </div>
+              )}
+
             {/* Use recommendation button — only when not clarification */}
             {!chatResult.needs_clarification && (
               <div>
                 <button
                   onClick={useRecommendation}
                   className="btn btn-green"
-                  style={{ fontSize: "0.85rem", marginRight: "0.75rem" }}
+                  style={{
+                    fontSize: "0.85rem",
+                    marginRight: "0.75rem",
+                    opacity:
+                      chatResult.route_toll_enabled &&
+                      chatResult.route_toll_required &&
+                      chatResult.route_payment_status !== "completed"
+                        ? 0.4
+                        : 1,
+                  }}
+                  disabled={
+                    !!(
+                      chatResult.route_toll_enabled &&
+                      chatResult.route_toll_required &&
+                      chatResult.route_payment_status !== "completed"
+                    )
+                  }
                 >
                   Use Recommendation
                 </button>
@@ -488,7 +563,17 @@ export default function TutorPage() {
           {ROUTE_OPTIONS.map((route) => (
             <button
               key={route.tier}
-              onClick={() => setSelectedRoute(route.tier)}
+              onClick={() => {
+                setSelectedRoute(route.tier);
+                // Clear route toll proof if user manually changes route after toll was paid
+                if (
+                  chatResult?.route_toll_enabled &&
+                  chatResult?.route_payment_status === "completed" &&
+                  route.tier !== chatResult?.recommended_route_tier
+                ) {
+                  setChatResult(null);
+                }
+              }}
               style={{
                 padding: "1rem",
                 borderRadius: 8,
