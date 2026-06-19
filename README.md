@@ -92,7 +92,7 @@ Before any agent-initiated purchase, these checks must pass:
 8. Lesson not already unlocked
 9. ArcLayer Runner is available
 
-Failed checks log a `blocked_by_policy` action with the reason.
+Failed checks log `blocked_by_policy` action with the reason.
 
 ## ArcLayer Runner
 
