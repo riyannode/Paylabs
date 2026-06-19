@@ -1,9 +1,11 @@
 // POST /api/paylabs/source-paths/propose
 //
-// Propose a source path using the LangGraph workflow.
-// RSSHub-first: picks from paylabs_feed_items, not lessons.
+// Propose a source path using the 15-agent LangGraph workflow.
+// RSSHub-first: picks from paylabs_feed_items with monetization gate.
 //
-// Flow: intent → source_planner → source_verifier → persist
+// Flow: tutor_intake → intent_classifier → query_expander → feed_discovery →
+// source_ranker → evidence_allocator → stop_limit_controller → budget_optimizer →
+// source_quality_verifier → provenance_verifier → creator_ownership_verifier → persist
 
 export const maxDuration = 300;
 
@@ -48,6 +50,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: result.error }, { status: 500 });
     }
 
+    // Build path from verified sources (DB facts only)
     const path = (result.verifiedSources as Record<string, unknown>[] || []).map((v, i) => {
       const selected = (result.selectedSources as Record<string, unknown>[] || []).find(
         (s) => s.feed_item_id === v.feed_item_id
@@ -58,23 +61,46 @@ export async function POST(req: NextRequest) {
         source_ok: v.source_ok,
         route_ok: v.route_ok,
         verification_reason: v.verification_reason,
-        price_usdc: selected?.price_usdc || 0,
+        evidence_score: selected?.evidence_score || null,
+        marginal_value_score: selected?.marginal_value_score || null,
         reason: selected?.reason || "",
-        title: selected?.title || "",
+        expected_value: selected?.expected_value || "",
       };
     });
+
+    // Build selected/excluded from stop-limit terminology
+    const selectedSources = (result.selectedSources as Record<string, unknown>[] || []).map(s => ({
+      feed_item_id: s.feed_item_id,
+      evidence_score: s.evidence_score,
+      marginal_value_score: s.marginal_value_score,
+      reason: s.reason,
+    }));
+
+    const excludedSources = (result.excludedSources as Record<string, unknown>[] || []).map(s => ({
+      feed_item_id: s.feed_item_id,
+      reason: s.reason,
+    }));
 
     return NextResponse.json({
       source_path_id: result.sourcePathId,
       source_path_status: result.sourcePathStatus,
       goal,
-      budget_usdc,
+      budget_usdc: Number(budget_usdc),
+      effective_spend_cap_usdc: result.effectiveSpendCapUsdc || 0,
       route_tier: result.routeTier,
       route_config: result.routeConfig,
+      route_limits: result.routeLimits,
       path,
+      selected_sources: selectedSources,
+      excluded_sources: excludedSources,
+      stop_reason: result.stopReason || null,
+      stop_limit_hit: result.stopLimitHit || false,
       total_usdc: result.estimatedTotalUsdc || 0,
+      creator_payout_usdc: result.estimatedCreatorPayoutUsdc || 0,
+      agent_fee_usdc: result.estimatedAgentFeeUsdc || 0,
+      treasury_fee_usdc: result.estimatedTreasuryFeeUsdc || 0,
       remaining_usdc: result.remainingUsdc || 0,
-      rejected: result.rejectedSources || [],
+      agent_trace: result.agentTrace || {},
       agent_service_calls: result.agentServiceCalls || [],
     });
   } catch (e: unknown) {
