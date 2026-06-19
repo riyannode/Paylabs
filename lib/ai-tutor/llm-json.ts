@@ -1,20 +1,21 @@
 /**
  * PayLabs LLM JSON Agent Helper
  *
- * Shared helper for all 5 agents to call LLM with structured output.
+ * Shared helper for all agents to call LLM with structured output.
  * - Calls actual model.invoke() with Zod schema
  * - Validates with zod
  * - Max 1 retry on invalid output
  * - Returns structured result or structured error
  * - If PAYLABS_LLM_REQUIRED=true and LLM fails, THROWS (no silent bypass)
  * - Records model, route_tier, agent_name, prompt_persona, prompt_hash, mode
+ * - Per-agent LLM config: provider, model, base_url_present, agent_key
  * - No secrets printed
  */
 
 import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/messages";
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import { getTutorModel, getTutorModelName, isLlmRequired } from "./llm";
+import { getTutorModel, getTutorModelName, getTutorModelConfig, isLlmRequired } from "./llm";
 import type { RouteTier } from "./route-config";
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -38,6 +39,10 @@ export interface LlmAgentResult<T = Record<string, unknown>> {
     prompt_persona: string;
     prompt_hash: string;
     retry_count: number;
+    provider: string;
+    agent_key: string;
+    base_url_present: boolean;
+    api_key_present: boolean;
   };
 }
 
@@ -52,6 +57,10 @@ export interface LlmAgentError {
     prompt_persona: string;
     prompt_hash: string;
     retry_count: number;
+    provider: string;
+    agent_key: string;
+    base_url_present: boolean;
+    api_key_present: boolean;
   };
 }
 
@@ -69,7 +78,10 @@ export async function invokeJsonAgent<T = Record<string, unknown>>(
   const { agentName, routeTier, prompt, userMessage, schema } = input;
   const required = isLlmRequired();
 
-  const model = getTutorModel();
+  const model = getTutorModel(agentName);
+  const modelConfig = getTutorModelConfig(agentName);
+  const modelName = getTutorModelName(agentName);
+
   if (!model) {
     // No model available — this path only reached if NOT required
     // (getTutorModel throws if required + no key)
@@ -84,11 +96,14 @@ export async function invokeJsonAgent<T = Record<string, unknown>>(
         prompt_persona: `${routeTier}_${agentName}`,
         prompt_hash: hashPrompt(prompt),
         retry_count: 0,
+        provider: modelConfig.provider,
+        agent_key: modelConfig.agentKey,
+        base_url_present: !!modelConfig.baseUrl,
+        api_key_present: modelConfig.apiKeyPresent,
       },
     };
   }
 
-  const modelName = getTutorModelName();
   const promptHash = hashPrompt(prompt);
   const persona = `${routeTier}_${agentName}`;
 
@@ -125,6 +140,10 @@ export async function invokeJsonAgent<T = Record<string, unknown>>(
           prompt_persona: persona,
           prompt_hash: promptHash,
           retry_count: attempt,
+          provider: modelConfig.provider,
+          agent_key: modelConfig.agentKey,
+          base_url_present: !!modelConfig.baseUrl,
+          api_key_present: modelConfig.apiKeyPresent,
         },
       };
     } catch (e: unknown) {
@@ -155,6 +174,10 @@ export async function invokeJsonAgent<T = Record<string, unknown>>(
       prompt_persona: persona,
       prompt_hash: promptHash,
       retry_count: maxAttempts,
+      provider: modelConfig.provider,
+      agent_key: modelConfig.agentKey,
+      base_url_present: !!modelConfig.baseUrl,
+      api_key_present: modelConfig.apiKeyPresent,
     },
   };
 }
