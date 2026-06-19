@@ -101,9 +101,10 @@ pnpm dev
 Create routes and sync feed items:
 
 ```bash
-# Create a route
+# Create a route (requires PAYLABS_RSSHUB_ADMIN_SECRET)
 curl -X POST http://localhost:3000/api/paylabs/rsshub/routes \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $PAYLABS_RSSHUB_ADMIN_SECRET" \
   -d '{"rsshub_base_url":"https://rsshub.app","route_path":"/hackernews/best","title":"Hacker News Best","creator_wallet":"0x..."}'
 
 # Sync all routes (requires PAYLABS_RSSHUB_SYNC_SECRET)
@@ -145,6 +146,7 @@ See `.env.example` for the full list. Critical variables:
 
 - `X402_RECEIVER_ADDRESS` — Where payments go
 - `PAYLABS_RSSHUB_SYNC_SECRET` — Bearer token for sync endpoint
+- `PAYLABS_RSSHUB_ADMIN_SECRET` — Bearer token for creating routes (falls back to SYNC_SECRET)
 - `PAYLABS_RSSHUB_DEFAULT_BASE_URL` — Default RSSHub instance
 - `PAYLABS_LLM_PROVIDER_DEFAULT` / `PAYLABS_LLM_API_KEY_DEFAULT` — LLM config
 - `ARCLAYER_RUNNER_URL` / `ARCLAYER_RUNNER_API_KEY` — Runner for payments
