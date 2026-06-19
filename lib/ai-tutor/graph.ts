@@ -249,6 +249,37 @@ export async function proposeSourcePath(input: {
   const limits = getRouteLimits(tier);
   const effectiveCap = computeEffectiveSpendCap(input.budgetUsdc, tier);
 
+  // ── Deterministic pre-check: skip 15-agent pipeline if no eligible sources ──
+  const { listMonetizedFeedItems } = await import("./tools");
+  const eligibleSources = await listMonetizedFeedItems();
+  if (eligibleSources.length === 0) {
+    return {
+      sourcePathId: undefined,
+      sourcePathStatus: "none" as const,
+      goal: input.goal,
+      budgetUsdc: input.budgetUsdc,
+      effectiveSpendCapUsdc: effectiveCap,
+      routeTier: tier,
+      routeConfig: config,
+      routeLimits: limits,
+      selectedSources: [],
+      excludedSources: [],
+      verifiedSources: [],
+      rejectedSources: [],
+      stopReason: "no_eligible_sources",
+      stopLimitHit: false,
+      estimatedTotalUsdc: 0,
+      estimatedCreatorPayoutUsdc: 0,
+      estimatedAgentFeeUsdc: 0,
+      estimatedTreasuryFeeUsdc: 0,
+      remainingUsdc: 0,
+      agentServiceCalls: [],
+      agentTrace: { pre_check: "no_verified_monetized_sources" },
+      error: "No verified monetized sources available",
+      eligibleSourceCount: 0,
+    };
+  }
+
   const result = await proposalGraph.invoke({
     userWallet: input.userWallet,
     goal: input.goal,
@@ -293,6 +324,7 @@ export async function proposeSourcePath(input: {
     agentServiceCalls: result.agentServiceCalls || [],
     agentTrace: result.agentTrace,
     error: result.error,
+    eligibleSourceCount: eligibleSources.length,
   };
 }
 

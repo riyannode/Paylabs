@@ -30,5 +30,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ items: data ?? [], limit, offset });
+  // Mask sensitive fields for unmonetized items in public API
+  const masked = (data ?? []).map((item) => {
+    if (!item.is_monetized) {
+      return {
+        ...item,
+        creator_wallet: null,
+        price_per_citation_usdc: 0,
+        price_per_unlock_usdc: 0,
+      };
+    }
+    return item;
+  });
+
+  return NextResponse.json({ items: masked, limit, offset });
 }
