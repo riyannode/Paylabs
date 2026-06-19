@@ -20,6 +20,20 @@ interface RouteOption {
   detail: string;
 }
 
+interface AgentServiceCall {
+  id?: string;
+  buyer_agent_id?: string;
+  provider_agent_id?: string;
+  service_type?: string;
+  amount_usdc?: number;
+  payment_id?: string;
+  payment_ref?: string;
+  settlement_ref?: string;
+  tx_hash?: string;
+  output_hash?: string;
+  status?: string;
+}
+
 const ROUTE_OPTIONS: RouteOption[] = [
   {
     tier: "normal",
@@ -69,6 +83,7 @@ export default function TutorPage() {
   const [wallet, setWallet] = useState<string | null>(null);
   const [buyingLessonId, setBuyingLessonId] = useState<string | null>(null);
   const [unlockedIds, setUnlockedIds] = useState<Set<string>>(new Set());
+  const [agentServiceCalls, setAgentServiceCalls] = useState<AgentServiceCall[]>([]);
 
   useEffect(() => {
     if (typeof window !== "undefined" && window.ethereum) {
@@ -109,6 +124,7 @@ export default function TutorPage() {
     setPathStatus("none");
     setBuyStatus("");
     setUnlockedIds(new Set());
+    setAgentServiceCalls([]);
     try {
       const res = await fetch("/api/paylabs/learning-paths/propose", {
         method: "POST",
@@ -128,6 +144,7 @@ export default function TutorPage() {
         setRouteTier(data.route_tier || selectedRoute);
         setRouteDescription(data.route_config?.description || "");
         setTotal(data.total_usdc);
+        setAgentServiceCalls(data.agent_service_calls || []);
       } else {
         setBuyStatus("Error: " + (data.error || "Could not propose path"));
       }
@@ -325,6 +342,73 @@ export default function TutorPage() {
           </button>
         </div>
       </div>
+
+      {/* Agent Economy Trace panel */}
+      {agentServiceCalls.length > 0 && (
+        <div
+          className="card"
+          style={{
+            marginBottom: "1.5rem",
+            border: "1px solid rgba(34,197,94,0.3)",
+          }}
+        >
+          <h2
+            style={{
+              fontSize: "1.1rem",
+              fontWeight: 600,
+              marginBottom: "0.75rem",
+              color: "var(--accent-green)",
+            }}
+          >
+            ⚡ Agent Economy Trace
+          </h2>
+          <p
+            style={{
+              fontSize: "0.8rem",
+              color: "var(--muted)",
+              marginBottom: "0.75rem",
+            }}
+          >
+            Agent-to-agent payments executed via x402/ArcLayer Runner (RFB 03)
+          </p>
+          <div style={{ display: "grid", gap: "0.5rem" }}>
+            {agentServiceCalls.map((call, i) => (
+              <div
+                key={call.id || i}
+                style={{
+                  padding: "0.6rem 0.75rem",
+                  background: "rgba(255,255,255,0.03)",
+                  borderRadius: 6,
+                  fontSize: "0.8rem",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.25rem" }}>
+                  <span>
+                    <strong>{call.buyer_agent_id?.slice(0, 20) || "orchestrator"}</strong>
+                    {" → "}
+                    <strong>{call.provider_agent_id?.slice(0, 25) || "specialist"}</strong>
+                  </span>
+                  <span style={{ color: "var(--accent-green)", fontWeight: 700 }}>
+                    {call.amount_usdc} USDC
+                  </span>
+                </div>
+                <div style={{ color: "var(--muted)", fontSize: "0.75rem" }}>
+                  {call.service_type} •{" "}
+                  <span style={{ color: call.status === "completed" ? "var(--accent-green)" : "#f59e0b" }}>
+                    {call.status}
+                  </span>
+                  {call.payment_id && (
+                    <> • Payment: {call.payment_id.slice(0, 12)}...</>
+                  )}
+                  {call.output_hash && (
+                    <> • Output: {call.output_hash.slice(0, 12)}...</>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Proposed path */}
       {path && (

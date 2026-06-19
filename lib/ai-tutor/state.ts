@@ -80,6 +80,15 @@ export const PayLabsTutorState = Annotation.Root({
   unlockId: Annotation<string | undefined>,
   receiptId: Annotation<string | undefined>,
 
+  // Agent service calls — merged across nodes via reducer (RFB 03)
+  agentServiceCalls: Annotation<Record<string, unknown>[]>({
+    reducer: (existing: Record<string, unknown>[], update: Record<string, unknown>[]) => [
+      ...(existing || []),
+      ...(update || []),
+    ],
+    default: () => [],
+  }),
+
   // Error tracking
   error: Annotation<string | undefined>,
 });

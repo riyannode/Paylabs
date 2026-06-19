@@ -29,7 +29,7 @@ import { getPromptsForRoute } from "./route-prompts";
 async function persistProposedPathNode(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { userWallet, goal, budgetUsdc, verifiedLessons, estimatedTotalUsdc, allVerified, routeTier, routeConfig, agentTrace, llmOutputs, llmErrors } = state;
+  const { userWallet, goal, budgetUsdc, verifiedLessons, estimatedTotalUsdc, allVerified, routeTier, routeConfig, agentTrace, llmOutputs, llmErrors, agentServiceCalls } = state;
   const tier: RouteTier = routeTier || "normal";
   const config = routeConfig || getRouteConfig(tier);
 
@@ -46,6 +46,7 @@ async function persistProposedPathNode(
       ...(agentTrace || {}),
       ...(llmOutputs && Object.keys(llmOutputs).length > 0 ? { llm_outputs: llmOutputs } : {}),
       ...(llmErrors && Object.keys(llmErrors).length > 0 ? { llm_errors: llmErrors } : {}),
+      ...(agentServiceCalls && agentServiceCalls.length > 0 ? { agent_service_calls: agentServiceCalls } : {}),
     };
 
     const { data: pathRow, error: pathErr } = await supabaseAdmin()
@@ -175,6 +176,7 @@ export async function proposeLearningPath(input: {
     rejectedLessons: result.rejectedLessons,
     estimatedTotalUsdc: result.estimatedTotalUsdc,
     remainingUsdc: result.remainingUsdc,
+    agentServiceCalls: result.agentServiceCalls || [],
     error: result.error,
   };
 }
