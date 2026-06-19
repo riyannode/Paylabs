@@ -78,6 +78,63 @@ Route tier is persisted in `paylabs_learning_paths`:
 
 Migration: `supabase/migrations/003_route_tiered_agents.sql`
 
+## Per-Agent LLM Routing
+
+PayLabs supports per-agent model routing. Each LangGraph agent can be configured with its own provider, API key, base URL, and model through environment variables. The current budget-friendly deployment can route all agents to MiMo v2.5 Pro, while production deployments can selectively route planner, verifier, or policy agents to stronger models.
+
+### Agent Key Mapping
+
+| Agent | Env Key |
+|-------|---------|
+| `tutor_intake` | `INTAKE` |
+| `intent` | `INTENT` |
+| `curriculum_planner` | `PLANNER` |
+| `source_verifier` | `VERIFIER` |
+| `source_verifier_specialist` | `VERIFIER_SPECIALIST` |
+| `specialist_payment_decision` | `SPECIALIST_DECISION` |
+| `policy_guard` | `POLICY` |
+| `payment_executor` | `EXECUTOR` |
+
+### Config Resolution Order
+
+Each field resolves independently:
+
+- **provider:** `PAYLABS_LLM_PROVIDER_<AGENT_KEY>` → `PAYLABS_LLM_PROVIDER_DEFAULT` → `openai`
+- **api key:** `PAYLABS_LLM_API_KEY_<AGENT_KEY>` → `PAYLABS_LLM_API_KEY_DEFAULT` → `PAYLABS_OPENAI_API_KEY` → `OPENAI_API_KEY`
+- **base URL:** `PAYLABS_LLM_BASE_URL_<AGENT_KEY>` → `PAYLABS_LLM_BASE_URL_DEFAULT` → undefined
+- **model:** `PAYLABS_TUTOR_MODEL_<AGENT_KEY>` → `PAYLABS_TUTOR_MODEL_DEFAULT` → `PAYLABS_TUTOR_MODEL` → `gpt-4o-mini`
+
+If all agents should use the same model, only the DEFAULT variables are required. Per-agent variables override the default.
+
+### Example Environment Variables
+
+```bash
+# --- LLM (all agents route to MiMo v2.5 Pro by default) ---
+PAYLABS_LLM_REQUIRED=true
+
+# Default config (used by all agents unless overridden)
+PAYLABS_LLM_PROVIDER_DEFAULT=mimo
+PAYLABS_LLM_BASE_URL_DEFAULT=https://mimo-api.example/v1
+PAYLABS_LLM_API_KEY_DEFAULT=...
+PAYLABS_TUTOR_MODEL_DEFAULT=mimo-v2.5-pro
+
+# Per-agent overrides (optional — uncomment to use different models per agent)
+# PAYLABS_LLM_PROVIDER_PLANNER=openai
+# PAYLABS_LLM_BASE_URL_PLANNER=https://api.openai.com/v1
+# PAYLABS_LLM_API_KEY_PLANNER=sk-...
+# PAYLABS_TUTOR_MODEL_PLANNER=gpt-4o
+
+# PAYLABS_LLM_PROVIDER_VERIFIER=openai
+# PAYLABS_LLM_BASE_URL_VERIFIER=https://api.openai.com/v1
+# PAYLABS_LLM_API_KEY_VERIFIER=sk-...
+# PAYLABS_TUTOR_MODEL_VERIFIER=gpt-4o
+
+# PAYLABS_LLM_PROVIDER_POLICY=openai
+# PAYLABS_LLM_BASE_URL_POLICY=https://api.openai.com/v1
+# PAYLABS_LLM_API_KEY_POLICY=sk-...
+# PAYLABS_TUTOR_MODEL_POLICY=gpt-4o
+```
+
 ## AI Tutor Budget Policy
 
 Before any agent-initiated purchase, these checks must pass:
@@ -165,3 +222,6 @@ See `.env.example` for the full list. Critical variables:
 - `PAYLABS_PLATFORM_WALLET` / `PAYLABS_TREASURY_WALLET` - Revenue split wallets
 - `ARCLAYER_RUNNER_URL` / `ARCLAYER_RUNNER_API_KEY` - Runner for agent purchases
 - `PAYLABS_MAX_LESSON_PRICE_USDC` - Max price an agent can pay (default 0.05)
+- `PAYLABS_LLM_REQUIRED` - Set to `true` to require LLM (throws if no API key)
+- `PAYLABS_LLM_PROVIDER_DEFAULT` / `PAYLABS_LLM_API_KEY_DEFAULT` - Default LLM config
+- `PAYLABS_TUTOR_MODEL_DEFAULT` - Default model (fallback: `PAYLABS_TUTOR_MODEL`, then `gpt-4o-mini`)
