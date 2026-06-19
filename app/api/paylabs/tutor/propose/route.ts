@@ -47,7 +47,8 @@ export async function POST(req: NextRequest) {
         routeInputHash: req.headers.get("x-route-input-hash") || "",
       },
       user_wallet,
-      tier
+      tier,
+      goal
     );
 
     if (!verifyResult.ok) {
