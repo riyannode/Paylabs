@@ -4,11 +4,6 @@
 
 AI micro-learning buyer. User sets goal + budget, AI Tutor picks source-backed lessons, pays via x402 on Arc testnet. Creators receive receipt-backed payouts.
 
-## Lepton Agents Hackathon 2026
-
-- **RFB 01**: Autonomous Paying Agents
-- **RFB 06**: Creator and Publisher Monetization
-
 ## Live Demo
 
 - Landing: `/` - live counters from database
