@@ -238,6 +238,21 @@ export async function generateStructuredJson<T>(
       const result = await (model as ChatOpenAI).invoke(messages);
       const jsonStr = extractJsonFromResponse(result);
 
+      // Debug: log response shape for provider debugging (no secrets)
+      if (process.env.PAYLABS_LLM_DEBUG === "true") {
+        const dbg = result as unknown as Record<string, unknown>;
+        const dbgContent = dbg?.content;
+        const dbgAk = dbg?.additional_kwargs as Record<string, unknown> | undefined;
+        console.log("[llm-structured] response shape:", {
+          content_type: typeof dbgContent,
+          content_length: typeof dbgContent === "string" ? dbgContent.length : Array.isArray(dbgContent) ? dbgContent.length : "n/a",
+          content_preview: typeof dbgContent === "string" ? dbgContent.slice(0, 200) : "non-string",
+          has_reasoning: !!dbgAk?.reasoning_content,
+          jsonStr_found: !!jsonStr,
+          jsonStr_preview: jsonStr ? jsonStr.slice(0, 200) : "null",
+        });
+      }
+
       if (!jsonStr) {
         // Check for MiMo empty content + reasoning_content
         const msg = result as unknown as Record<string, unknown>;
@@ -270,6 +285,9 @@ export async function generateStructuredJson<T>(
       const parsed = schema.safeParse(parsedJson);
       if (!parsed.success) {
         lastError = `Zod validation failed: ${parsed.error.issues.map(i => i.message).join("; ")}`;
+        if (process.env.PAYLABS_LLM_DEBUG === "true") {
+          console.log("[llm-structured] parsed JSON (pre-validation):", JSON.stringify(parsedJson).slice(0, 500));
+        }
         if (attempt === 0) continue;
         break;
       }
