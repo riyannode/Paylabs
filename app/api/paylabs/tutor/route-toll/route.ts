@@ -10,13 +10,13 @@
 // - call Circle directly
 // - call wallet APIs directly
 // - call contracts directly
-// - write to DB
 //
 // It DOES:
 // - validate inputs
 // - compute deterministic input hash
 // - execute route toll payment via ArcLayer Runner
-// - return payment proof
+// - persist completed proof to paylabs_route_toll_calls
+// - return payment proof + route_toll_call_id
 //
 // The proof returned here must be passed to /api/paylabs/learning-paths/propose
 // as headers when PAYLABS_ROUTE_TOLL_ENABLED=true.
@@ -24,6 +24,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import { executeRouteTollPayment } from "@/lib/arclayer-runner/route-toll";
+import { supabaseAdmin } from "@/lib/supabase/server";
 
 // ─── Route toll amounts from env ─────────────────────────────────
 
@@ -139,6 +140,20 @@ export async function POST(req: NextRequest) {
     });
 
     if (!result.ok) {
+      // Persist failed attempt
+      await supabaseAdmin().from("paylabs_route_toll_calls").insert({
+        user_wallet: user_wallet.toLowerCase(),
+        route_tier,
+        route_label: label,
+        normalized_goal,
+        input_hash: inputHash,
+        amount_usdc: Number(amountUsdc),
+        payment_id: result.paymentId || "failed",
+        payment_ref: result.paymentRef || null,
+        settlement_ref: result.settlementRef || null,
+        status: "failed",
+      });
+
       return NextResponse.json(
         {
           error: result.error || "Route toll payment failed",
@@ -148,8 +163,38 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Persist completed proof to DB — this is the server-side record
+    // that propose endpoints will verify against.
+    const { data: tollRow, error: insertErr } = await supabaseAdmin()
+      .from("paylabs_route_toll_calls")
+      .insert({
+        user_wallet: user_wallet.toLowerCase(),
+        route_tier,
+        route_label: label,
+        normalized_goal,
+        input_hash: inputHash,
+        amount_usdc: Number(amountUsdc),
+        payment_id: result.paymentId!,
+        payment_ref: result.paymentRef || null,
+        settlement_ref: result.settlementRef || null,
+        status: "completed",
+      })
+      .select("id")
+      .single();
+
+    if (insertErr || !tollRow) {
+      return NextResponse.json(
+        {
+          error: `Route toll payment succeeded but failed to persist proof: ${insertErr?.message || "unknown"}`,
+          route_payment_status: "completed_unpersisted",
+        },
+        { status: 500 }
+      );
+    }
+
     // Return proof — caller must pass this to /api/paylabs/learning-paths/propose
     return NextResponse.json({
+      route_toll_call_id: tollRow.id,
       route_payment_id: result.paymentId,
       route_payment_ref: result.paymentRef,
       route_settlement_ref: result.settlementRef,
