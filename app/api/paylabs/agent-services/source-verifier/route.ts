@@ -2,11 +2,8 @@
  * POST /api/paylabs/agent-services/source-verifier
  * Paid Source Verifier Agent Service endpoint.
  *
- * This is a specialist service that the Tutor Orchestrator pays via x402/Runner.
- * It does NOT execute payment — payment is executed by the Orchestrator before calling.
- *
- * Input: route_tier + safe lesson metadata (no wallet secrets, no payment data)
- * Output: verified/rejected lessons, verification notes, output_hash
+ * REQUIRES payment proof headers from Runner.
+ * Without valid proof, returns 402 — no verification output.
  *
  * RFB 03: Agent-to-Agent Nanopayment Networks
  */
@@ -32,10 +29,39 @@ const VerifierSchema = z.object({
 
 type VerifierResult = z.infer<typeof VerifierSchema>;
 
+const VALID_PROVIDER_ID = "paylabs-source-verifier-v1";
+
 export async function POST(req: NextRequest) {
   try {
+    // ── Payment proof validation (REQUIRED) ──
+    const paymentId = req.headers.get("x-payment-id");
+    const paymentRef = req.headers.get("x-payment-ref");
+    const settlementRef = req.headers.get("x-settlement-ref");
+    const proofInputHash = req.headers.get("x-input-hash");
+    const proofProviderId = req.headers.get("x-provider-agent-id");
+
+    if (!paymentId) {
+      return NextResponse.json(
+        { error: "Payment proof required: x-payment-id header missing" },
+        { status: 402 }
+      );
+    }
+    if (!paymentRef && !settlementRef) {
+      return NextResponse.json(
+        { error: "Payment proof required: x-payment-ref or x-settlement-ref header missing" },
+        { status: 402 }
+      );
+    }
+    if (proofProviderId !== VALID_PROVIDER_ID) {
+      return NextResponse.json(
+        { error: "Invalid provider agent ID" },
+        { status: 403 }
+      );
+    }
+
+    // ── Parse body ──
     const body = await req.json();
-    const { route_tier, lessons } = body;
+    const { route_tier, lessons, input_hash } = body;
 
     if (!route_tier || !isValidRouteTier(route_tier)) {
       return NextResponse.json(
@@ -48,6 +74,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "lessons array required" },
         { status: 400 }
+      );
+    }
+
+    // Verify input_hash matches request body
+    const bodyHash = createHash("sha256")
+      .update(JSON.stringify(lessons))
+      .digest("hex");
+    if (proofInputHash && proofInputHash !== bodyHash) {
+      return NextResponse.json(
+        { error: "Input hash mismatch — proof does not match request body" },
+        { status: 403 }
       );
     }
 
@@ -115,13 +152,10 @@ export async function POST(req: NextRequest) {
       };
     });
 
-    // Provider ID
-    const providerAgentId = "paylabs-source-verifier-v1";
-
     // Compute output hash
     const outputHash = createHash("sha256")
       .update(JSON.stringify({
-        provider_agent_id: providerAgentId,
+        provider_agent_id: VALID_PROVIDER_ID,
         verified: enrichedVerified,
         rejected: result.rejected,
         all_verified: result.allVerified,
@@ -130,11 +164,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      provider_agent_id: providerAgentId,
+      provider_agent_id: VALID_PROVIDER_ID,
       verified_lessons: enrichedVerified,
       rejected_lessons: result.rejected,
       verification_notes: llmNotes,
       output_hash: outputHash,
+      payment_id: paymentId,
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

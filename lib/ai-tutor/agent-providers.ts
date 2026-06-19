@@ -13,6 +13,8 @@ const MAX_AGENT_SERVICE_PRICE_USDC = Number(
   process.env.PAYLABS_MAX_AGENT_SERVICE_PRICE_USDC || "0.001"
 );
 
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
 export interface AgentProvider {
   id: string;
   agent_id: string;
@@ -26,7 +28,30 @@ export interface AgentProvider {
 }
 
 /**
+ * Resolve the runtime wallet address for a known provider agent.
+ * For paylabs-source-verifier-v1: reads PAYLABS_SOURCE_VERIFIER_WALLET env.
+ * Falls back to DB wallet_address only if it is a valid non-zero address.
+ * Returns null if no valid wallet can be resolved.
+ */
+function resolveProviderWallet(agentId: string, dbWallet: string): string | null {
+  // Per-provider env resolution
+  let envWallet: string | undefined;
+  if (agentId === "paylabs-source-verifier-v1") {
+    envWallet = process.env.PAYLABS_SOURCE_VERIFIER_WALLET;
+  }
+
+  const wallet = envWallet || dbWallet;
+
+  // Validate: must be 0x-prefixed, 42 chars, NOT zero address
+  if (!wallet || !wallet.startsWith("0x") || wallet.length !== 42) return null;
+  if (wallet.toLowerCase() === ZERO_ADDRESS) return null;
+
+  return wallet;
+}
+
+/**
  * Get an active agent provider for a given service type and route tier.
+ * Resolves wallet address from env at runtime — zero address is rejected.
  * Deterministic: returns first matching provider or null.
  */
 export async function getActiveAgentProvider(
@@ -49,7 +74,11 @@ export async function getActiveAgentProvider(
   // Price cap check
   if (data.price_usdc > MAX_AGENT_SERVICE_PRICE_USDC) return null;
 
-  return data as AgentProvider;
+  // Resolve wallet from env — reject zero address
+  const resolvedWallet = resolveProviderWallet(data.agent_id, data.wallet_address);
+  if (!resolvedWallet) return null;
+
+  return { ...data, wallet_address: resolvedWallet } as AgentProvider;
 }
 
 /**
