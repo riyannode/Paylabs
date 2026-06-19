@@ -58,13 +58,22 @@ export const PayLabsTutorState = Annotation.Root({
     "none" | "proposed" | "approved" | "active" | "completed" | "cancelled"
   >,
 
-  // Agent 2: Curriculum Planner output
+  // Agent 2: Curriculum Planner output (legacy lesson path)
   publishedLessons: Annotation<unknown[]>,
   unlockedLessonIds: Annotation<string[]>,
   selectedLessons: Annotation<unknown[]>,
   estimatedTotalUsdc: Annotation<number | undefined>,
   remainingUsdc: Annotation<number | undefined>,
   plannerNotes: Annotation<string[]>,
+
+  // Agent 2: Curriculum Planner output (RSSHub source path)
+  availableFeedItems: Annotation<unknown[]>,
+  selectedFeedItems: Annotation<unknown[]>,
+  verifiedFeedItems: Annotation<unknown[]>,
+  rejectedFeedItems: Annotation<unknown[]>,
+  sourcePathItems: Annotation<unknown[]>,
+  sourcePathTotalUsdc: Annotation<number | undefined>,
+  sourceCardCount: Annotation<number | undefined>,
 
   // Agent 3: Source Verifier output
   verifiedLessons: Annotation<unknown[]>,

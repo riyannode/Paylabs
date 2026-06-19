@@ -71,6 +71,49 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: result.error }, { status: 500 });
     }
 
+    // ── RSSHub source path response ──
+    const verifiedFeed = result.verifiedFeedItems as Record<string, unknown>[] | undefined;
+    if (verifiedFeed && verifiedFeed.length > 0) {
+      const selectedFeed = (result.selectedFeedItems || []) as Record<string, unknown>[];
+      const rejectedFeed = (result.rejectedFeedItems || []) as Record<string, unknown>[];
+
+      const sourcePathItems = verifiedFeed.map((v, i) => {
+        const selected = selectedFeed.find(
+          (s) => s.feed_item_id === v.feed_item_id
+        );
+        return {
+          id: v.feed_item_id,
+          feed_item_id: v.feed_item_id,
+          order_index: i,
+          title: selected?.source_title || "",
+          source_url: selected?.source_url || "",
+          creator_wallet: selected?.creator_wallet || "",
+          citation_price_usdc: selected?.citation_price_usdc || 0,
+          unlock_price_usdc: selected?.unlock_price_usdc || 0,
+          reason: selected?.reason || "",
+          expected_value: selected?.expected_value || "",
+          verification_reason: v.verification_reason || "",
+          hash_status: v.hash_status || "verified",
+        };
+      });
+
+      return NextResponse.json({
+        path_id: result.pathId,
+        path_status: result.pathStatus,
+        path_type: "rsshub_source_path",
+        goal,
+        budget_usdc,
+        route_tier: result.routeTier,
+        route_config: result.routeConfig,
+        source_path_items: sourcePathItems,
+        total_usdc: result.sourcePathTotalUsdc || 0,
+        remaining_usdc: result.remainingUsdc || 0,
+        rejected: rejectedFeed,
+        agent_service_calls: result.agentServiceCalls || [],
+      });
+    }
+
+    // ── Legacy lesson path response ──
     const path = (result.verifiedLessons as Record<string, unknown>[] || []).map((v, i) => {
       const selected = (result.selectedLessons as Record<string, unknown>[] || []).find(
         (s) => s.lesson_id === v.lesson_id
@@ -91,6 +134,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       path_id: result.pathId,
       path_status: result.pathStatus,
+      path_type: "legacy_lesson_path",
       goal,
       budget_usdc,
       route_tier: result.routeTier,

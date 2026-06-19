@@ -29,13 +29,35 @@ import { getPromptsForRoute } from "./route-prompts";
 async function persistProposedPathNode(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { userWallet, goal, budgetUsdc, verifiedLessons, estimatedTotalUsdc, allVerified, routeTier, routeConfig, agentTrace, llmOutputs, llmErrors, agentServiceCalls } = state;
+  const { userWallet, goal, budgetUsdc, verifiedLessons, verifiedFeedItems, rejectedFeedItems, selectedFeedItems, estimatedTotalUsdc, sourcePathTotalUsdc, sourceCardCount, allVerified, routeTier, routeConfig, agentTrace, llmOutputs, llmErrors, agentServiceCalls } = state;
   const tier: RouteTier = routeTier || "normal";
-  const config = routeConfig || getRouteConfig(tier);
+  const config = (routeConfig as unknown as ReturnType<typeof getRouteConfig>) || getRouteConfig(tier);
 
+  // ── RSSHub Source Path ──
+  if (verifiedFeedItems && (verifiedFeedItems as Record<string, unknown>[]).length > 0) {
+    return await persistSourcePath({
+      userWallet,
+      goal: goal || "",
+      budgetUsdc: budgetUsdc || 0,
+      verifiedFeedItems: verifiedFeedItems as Record<string, unknown>[],
+      rejectedFeedItems: (rejectedFeedItems || []) as Record<string, unknown>[],
+      selectedFeedItems: (selectedFeedItems || []) as Record<string, unknown>[],
+      sourcePathTotalUsdc: sourcePathTotalUsdc || 0,
+      sourceCardCount: sourceCardCount || 0,
+      allVerified: allVerified || false,
+      tier,
+      config,
+      agentTrace: agentTrace || {},
+      llmOutputs: llmOutputs || {},
+      llmErrors: llmErrors || {},
+      agentServiceCalls: agentServiceCalls || [],
+    });
+  }
+
+  // ── Legacy Lesson Path ──
   if (!allVerified || !verifiedLessons || verifiedLessons.length === 0) {
     return {
-      error: "Cannot persist: no verified lessons",
+      error: "Cannot persist: no verified lessons or feed items",
       pathStatus: "none",
     };
   }
@@ -109,6 +131,120 @@ async function persistProposedPathNode(
   }
 }
 
+// ─── Persist RSSHub Source Path ──────────────────────────────────
+
+async function persistSourcePath(input: {
+  userWallet: string;
+  goal: string;
+  budgetUsdc: number;
+  verifiedFeedItems: Record<string, unknown>[];
+  rejectedFeedItems: Record<string, unknown>[];
+  selectedFeedItems: Record<string, unknown>[];
+  sourcePathTotalUsdc: number;
+  sourceCardCount: number;
+  allVerified: boolean;
+  tier: RouteTier;
+  config: ReturnType<typeof getRouteConfig>;
+  agentTrace: Record<string, unknown>;
+  llmOutputs: Record<string, unknown>;
+  llmErrors: Record<string, unknown>;
+  agentServiceCalls: Record<string, unknown>[];
+}): Promise<Partial<PayLabsTutorStateType>> {
+  const {
+    userWallet,
+    goal,
+    budgetUsdc,
+    verifiedFeedItems,
+    rejectedFeedItems,
+    selectedFeedItems,
+    sourcePathTotalUsdc,
+    sourceCardCount,
+    tier,
+    config,
+    agentTrace,
+    llmOutputs,
+    llmErrors,
+    agentServiceCalls,
+  } = input;
+
+  try {
+    const fullAgentTrace = {
+      ...agentTrace,
+      ...(Object.keys(llmOutputs).length > 0 ? { llm_outputs: llmOutputs } : {}),
+      ...(Object.keys(llmErrors).length > 0 ? { llm_errors: llmErrors } : {}),
+      ...(agentServiceCalls.length > 0 ? { agent_service_calls: agentServiceCalls } : {}),
+      selected_feed_items: selectedFeedItems,
+      verified_feed_items: verifiedFeedItems,
+      rejected_feed_items: rejectedFeedItems,
+    };
+
+    const { data: pathRow, error: pathErr } = await supabaseAdmin()
+      .from("paylabs_learning_paths")
+      .insert({
+        user_wallet: userWallet.toLowerCase(),
+        goal,
+        budget_usdc: budgetUsdc,
+        estimated_total_usdc: sourcePathTotalUsdc,
+        agent_reasoning_summary: `LangGraph proposed ${sourceCardCount} RSSHub source cards for goal: ${goal.slice(0, 100)}`,
+        status: "proposed",
+        created_by_agent_id: "paylabs-langgraph-v1",
+        route_tier: tier,
+        route_config: config,
+        agent_trace: fullAgentTrace,
+      })
+      .select("id, status")
+      .single();
+
+    if (pathErr || !pathRow) {
+      return {
+        error: `Failed to create source path: ${pathErr?.message}`,
+        pathStatus: "none",
+      };
+    }
+
+    // Insert source path items
+    const sourcePathItems = (selectedFeedItems as Record<string, unknown>[]).map((s, i) => ({
+      path_id: pathRow.id,
+      feed_item_id: s.feed_item_id as string,
+      order_index: i,
+      reason: s.reason as string,
+      expected_value: s.expected_value as string,
+      citation_price_usdc: s.citation_price_usdc as number,
+      unlock_price_usdc: s.unlock_price_usdc as number,
+      creator_wallet: s.creator_wallet as string,
+      source_url: s.source_url as string,
+      source_title: (s.source_title as string) || null,
+      source_hash: (s.source_hash as string) || null,
+      status: "proposed",
+    }));
+
+    const { error: itemsErr } = await supabaseAdmin()
+      .from("paylabs_source_path_items")
+      .insert(sourcePathItems);
+
+    if (itemsErr) {
+      // Clean up path if items fail
+      await supabaseAdmin()
+        .from("paylabs_learning_paths")
+        .delete()
+        .eq("id", pathRow.id);
+      return {
+        error: `Failed to create source path items: ${itemsErr.message}`,
+        pathStatus: "none",
+      };
+    }
+
+    return {
+      pathId: pathRow.id,
+      pathStatus: "proposed",
+      sourcePathItems,
+    };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { error: `Persist failed: ${msg}`, pathStatus: "none" };
+  }
+}
+
 // ─── Proposal Graph ──────────────────────────────────────────────
 
 const proposalGraph = new StateGraph(PayLabsTutorState)
@@ -162,6 +298,11 @@ export async function proposeLearningPath(input: {
     plannerNotes: [],
     verifiedLessons: [],
     rejectedLessons: [],
+    availableFeedItems: [],
+    selectedFeedItems: [],
+    verifiedFeedItems: [],
+    rejectedFeedItems: [],
+    sourcePathItems: [],
   } as unknown as PayLabsTutorStateType);
 
   return {
@@ -171,10 +312,18 @@ export async function proposeLearningPath(input: {
     budgetUsdc: input.budgetUsdc,
     routeTier: tier,
     routeConfig: config,
+    // Legacy lesson path fields (kept for compatibility)
     selectedLessons: result.selectedLessons,
     verifiedLessons: result.verifiedLessons,
     rejectedLessons: result.rejectedLessons,
     estimatedTotalUsdc: result.estimatedTotalUsdc,
+    // RSSHub source path fields
+    selectedFeedItems: result.selectedFeedItems,
+    verifiedFeedItems: result.verifiedFeedItems,
+    rejectedFeedItems: result.rejectedFeedItems,
+    sourcePathItems: result.sourcePathItems,
+    sourcePathTotalUsdc: result.sourcePathTotalUsdc,
+    sourceCardCount: result.sourceCardCount,
     remainingUsdc: result.remainingUsdc,
     agentServiceCalls: result.agentServiceCalls || [],
     error: result.error,
@@ -215,6 +364,11 @@ export async function buyApprovedLesson(input: {
     plannerNotes: [],
     verifiedLessons: [],
     rejectedLessons: [],
+    availableFeedItems: [],
+    selectedFeedItems: [],
+    verifiedFeedItems: [],
+    rejectedFeedItems: [],
+    sourcePathItems: [],
   } as unknown as PayLabsTutorStateType);
 
   return {

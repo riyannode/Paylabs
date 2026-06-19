@@ -21,11 +21,30 @@ import { getActiveAgentProvider, validateAgentServiceBudget, hashAgentServiceInp
 import { executeAgentServicePurchase } from "@/lib/arclayer-runner/agent-services";
 import { getSpecialistPaymentDecision, validateSpecialistDecision } from "./specialist-payment-decision";
 import { runSourceVerification, type VerificationInput } from "./source-verifier-service";
+import {
+  runSourceFeedVerification,
+  type VerificationFeedItemInput,
+} from "./source-feed-verifier-service";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-// ─── Zod schema for LLM structured output ───────────────────────
+// ─── Zod schemas for LLM structured output ──────────────────────
+
+const FeedVerifierSchema = z.object({
+  verification_notes: z
+    .array(
+      z.object({
+        feed_item_id: z.string().describe("The feed item being reviewed"),
+        source_reasoning: z.string().describe("Reasoning about source integrity"),
+        creator_reasoning: z.string().describe("Reasoning about creator trustworthiness"),
+        risk_flags: z.array(z.string()).describe("Any risk flags found"),
+      })
+    )
+    .describe("Per-feed-item verification reasoning"),
+});
+
+type FeedVerifierResult = z.infer<typeof FeedVerifierSchema>;
 
 const VerifierSchema = z.object({
   verification_notes: z.array(
@@ -51,17 +70,30 @@ function isAgentToAgentPaymentsEnabled(): boolean {
 export async function sourceVerifierAgent(
   state: PayLabsTutorStateType
 ): Promise<Partial<PayLabsTutorStateType>> {
-  const { selectedLessons, publishedLessons, routeTier, routePrompts, budgetUsdc, estimatedTotalUsdc, userWallet } = state;
+  const { selectedLessons, selectedFeedItems, publishedLessons, routeTier, routePrompts, budgetUsdc, estimatedTotalUsdc, sourcePathTotalUsdc, userWallet } = state;
   const tier: RouteTier = routeTier || "normal";
   const config = getRouteConfig(tier);
   const prompts = (routePrompts as unknown as ReturnType<typeof getPromptsForRoute>) || getPromptsForRoute(tier);
 
+  // ── RSSHub Feed Item Verification Path ──
+  if (selectedFeedItems && (selectedFeedItems as Record<string, unknown>[]).length > 0) {
+    return await feedItemVerification({
+      tier,
+      config,
+      prompts,
+      selectedFeedItems: selectedFeedItems as Record<string, unknown>[],
+    });
+  }
+
+  // ── Legacy Lesson Verification Path ──
   if (!selectedLessons || selectedLessons.length === 0) {
     return {
       verifiedLessons: [],
       rejectedLessons: [],
+      verifiedFeedItems: [],
+      rejectedFeedItems: [],
       allVerified: false,
-      error: "No lessons to verify",
+      error: "No lessons or feed items to verify",
     };
   }
 
@@ -115,6 +147,87 @@ export async function sourceVerifierAgent(
     lessonMap,
     selectedLessons: selectedLessons as Record<string, unknown>[],
   });
+}
+
+// ─── Feed Item Verification Path ────────────────────────────────
+
+async function feedItemVerification(input: {
+  tier: RouteTier;
+  config: ReturnType<typeof getRouteConfig>;
+  prompts: ReturnType<typeof getPromptsForRoute>;
+  selectedFeedItems: Record<string, unknown>[];
+}): Promise<Partial<PayLabsTutorStateType>> {
+  const { tier, config, prompts, selectedFeedItems } = input;
+
+  // Build safe metadata for LLM — only reasoning, no price/wallet/source
+  const feedItemMeta = selectedFeedItems.map((s) => ({
+    feed_item_id: s.feed_item_id,
+    title: s.source_title,
+    source_url: s.source_url,
+    creator_wallet: s.creator_wallet ? `${(s.creator_wallet as string).slice(0, 6)}...${(s.creator_wallet as string).slice(-4)}` : undefined,
+    citation_price_usdc: s.citation_price_usdc,
+    has_hash: !!s.source_hash,
+  }));
+
+  // Call LLM for reasoning only
+  const llmResult = await invokeJsonAgent<FeedVerifierResult>({
+    agentName: "source_verifier",
+    routeTier: tier,
+    prompt: prompts.sourceVerifier,
+    userMessage: `Route tier: ${tier}\nSource strictness: ${config.sourceStrictness}\n\nRSSHub feed item metadata to verify (JSON):\n${JSON.stringify(feedItemMeta, null, 2)}\n\nReview each feed item's source integrity and creator trustworthiness. Flag any concerns.`,
+    schema: FeedVerifierSchema,
+  });
+
+  const llmNotes: Record<string, { source: string; creator: string; flags: string[] }> = {};
+  let llmMeta: Record<string, unknown> = {};
+
+  if (llmResult.ok) {
+    const data = (llmResult as { ok: true; data: FeedVerifierResult; meta: Record<string, unknown> }).data;
+    llmMeta = (llmResult as { ok: true; data: FeedVerifierResult; meta: Record<string, unknown> }).meta;
+    for (const note of data.verification_notes) {
+      llmNotes[note.feed_item_id] = {
+        source: note.source_reasoning,
+        creator: note.creator_reasoning,
+        flags: note.risk_flags,
+      };
+    }
+  } else {
+    const errResult = llmResult as { ok: false; error: string; meta: Record<string, unknown> };
+    llmMeta = errResult.meta;
+  }
+
+  // Deterministic verification — final decision
+  const verificationInputs: VerificationFeedItemInput[] = selectedFeedItems.map((s) => ({
+    feed_item_id: s.feed_item_id as string,
+    title: s.source_title as string,
+    canonical_url: s.source_url as string,
+    publisher: undefined, // feed items don't have separate publisher in path items
+    author_name: undefined,
+    normalized_sha256: s.source_hash as string,
+    content_sha256: undefined,
+    is_active: true, // already validated by planner
+    creator_wallet: s.creator_wallet as string,
+  }));
+
+  const result = runSourceFeedVerification(verificationInputs, config);
+
+  const trace = {
+    ...llmMeta,
+    deterministic_verified: result.verified.length,
+    deterministic_rejected: result.rejected.length,
+    feed_item_path: true,
+  };
+
+  return {
+    verifiedFeedItems: result.verified,
+    rejectedFeedItems: result.rejected,
+    allVerified: result.allVerified,
+    agentTrace: { source_verifier: trace },
+    ...(llmResult.ok
+      ? { llmOutputs: { source_verifier: (llmResult as { data: unknown }).data } }
+      : { llmErrors: { source_verifier: llmResult } }),
+    // Do NOT fill legacy verifiedLessons for feed item paths
+  };
 }
 
 // ─── Local Verification Path ─────────────────────────────────────

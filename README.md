@@ -128,6 +128,9 @@ New tables (migration 006):
 - `paylabs_feed_items` — Normalized feed items with content hashes
 - `paylabs_citation_receipts` — Citation/unlock payment records
 
+New tables (migration 007):
+- `paylabs_source_path_items` — RSSHub source path items for proposed learning paths
+
 Existing tables preserved: `paylabs_lessons`, `paylabs_creators`, `paylabs_unlocks`, `paylabs_payout_receipts`, `paylabs_route_toll_calls`, `paylabs_agent_service_calls`, `paylabs_learning_paths`.
 
 ## Revenue Split
@@ -140,7 +143,17 @@ Existing tables preserved: `paylabs_lessons`, `paylabs_creators`, `paylabs_unloc
 
 PayLabs does not create receipt records without valid EIP-3009 TransferWithAuthorization signature verification. No fake payments. No fake tx hashes. No secrets in logs.
 
-## Environment Variables
+## Backend Roadmap
+
+- **PR #9**: Per-agent LLM routing (merged)
+- **PR #10**: RSSHub ingestion/dashboard foundation (merged)
+- **PR #11**: AI Tutor source path backend — RSSHub feed items as primary proposal path
+- **PR #12**: Citation/unlock payment execution (planned)
+- **PR #13**: Source verifier specialist support for feed items (planned)
+
+PR #11 adds RSSHub source path support to the LangGraph proposal graph. The AI tutor now uses `paylabs_feed_items` as the primary planning source. Citation payments are NOT yet live — source paths are proposal-only.
+
+## Database
 
 See `.env.example` for the full list. Critical variables:
 
