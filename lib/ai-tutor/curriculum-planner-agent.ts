@@ -156,6 +156,10 @@ function revalidateSourceSelection(
       source_url: feedItem.canonical_url,
       source_title: feedItem.title,
       source_hash: feedItem.normalized_sha256 || feedItem.content_sha256,
+      publisher: feedItem.publisher,
+      author_name: feedItem.author_name,
+      normalized_sha256: feedItem.normalized_sha256,
+      content_sha256: feedItem.content_sha256,
       reason: item.reason,
       expected_value: item.expected_value,
     });

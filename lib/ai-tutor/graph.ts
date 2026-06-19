@@ -159,6 +159,7 @@ async function persistSourcePath(input: {
     selectedFeedItems,
     sourcePathTotalUsdc,
     sourceCardCount,
+    allVerified,
     tier,
     config,
     agentTrace,
@@ -166,6 +167,20 @@ async function persistSourcePath(input: {
     llmErrors,
     agentServiceCalls,
   } = input;
+
+  if (!allVerified || rejectedFeedItems.length > 0) {
+    return {
+      error: "Cannot persist: not all feed items verified",
+      pathStatus: "none",
+    };
+  }
+
+  if (verifiedFeedItems.length === 0) {
+    return {
+      error: "Cannot persist: no verified feed items",
+      pathStatus: "none",
+    };
+  }
 
   try {
     const fullAgentTrace = {

@@ -201,10 +201,10 @@ async function feedItemVerification(input: {
     feed_item_id: s.feed_item_id as string,
     title: s.source_title as string,
     canonical_url: s.source_url as string,
-    publisher: undefined, // feed items don't have separate publisher in path items
-    author_name: undefined,
-    normalized_sha256: s.source_hash as string,
-    content_sha256: undefined,
+    publisher: s.publisher as string | undefined,
+    author_name: s.author_name as string | undefined,
+    normalized_sha256: s.normalized_sha256 as string | undefined,
+    content_sha256: s.content_sha256 as string | undefined,
     is_active: true, // already validated by planner
     creator_wallet: s.creator_wallet as string,
   }));
