@@ -127,7 +127,7 @@ pm2 status paylabs-discovery-worker
 pm2 logs paylabs-discovery-worker --lines 50 --nostream
 
 # Check specific run (via Supabase REST)
-curl -sS "https://paylabs.vercel.app/api/paylabs/discovery-runs/<ID>/status"
+curl -sS 
 ```
 
 ## Log Safety
