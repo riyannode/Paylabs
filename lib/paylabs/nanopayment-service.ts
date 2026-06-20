@@ -13,6 +13,7 @@ import {
   PAID_AGENTS,
   AGENT_NANOPRICE_USDC,
   AGENT_COUNT,
+  getPayerForAgent,
   type PaidAgentName,
 } from "@/lib/paylabs/agent-registry";
 import {
@@ -85,7 +86,7 @@ export async function createNanopaymentRows(
   const rows = PAID_AGENTS.map((agent) => ({
     discovery_run_id: input.discoveryRunId,
     user_wallet: input.userWallet.toLowerCase(),
-    payer_agent: "paylabs_treasury",
+    payer_agent: getPayerForAgent(agent.name as PaidAgentName),
     payee_agent: agent.name,
     route_tier: input.routeTier,
     agent_name: agent.name,
@@ -237,7 +238,7 @@ export async function getRecentBatchSettlements(
 }
 
 /**
- * Update nanopayment status.
+ * Update nanopayment status by row ID.
  */
 export async function updateNanopaymentStatus(
   id: string,
@@ -253,4 +254,24 @@ export async function updateNanopaymentStatus(
     .from("paylabs_agent_nanopayments")
     .update(update)
     .eq("id", id);
+}
+
+/**
+ * Update nanopayment status by receipt_id.
+ * Used by agent capability endpoints which only know receipt_id from context.
+ */
+export async function updateNanopaymentStatusByReceiptId(
+  receiptId: string,
+  status: string,
+  refs?: { paymentRef?: string; settlementRef?: string; transferId?: string }
+): Promise<void> {
+  const update: Record<string, unknown> = { status };
+  if (refs?.paymentRef) update.x402_payment_ref = refs.paymentRef;
+  if (refs?.settlementRef) update.x402_settlement_ref = refs.settlementRef;
+  if (refs?.transferId) update.circle_transfer_id = refs.transferId;
+
+  await supabaseAdmin()
+    .from("paylabs_agent_nanopayments")
+    .update(update)
+    .eq("receipt_id", receiptId);
 }
