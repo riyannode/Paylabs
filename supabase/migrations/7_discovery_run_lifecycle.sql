@@ -31,6 +31,9 @@ alter table paylabs_discovery_runs add column if not exists worker_heartbeat_at 
 -- Error tracking
 alter table paylabs_discovery_runs add column if not exists error_summary text;
 
+-- Budget persistence (enqueued budget, read back by worker)
+alter table paylabs_discovery_runs add column if not exists budget_usdc numeric;
+
 -- Index for worker polling: find queued runs oldest-first
 create index if not exists idx_discovery_runs_queued
   on paylabs_discovery_runs(status, queued_at asc)
