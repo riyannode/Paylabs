@@ -1,22 +1,37 @@
 /**
  * PayLabs Tutor LangGraph Workflow — 15-Agent Production Core
  *
+ * 15 LLM-backed LangGraph agents.
+ * 7 are x402-paid audited nodes (withPaidNode wrapper).
+ * 8 are free/internal LLM agents with deterministic backend guardrails.
+ * persist_source_path is a DB persistence node, not an LLM agent.
+ * Payment execution and final payment proof are deterministic, not LLM-controlled.
+ *
  * Two separate graphs:
- * 1. Proposal: START → tutor_intake → intent_classifier → query_expander →
+ * 1. Proposal (12 nodes): START → tutor_intake → intent_classifier → query_expander →
  *    feed_discovery → source_ranker → evidence_allocator → stop_limit_controller →
  *    budget_optimizer → source_quality → provenance → creator_ownership →
  *    persist_source_path → END
  *
- * 2. Payment: START → policy_guard → payment_quote → payment_executor →
+ * 2. Payment (4 nodes): START → policy_guard → payment_quote → payment_executor →
  *    receipt_auditor → END
+ *
+ * x402-paid agents (7):
+ *   tutor_intake, intent_classifier, query_expander,
+ *   source_ranker (discovery_ranker), source_quality_verifier,
+ *   provenance_verifier, creator_ownership_verifier (attribution_auditor)
+ *
+ * Free/internal LLM agents (8):
+ *   feed_discovery, evidence_allocator, stop_limit_controller,
+ *   budget_optimizer, policy_guard, payment_quote,
+ *   payment_executor, receipt_auditor
+ *
+ * DB persistence node: persist_source_path
  *
  * Proposal and payment are separate invocations.
  * Payment is impossible until the user approves the source path.
  * Route tier changes planning behavior and prompt persona only.
  * Route tier NEVER weakens safety checks.
- *
- * All 15 agents are LLM-backed. Payment-critical decisions still have
- * deterministic backend checks. No hardcoded Runner — uses Payment Adapter.
  */
 
 import { StateGraph, START, END } from "@langchain/langgraph";
@@ -200,19 +215,33 @@ async function persistProposedSourcePathNode(
 }
 
 // ─── Proposal Graph (12 nodes) ──────────────────────────────────
+// 7 x402-paid agents use withPaidNode() wrapper.
+// 4 free/internal agents + 1 DB node run without wrapper.
 
 const proposalGraph = new StateGraph(PayLabsTutorState)
+  // x402-paid: interprets user goal / initial intent
   .addNode("tutor_intake", withPaidNode("tutor_intake", tutorIntakeAgent))
+  // x402-paid: classifies workflow and NL constraints
   .addNode("intent_classifier", withPaidNode("intent_classifier", intentClassifierAgent))
+  // x402-paid: expands goal into query/source-discovery intent
   .addNode("query_expander", withPaidNode("query_expander", queryExpanderAgent))
+  // free: hybrid DB filter + LLM review (deterministic candidate set)
   .addNode("feed_discovery", feedDiscoveryAgent)
+  // x402-paid: source relevance ranking (paid identity: discovery_ranker)
   .addNode("source_ranker", withPaidNode("discovery_ranker", sourceRankerAgent))
+  // free: evidence path planning (internal reasoning, not paid capability)
   .addNode("evidence_allocator", evidenceAllocatorAgent)
+  // free: deterministic budget/source caps (LLM for explanation only)
   .addNode("stop_limit_controller", stopLimitControllerAgent)
+  // free: deterministic math/split/cap (LLM for explanation only)
   .addNode("budget_optimizer", budgetOptimizerAgent)
+  // x402-paid: paid source-quality assessment
   .addNode("source_quality_verifier", withPaidNode("source_quality_verifier", sourceQualityVerifierAgent))
+  // x402-paid: paid provenance/audit reasoning from DB metadata
   .addNode("provenance_verifier", withPaidNode("provenance_verifier", provenanceVerifierAgent))
+  // x402-paid: hybrid DB truth + LLM summary (paid identity: attribution_auditor)
   .addNode("creator_ownership_verifier", withPaidNode("attribution_auditor", creatorOwnershipVerifierAgent))
+  // DB persistence node (not an LLM agent)
   .addNode("persist_source_path", persistProposedSourcePathNode)
   .addEdge(START, "tutor_intake")
   .addEdge("tutor_intake", "intent_classifier")
@@ -420,11 +449,17 @@ export async function discoverOnly(input: {
 }
 
 // ─── Payment Graph (4 nodes) ────────────────────────────────────
+// All 4 are free/internal LLM agents.
+// Final decisions are deterministic (adapter executes, not LLM).
 
 const sourcePaymentGraph = new StateGraph(PayLabsTutorState)
+  // free: LLM for explanation, final allow/block is deterministic
   .addNode("policy_guard", policyGuardAgent)
+  // free: LLM for explanation, quote value is deterministic from DB
   .addNode("payment_quote", paymentQuoteAgent)
+  // free: LLM for explanation, actual execution is deterministic via adapter
   .addNode("payment_executor", paymentExecutorAgent)
+  // free: LLM for audit summary, receipt status is deterministic from DB
   .addNode("receipt_auditor", receiptAuditorAgent)
   .addEdge(START, "policy_guard")
   .addEdge("policy_guard", "payment_quote")
@@ -441,6 +476,7 @@ export async function proposeSourcePath(input: {
   budgetUsdc: number;
   routeTier?: RouteTier;
   discoveryRunId?: string;
+  paidReceiptIds?: Record<string, string>;
 }) {
   const tier: RouteTier = input.routeTier || "normal";
   const config = getRouteConfig(tier);
@@ -487,6 +523,7 @@ export async function proposeSourcePath(input: {
     routeLimits: limits,
     effectiveSpendCapUsdc: effectiveCap,
     discoveryRunId: input.discoveryRunId,
+    paidReceiptIds: input.paidReceiptIds,
     agentTrace: {},
     topics: [],
     riskNotes: [],
