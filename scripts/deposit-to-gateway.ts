@@ -5,7 +5,7 @@
  *   1. approve(GatewayWallet, amount) on USDC contract
  *   2. deposit(USDC, amount) on Gateway Wallet contract
  *
- * Uses abiFunctionSignature + abiParameters (not raw callData).
+ * Uses raw callData encoding (verified working on ARC-TESTNET).
  * No local private keys. No secrets printed.
  *
  * ⚠️  Direct USDC ERC-20 transfer to Gateway Wallet does NOT credit
@@ -13,8 +13,8 @@
  *     contract. Skipping approve() will also fail.
  *
  * Usage:
- *   npx tsx scripts/deposit-to-gateway.mjs [amount_usdc]
- *   npx tsx scripts/deposit-to-gateway.mjs 0.01
+ *   npx tsx scripts/deposit-to-gateway.ts [amount_usdc]
+ *   npx tsx scripts/deposit-to-gateway.ts 0.01
  */
 
 import { createRequire } from "node:module";
@@ -37,6 +37,24 @@ const TERMINAL_STATES = new Set([
   "CANCELLED",
   "DENIED",
 ]);
+
+// ─── ABI Encoding ──────────────────────────────────────────────
+
+/** Encode approve(address,uint256) calldata */
+function encodeApprove(spender: string, amount: bigint): string {
+  const selector = "0x095ea7b3";
+  const addr = spender.toLowerCase().replace("0x", "").padStart(64, "0");
+  const amt = amount.toString(16).padStart(64, "0");
+  return `${selector}${addr}${amt}`;
+}
+
+/** Encode deposit(address,uint256) calldata */
+function encodeDeposit(token: string, amount: bigint): string {
+  const selector = "0x47e7ef24";
+  const addr = token.toLowerCase().replace("0x", "").padStart(64, "0");
+  const amt = amount.toString(16).padStart(64, "0");
+  return `${selector}${addr}${amt}`;
+}
 
 // ─── Helpers ───────────────────────────────────────────────────
 
@@ -88,8 +106,8 @@ async function main() {
 
   const apiKey = requireEnv("CIRCLE_API_KEY");
   const entitySecret = requireEnv("CIRCLE_ENTITY_SECRET");
-  const walletId = requireEnv("PAYLABS_AGENT_EOA_WALLET_ID");
-  const walletAddress = requireEnv("PAYLABS_AGENT_EOA_ADDRESS");
+  const walletId = requireEnv("PAYLABS_TREASURY_WALLET_ID");
+  const walletAddress = requireEnv("PAYLABS_TREASURY_WALLET_ADDRESS");
 
   console.log(`\n🔐 Gateway Deposit: ${amountUsdc} USDC`);
   console.log(`   Wallet: ${walletAddress}`);
@@ -103,12 +121,12 @@ async function main() {
 
   // ── Step 1: Approve ──────────────────────────────────────────
 
+  const approveCalldata = encodeApprove(GATEWAY_WALLET, amountAtomic);
   console.log("📝 Step 1/2: approve(GatewayWallet, amount)...");
   const approveResp = await client.createContractExecutionTransaction({
     walletId,
     contractAddress: USDC_ARC_TESTNET,
-    abiFunctionSignature: "approve(address,uint256)",
-    abiParameters: [GATEWAY_WALLET, amountAtomic.toString()],
+    callData: approveCalldata,
     fee: { type: "level", config: { feeLevel: "MEDIUM" } },
     idempotencyKey: `gw-approve-${walletId}-${Date.now()}`,
   });
@@ -132,12 +150,12 @@ async function main() {
 
   // ── Step 2: Deposit ──────────────────────────────────────────
 
+  const depositCalldata = encodeDeposit(USDC_ARC_TESTNET, amountAtomic);
   console.log("\n📝 Step 2/2: deposit(USDC, amount)...");
   const depositResp = await client.createContractExecutionTransaction({
     walletId,
     contractAddress: GATEWAY_WALLET,
-    abiFunctionSignature: "deposit(address,uint256)",
-    abiParameters: [USDC_ARC_TESTNET, amountAtomic.toString()],
+    callData: depositCalldata,
     fee: { type: "level", config: { feeLevel: "MEDIUM" } },
     idempotencyKey: `gw-deposit-${walletId}-${Date.now()}`,
   });
