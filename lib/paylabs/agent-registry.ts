@@ -129,6 +129,33 @@ export function resolveReserveWallet(): {
 }
 
 /**
+ * Get the payer agent for a given agent in the execution chain.
+ * Chain: treasury → tutor_intake → intent_classifier → query_expander →
+ *        discovery_ranker → source_quality_verifier → provenance_verifier →
+ *        attribution_auditor
+ */
+export function getPayerForAgent(agentName: PaidAgentName): string {
+  switch (agentName) {
+    case "tutor_intake":
+      return "paylabs_treasury";
+    case "intent_classifier":
+      return "tutor_intake";
+    case "query_expander":
+      return "intent_classifier";
+    case "discovery_ranker":
+      return "query_expander";
+    case "source_quality_verifier":
+      return "discovery_ranker";
+    case "provenance_verifier":
+      return "source_quality_verifier";
+    case "attribution_auditor":
+      return "provenance_verifier";
+    default:
+      return "paylabs_treasury";
+  }
+}
+
+/**
  * Check if all 7 agent wallets are configured.
  * Returns list of missing agent names.
  */

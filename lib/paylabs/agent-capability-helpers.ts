@@ -18,7 +18,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAgentContext, type AgentContextPayload } from "@/lib/payments/agent-context";
 import { getPaymentFlags } from "@/lib/paylabs/feature-flags";
-import { updateNanopaymentStatus } from "@/lib/paylabs/nanopayment-service";
+import { updateNanopaymentStatusByReceiptId } from "@/lib/paylabs/nanopayment-service";
 import type { PaidAgentName } from "@/lib/paylabs/agent-registry";
 
 // ─── Constants ─────────────────────────────────────────────────
@@ -179,8 +179,8 @@ export async function recordAgentCapabilityResult(
 
   // Find nanopayment row by receipt_id and update
   try {
-    await updateNanopaymentStatus(
-      context.receipt_id, // used as receipt_id lookup
+    await updateNanopaymentStatusByReceiptId(
+      context.receipt_id,
       status,
       {
         paymentRef: undefined, // real ref only from Gateway/Circle
