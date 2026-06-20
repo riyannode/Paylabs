@@ -117,7 +117,7 @@ function resolveConfig(agentName?: string): {
     envOrDefault("PAYLABS_TUTOR_MODEL") ??
     "gpt-4o-mini";
 
-  const timeoutMs = resolveNumberConfig(agentKey, "PAYLABS_LLM_TIMEOUT", 20000);
+  const timeoutMs = resolveNumberConfig(agentKey, "PAYLABS_LLM_TIMEOUT_MS", 20000);
   const maxTokens = resolveNumberConfig(agentKey, "PAYLABS_LLM_MAX_TOKENS", 1024);
 
   return { provider, apiKey, baseUrl, model, agentKey, timeoutMs, maxTokens };
