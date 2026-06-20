@@ -12,7 +12,7 @@
 // 2. Click "Propose Path"
 
 import { NextRequest, NextResponse } from "next/server";
-import { runTutorIntake } from "@/lib/ai-tutor/intake-graph";
+import { runTutorIntake } from "@/lib/ai/intake-graph";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();

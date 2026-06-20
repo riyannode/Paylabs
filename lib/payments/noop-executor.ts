@@ -3,7 +3,7 @@
  * Fail-closed: propose works, payment returns "not configured".
  * No fake payment ID, no fake receipt, no DB row.
  */
-import type { PaymentExecutor, PaymentQuoteInput, PaymentQuoteResult, PaymentPayInput, PaymentPayResult, PaymentReceiptResult } from "./types";
+import type { PaymentExecutor, PaymentQuoteInput, PaymentQuoteResult, PaymentPayInput, PaymentPayResult, PaymentReceiptResult } from "@/lib/paylabs/x402/types";
 
 export class NoopPaymentExecutor implements PaymentExecutor {
   async quote(_input: PaymentQuoteInput): Promise<PaymentQuoteResult> {

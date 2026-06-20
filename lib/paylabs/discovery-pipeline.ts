@@ -28,7 +28,7 @@
  */
 
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { proposeSourcePath } from "@/lib/ai-tutor/graph";
+import { proposeSourcePath } from "@/lib/ai/graph";
 import {
   createNanopaymentRows,
   getNanopaymentsByRun,
@@ -36,8 +36,8 @@ import {
 } from "@/lib/paylabs/nanopayment-service";
 import type { ExternalRouteTier } from "@/lib/paylabs/route-tier";
 import { toInternalTier } from "@/lib/paylabs/route-tier";
-import type { RouteTier } from "@/lib/ai-tutor/route-config";
-import { validateRouteBudget } from "@/lib/ai-tutor/route-config";
+import type { RouteTier } from "@/lib/ai/route-config";
+import { validateRouteBudget } from "@/lib/ai/route-config";
 
 // ─── Types ─────────────────────────────────────────────────────
 

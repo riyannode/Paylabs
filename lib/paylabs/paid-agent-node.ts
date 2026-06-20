@@ -35,9 +35,9 @@ import {
 import {
   createAgentContext,
   type AgentContextPayload,
-} from "@/lib/payments/agent-context";
+} from "@/lib/paylabs/x402/agent-context";
 import { toExternalTier } from "@/lib/paylabs/route-tier";
-import type { PayLabsTutorStateType } from "@/lib/ai-tutor/state";
+import type { PayLabsTutorStateType } from "@/lib/ai/state";
 
 // ─── Types ─────────────────────────────────────────────────────
 

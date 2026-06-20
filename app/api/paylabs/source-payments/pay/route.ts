@@ -4,7 +4,7 @@
 // Flow: policy_guard → payment_executor → Runner → paylabs_source_payments
 
 import { NextRequest, NextResponse } from "next/server";
-import { executeSourcePayment } from "@/lib/ai-tutor/graph";
+import { executeSourcePayment } from "@/lib/ai/graph";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
