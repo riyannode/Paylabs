@@ -1,22 +1,41 @@
 /**
- * PayLabs Tutor LangGraph Workflow — 15-Agent Production Core
+ * PayLabs Tutor LangGraph Workflow
  *
- * Two separate graphs:
- * 1. Proposal: START → tutor_intake → intent_classifier → query_expander →
- *    feed_discovery → source_ranker → evidence_allocator → stop_limit_controller →
- *    budget_optimizer → source_quality → provenance → creator_ownership →
- *    persist_source_path → END
+ * 15 LLM-backed agents + 1 DB persistence node = 16 total nodes.
+ * Proposal graph: 11 LLM agents + 1 DB node (12 nodes).
+ * Payment graph: 4 LLM/deterministic payment agents (4 nodes).
  *
- * 2. Payment: START → policy_guard → payment_quote → payment_executor →
- *    receipt_auditor → END
+ * 7 of the 15 LLM agents are x402-paid audited nodes (withPaidNode wrapper).
+ * 8 of the 15 LLM agents are free/internal with deterministic backend guardrails.
+ * persist_source_path is a DB persistence node, not an LLM agent.
+ * Payment execution and final payment proof are deterministic, not LLM-controlled.
+ *
+ * Proposal graph (12 nodes):
+ *   tutor_intake → intent_classifier → query_expander → feed_discovery →
+ *   source_ranker → evidence_allocator → stop_limit_controller →
+ *   budget_optimizer → source_quality_verifier → provenance_verifier →
+ *   creator_ownership_verifier → persist_source_path → END
+ *
+ * Payment graph (4 nodes):
+ *   policy_guard → payment_quote → payment_executor → receipt_auditor → END
+ *
+ * x402-paid LLM agents (7):
+ *   tutor_intake, intent_classifier, query_expander,
+ *   source_ranker (paid identity: discovery_ranker),
+ *   source_quality_verifier, provenance_verifier,
+ *   creator_ownership_verifier (paid identity: attribution_auditor)
+ *
+ * Free/internal LLM agents (8):
+ *   feed_discovery, evidence_allocator, stop_limit_controller,
+ *   budget_optimizer, policy_guard, payment_quote,
+ *   payment_executor, receipt_auditor
+ *
+ * DB persistence node (1): persist_source_path
  *
  * Proposal and payment are separate invocations.
  * Payment is impossible until the user approves the source path.
  * Route tier changes planning behavior and prompt persona only.
  * Route tier NEVER weakens safety checks.
- *
- * All 15 agents are LLM-backed. Payment-critical decisions still have
- * deterministic backend checks. No hardcoded Runner — uses Payment Adapter.
  */
 
 import { StateGraph, START, END } from "@langchain/langgraph";
@@ -43,6 +62,9 @@ import { policyGuardAgent } from "./agents/policy-guard-agent";
 import { paymentQuoteAgent } from "./agents/payment-quote-agent";
 import { paymentExecutorAgent } from "./agents/payment-executor-agent";
 import { receiptAuditorAgent } from "./agents/receipt-auditor-agent";
+
+// ─── Paid node wrapper (x402 nanopayment tracking) ───────────
+import { withPaidNode } from "@/lib/paylabs/paid-agent-node";
 
 // ─── Discovery-only imports ────────────────────────────────────
 import { z } from "zod";
@@ -135,8 +157,10 @@ async function persistProposedSourcePathNode(
       const feedItemId = v.feed_item_id as string;
       const feedItem = feedItemMap.get(feedItemId);
       const selected = selectedMap.get(feedItemId);
-      const citationPrice = Number((feedItem?.price_per_citation_usdc as number) || 0);
-      const unlockPrice = Number((feedItem?.price_per_unlock_usdc as number) || 0);
+      const isUnclaimed = (v.claim_status as string) === "unclaimed" || (v.is_creator_payout_eligible === false);
+      // Unclaimed sources: creator payout = 0, fee goes to treasury
+      const citationPrice = isUnclaimed ? 0 : Number((feedItem?.price_per_citation_usdc as number) || 0);
+      const unlockPrice = isUnclaimed ? 0 : Number((feedItem?.price_per_unlock_usdc as number) || 0);
       computedTotal += citationPrice;
 
       pathItems.push({
@@ -144,7 +168,7 @@ async function persistProposedSourcePathNode(
         feed_item_id: feedItemId,
         order_index: i,
         reason: (selected?.reason as string) || (v.verification_reason as string) || "",
-        expected_value: (selected?.expected_value as string) || "Verified RSSHub source",
+        expected_value: isUnclaimed ? "Unclaimed source — treasury agent fee only" : ((selected?.expected_value as string) || "Verified RSSHub source"),
         source_url: String(feedItem?.canonical_url || ""),
         source_title: String(feedItem?.title || ""),
         publisher: String(feedItem?.publisher || ""),
@@ -152,8 +176,8 @@ async function persistProposedSourcePathNode(
         normalized_sha256: String(feedItem?.normalized_sha256 || ""),
         content_sha256: String(feedItem?.content_sha256 || ""),
         source_hash: String(feedItem?.content_sha256 || ""),
-        creator_wallet: String(feedItem?.creator_wallet || "").toLowerCase(),
-        is_monetized: feedItem?.is_monetized === true,
+        creator_wallet: isUnclaimed ? null : (feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : null),
+        is_monetized: isUnclaimed ? false : (feedItem?.is_monetized === true),
         citation_price_usdc: citationPrice,
         unlock_price_usdc: unlockPrice,
         evidence_score: selected?.evidence_score || null,
@@ -197,19 +221,33 @@ async function persistProposedSourcePathNode(
 }
 
 // ─── Proposal Graph (12 nodes) ──────────────────────────────────
+// 7 x402-paid agents use withPaidNode() wrapper.
+// 4 free/internal agents + 1 DB node run without wrapper.
 
 const proposalGraph = new StateGraph(PayLabsTutorState)
-  .addNode("tutor_intake", tutorIntakeAgent)
-  .addNode("intent_classifier", intentClassifierAgent)
-  .addNode("query_expander", queryExpanderAgent)
+  // x402-paid: interprets user goal / initial intent
+  .addNode("tutor_intake", withPaidNode("tutor_intake", tutorIntakeAgent))
+  // x402-paid: classifies workflow and NL constraints
+  .addNode("intent_classifier", withPaidNode("intent_classifier", intentClassifierAgent))
+  // x402-paid: expands goal into query/source-discovery intent
+  .addNode("query_expander", withPaidNode("query_expander", queryExpanderAgent))
+  // free: hybrid DB filter + LLM review (deterministic candidate set)
   .addNode("feed_discovery", feedDiscoveryAgent)
-  .addNode("source_ranker", sourceRankerAgent)
+  // x402-paid: source relevance ranking (paid identity: discovery_ranker)
+  .addNode("source_ranker", withPaidNode("discovery_ranker", sourceRankerAgent))
+  // free: evidence path planning (internal reasoning, not paid capability)
   .addNode("evidence_allocator", evidenceAllocatorAgent)
+  // free: deterministic budget/source caps (LLM for explanation only)
   .addNode("stop_limit_controller", stopLimitControllerAgent)
+  // free: deterministic math/split/cap (LLM for explanation only)
   .addNode("budget_optimizer", budgetOptimizerAgent)
-  .addNode("source_quality_verifier", sourceQualityVerifierAgent)
-  .addNode("provenance_verifier", provenanceVerifierAgent)
-  .addNode("creator_ownership_verifier", creatorOwnershipVerifierAgent)
+  // x402-paid: paid source-quality assessment
+  .addNode("source_quality_verifier", withPaidNode("source_quality_verifier", sourceQualityVerifierAgent))
+  // x402-paid: paid provenance/audit reasoning from DB metadata
+  .addNode("provenance_verifier", withPaidNode("provenance_verifier", provenanceVerifierAgent))
+  // x402-paid: hybrid DB truth + LLM summary (paid identity: attribution_auditor)
+  .addNode("creator_ownership_verifier", withPaidNode("attribution_auditor", creatorOwnershipVerifierAgent))
+  // DB persistence node (not an LLM agent)
   .addNode("persist_source_path", persistProposedSourcePathNode)
   .addEdge(START, "tutor_intake")
   .addEdge("tutor_intake", "intent_classifier")
@@ -417,11 +455,17 @@ export async function discoverOnly(input: {
 }
 
 // ─── Payment Graph (4 nodes) ────────────────────────────────────
+// All 4 are free/internal LLM agents.
+// Final decisions are deterministic (adapter executes, not LLM).
 
 const sourcePaymentGraph = new StateGraph(PayLabsTutorState)
+  // free: LLM for explanation, final allow/block is deterministic
   .addNode("policy_guard", policyGuardAgent)
+  // free: LLM for explanation, quote value is deterministic from DB
   .addNode("payment_quote", paymentQuoteAgent)
+  // free: LLM for explanation, actual execution is deterministic via adapter
   .addNode("payment_executor", paymentExecutorAgent)
+  // free: LLM for audit summary, receipt status is deterministic from DB
   .addNode("receipt_auditor", receiptAuditorAgent)
   .addEdge(START, "policy_guard")
   .addEdge("policy_guard", "payment_quote")
@@ -437,16 +481,18 @@ export async function proposeSourcePath(input: {
   goal: string;
   budgetUsdc: number;
   routeTier?: RouteTier;
+  discoveryRunId?: string;
+  paidReceiptIds?: Record<string, string>;
 }) {
   const tier: RouteTier = input.routeTier || "normal";
   const config = getRouteConfig(tier);
   const limits = getRouteLimits(tier);
   const effectiveCap = computeEffectiveSpendCap(input.budgetUsdc, tier);
 
-  // ── Deterministic pre-check: skip 15-agent pipeline if no eligible sources ──
-  const { listMonetizedFeedItems } = await import("./tools");
-  const eligibleSources = await listMonetizedFeedItems();
-  if (eligibleSources.length === 0) {
+  // ── Deterministic pre-check: skip pipeline if no discoverable sources ──
+  const { listDiscoverableFeedItems } = await import("./tools");
+  const discoverableSources = await listDiscoverableFeedItems();
+  if (discoverableSources.length === 0) {
     return {
       sourcePathId: undefined,
       sourcePathStatus: "none" as const,
@@ -460,7 +506,7 @@ export async function proposeSourcePath(input: {
       excludedSources: [],
       verifiedSources: [],
       rejectedSources: [],
-      stopReason: "no_eligible_sources",
+      stopReason: "no_discoverable_sources",
       stopLimitHit: false,
       estimatedTotalUsdc: 0,
       estimatedCreatorPayoutUsdc: 0,
@@ -468,8 +514,8 @@ export async function proposeSourcePath(input: {
       estimatedTreasuryFeeUsdc: 0,
       remainingUsdc: 0,
       agentServiceCalls: [],
-      agentTrace: { pre_check: "no_verified_monetized_sources" },
-      error: "No verified monetized sources available",
+      agentTrace: { pre_check: "no_discoverable_sources" },
+      error: "No discoverable sources found for this goal",
       eligibleSourceCount: 0,
     };
   }
@@ -482,6 +528,8 @@ export async function proposeSourcePath(input: {
     routeConfig: config as unknown as Record<string, unknown>,
     routeLimits: limits,
     effectiveSpendCapUsdc: effectiveCap,
+    discoveryRunId: input.discoveryRunId,
+    paidReceiptIds: input.paidReceiptIds,
     agentTrace: {},
     topics: [],
     riskNotes: [],
@@ -518,7 +566,7 @@ export async function proposeSourcePath(input: {
     agentServiceCalls: result.agentServiceCalls || [],
     agentTrace: result.agentTrace,
     error: result.error,
-    eligibleSourceCount: eligibleSources.length,
+    eligibleSourceCount: discoverableSources.length,
   };
 }
 

@@ -14,6 +14,7 @@
 import type { PaymentExecutor } from "./types";
 import { NoopPaymentExecutor } from "./noop-executor";
 import { CircleCliPaymentExecutor } from "./circle-cli-executor";
+import { X402GatewayPaymentExecutor } from "./x402-gateway-executor";
 
 let cachedExecutor: PaymentExecutor | null = null;
 
@@ -27,11 +28,11 @@ export function getPaymentExecutor(): PaymentExecutor {
       cachedExecutor = new CircleCliPaymentExecutor();
       break;
     case "x402":
-      // TODO: Implement x402 executor
-      cachedExecutor = new NoopPaymentExecutor();
+    case "circle_sdk":
+      cachedExecutor = new X402GatewayPaymentExecutor();
       break;
     case "runner":
-      // TODO: Implement runner executor adapter
+      // Deprecated — noop fail-closed
       cachedExecutor = new NoopPaymentExecutor();
       break;
     case "noop":
