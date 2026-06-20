@@ -1,14 +1,18 @@
 // POST /api/paylabs/agent-capabilities/source-quality-verifier
 //
-// Paid agent capability: verify_source_quality
-// Agent 5 of 7 in the nanopayment audit lane.
+// Compatibility adapter for the source_quality_verifier paid agent.
+// Validates HMAC-signed context but does NOT execute the agent.
+// Real execution happens via the unified LangGraph pipeline:
+//   POST /api/paylabs/discovery-runs/pay
+//
+// Returns the actual nanopayment row status from DB.
 
 import { NextRequest } from "next/server";
 import {
   validateAgentRequest,
   buildAgentResponse,
   buildAgentError,
-  recordAgentCapabilityResult,
+  getAgentCapabilityStatus,
 } from "@/lib/paylabs/agent-capability-helpers";
 
 const AGENT_NAME = "source_quality_verifier" as const;
@@ -22,21 +26,22 @@ export async function POST(req: NextRequest) {
   const { context } = validation;
 
   try {
-    const result = { ok: true, capability: "verify_source_quality", agent: AGENT_NAME };
-    await recordAgentCapabilityResult(context, result);
+    // Look up actual status from DB — never return fake ok:true
+    const status = await getAgentCapabilityStatus(context);
 
     return buildAgentResponse({
-      status: "completed",
+      adapter: true,
+      message: "This is a compatibility endpoint. Real execution via unified pipeline.",
+      execution_path: "POST /api/paylabs/discovery-runs/pay",
       agent_name: AGENT_NAME,
       capability: "verify_source_quality",
       receipt_id: context.receipt_id,
       receipt_url: context.receipt_url,
       amount_usdc: context.amount_usdc,
-      settlement_mode: context.settlement_mode,
+      db_status: status.status,
     }, context);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    await recordAgentCapabilityResult(context, { ok: false, error: msg });
-    return buildAgentError(`Agent capability failed: ${msg}`, 500);
+    return buildAgentError(`Adapter error: ${msg}`, 500);
   }
 }

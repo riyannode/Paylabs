@@ -18,7 +18,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAgentContext, type AgentContextPayload } from "@/lib/payments/agent-context";
 import { getPaymentFlags } from "@/lib/paylabs/feature-flags";
-import { updateNanopaymentStatusByReceiptId } from "@/lib/paylabs/nanopayment-service";
 import type { PaidAgentName } from "@/lib/paylabs/agent-registry";
 
 // ─── Constants ─────────────────────────────────────────────────
@@ -155,42 +154,20 @@ export function buildAgentError(
 // ─── Post-Validation Processing ────────────────────────────────
 
 /**
- * Update nanopayment row status after agent processes the call.
- * Called by each capability endpoint after completing its work.
- *
- * When payments disabled: status = "skipped"
- * When payments enabled but no real ref: status = "completed"
- * When real payment ref exists: status = "paid"
+ * Look up nanopayment row status by receipt_id.
+ * Returns the actual DB status — never a fake hardcoded value.
+ * The real agent execution happens via the unified LangGraph pipeline
+ * (POST /api/paylabs/discovery-runs/pay), not through these endpoints.
  */
-export async function recordAgentCapabilityResult(
-  context: AgentContextPayload,
-  result: { ok: boolean; outputHash?: string; error?: string }
-): Promise<void> {
-  const flags = getPaymentFlags();
+export async function getAgentCapabilityStatus(
+  context: AgentContextPayload
+): Promise<{ status: string; receipt_id: string; agent_name: string }> {
+  const { getNanopaymentByReceipt } = await import("@/lib/paylabs/nanopayment-service");
+  const row = await getNanopaymentByReceipt(context.receipt_id);
 
-  let status: string;
-  if (!flags.agentNanopaymentsEnabled) {
-    status = "skipped";
-  } else if (result.ok) {
-    status = "completed";
-  } else {
-    status = "failed";
-  }
-
-  // Find nanopayment row by receipt_id and update
-  try {
-    await updateNanopaymentStatusByReceiptId(
-      context.receipt_id,
-      status,
-      {
-        paymentRef: undefined, // real ref only from Gateway/Circle
-        settlementRef: undefined,
-      }
-    );
-  } catch {
-    // Non-fatal — audit trail already exists from creation
-    console.error(
-      `[agent-capability] Failed to update nanopayment status for receipt ${context.receipt_id}`
-    );
-  }
+  return {
+    status: row?.status || "not_found",
+    receipt_id: context.receipt_id,
+    agent_name: context.agent_name,
+  };
 }
