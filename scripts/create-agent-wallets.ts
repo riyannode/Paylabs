@@ -1,11 +1,9 @@
 /**
  * Create PayLabs Agent Wallets via Circle DCW API
- * Uses createRequire for CJS interop.
+ * Uses initiateDeveloperControlledWalletsClient factory.
  */
 
-import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
-const { CircleDeveloperControlledWalletsClient } = require("@circle-fin/developer-controlled-wallets");
+import { initiateDeveloperControlledWalletsClient } from "@circle-fin/developer-controlled-wallets";
 
 const WALLET_LABELS = [
   { label: "treasury", envId: "PAYLABS_TREASURY_WALLET_ID", envAddr: "PAYLABS_TREASURY_WALLET_ADDRESS" },
@@ -30,7 +28,7 @@ async function main() {
 
   console.log("Creating PayLabs wallet set on ARC-TESTNET...\n");
 
-  const client = new CircleDeveloperControlledWalletsClient({ apiKey, entitySecret });
+  const client = initiateDeveloperControlledWalletsClient({ apiKey, entitySecret });
 
   // Create wallet set
   const wsResponse = await client.createWalletSet({
