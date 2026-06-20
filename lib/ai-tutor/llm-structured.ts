@@ -52,7 +52,7 @@ function hashPrompt(prompt: string): string {
 function buildMeta(
   agentName: string,
   routeTier: RouteTier,
-  modelConfig: { provider: string; model: string; baseUrl?: string; apiKeyPresent: boolean; agentKey: string },
+  modelConfig: { provider: string; model: string; baseUrl?: string; apiKeyPresent: boolean; agentKey: string; timeoutMs: number; maxTokens: number },
   modelName: string,
   promptHash: string,
   retryCount: number,
@@ -69,13 +69,15 @@ function buildMeta(
     agent_key: modelConfig.agentKey,
     base_url_present: !!modelConfig.baseUrl,
     api_key_present: modelConfig.apiKeyPresent,
+    timeout_ms: modelConfig.timeoutMs,
+    max_tokens: modelConfig.maxTokens,
   };
 }
 
 /**
  * Extract JSON from various response formats:
  * - Direct content string
- * - Fenced JSON block (```json ... ```)
+ * - Fenced JSON block (\`\`\`json ... \`\`\`)
  * - Content array (some providers return [{type: "text", text: "..."}])
  * - reasoning_content with content (MiMo pattern)
  */
@@ -131,7 +133,7 @@ function extractJsonFromResponse(response: unknown): string | null {
 
 /**
  * Try to extract a JSON object from a string.
- * Handles: raw JSON, fenced ```json blocks, embedded JSON objects.
+ * Handles: raw JSON, fenced \`\`\`json blocks, embedded JSON objects.
  */
 function tryExtractJson(text: string): string | null {
   const trimmed = text.trim();
@@ -187,6 +189,27 @@ function supportsNativeStructured(provider: string): boolean {
   return NATIVE_STRUCTURED_PROVIDERS.has(provider.toLowerCase());
 }
 
+/**
+ * Extract expected top-level keys from a Zod schema for instruction hints.
+ */
+function getExpectedKeys(schema: z.ZodType<unknown>): string[] {
+  try {
+    const jsonSchema = zodToJsonSchema(schema, { target: "openApi3" });
+    const schemaObj = (jsonSchema as Record<string, unknown>)?.schema as Record<string, unknown> || jsonSchema;
+    const props = schemaObj?.properties as Record<string, unknown> | undefined;
+    if (props) return Object.keys(props);
+  } catch {
+    // Fallback — try Zod shape
+  }
+  try {
+    const shape = (schema as unknown as { _def?: { shape?: () => Record<string, unknown> } })._def?.shape?.();
+    if (shape) return Object.keys(shape);
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
 // ─── Main API ───────────────────────────────────────────────────
 
 export async function generateStructuredJson<T>(
@@ -208,12 +231,24 @@ export async function generateStructuredJson<T>(
     return { ok: false, code: "LLM_UNAVAILABLE", error: "No LLM model available (no API key)", meta };
   }
 
+  // Env-configurable max attempts per agent
+  const rawMaxAttempts = Number(
+    process.env[`PAYLABS_LLM_MAX_ATTEMPTS_${modelConfig.agentKey}`] ??
+    process.env.PAYLABS_LLM_MAX_ATTEMPTS_DEFAULT ??
+    process.env.PAYLABS_LLM_MAX_ATTEMPTS ??
+    1
+  );
+  const maxAttempts = Math.max(1, Math.min(rawMaxAttempts || 1, 3));
+
+  // Timeout retry behavior: skip for MiMo unless explicitly enabled
+  const retryTimeouts = process.env.PAYLABS_LLM_RETRY_TIMEOUTS === "true";
+  const isTimeoutProvider = modelConfig.provider === "mimo";
+
   const messages: BaseMessage[] = [
     new SystemMessage(systemPrompt),
     new HumanMessage(userPrompt),
   ];
 
-  const maxAttempts = 2;
   let lastError = "";
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -237,17 +272,25 @@ export async function generateStructuredJson<T>(
     // Strategy 2: Raw invoke + JSON extraction (with schema-in-prompt for non-native providers)
     try {
       // For non-native providers (MiMo, etc.), append JSON schema to system prompt
-      // so the LLM knows exactly what structure to produce
       const strategyMessages: BaseMessage[] = [...messages];
       if (!supportsNativeStructured(modelConfig.provider)) {
         try {
           const jsonSchema = zodToJsonSchema(schema, { target: "openApi3" });
-          // Remove OpenAPI wrapper, get just the schema properties
           const schemaObj = (jsonSchema as Record<string, unknown>)?.schema as Record<string, unknown> || jsonSchema;
           const schemaStr = JSON.stringify(schemaObj, null, 2);
+          const expectedKeys = getExpectedKeys(schema);
+          const keyHint = expectedKeys.length > 0
+            ? `\nRequired top-level keys: ${expectedKeys.join(", ")}`
+            : "";
           const enhancedSystemPrompt = systemPrompt
             + "\n\nYou MUST respond with valid JSON matching this exact schema:\n```json\n" + schemaStr + "\n```\n"
-            + "Do NOT add fields not in the schema. Do NOT omit required fields. Return ONLY the JSON object, no other text.";
+            + "Return exactly one JSON object."
+            + keyHint
+            + "\nDo not use synonyms."
+            + "\nDo not add markdown."
+            + "\nDo not add explanation."
+            + "\nDo not include fields outside the schema."
+            + "\nReturn ONLY the JSON object, no other text.";
           strategyMessages[0] = new SystemMessage(enhancedSystemPrompt);
         } catch {
           // Schema conversion failed — proceed with original prompt
@@ -257,18 +300,32 @@ export async function generateStructuredJson<T>(
       const result = await (model as ChatOpenAI).invoke(strategyMessages);
       const jsonStr = extractJsonFromResponse(result);
 
-      // Debug: log response shape for provider debugging (no secrets)
+      // Safe debug: no content preview, no full prompt, no secrets
       if (process.env.PAYLABS_LLM_DEBUG === "true") {
         const dbg = result as unknown as Record<string, unknown>;
         const dbgContent = dbg?.content;
         const dbgAk = dbg?.additional_kwargs as Record<string, unknown> | undefined;
-        console.log("[llm-structured] response shape:", {
-          content_type: typeof dbgContent,
+        const expectedKeys = getExpectedKeys(schema);
+        let receivedKeys: string[] = [];
+        if (jsonStr) {
+          try {
+            const parsed = JSON.parse(jsonStr);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              receivedKeys = Object.keys(parsed);
+            }
+          } catch { /* ignore */ }
+        }
+        console.log("[llm-structured] response:", {
+          provider: modelConfig.provider,
+          model: modelName,
+          agent_name: agentName,
+          mode: "llm_structured_json_extract",
+          attempt,
+          expected_keys: expectedKeys,
+          received_keys: receivedKeys,
           content_length: typeof dbgContent === "string" ? dbgContent.length : Array.isArray(dbgContent) ? dbgContent.length : "n/a",
-          content_preview: typeof dbgContent === "string" ? dbgContent.slice(0, 200) : "non-string",
           has_reasoning: !!dbgAk?.reasoning_content,
-          jsonStr_found: !!jsonStr,
-          jsonStr_preview: jsonStr ? jsonStr.slice(0, 200) : "null",
+          json_found: !!jsonStr,
         });
       }
 
@@ -281,9 +338,7 @@ export async function generateStructuredJson<T>(
         const hasReasoning = !!ak?.reasoning_content;
 
         if (hasEmptyContent && hasReasoning) {
-          // MiMo returned reasoning but no parseable content
           lastError = "MiMo returned reasoning_content with empty content — no JSON extractable";
-          // Don't retry — this is a provider limitation
           break;
         }
 
@@ -303,9 +358,17 @@ export async function generateStructuredJson<T>(
 
       const parsed = schema.safeParse(parsedJson);
       if (!parsed.success) {
+        const issuePaths = parsed.error.issues.map(i => i.path.join("."));
         lastError = `Zod validation failed: ${parsed.error.issues.map(i => i.message).join("; ")}`;
         if (process.env.PAYLABS_LLM_DEBUG === "true") {
-          console.log("[llm-structured] parsed JSON (pre-validation):", JSON.stringify(parsedJson).slice(0, 500));
+          console.log("[llm-structured] validation:", {
+            provider: modelConfig.provider,
+            model: modelName,
+            agent_name: agentName,
+            attempt,
+            validation_issue_paths: issuePaths,
+            content_length: jsonStr.length,
+          });
         }
         if (attempt === 0) continue;
         break;
@@ -316,6 +379,15 @@ export async function generateStructuredJson<T>(
 
     } catch (e: unknown) {
       lastError = `LLM invoke failed: ${e instanceof Error ? e.message : String(e)}`;
+
+      // Timeout retry skip: MiMo timeouts should not retry unless explicitly enabled
+      const isTimeout = isTimeoutProvider && (
+        lastError.includes("timeout") || lastError.includes("timed out") || lastError.includes("Request timed out")
+      );
+      if (isTimeout && !retryTimeouts) {
+        break;
+      }
+
       if (attempt === 0) continue;
       break;
     }
