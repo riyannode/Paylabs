@@ -3,14 +3,19 @@
  *
  * Single entry point that:
  * 1. Creates a discovery run in DB
- * 2. Creates 7 nanopayment rows (planned)
- * 3. Runs the full LangGraph proposal pipeline (12 agents, all LLM-backed)
- * 4. Updates nanopayment rows based on which agents executed
- * 5. Returns combined results (pipeline output + payment state)
+ * 2. Creates 7 planned nanopayment rows (one per x402-paid agent)
+ * 3. Passes planned receipt IDs into LangGraph state
+ * 4. Runs the full 15-agent LangGraph proposal pipeline
+ *    — 7 agents are x402-paid audited nodes (withPaidNode wrapper)
+ *    — 8 agents are free/internal LLM agents with deterministic guardrails
+ *    — persist_source_path is a DB persistence node
+ * 5. Reads final nanopayment statuses (wrapper updates them inline)
+ * 6. Returns combined results (pipeline output + payment state)
  *
- * This replaces the disconnected skeleton where:
- * - LangGraph pipeline existed but was never called from API
- * - Nanopayment rows were created but no agents ran
+ * CRITICAL: The wrapper (withPaidNode) does NOT create rows.
+ * This pipeline creates exactly 7 planned rows, then passes their
+ * receipt IDs into the graph. The wrapper only UPDATES existing rows:
+ *   planned → running → completed/failed
  */
 
 import { supabaseAdmin } from "@/lib/supabase/server";
@@ -121,6 +126,7 @@ export async function runDiscoveryPipeline(
       budgetUsdc: input.budgetUsdc || 0.01,
       routeTier: tier as RouteTier,
       discoveryRunId,
+      paidReceiptIds: Object.fromEntries(receiptByAgent),
     });
     pipelineResult = result as Record<string, unknown>;
   } catch (e: unknown) {
