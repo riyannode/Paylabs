@@ -16,7 +16,7 @@ import type {
   PaymentPayInput,
   PaymentPayResult,
   PaymentReceiptResult,
-} from "./types";
+} from "@/lib/paylabs/x402/types";
 
 export class X402GatewayPaymentExecutor implements PaymentExecutor {
   async quote(input: PaymentQuoteInput): Promise<PaymentQuoteResult> {
