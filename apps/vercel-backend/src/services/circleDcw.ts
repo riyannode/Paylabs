@@ -214,13 +214,15 @@ export async function transferUsdc(input: {
 }): Promise<{ txId: string; status: string }> {
   const client = getClient();
 
+  // Circle DCW SDK: use tokenAddress (contract address), not tokenId (UUID)
+  // Circle DCW SDK: use amounts (plural), not amount
   const usdcAddress = "0x3600000000000000000000000000000000000000";
 
   const response = await client.createTransaction({
     walletId: input.walletId,
-    tokenId: usdcAddress,
-    destinationAddress: input.destinationAddress as `0x${string}`,
-    amount: [input.amountUsdc],
+    tokenAddress: usdcAddress,
+    destinationAddress: input.destinationAddress,
+    amounts: [input.amountUsdc],
     fee: {
       type: "level",
       config: {
@@ -254,7 +256,7 @@ export async function executeContractCall(input: {
 
   const response = await client.createContractExecutionTransaction({
     walletId: input.walletId,
-    contractAddress: input.contractAddress as `0x${string}`,
+    contractAddress: input.contractAddress,
     callData: input.callData as `0x${string}`,
     fee: {
       type: "level",
