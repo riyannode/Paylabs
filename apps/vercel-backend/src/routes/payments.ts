@@ -470,3 +470,65 @@ paymentsRoutes.get("/gateway-balance", async (c) => {
   const result = await queryGatewayBalance(walletAddress);
   return c.json(result);
 });
+
+// ─── POST /gateway-deposit ───────────────────────────────────
+// Deposit USDC from DCW wallet into Circle Gateway.
+// Two on-chain tx: approve + deposit. Returns tx IDs for polling.
+
+paymentsRoutes.post("/gateway-deposit", async (c) => {
+  let body: { walletId?: string; amountUsdc?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ ok: false, error: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.walletId || !body.amountUsdc) {
+    return c.json({ ok: false, error: "walletId and amountUsdc are required" }, 400);
+  }
+
+  const amount = parseFloat(body.amountUsdc);
+  if (isNaN(amount) || amount <= 0) {
+    return c.json({ ok: false, error: "amountUsdc must be a positive number" }, 400);
+  }
+
+  try {
+    const { gatewayApproveAndDeposit } = await import("../services/circleDcw.js");
+    const result = await gatewayApproveAndDeposit({
+      walletId: body.walletId,
+      amountUsdc: body.amountUsdc,
+      idempotencyKeyPrefix: `gw-deposit:${body.walletId}`,
+    });
+
+    return c.json({
+      ok: true,
+      approveTxId: result.approveTxId,
+      depositTxId: result.depositTxId,
+      approveStatus: result.approveStatus,
+      depositStatus: result.depositStatus,
+      message: "Poll transaction status via GET /api/paylabs/payments/tx-status/:txId",
+    });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return c.json({ ok: false, error: msg }, 500);
+  }
+});
+
+// ─── GET /tx-status/:txId ────────────────────────────────────
+// Poll DCW transaction status (for deposit/transfer confirmation).
+
+paymentsRoutes.get("/tx-status/:txId", async (c) => {
+  const txId = c.req.param("txId");
+  if (!txId) {
+    return c.json({ ok: false, error: "txId required" }, 400);
+  }
+
+  try {
+    const { getTransactionStatus } = await import("../services/circleDcw.js");
+    const result = await getTransactionStatus(txId);
+    return c.json(result);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return c.json({ ok: false, error: msg }, 500);
+  }
+});
