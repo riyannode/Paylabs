@@ -315,6 +315,9 @@ export default async function DashboardPage() {
       {/* ─── Discovery Runs Table ──────────────────────────── */}
       <section className="card">
         <h2 className="section-title">Discovery Runs</h2>
+        <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
+          PayLabs charges a discovery fee for AI-powered source routing. If a source is not yet claimed by a creator, the fee covers agent compute, indexing, and attribution tracking. Creator payouts only begin after ownership is verified.
+        </p>
         {discoveryRunRows.length === 0 ? (
           <div className="muted" style={{ textAlign: "center", padding: 24 }}>
             No discovery runs yet.

@@ -346,6 +346,8 @@ export async function discoverOnly(input: {
       candidate_count: allActive.length,
       eligible_source_count: eligibleMonetized.length,
       unclaimed_source_count: unclaimed.length,
+      payment_kind: "discovery_fee",
+      message: "PayLabs charges a discovery fee for AI-powered source routing. Creator payouts begin after ownership is verified.",
       agent_trace: {
         llm_ranking: rankResult.ok ? rankResult.meta : { error: rankResult.error },
         fallback: !rankResult.ok,
