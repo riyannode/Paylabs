@@ -131,6 +131,7 @@ export async function enqueueDiscoveryRun(
       status: "queued",
       payment_kind: "discovery_fee",
       queued_at: now,
+      budget_usdc: userBudget,
     })
     .select("id")
     .single();
@@ -206,26 +207,41 @@ export async function executeDiscoveryRun(
     };
   }
 
-  if (runRow.status !== "queued") {
+  // Accept: queued (will mark running) OR already-running with matching runner_id
+  // This handles both inline calls and worker-claimed runs.
+  if (runRow.status === "queued") {
+    // Claim: mark running
+    const { error: claimErr } = await supabaseAdmin()
+      .from("paylabs_discovery_runs")
+      .update({
+        status: "running",
+        started_at: now,
+        runner_id: runnerId || "vercel-inline",
+        worker_heartbeat_at: now,
+      })
+      .eq("id", discoveryRunId)
+      .eq("status", "queued"); // CAS guard
+
+    if (claimErr) {
+      return {
+        ok: false,
+        discoveryRunId,
+        nanopayments: { total: 0, completed: 0, failed: 0, skipped: 0, rows: [] },
+        pipeline: { agentsRun: [], agentsFailed: [], selectedSources: [], verifiedSources: [], estimatedTotalUsdc: 0 },
+        error: `Failed to claim run: ${claimErr.message}`,
+      };
+    }
+  } else if (runRow.status === "running" && runRow.runner_id === runnerId) {
+    // Already claimed by this same worker (retry/resume) — proceed
+  } else {
     return {
       ok: false,
       discoveryRunId,
       nanopayments: { total: 0, completed: 0, failed: 0, skipped: 0, rows: [] },
       pipeline: { agentsRun: [], agentsFailed: [], selectedSources: [], verifiedSources: [], estimatedTotalUsdc: 0 },
-      error: `Run is not queued (current status: ${runRow.status})`,
+      error: `Run is not claimable (status: ${runRow.status}, runner: ${runRow.runner_id})`,
     };
   }
-
-  // ── Step 2: Mark running ─────────────────────────────────────
-  await supabaseAdmin()
-    .from("paylabs_discovery_runs")
-    .update({
-      status: "running",
-      started_at: now,
-      runner_id: runnerId || "vercel-inline",
-      worker_heartbeat_at: now,
-    })
-    .eq("id", discoveryRunId);
 
   // ── Step 3: Load existing planned nanopayment rows ───────────
   const nanoRows = await getNanopaymentsByRun(discoveryRunId);
@@ -269,7 +285,7 @@ export async function executeDiscoveryRun(
     const result = await proposeSourcePath({
       userWallet: wallet,
       goal,
-      budgetUsdc: 0.01, // budget already validated at enqueue time
+      budgetUsdc: Number(runRow.budget_usdc) || 0.01,
       routeTier: internalTier,
       discoveryRunId,
       paidReceiptIds: Object.fromEntries(receiptByAgent),
