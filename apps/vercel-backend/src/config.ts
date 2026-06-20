@@ -56,4 +56,12 @@ export const config = {
   agentAllowThreadOpen: (process.env.AGENT_ALLOW_THREAD_OPEN ?? process.env.AGENT_ALLOW_CONTENT_ACCESS) === "true",
   agentAllowWithdraw: false,
   agentAllowTransfer: false,
+
+  // Circle DCW
+  circleApiKey: process.env.CIRCLE_API_KEY ?? "",
+  circleEntitySecret: process.env.CIRCLE_ENTITY_SECRET ?? "",
+
+  // Payment flags
+  paymentRoute: process.env.PAYLABS_PAYMENT_ROUTE ?? "none",
+  paymentExecutor: process.env.PAYLABS_PAYMENT_EXECUTOR ?? "noop",
 };

@@ -10,6 +10,7 @@ import { receiptsRoutes } from "./routes/receipts.js";
 import { settlementRoutes } from "./routes/settlement.js";
 import { sitesRoutes } from "./routes/sites.js";
 import { aiRoutes } from "./routes/ai.js";
+import { paymentsRoutes } from "./routes/payments.js";
 
 const app = new Hono();
 
@@ -44,5 +45,6 @@ app.route("/api/receipts", receiptsRoutes);
 app.route("/api/settlement", settlementRoutes);
 app.route("/api/sites", sitesRoutes);
 app.route("/api/ai", aiRoutes);
+app.route("/api/paylabs/payments", paymentsRoutes);
 
 export default app;

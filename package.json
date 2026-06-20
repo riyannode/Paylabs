@@ -13,6 +13,7 @@
     "clear:legacy-lessons": "tsx scripts/clear-legacy-lessons.ts"
   },
   "dependencies": {
+    "@circle-fin/developer-controlled-wallets": "^10.6.0",
     "@langchain/core": "^1.2.0",
     "@langchain/langgraph": "^1.4.4",
     "@langchain/openai": "^1.5.0",

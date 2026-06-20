@@ -8,7 +8,11 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "baseUrl": "../..",
+    "paths": {
+      "@/*": ["./*"]
+    }
   },
-  "include": ["api/**/*.ts", "src/**/*.ts"]
+  "include": ["api/**/*.ts", "src/**/*.ts", "../../lib/**/*.ts", "../../types/**/*.ts"]
 }
