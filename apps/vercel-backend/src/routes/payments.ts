@@ -26,6 +26,8 @@ import {
   settleX402Payment,
   queryGatewayBalance,
   buildPaymentRequirements,
+  buildX402Challenge,
+  extractNonceHash,
 } from "../services/circleX402Settle.js";
 
 export const paymentsRoutes = new Hono();
@@ -83,17 +85,21 @@ paymentsRoutes.get("/readiness", async (c) => {
   // 3. HMAC secret
   if (!process.env.PAYLABS_HMAC_SECRET) missing.push("PAYLABS_HMAC_SECRET");
 
-  // 4. Treasury wallet
+  // 4. Circle API credentials (required for DCW production path)
+  if (!process.env.CIRCLE_API_KEY) missing.push("CIRCLE_API_KEY");
+  if (!process.env.CIRCLE_ENTITY_SECRET) missing.push("CIRCLE_ENTITY_SECRET");
+
+  // 5. Treasury wallet
   const treasury = resolveTreasuryWallet();
   if (!treasury.walletId) missing.push("PAYLABS_TREASURY_WALLET_ID");
   if (!treasury.address) missing.push("PAYLABS_TREASURY_WALLET_ADDRESS");
 
-  // 5. Reserve wallet
+  // 6. Reserve wallet
   const reserve = resolveReserveWallet();
   if (!reserve.walletId) missing.push("PAYLABS_RESERVE_WALLET_ID");
   if (!reserve.address) missing.push("PAYLABS_RESERVE_WALLET_ADDRESS");
 
-  // 6. Agent wallets (7 agents)
+  // 7. Agent wallets (7 agents)
   const missingAgents = getMissingAgentWallets();
   if (missingAgents.length > 0) {
     for (const agent of missingAgents) {
@@ -102,13 +108,13 @@ paymentsRoutes.get("/readiness", async (c) => {
     }
   }
 
-  // 7. Gateway/x402 config
+  // 8. Gateway/x402 config
   const x402Config = checkX402Config();
   if (!x402Config.configured) {
     missing.push(...x402Config.missing);
   }
 
-  // 8. DCW API reachable (only if credentials present)
+  // 9. DCW API reachable (only if credentials present)
   let dcwReachable = false;
   if (process.env.CIRCLE_API_KEY && process.env.CIRCLE_ENTITY_SECRET) {
     const dcwCheck = await checkDcwApiReachable();
@@ -118,7 +124,7 @@ paymentsRoutes.get("/readiness", async (c) => {
     }
   }
 
-  // 9. Gateway reachable + Arc Testnet domain supported
+  // 10. Gateway reachable + Arc Testnet domain supported
   let gatewayReachable = false;
   let arcDomainSupported = false;
   const gwCheck = await checkGatewayReachable();
@@ -132,7 +138,7 @@ paymentsRoutes.get("/readiness", async (c) => {
     }
   }
 
-  // 10. Flags summary
+  // 11. Flags summary
   const discoveryFeeEnabled = process.env.PAYLABS_X402_DISCOVERY_FEE_ENABLED === "true";
   const agentNanoEnabled = process.env.PAYLABS_AGENT_NANOPAYMENTS_ENABLED === "true";
   checks.discoveryFeeEnabled = String(discoveryFeeEnabled);
@@ -159,8 +165,9 @@ paymentsRoutes.get("/readiness", async (c) => {
 });
 
 // ─── POST /discovery ─────────────────────────────────────────
-// x402 v2 flow: client sends payment-signature header (base64-encoded)
-// Server decodes → BatchFacilitatorClient.verify() → .settle()
+// x402 v2 flow:
+//   1. No payment-signature → return 402 + PAYMENT-REQUIRED header (challenge)
+//   2. Has payment-signature → decode → verify → settle via SDK
 
 paymentsRoutes.post("/discovery", async (c) => {
   const discoveryFeeEnabled = process.env.PAYLABS_X402_DISCOVERY_FEE_ENABLED === "true";
@@ -195,15 +202,6 @@ paymentsRoutes.post("/discovery", async (c) => {
     );
   }
 
-  // Extract x402 payment from payment-signature header
-  const paymentSignatureHeader = c.req.header("payment-signature");
-  if (!paymentSignatureHeader) {
-    return c.json(
-      { ok: false, status: "payment_required", error: "payment-signature header required" },
-      402
-    );
-  }
-
   // Treasury wallet
   const treasury = resolveTreasuryWallet();
   if (!treasury.address) {
@@ -214,12 +212,55 @@ paymentsRoutes.post("/discovery", async (c) => {
   const feeTier = getFeeTier(body.routeTier!);
   const amountBaseUnits = BigInt(Math.round(parseFloat(feeTier.totalFeeUsdc) * 1_000_000)).toString();
 
+  // ── x402 challenge: no payment-signature → 402 + PAYMENT-REQUIRED ──
+  const paymentSignatureHeader = c.req.header("payment-signature");
+  if (!paymentSignatureHeader) {
+    const challenge = buildX402Challenge(
+      treasury.address,
+      amountBaseUnits,
+      "/api/paylabs/payments/discovery"
+    );
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        status: "payment_required",
+        error: "x402 payment required",
+        amountUsdc: feeTier.totalFeeUsdc,
+        payTo: treasury.address,
+      }),
+      {
+        status: 402,
+        headers: {
+          "Content-Type": "application/json",
+          "PAYMENT-REQUIRED": challenge,
+        },
+      }
+    );
+  }
+
+  // ── x402 settle: has payment-signature → decode → verify → settle ──
+
   // Decode payment-signature header (base64-encoded x402 v2 payload)
   let paymentPayload: Record<string, unknown>;
   try {
     paymentPayload = JSON.parse(Buffer.from(paymentSignatureHeader, "base64").toString("utf-8"));
   } catch {
     return c.json({ ok: false, error: "Invalid payment-signature header (not valid base64 JSON)" }, 400);
+  }
+
+  // Extract nonce hash for internal duplicate guard
+  const nonceHash = extractNonceHash(paymentPayload);
+
+  // Check for replay in internal ledger
+  if (nonceHash) {
+    const { data: existingPayment } = await supabaseAdmin()
+      .from("paylabs_discovery_payments")
+      .select("id")
+      .eq("nonce_hash", nonceHash)
+      .limit(1);
+    if (existingPayment && existingPayment.length > 0) {
+      return c.json({ ok: false, error: "Duplicate payment (nonce already used)" }, 409);
+    }
   }
 
   // Build payment requirements (matches circlefin/arc-nanopayments pattern)
@@ -232,7 +273,7 @@ paymentsRoutes.post("/discovery", async (c) => {
   });
 
   if (!settleResult.ok) {
-    // Store failed payment record
+    // Store failed payment record with nonce_hash
     await supabaseAdmin()
       .from("paylabs_discovery_payments")
       .insert({
@@ -243,6 +284,7 @@ paymentsRoutes.post("/discovery", async (c) => {
         agent_nanopayment_total_usdc: parseFloat(feeTier.agentNanopaymentsUsdc),
         gateway_buffer_usdc: parseFloat(feeTier.gatewayBufferUsdc),
         treasury_fee_usdc: parseFloat(feeTier.treasuryFeeUsdc),
+        nonce_hash: nonceHash,
         status: "failed",
         failure_reason: settleResult.error,
       });
@@ -253,7 +295,7 @@ paymentsRoutes.post("/discovery", async (c) => {
     );
   }
 
-  // Store successful payment with REAL refs from Gateway
+  // Store successful payment with sanitized gateway summary + nonce_hash
   const { data: paymentRow, error: insertError } = await supabaseAdmin()
     .from("paylabs_discovery_payments")
     .insert({
@@ -266,7 +308,8 @@ paymentsRoutes.post("/discovery", async (c) => {
       treasury_fee_usdc: parseFloat(feeTier.treasuryFeeUsdc),
       x402_payment_ref: settleResult.paymentRef || null,
       x402_settlement_ref: settleResult.settlementRef || null,
-      gateway_response: settleResult.gatewayResponse || null,
+      gateway_response: settleResult.gatewaySummary || null,
+      nonce_hash: nonceHash,
       status: "paid",
     })
     .select("id")
@@ -309,12 +352,6 @@ paymentsRoutes.post("/agent-nanopayment", async (c) => {
     return c.json({ ok: false, error: "discoveryRunId and agentName are required" }, 400);
   }
 
-  // Extract x402 payment from payment-signature header
-  const paymentSignatureHeader = c.req.header("payment-signature");
-  if (!paymentSignatureHeader) {
-    return c.json({ ok: false, status: "payment_required", error: "payment-signature header required" }, 402);
-  }
-
   // Validate agent wallet
   const agentWallet = resolveAgentWallet(body.agentName);
   if (!agentWallet) {
@@ -324,7 +361,38 @@ paymentsRoutes.post("/agent-nanopayment", async (c) => {
     );
   }
 
-  // Decode payment-signature header
+  // Build payment requirements for this agent
+  const amountBaseUnits = "1"; // 0.000001 USDC = 1 base unit
+
+  // ── x402 challenge: no payment-signature → 402 + PAYMENT-REQUIRED ──
+  const paymentSignatureHeader = c.req.header("payment-signature");
+  if (!paymentSignatureHeader) {
+    const challenge = buildX402Challenge(
+      agentWallet,
+      amountBaseUnits,
+      "/api/paylabs/payments/agent-nanopayment"
+    );
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        status: "payment_required",
+        error: "x402 payment required for agent nanopayment",
+        agentName: body.agentName,
+        amountUsdc: "0.000001",
+        payTo: agentWallet,
+      }),
+      {
+        status: 402,
+        headers: {
+          "Content-Type": "application/json",
+          "PAYMENT-REQUIRED": challenge,
+        },
+      }
+    );
+  }
+
+  // ── x402 settle ──
+
   let paymentPayload: Record<string, unknown>;
   try {
     paymentPayload = JSON.parse(Buffer.from(paymentSignatureHeader, "base64").toString("utf-8"));
@@ -332,11 +400,22 @@ paymentsRoutes.post("/agent-nanopayment", async (c) => {
     return c.json({ ok: false, error: "Invalid payment-signature header (not valid base64 JSON)" }, 400);
   }
 
-  // Build payment requirements for this agent
-  const amountBaseUnits = "1"; // 0.000001 USDC = 1 base unit
+  const nonceHash = extractNonceHash(paymentPayload);
+
+  // Check for replay
+  if (nonceHash) {
+    const { data: existing } = await supabaseAdmin()
+      .from("paylabs_agent_nanopayments")
+      .select("id")
+      .eq("nonce_hash", nonceHash)
+      .limit(1);
+    if (existing && existing.length > 0) {
+      return c.json({ ok: false, error: "Duplicate nanopayment (nonce already used)" }, 409);
+    }
+  }
+
   const paymentRequirements = buildPaymentRequirements(agentWallet, amountBaseUnits);
 
-  // Verify + settle via Circle SDK
   const settleResult = await settleX402Payment({
     paymentPayload,
     paymentRequirements,
@@ -349,7 +428,7 @@ paymentsRoutes.post("/agent-nanopayment", async (c) => {
     );
   }
 
-  // Update nanopayment row with real refs
+  // Update nanopayment row with real refs + nonce_hash
   const { data: nanoRow } = await supabaseAdmin()
     .from("paylabs_agent_nanopayments")
     .select("receipt_id")
@@ -365,6 +444,7 @@ paymentsRoutes.post("/agent-nanopayment", async (c) => {
         status: "paid",
         x402_payment_ref: settleResult.paymentRef || null,
         x402_settlement_ref: settleResult.settlementRef || null,
+        nonce_hash: nonceHash,
       })
       .eq("receipt_id", nanoRow.receipt_id);
   }
