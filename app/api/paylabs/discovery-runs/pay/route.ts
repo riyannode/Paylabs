@@ -1,17 +1,13 @@
 // POST /api/paylabs/discovery-runs/pay
 //
-// Unified discovery payment + agent pipeline execution.
-// 1. Validates input
-// 2. Runs full LangGraph pipeline (12 agents, all LLM-backed)
-// 3. Creates 7 nanopayment rows + updates based on agent execution
-// 4. Returns combined results: pipeline output + payment state
+// Enqueue a discovery run for async background execution.
+// Returns HTTP 202 immediately with discovery_run_id.
+// Worker process picks up queued runs and executes LangGraph pipeline.
 //
-// No separate agent capability endpoints needed.
-// No skeleton code. Real LLM calls. Real nanopayment tracking.
+// Poll status via: GET /api/paylabs/discovery-runs/[id]/status
 
 import { NextRequest, NextResponse } from "next/server";
-import { runDiscoveryPipeline } from "@/lib/paylabs/discovery-pipeline";
-import { getPaymentFlags } from "@/lib/paylabs/feature-flags";
+import { enqueueDiscoveryRun } from "@/lib/paylabs/discovery-pipeline";
 import { isValidExternalTier, DEFAULT_EXTERNAL_TIER } from "@/lib/paylabs/route-tier";
 
 export async function POST(req: NextRequest) {
@@ -35,11 +31,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const flags = getPaymentFlags();
-
-  // ── Run unified pipeline ─────────────────────────────────────
+  // ── Enqueue ──────────────────────────────────────────────────
   try {
-    const result = await runDiscoveryPipeline({
+    const result = await enqueueDiscoveryRun({
       userWallet: user_wallet,
       goal: goal.trim(),
       routeTier,
@@ -47,7 +41,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!result.ok) {
-      // Budget validation failure — clean 400, no rows were created
+      // Budget validation failure — 400, no rows created
       if (result.budgetError) {
         return NextResponse.json({
           ok: false,
@@ -60,37 +54,23 @@ export async function POST(req: NextRequest) {
         }, { status: 400 });
       }
 
-      // Pipeline error — 500
+      // Enqueue failure — 500
       return NextResponse.json({
         ok: false,
-        status: "pipeline_error",
-        discovery_run_id: result.discoveryRunId,
+        status: "enqueue_failed",
         error: result.error,
-        nanopayments: result.nanopayments,
-        agents_run: result.pipeline.agentsRun,
-        agents_failed: result.pipeline.agentsFailed,
       }, { status: 500 });
     }
 
+    // Success — 202 Accepted (queued for background execution)
     return NextResponse.json({
       ok: true,
-      status: result.sourcePathStatus === "proposed" ? "paid_path_available" : "discovery_only",
+      status: "queued",
       discovery_run_id: result.discoveryRunId,
-      source_path_id: result.sourcePathId,
-      source_path_status: result.sourcePathStatus,
       route_tier: routeTier,
-      payment_route: flags.paymentRoute,
       nanopayments: result.nanopayments,
-      pipeline: {
-        agents_run: result.pipeline.agentsRun,
-        agents_failed: result.pipeline.agentsFailed,
-        selected_sources_count: result.pipeline.selectedSources.length,
-        verified_sources_count: result.pipeline.verifiedSources.length,
-        estimated_total_usdc: result.pipeline.estimatedTotalUsdc,
-      },
-      selected_sources: result.pipeline.selectedSources,
-      verified_sources: result.pipeline.verifiedSources,
-    });
+      message: "Discovery run queued. Poll GET /api/paylabs/discovery-runs/{id}/status for progress.",
+    }, { status: 202 });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json(
