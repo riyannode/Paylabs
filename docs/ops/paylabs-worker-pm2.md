@@ -12,20 +12,41 @@ Always start/restart the worker through `scripts/start-discovery-worker.sh`.
 ## Start / Restart Commands
 
 ```bash
-# Start (preferred)
-pm2 delete paylabs-discovery-worker || true
-pm2 start scripts/start-discovery-worker.sh --name paylabs-discovery-worker --time
-pm2 save
+# Preferred: use restart script
+bash scripts/restart-worker.sh restart
 
-# Restart (also safe — re-sources .env.local)
-pm2 restart paylabs-discovery-worker
+# Or manually via ecosystem config
+pm2 delete paylabs-discovery-worker || true
+pm2 start ecosystem.config.cjs --only paylabs-discovery-worker
+pm2 save --force
 ```
+
+**The ecosystem config (`ecosystem.config.cjs`) loads `.env.local` at parse time.**
+This solves the `pm2 restart --update-env` bug — env is always fresh.
 
 **Never use:**
 ```bash
 # WRONG — does not reload .env.local
 pm2 restart paylabs-discovery-worker --update-env
 ```
+
+## Crash Resilience
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| `autorestart` | `true` | Auto-restart on crash |
+| `max_restarts` | `100` | Keep trying |
+| `min_uptime` | `10s` | Crash if exits within 10s |
+| `exp_backoff_restart_delay` | `5000` | 5s → 10s → 20s → 40s → ... |
+| `max_memory_restart` | `512M` | Restart on memory leak |
+| `kill_timeout` | `60s` | Graceful for in-flight LLM calls |
+
+**Boot recovery:** PM2 systemd service (`pm2-root`) is `enabled`. On reboot:
+1. systemd starts PM2
+2. PM2 `resurrect` loads saved process list from `dump.pm2`
+3. Worker starts via ecosystem config (`.env.local` loaded)
+
+**Crash tested:** `kill -9` → PM2 restarts worker in ~3s.
 
 ## Safe Environment Checks
 
