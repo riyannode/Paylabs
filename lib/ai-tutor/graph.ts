@@ -157,8 +157,10 @@ async function persistProposedSourcePathNode(
       const feedItemId = v.feed_item_id as string;
       const feedItem = feedItemMap.get(feedItemId);
       const selected = selectedMap.get(feedItemId);
-      const citationPrice = Number((feedItem?.price_per_citation_usdc as number) || 0);
-      const unlockPrice = Number((feedItem?.price_per_unlock_usdc as number) || 0);
+      const isUnclaimed = (v.claim_status as string) === "unclaimed" || (v.is_creator_payout_eligible === false);
+      // Unclaimed sources: creator payout = 0, fee goes to treasury
+      const citationPrice = isUnclaimed ? 0 : Number((feedItem?.price_per_citation_usdc as number) || 0);
+      const unlockPrice = isUnclaimed ? 0 : Number((feedItem?.price_per_unlock_usdc as number) || 0);
       computedTotal += citationPrice;
 
       pathItems.push({
@@ -166,7 +168,7 @@ async function persistProposedSourcePathNode(
         feed_item_id: feedItemId,
         order_index: i,
         reason: (selected?.reason as string) || (v.verification_reason as string) || "",
-        expected_value: (selected?.expected_value as string) || "Verified RSSHub source",
+        expected_value: isUnclaimed ? "Unclaimed source — treasury agent fee only" : ((selected?.expected_value as string) || "Verified RSSHub source"),
         source_url: String(feedItem?.canonical_url || ""),
         source_title: String(feedItem?.title || ""),
         publisher: String(feedItem?.publisher || ""),
@@ -174,8 +176,8 @@ async function persistProposedSourcePathNode(
         normalized_sha256: String(feedItem?.normalized_sha256 || ""),
         content_sha256: String(feedItem?.content_sha256 || ""),
         source_hash: String(feedItem?.content_sha256 || ""),
-        creator_wallet: String(feedItem?.creator_wallet || "").toLowerCase(),
-        is_monetized: feedItem?.is_monetized === true,
+        creator_wallet: isUnclaimed ? null : (feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : null),
+        is_monetized: isUnclaimed ? false : (feedItem?.is_monetized === true),
         citation_price_usdc: citationPrice,
         unlock_price_usdc: unlockPrice,
         evidence_score: selected?.evidence_score || null,
@@ -487,10 +489,10 @@ export async function proposeSourcePath(input: {
   const limits = getRouteLimits(tier);
   const effectiveCap = computeEffectiveSpendCap(input.budgetUsdc, tier);
 
-  // ── Deterministic pre-check: skip 15-agent pipeline if no eligible sources ──
-  const { listMonetizedFeedItems } = await import("./tools");
-  const eligibleSources = await listMonetizedFeedItems();
-  if (eligibleSources.length === 0) {
+  // ── Deterministic pre-check: skip pipeline if no discoverable sources ──
+  const { listDiscoverableFeedItems } = await import("./tools");
+  const discoverableSources = await listDiscoverableFeedItems();
+  if (discoverableSources.length === 0) {
     return {
       sourcePathId: undefined,
       sourcePathStatus: "none" as const,
@@ -504,7 +506,7 @@ export async function proposeSourcePath(input: {
       excludedSources: [],
       verifiedSources: [],
       rejectedSources: [],
-      stopReason: "no_eligible_sources",
+      stopReason: "no_discoverable_sources",
       stopLimitHit: false,
       estimatedTotalUsdc: 0,
       estimatedCreatorPayoutUsdc: 0,
@@ -512,8 +514,8 @@ export async function proposeSourcePath(input: {
       estimatedTreasuryFeeUsdc: 0,
       remainingUsdc: 0,
       agentServiceCalls: [],
-      agentTrace: { pre_check: "no_verified_monetized_sources" },
-      error: "No verified monetized sources available",
+      agentTrace: { pre_check: "no_discoverable_sources" },
+      error: "No discoverable sources found for this goal",
       eligibleSourceCount: 0,
     };
   }
@@ -564,7 +566,7 @@ export async function proposeSourcePath(input: {
     agentServiceCalls: result.agentServiceCalls || [],
     agentTrace: result.agentTrace,
     error: result.error,
-    eligibleSourceCount: eligibleSources.length,
+    eligibleSourceCount: discoverableSources.length,
   };
 }
 

@@ -100,7 +100,7 @@ export default async function DashboardPage() {
       supabaseAdmin()
         .from("paylabs_feed_items")
         .select(
-          "id, title, summary, canonical_url, author_name, publisher, published_at, creator_wallet, price_per_citation_usdc, price_per_unlock_usdc, normalized_sha256, is_active"
+          "id, title, summary, canonical_url, author_name, publisher, published_at, creator_wallet, is_monetized, price_per_citation_usdc, price_per_unlock_usdc, normalized_sha256, is_active"
         )
         .eq("is_active", true)
         .order("published_at", { ascending: false, nullsFirst: false })
@@ -174,7 +174,7 @@ export default async function DashboardPage() {
                   <th>Title</th>
                   <th>Route Path</th>
                   <th>Base URL</th>
-                  <th>Creator</th>
+                  <th>Status</th>
                   <th>Citation Price</th>
                   <th>Last Synced</th>
                   <th>Active</th>
@@ -188,11 +188,13 @@ export default async function DashboardPage() {
                     <td className="muted">
                       {shortUrl(r.rsshub_base_url, 30)}
                     </td>
-                    <td className="data-mono">
-                      {short(r.creator_wallet)}
+                    <td>
+                      <span className={`badge ${r.is_monetized ? "badge-success" : ""}`} style={!r.is_monetized ? { fontSize: 10 } : undefined}>
+                        {r.is_monetized ? "Monetized" : "Sample"}
+                      </span>
                     </td>
                     <td className="data-mono">
-                      {usdc(r.default_price_per_citation_usdc)}
+                      {r.is_monetized ? usdc(r.default_price_per_citation_usdc) : "Not monetized"}
                     </td>
                     <td className="muted">
                       {r.last_synced_at ? timeAgo(r.last_synced_at) : "never"}
@@ -229,7 +231,7 @@ export default async function DashboardPage() {
                   <th>Title</th>
                   <th>Author</th>
                   <th>Source URL</th>
-                  <th>Creator</th>
+                  <th>Status</th>
                   <th>Citation Price</th>
                   <th>Hash</th>
                   <th>Published</th>
@@ -245,11 +247,13 @@ export default async function DashboardPage() {
                     <td className="muted" style={{ fontSize: 11 }}>
                       {shortUrl(f.canonical_url, 35)}
                     </td>
-                    <td className="data-mono">
-                      {short(f.creator_wallet)}
+                    <td>
+                      <span className={`badge ${f.is_monetized ? "badge-success" : ""}`} style={!f.is_monetized ? { fontSize: 10 } : undefined}>
+                        {f.is_monetized ? "Monetized" : "Sample"}
+                      </span>
                     </td>
                     <td className="data-mono">
-                      {usdc(f.price_per_citation_usdc)}
+                      {f.is_monetized ? usdc(f.price_per_citation_usdc) : "Not monetized"}
                     </td>
                     <td className="data-mono" style={{ fontSize: 11 }}>
                       {f.normalized_sha256
@@ -282,7 +286,7 @@ export default async function DashboardPage() {
                   <th>Time</th>
                   <th>User</th>
                   <th>Source URL</th>
-                  <th>Creator</th>
+                  <th>Recipient</th>
                   <th>Amount</th>
                   <th>Kind</th>
                   <th>Payment</th>
@@ -297,8 +301,10 @@ export default async function DashboardPage() {
                     <td className="muted" style={{ fontSize: 11 }}>
                       {shortUrl(r.source_url, 35)}
                     </td>
-                    <td className="data-mono">
-                      {short(r.creator_wallet)}
+                    <td>
+                      <span className="badge" style={{ fontSize: 10 }}>
+                        {r.creator_wallet ? "Creator" : "Treasury"}
+                      </span>
                     </td>
                     <td className="data-mono">{usdc(r.amount_usdc)}</td>
                     <td>{r.payment_kind}</td>

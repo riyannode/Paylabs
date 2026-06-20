@@ -49,10 +49,10 @@ export async function POST(req: NextRequest) {
       routeTier: tier,
     });
 
-    // Case B: no monetized sources — run discovery-only flow
+    // Case B: no discoverable sources — run discovery-only flow
     if (result.error && !result.sourcePathId) {
       const noSourceErrors = [
-        "No verified monetized sources available",
+        "No discoverable sources found for this goal",
         "Cannot persist: no verified sources",
       ];
       const isNoSource = noSourceErrors.some(
