@@ -1,71 +1,39 @@
-// x402 payment verification for Circle Gateway on Arc testnet
-// EIP-3009 TransferWithAuthorization verification
+// x402 v2 payment verification for Circle Gateway on Arc testnet
+// EIP-3009 TransferWithAuthorization with GatewayWalletBatched domain
 //
 // Architecture:
-//   Client wallet signs TransferWithAuthorization (EIP-3009)
+//   Client wallet signs TransferWithAuthorization (EIP-3009) with GatewayWalletBatched domain
 //   Client sends signed authorization to server
-//   Server verifies signature + fields before creating unlock/receipt
-//   Settlement via Circle Gateway batch (server-side, through Runner)
+//   Server verifies signature + fields before settlement
+//   Settlement via Circle Gateway /v1/x402/settle (permissionless)
 
-import { type Address, type Hex, isAddress, recoverAddress, keccak256, encodeAbiParameters, concat } from "viem";
-import type { X402PaymentChallenge } from "@/types/paylabs";
-import { createHash } from "node:crypto";
+import { keccak256, recoverAddress, type Address, type Hex } from "viem";
 
-const USDC_ARC_TESTNET: Address = "0x3600000000000000000000000000000000000000";
+// ─── Constants ───────────────────────────────────────────────
+
 const ARC_CHAIN_ID = 5042002;
+const USDC_ARC_TESTNET = "0x3600000000000000000000000000000000000000" as Address;
+const GATEWAY_WALLET_TESTNET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9" as Address;
 
-export interface X402AuthorizationPayload {
-  from: Address;
-  to: Address;
-  value: string; // base units (6 decimals)
-  validAfter: string;
-  validBefore: string;
-  nonce: Hex; // bytes32
-  signature: Hex; // 65-byte ECDSA signature (r + s + v)
-}
+// ─── x402 v2 EIP-712 Domain (GatewayWalletBatched) ──────────
 
-export interface X402VerifyResult {
-  valid: boolean;
-  error?: string;
-  recoveredAddress?: Address;
-  paymentId?: string;
-}
+const GATEWAY_DOMAIN = {
+  name: "GatewayWalletBatched",
+  version: "1",
+  chainId: ARC_CHAIN_ID,
+  verifyingContract: GATEWAY_WALLET_TESTNET,
+};
 
-/**
- * Build x402 payment challenge for a source.
- */
-export function buildX402Challenge(
-  receiverAddress: string,
-  amountUsdc: number
-): X402PaymentChallenge {
-  const amountBaseUnits = BigInt(
-    Math.round(amountUsdc * 1_000_000)
-  ).toString();
-
-  return {
-    network: "arc-testnet",
-    receiverAddress,
-    amount: amountBaseUnits,
-    token: USDC_ARC_TESTNET,
-    chainId: ARC_CHAIN_ID,
-    eip712Domain: {
-      name: "USD Coin",
-      version: "2",
-      chainId: ARC_CHAIN_ID,
-      verifyingContract: USDC_ARC_TESTNET,
-    },
-    typedData: {
-      TransferWithAuthorization: [
-        { name: "from", type: "address" },
-        { name: "to", type: "address" },
-        { name: "value", type: "uint256" },
-        { name: "validAfter", type: "uint256" },
-        { name: "validBefore", type: "uint256" },
-        { name: "nonce", type: "bytes32" },
-      ],
-    },
-  };
-}
+const TRANSFER_AUTH_TYPES = {
+  TransferWithAuthorization: [
+    { name: "from", type: "address" },
+    { name: "to", type: "address" },
+    { name: "value", type: "uint256" },
+    { name: "validAfter", type: "uint256" },
+    { name: "validBefore", type: "uint256" },
+    { name: "nonce", type: "bytes32" },
+  ],
+};
 
 /**
  * Compute the EIP-712 struct hash for TransferWithAuthorization.
@@ -78,166 +46,249 @@ function computeTransferAuthStructHash(
   validBefore: bigint,
   nonce: Hex
 ): Hex {
-  // TransferWithAuthorization typehash
   const typeHash = keccak256(
     Buffer.from(
       "TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
     )
   );
 
-  const encoded = encodeAbiParameters(
-    [
-      { type: "bytes32" },
-      { type: "address" },
-      { type: "address" },
-      { type: "uint256" },
-      { type: "uint256" },
-      { type: "uint256" },
-      { type: "bytes32" },
-    ],
-    [typeHash, from, to, value, validAfter, validBefore, nonce]
+  return keccak256(
+    Buffer.concat([
+      Buffer.from(typeHash.slice(2), "hex"),
+      Buffer.from(from.slice(2).padStart(64, "0"), "hex"),
+      Buffer.from(to.slice(2).padStart(64, "0"), "hex"),
+      Buffer.from(value.toString(16).padStart(64, "0"), "hex"),
+      Buffer.from(validAfter.toString(16).padStart(64, "0"), "hex"),
+      Buffer.from(validBefore.toString(16).padStart(64, "0"), "hex"),
+      Buffer.from(nonce.slice(2).padStart(64, "0"), "hex"),
+    ])
   );
-
-  return keccak256(encoded);
 }
 
 /**
- * Compute the EIP-712 digest for TransferWithAuthorization.
+ * Compute the EIP-712 domain separator for GatewayWalletBatched.
  */
-function computeEIP712Digest(
-  structHash: Hex,
-  chainId: number,
-  verifyingContract: Address
-): Hex {
-  // EIP-712: digest = keccak256("\x19\x01" || domainSeparator || structHash)
-  const domainSeparator = keccak256(
-    encodeAbiParameters(
-      [
-        { type: "bytes32" },
-        { type: "bytes32" },
-        { type: "bytes32" },
-        { type: "uint256" },
-        { type: "address" },
-      ],
-      [
-        keccak256(Buffer.from("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")),
-        keccak256(Buffer.from("USD Coin")),
-        keccak256(Buffer.from("2")),
-        BigInt(chainId),
-        verifyingContract,
-      ]
+function computeDomainSeparator(): Hex {
+  const typeHash = keccak256(
+    Buffer.from(
+      "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
     )
   );
+  const nameHash = keccak256(Buffer.from(GATEWAY_DOMAIN.name));
+  const versionHash = keccak256(Buffer.from(GATEWAY_DOMAIN.version));
 
-  // Concatenate: 0x1901 (2 bytes) + domainSeparator (32 bytes) + structHash (32 bytes)
-  const encoded = concat([
-    "0x1901",
-    domainSeparator,
-    structHash,
-  ]);
-  return keccak256(encoded);
+  return keccak256(
+    Buffer.concat([
+      Buffer.from(typeHash.slice(2), "hex"),
+      Buffer.from(nameHash.slice(2), "hex"),
+      Buffer.from(versionHash.slice(2), "hex"),
+      Buffer.from(
+        GATEWAY_DOMAIN.chainId.toString(16).padStart(64, "0"),
+        "hex"
+      ),
+      Buffer.from(
+        GATEWAY_DOMAIN.verifyingContract.slice(2).padStart(64, "0"),
+        "hex"
+      ),
+    ])
+  );
 }
 
 /**
- * Verify a signed x402 TransferWithAuthorization.
+ * Compute the full EIP-712 digest.
+ */
+function computeEIP712Digest(structHash: Hex): Hex {
+  const domainSeparator = computeDomainSeparator();
+  return keccak256(
+    Buffer.concat([
+      Buffer.from("1901", "hex"),
+      Buffer.from(domainSeparator.slice(2), "hex"),
+      Buffer.from(structHash.slice(2), "hex"),
+    ])
+  );
+}
+
+// ─── Types ───────────────────────────────────────────────────
+
+export interface SignedAuthorization {
+  from: `0x${string}`;
+  to: `0x${string}`;
+  value: string;
+  validAfter: string;
+  validBefore: string;
+  nonce: `0x${string}`;
+  signature: `0x${string}`;
+}
+
+export interface VerifyResult {
+  valid: boolean;
+  error?: string;
+  /** Hash of nonce+from for replay protection */
+  paymentId?: string;
+}
+
+// ─── Verification ────────────────────────────────────────────
+
+/**
+ * Verify an EIP-3009 TransferWithAuthorization signature
+ * using the GatewayWalletBatched EIP-712 domain (x402 v2).
  *
  * Checks:
- * 1. Receiver matches X402_RECEIVER_ADDRESS
- * 2. Amount matches expected source price
- * 3. Chain ID is 5042002 (Arc testnet)
- * 4. USDC contract address correct
- * 5. Authorization is currently valid (validAfter <= now <= validBefore)
- * 6. Nonce/payment_id is unique (not already used)
- * 7. Signature recovers to the `from` address
- * 8. `from` address is the paying user
+ * 1. Signature recovery matches `from` address
+ * 2. `value` matches expected amount
+ * 3. `to` matches expected receiver
+ * 4. Timing (validAfter/validBefore) is valid
+ * 5. Nonce has not been used before (via nonceExists callback)
  */
 export async function verifyX402Authorization(
-  auth: X402AuthorizationPayload,
+  auth: SignedAuthorization,
   expectedAmountUsdc: number,
-  expectedReceiver: Address,
-  nonceExists: (nonce: string) => Promise<boolean>
-): Promise<X402VerifyResult> {
-  // 1. Validate addresses
-  if (!isAddress(auth.from)) {
-    return { valid: false, error: "Invalid from address" };
-  }
-  if (!isAddress(auth.to)) {
-    return { valid: false, error: "Invalid to address" };
-  }
-
-  // 2. Receiver must match configured receiver
-  if (auth.to.toLowerCase() !== expectedReceiver.toLowerCase()) {
-    return {
-      valid: false,
-      error: `Receiver mismatch: expected ${expectedReceiver}, got ${auth.to}`,
-    };
-  }
-
-  // 3. Amount must match
-  const expectedBaseUnits = BigInt(Math.round(expectedAmountUsdc * 1_000_000));
-  if (BigInt(auth.value) !== expectedBaseUnits) {
-    return {
-      valid: false,
-      error: `Amount mismatch: expected ${expectedBaseUnits}, got ${auth.value}`,
-    };
-  }
-
-  // 4. Authorization validity window
-  const now = Math.floor(Date.now() / 1000);
-  if (now < Number(auth.validAfter)) {
-    return { valid: false, error: "Authorization not yet valid" };
-  }
-  if (now > Number(auth.validBefore)) {
-    return { valid: false, error: "Authorization expired" };
-  }
-
-  // 5. Nonce uniqueness
-  const nonceHash = createHash("sha256").update(auth.nonce).digest("hex");
-  if (await nonceExists(nonceHash)) {
-    return { valid: false, error: "Nonce already used (duplicate payment)" };
-  }
-
-  // 6. Recover signer from EIP-712 digest
+  expectedReceiver: `0x${string}`,
+  nonceExists: (nonceHash: string) => Promise<boolean>
+): Promise<VerifyResult> {
   try {
-    const structHash = computeTransferAuthStructHash(
-      auth.from,
-      auth.to,
-      BigInt(auth.value),
-      BigInt(auth.validAfter),
-      BigInt(auth.validBefore),
-      auth.nonce
-    );
+    const from = auth.from.toLowerCase() as Address;
+    const to = auth.to.toLowerCase() as Address;
+    const value = BigInt(auth.value);
+    const validAfter = BigInt(auth.validAfter);
+    const validBefore = BigInt(auth.validBefore);
+    const nonce = auth.nonce as Hex;
+    const signature = auth.signature as Hex;
 
-    const digest = computeEIP712Digest(structHash, ARC_CHAIN_ID, USDC_ARC_TESTNET);
-
-    const recovered = await recoverAddress({
-      hash: digest,
-      signature: auth.signature,
-    });
-
-    // 7. Signer must be the `from` address
-    if (recovered.toLowerCase() !== auth.from.toLowerCase()) {
+    // 1. Validate expected amount
+    const expectedValue = BigInt(Math.round(expectedAmountUsdc * 1_000_000));
+    if (value !== expectedValue) {
       return {
         valid: false,
-        error: `Signature mismatch: recovered ${recovered}, expected ${auth.from}`,
+        error: `Value mismatch: expected ${expectedValue}, got ${value}`,
       };
     }
 
-    return {
-      valid: true,
-      recoveredAddress: recovered,
-      paymentId: nonceHash,
-    };
-  } catch (e: any) {
-    return { valid: false, error: `Signature recovery failed: ${e.message}` };
+    // 2. Validate receiver
+    if (to !== expectedReceiver.toLowerCase()) {
+      return {
+        valid: false,
+        error: `Receiver mismatch: expected ${expectedReceiver}, got ${to}`,
+      };
+    }
+
+    // 3. Validate timing
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    if (now < validAfter) {
+      return { valid: false, error: "Authorization not yet valid (validAfter)" };
+    }
+    if (now >= validBefore) {
+      return { valid: false, error: "Authorization expired (validBefore)" };
+    }
+
+    // 4. Check nonce replay
+    const nonceHash = keccak256(
+      Buffer.concat([
+        Buffer.from(from.slice(2), "hex"),
+        Buffer.from(nonce.slice(2), "hex"),
+      ])
+    );
+    if (await nonceExists(nonceHash)) {
+      return { valid: false, error: "Nonce already used" };
+    }
+
+    // 5. Recover signer from EIP-712 digest (GatewayWalletBatched domain)
+    const structHash = computeTransferAuthStructHash(
+      from,
+      to,
+      value,
+      validAfter,
+      validBefore,
+      nonce
+    );
+    const digest = computeEIP712Digest(structHash);
+
+    const recovered = await recoverAddress({
+      hash: digest,
+      signature,
+    });
+
+    if (recovered.toLowerCase() !== from) {
+      return {
+        valid: false,
+        error: `Signature recovery failed: expected ${from}, got ${recovered}`,
+      };
+    }
+
+    return { valid: true, paymentId: nonceHash };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { valid: false, error: `Signature recovery failed: ${msg}` };
   }
 }
 
+// ─── x402 v2 Payload Builder ────────────────────────────────
+
 /**
- * Build the resource URL for x402 verification.
- * This binds the payment to a specific source content endpoint.
+ * Build the x402 v2 paymentPayload from a signed authorization.
+ * Used by settleX402Payment to construct the Gateway /v1/x402/settle body.
  */
-export function buildResourceUrl(sourceUrl: string): string {
-  const base = process.env.NEXT_PUBLIC_PAYLABS_APP_URL || "https://paylabs.vercel.app";
-  return `${base}/api/paylabs/feed-items?url=${encodeURIComponent(sourceUrl)}`;
+export function buildX402PaymentPayload(
+  auth: SignedAuthorization,
+  receiverAddress: string,
+  amountBaseUnits: string
+) {
+  return {
+    x402Version: 2,
+    resource: {
+      url: "/api/paylabs/discovery",
+      description: "PayLabs discovery fee",
+      mimeType: "application/json",
+    },
+    accepted: {
+      scheme: "exact",
+      network: `eip155:${ARC_CHAIN_ID}`,
+      asset: USDC_ARC_TESTNET,
+      amount: amountBaseUnits,
+      payTo: receiverAddress,
+      maxTimeoutSeconds: 604900,
+      extra: {
+        name: "GatewayWalletBatched",
+        version: "1",
+        verifyingContract: GATEWAY_WALLET_TESTNET,
+      },
+    },
+    payload: {
+      authorization: {
+        from: auth.from,
+        to: receiverAddress,
+        value: auth.value,
+        validAfter: auth.validAfter,
+        validBefore: auth.validBefore,
+        nonce: auth.nonce,
+      },
+      signature: auth.signature,
+    },
+  };
 }
+
+/**
+ * Build x402 v2 paymentRequirements for the facilitator.
+ */
+export function buildX402PaymentRequirements(
+  receiverAddress: string,
+  amountBaseUnits: string
+) {
+  return {
+    scheme: "exact",
+    network: `eip155:${ARC_CHAIN_ID}`,
+    asset: USDC_ARC_TESTNET,
+    amount: amountBaseUnits,
+    payTo: receiverAddress,
+    maxTimeoutSeconds: 604900,
+    extra: {
+      name: "GatewayWalletBatched",
+      version: "1",
+      verifyingContract: GATEWAY_WALLET_TESTNET,
+    },
+  };
+}
+
+// ─── Re-export constants ─────────────────────────────────────
+
+export { ARC_CHAIN_ID, USDC_ARC_TESTNET, GATEWAY_WALLET_TESTNET, GATEWAY_DOMAIN };
