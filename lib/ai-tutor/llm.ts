@@ -139,6 +139,7 @@ export function getTutorModel(agentName?: string): ChatOpenAI | null {
     apiKey: cfg.apiKey,
     temperature: 0,
     maxTokens: 2048,
+    timeout: Number(process.env.PAYLABS_LLM_TIMEOUT_MS || 20000),
     ...(cfg.baseUrl
       ? { configuration: { baseURL: cfg.baseUrl } }
       : {}),
