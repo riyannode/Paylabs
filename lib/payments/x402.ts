@@ -1,11 +1,16 @@
-// x402 v2 payment verification for Circle Gateway on Arc testnet
-// EIP-3009 TransferWithAuthorization with GatewayWalletBatched domain
-//
-// Architecture:
-//   Client wallet signs TransferWithAuthorization (EIP-3009) with GatewayWalletBatched domain
-//   Client sends signed authorization to server
-//   Server verifies signature + fields before settlement
-//   Settlement via Circle Gateway /v1/x402/settle (permissionless)
+/**
+ * x402 payment verification for Circle Gateway on Arc testnet
+ *
+ * DEPRECATED: Server-side settlement now uses @circle-fin/x402-batching
+ * BatchFacilitatorClient (see apps/vercel-backend/src/services/circleX402Settle.ts).
+ *
+ * This module is kept for:
+ * - EIP-712 constants (GATEWAY_DOMAIN, types) used by client-side signing
+ * - verifyX402Authorization() used by LangGraph agents for pre-check
+ * - buildX402PaymentPayload/Requirements() for client payload construction
+ *
+ * For server-side verify+settle, use BatchFacilitatorClient instead.
+ */
 
 import { keccak256, recoverAddress, type Address, type Hex } from "viem";
 
