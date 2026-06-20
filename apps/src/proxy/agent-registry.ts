@@ -9,4 +9,4 @@ export {
   PAID_AGENTS,
   resolveAgentWallet,
   AGENT_NANOPRICE_USDC,
-} from "../../../../lib/paylabs/agent-registry.js";
+} from "../../../lib/paylabs/agent-registry.js";
