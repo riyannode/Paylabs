@@ -110,6 +110,9 @@ export const PayLabsTutorState = Annotation.Root({
   receiptId: Annotation<string | undefined>,
 
   // ─── Nanopayment x402 Tracking ──────────────────────────────
+  // Map of paid agent name → planned receipt_id from discovery-pipeline.
+  // withPaidNode() reads this to find the existing row instead of creating a new one.
+  paidReceiptIds: Annotation<Record<string, string> | undefined>,
   nanopaymentContexts: Annotation<Record<string, unknown>[]>({
     reducer: concatReducer,
     default: () => [],
