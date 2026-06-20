@@ -14,7 +14,7 @@ import {
   getWallet as dcwGetWallet,
   type SignTypedDataInput,
 } from "../services/circleDcw.js";
-import type { DcwSigner } from "../../../../lib/paylabs/x402/buyer-transport.js";
+import type { DcwSigner } from "../../../lib/paylabs/x402/buyer-transport.js";
 
 /**
  * Create a DcwSigner adapter backed by Circle DCW SDK.
