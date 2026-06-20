@@ -71,5 +71,11 @@ export async function GET() {
       agent_nanopayments: flags.agentNanopaymentsEnabled,
       batch_settlement: flags.agentBatchSettlementEnabled,
     },
+    x402_flow: {
+      seller_challenge: flags.agentNanopaymentsEnabled,
+      buyer_transport: flags.agentNanopaymentsEnabled,
+      gateway_balance_check: flags.agentNanopaymentsEnabled,
+      dcw_signer: flags.agentNanopaymentsEnabled,
+    },
   });
 }

@@ -1,0 +1,235 @@
+/**
+ * Seller-Side x402 Gateway Challenge Middleware
+ *
+ * Returns HTTP 402 with proper PAYMENT-REQUIRED header containing
+ * Circle Gateway x402 payment requirements. The buyer uses this
+ * challenge to create a signed payment payload via BatchEvmScheme.
+ *
+ * Also provides verify+settle for the retry request with payment header.
+ *
+ * Flow:
+ *   1. Buyer calls seller endpoint (no payment)
+ *   2. Seller returns 402 + PAYMENT-REQUIRED header (base64 JSON)
+ *   3. Buyer signs payment payload, retries with PAYMENT-SIGNATURE header
+ *   4. Seller verifies signature via BatchFacilitatorClient
+ *   5. Seller settles payment via BatchFacilitatorClient
+ *   6. Seller executes agent logic and returns result
+ */
+
+import { createRequire } from "node:module";
+
+// CJS interop — @circle-fin/x402-batching has CJS entry
+const _require = createRequire(import.meta.url);
+
+// ─── Lazy SDK imports ───────────────────────────────────────
+
+let _BatchFacilitatorClient: any = null;
+
+function getBatchFacilitatorClient() {
+  if (_BatchFacilitatorClient) return _BatchFacilitatorClient;
+  try {
+    const mod = _require("@circle-fin/x402-batching/server");
+    _BatchFacilitatorClient = mod.BatchFacilitatorClient;
+  } catch {
+    // SDK not installed — will fail closed
+  }
+  return _BatchFacilitatorClient;
+}
+
+// ─── Types ────────────────────────────────────────────────────
+
+export interface X402ChallengeRequirements {
+  scheme: string;
+  network: string;
+  asset: string;
+  /** Amount in atomic units (6 decimals for USDC) */
+  amount: string;
+  payTo: string;
+  maxTimeoutSeconds: number;
+  extra: {
+    name: string;
+    version: string;
+    verifyingContract: string;
+  };
+}
+
+export interface X402ChallengeResponse {
+  x402Version: number;
+  accepts: X402ChallengeRequirements[];
+  resource?: {
+    url: string;
+    description?: string;
+    mimeType?: string;
+  };
+}
+
+export interface VerifyAndSettleResult {
+  ok: boolean;
+  /** Whether the payment was verified and settled */
+  settled: boolean;
+  /** Safe payment metadata (no raw signatures) */
+  paymentMeta?: {
+    amountAtomic: string;
+    payTo: string;
+    network: string;
+    x402Version: number;
+  };
+  /** Payer address if verified */
+  payer?: string;
+  error?: string;
+}
+
+// ─── Constants ────────────────────────────────────────────────
+
+/** Gateway Wallet on Arc Testnet */
+const GATEWAY_WALLET_ADDRESS = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
+
+/** USDC on Arc Testnet */
+const USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
+
+/** Arc Testnet network identifier for x402 */
+const ARC_NETWORK = "eip155:5042002";
+
+/** Default timeout for payment authorization (7 days) */
+const DEFAULT_MAX_TIMEOUT = 604900;
+
+// ─── Build 402 Challenge ──────────────────────────────────────
+
+/**
+ * Build the x402 payment requirements for a given seller and amount.
+ * Used to construct the PAYMENT-REQUIRED header for HTTP 402 responses.
+ */
+export function buildPaymentRequirements(
+  sellerAddress: string,
+  amountAtomic: string
+): X402ChallengeRequirements {
+  return {
+    scheme: "exact",
+    network: ARC_NETWORK,
+    asset: USDC_ADDRESS,
+    amount: amountAtomic,
+    payTo: sellerAddress.toLowerCase(),
+    maxTimeoutSeconds: DEFAULT_MAX_TIMEOUT,
+    extra: {
+      name: "GatewayWalletBatched",
+      version: "1",
+      verifyingContract: GATEWAY_WALLET_ADDRESS,
+    },
+  };
+}
+
+/**
+ * Build the full x402 challenge response body.
+ * The seller encodes this as base64 JSON in the PAYMENT-REQUIRED header.
+ */
+export function buildX402Challenge(
+  sellerAddress: string,
+  amountAtomic: string,
+  resourceUrl?: string
+): X402ChallengeResponse {
+  const requirements = buildPaymentRequirements(sellerAddress, amountAtomic);
+
+  return {
+    x402Version: 2,
+    accepts: [requirements],
+    ...(resourceUrl
+      ? {
+          resource: {
+            url: resourceUrl,
+            description: "PayLabs agent capability service",
+            mimeType: "application/json",
+          },
+        }
+      : {}),
+  };
+}
+
+/**
+ * Encode challenge as base64 JSON for the PAYMENT-REQUIRED header.
+ */
+export function encodeChallengeHeader(challenge: X402ChallengeResponse): string {
+  return Buffer.from(JSON.stringify(challenge)).toString("base64");
+}
+
+// ─── Verify + Settle ──────────────────────────────────────────
+
+/**
+ * Verify and settle an x402 payment using BatchFacilitatorClient.
+ *
+ * Called when the seller receives a retry request with PAYMENT-SIGNATURE header.
+ * The payment signature is base64-encoded JSON containing the signed payload.
+ *
+ * Fails closed: if verification or settlement fails, returns ok:false.
+ * Never exposes raw Gateway response — only safe metadata.
+ */
+export async function verifyAndSettlePayment(
+  paymentSignatureBase64: string,
+  requirements: X402ChallengeRequirements
+): Promise<VerifyAndSettleResult> {
+  const FacilitatorClient = getBatchFacilitatorClient();
+  if (!FacilitatorClient) {
+    return {
+      ok: false,
+      settled: false,
+      error: "x402-batching SDK not available — cannot verify payment",
+    };
+  }
+
+  let paymentPayload: unknown;
+  try {
+    const decoded = Buffer.from(paymentSignatureBase64, "base64").toString("utf-8");
+    paymentPayload = JSON.parse(decoded);
+  } catch {
+    return {
+      ok: false,
+      settled: false,
+      error: "Invalid PAYMENT-SIGNATURE header (not valid base64 JSON)",
+    };
+  }
+
+  const facilitator = new FacilitatorClient();
+
+  // ── Verify ─────────────────────────────────────────────────
+  try {
+    const verifyResult = await facilitator.verify(paymentPayload, requirements);
+    if (!verifyResult?.isValid) {
+      return {
+        ok: false,
+        settled: false,
+        error: "Payment signature verification failed",
+      };
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      settled: false,
+      error: `Payment verification error: ${msg}`,
+    };
+  }
+
+  // ── Settle ─────────────────────────────────────────────────
+  try {
+    const settleResult = await facilitator.settle(paymentPayload, requirements);
+
+    return {
+      ok: true,
+      settled: true,
+      paymentMeta: {
+        amountAtomic: requirements.amount,
+        payTo: requirements.payTo,
+        network: requirements.network,
+        x402Version: 2,
+      },
+      payer: (settleResult as Record<string, unknown>)?.payer as string | undefined,
+    };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Settlement failed after verification — log but don't expose internals
+    return {
+      ok: false,
+      settled: false,
+      error: `Payment settlement failed: ${msg}`,
+    };
+  }
+}
