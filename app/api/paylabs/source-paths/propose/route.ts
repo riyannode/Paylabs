@@ -83,10 +83,11 @@ export async function POST(req: NextRequest) {
           {
             status: "discovery_only",
             paid_path_available: false,
+            payment_kind: "discovery_fee",
             eligible_source_count: discovery.eligibleSourceCount,
             unclaimed_source_count: discovery.unclaimedSourceCount,
             discovery_run_id: discovery.discoveryRunId,
-            message: "No verified monetized sources are available yet, but PayLabs found relevant unclaimed sources.",
+            message: "PayLabs charges a discovery fee for AI-powered source routing. Creator payouts begin after ownership is verified.",
             unclaimed_sources: discovery.unclaimedSources,
           },
           { status: 200 }
