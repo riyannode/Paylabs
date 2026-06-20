@@ -31,6 +31,7 @@ export const PayLabsTutorState = Annotation.Root({
   // ─── User Input ─────────────────────────────────────────────
   userWallet: Annotation<string>,
   goal: Annotation<string | undefined>,
+  discoveryRunId: Annotation<string | undefined>,
   normalizedGoal: Annotation<string | undefined>,
   budgetUsdc: Annotation<number | undefined>,
 
@@ -107,6 +108,15 @@ export const PayLabsTutorState = Annotation.Root({
   // ─── Agent 15: Receipt Auditor ─────────────────────────────
   receiptAudit: Annotation<Record<string, unknown> | undefined>,
   receiptId: Annotation<string | undefined>,
+
+  // ─── Nanopayment x402 Tracking ──────────────────────────────
+  // Map of paid agent name → planned receipt_id from discovery-pipeline.
+  // withPaidNode() reads this to find the existing row instead of creating a new one.
+  paidReceiptIds: Annotation<Record<string, string> | undefined>,
+  nanopaymentContexts: Annotation<Record<string, unknown>[]>({
+    reducer: concatReducer,
+    default: () => [],
+  }),
 
   // ─── Agent Trace / Telemetry ───────────────────────────────
   agentTrace: Annotation<Record<string, unknown>>({

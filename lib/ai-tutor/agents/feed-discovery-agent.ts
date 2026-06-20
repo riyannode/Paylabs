@@ -6,23 +6,23 @@
 import { z } from "zod";
 import type { PayLabsTutorStateType } from "../state";
 import { generateStructuredJson } from "../llm-structured";
-import { listMonetizedFeedItems } from "../tools";
+import { listDiscoverableFeedItems } from "../tools";
 
 const Schema = z.object({
   candidate_feed_item_ids: z.array(z.string()),
   discovery_notes: z.array(z.string()),
 });
 
-const SYSTEM_PROMPT = `You are PayLabs Feed Discovery Agent. Your job is to review DB-provided RSSHub feed candidates and identify eligible candidate IDs for the source path. You may only use the feed items provided by the backend. You cannot invent feed_item_id. You cannot invent source URL. You cannot set creator wallet. You cannot set price. You cannot include unverified or unmonetized sources. You cannot execute payments. Return structured JSON only.`;
+const SYSTEM_PROMPT = `You are PayLabs Feed Discovery Agent. Your job is to review DB-provided RSSHub feed candidates and identify eligible candidate IDs for the source path. You may only use the feed items provided by the backend. You cannot invent feed_item_id. You cannot invent source URL. You cannot set creator wallet. You cannot set price. You cannot execute payments. Sources may be monetized (creator-registered) or unclaimed (not yet registered). Both types are valid for discovery. Unclaimed sources will have creator payout set to 0. Return structured JSON only.`;
 
 export async function feedDiscoveryAgent(state: PayLabsTutorStateType) {
   const { normalizedGoal, goal, topics, expandedQueries, routeTier } = state;
   const tier = routeTier || "normal";
 
-  // Load monetized feed items from DB — deterministic filter
+  // Load discoverable feed items from DB — includes unclaimed sources
   let candidates: Record<string, unknown>[];
   try {
-    candidates = await listMonetizedFeedItems() as Record<string, unknown>[];
+    candidates = await listDiscoverableFeedItems() as Record<string, unknown>[];
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return { error: `Feed discovery DB read failed: ${msg}`, candidateSources: [], eligibleSources: [] };
@@ -32,7 +32,7 @@ export async function feedDiscoveryAgent(state: PayLabsTutorStateType) {
     return {
       candidateSources: [],
       eligibleSources: [],
-      stopReason: "NO_VERIFIED_SOURCE_AVAILABLE",
+      stopReason: "NO_DISCOVERABLE_SOURCES",
       stopLimitHit: true,
     };
   }
