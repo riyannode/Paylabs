@@ -44,6 +44,10 @@ import { paymentQuoteAgent } from "./agents/payment-quote-agent";
 import { paymentExecutorAgent } from "./agents/payment-executor-agent";
 import { receiptAuditorAgent } from "./agents/receipt-auditor-agent";
 
+// ─── Discovery-only imports ────────────────────────────────────
+import { z } from "zod";
+import { generateStructuredJson } from "./llm-structured";
+
 // ─── Persist Proposed Source Path Node ───────────────────────────
 
 async function persistProposedSourcePathNode(
@@ -221,6 +225,196 @@ const proposalGraph = new StateGraph(PayLabsTutorState)
   .addEdge("creator_ownership_verifier", "persist_source_path")
   .addEdge("persist_source_path", END)
   .compile();
+
+// ─── Discovery-Only Flow ─────────────────────────────────────────
+//
+// When no monetized sources exist, run a lightweight discovery + ranking
+// on ALL active feed items. Persists to paylabs_discovery_runs/items.
+// No payment, no creator wallet exposed for unmonetized sources.
+
+const DiscoveryRankSchema = z.object({
+  ranked_sources: z.array(z.object({
+    feed_item_id: z.string(),
+    rank: z.number(),
+    relevance_score: z.number(),
+    reason: z.string(),
+  })),
+});
+
+const DISCOVERY_RANK_PROMPT = `You are PayLabs Discovery Agent. Rank the provided feed items by relevance to the user's goal. These are unclaimed/unmonetized sources — no payment will be made. Select the most useful items for the user's research need. Return structured JSON only.`;
+
+export async function discoverOnly(input: {
+  userWallet: string;
+  goal: string;
+  routeTier: RouteTier;
+}) {
+  const { listActiveFeedItems } = await import("./tools");
+  const allActive = await listActiveFeedItems() as Record<string, unknown>[];
+
+  if (allActive.length === 0) {
+    return {
+      status: "failed" as const,
+      discoveryRunId: undefined,
+      candidateCount: 0,
+      eligibleSourceCount: 0,
+      unclaimedSourceCount: 0,
+      unclaimedSources: [],
+      error: "No active feed items found",
+    };
+  }
+
+  // Determine claim status for each item
+  const classifyItem = (item: Record<string, unknown>): {
+    claim_status: string;
+    is_monetized: boolean;
+  } => {
+    const route = Array.isArray(item.rsshub_route)
+      ? (item.rsshub_route as Record<string, unknown>[])[0]
+      : item.rsshub_route as Record<string, unknown> | undefined;
+
+    const routeVerified = route?.verification_status === "verified";
+    const itemMonetized = item.is_monetized === true && !!item.creator_wallet;
+
+    if (routeVerified && itemMonetized) {
+      return { claim_status: "verified", is_monetized: true };
+    }
+    if (route?.verification_status === "pending_claim") {
+      return { claim_status: "pending_claim", is_monetized: false };
+    }
+    return { claim_status: "unclaimed", is_monetized: false };
+  };
+
+  // Safe metadata for LLM — no wallet, no price
+  const feedMeta = allActive.map((item) => ({
+    id: item.id,
+    title: item.title,
+    summary: (item.summary as string || "").slice(0, 200),
+    publisher: item.publisher,
+    author_name: item.author_name,
+    published_at: item.published_at,
+  }));
+
+  // LLM ranking — single call, lightweight
+  const rankResult = await generateStructuredJson<z.infer<typeof DiscoveryRankSchema>>({
+    agentName: "discovery_ranker",
+    routeTier: input.routeTier,
+    systemPrompt: DISCOVERY_RANK_PROMPT,
+    userPrompt: `Goal: "${input.goal}"\n\nAvailable feed items:\n${JSON.stringify(feedMeta, null, 2)}\n\nRank by relevance. Return structured JSON only.`,
+    schema: DiscoveryRankSchema,
+  });
+
+  // Build ranked results — use LLM ranking if available, else fallback to recency
+  const feedMap = new Map(allActive.map(f => [f.id as string, f]));
+  let rankedItems: { feedItem: Record<string, unknown>; rank: number; reason: string; relevanceScore: number }[];
+
+  if (rankResult.ok) {
+    rankedItems = rankResult.data.ranked_sources
+      .filter(r => feedMap.has(r.feed_item_id))
+      .map((r, i) => ({
+        feedItem: feedMap.get(r.feed_item_id)!,
+        rank: i + 1,
+        reason: r.reason,
+        relevanceScore: r.relevance_score,
+      }));
+  } else {
+    // Fallback: recency order, no LLM
+    rankedItems = allActive.slice(0, 10).map((item, i) => ({
+      feedItem: item,
+      rank: i + 1,
+      reason: "Recent feed item (LLM ranking unavailable)",
+      relevanceScore: 0,
+    }));
+  }
+
+  // Classify each item
+  const classified = rankedItems.map(r => ({
+    ...r,
+    ...classifyItem(r.feedItem),
+  }));
+
+  const eligibleMonetized = classified.filter(c => c.claim_status === "verified" && c.is_monetized);
+  const unclaimed = classified.filter(c => c.claim_status !== "verified" || !c.is_monetized);
+
+  // Persist discovery run
+  const { data: runRow, error: runErr } = await supabaseAdmin()
+    .from("paylabs_discovery_runs")
+    .insert({
+      user_wallet: input.userWallet.toLowerCase(),
+      goal: input.goal,
+      route_tier: input.routeTier,
+      status: eligibleMonetized.length > 0 ? "paid_path_available" : "discovery_only",
+      candidate_count: allActive.length,
+      eligible_source_count: eligibleMonetized.length,
+      unclaimed_source_count: unclaimed.length,
+      payment_kind: "discovery_fee",
+      message: "PayLabs charges a discovery fee for AI-powered source routing. Creator payouts begin after ownership is verified.",
+      agent_trace: {
+        llm_ranking: rankResult.ok ? rankResult.meta : { error: rankResult.error },
+        fallback: !rankResult.ok,
+      },
+    })
+    .select("id")
+    .single();
+
+  if (runErr || !runRow) {
+    return {
+      status: "failed" as const,
+      discoveryRunId: undefined,
+      candidateCount: allActive.length,
+      eligibleSourceCount: eligibleMonetized.length,
+      unclaimedSourceCount: unclaimed.length,
+      unclaimedSources: [],
+      error: `Failed to persist discovery run: ${runErr?.message}`,
+    };
+  }
+
+  // Persist discovery run items (unclaimed only — verified go through paid path)
+  if (unclaimed.length > 0) {
+    const items = unclaimed.map(c => ({
+      discovery_run_id: runRow.id,
+      feed_item_id: c.feedItem.id as string,
+      source_url: String(c.feedItem.canonical_url || ""),
+      source_title: String(c.feedItem.title || ""),
+      publisher: String(c.feedItem.publisher || ""),
+      claim_status: c.claim_status,
+      is_monetized: c.is_monetized,
+      evidence_score: c.relevanceScore || null,
+      marginal_value_score: null,
+      rank_index: c.rank,
+      reason: c.reason,
+    }));
+
+    const { error: itemsErr } = await supabaseAdmin()
+      .from("paylabs_discovery_run_items")
+      .insert(items);
+
+    if (itemsErr) {
+      console.error("[discoverOnly] Failed to persist items:", itemsErr.message);
+      // Non-fatal — run was created, items just missing
+    }
+  }
+
+  // Build unclaimed_sources response (no wallet, no prices)
+  const unclaimedSources = unclaimed.map(c => ({
+    title: String(c.feedItem.title || ""),
+    publisher: String(c.feedItem.publisher || ""),
+    canonical_url: String(c.feedItem.canonical_url || ""),
+    claim_status: c.claim_status,
+    is_monetized: false,
+    evidence_score: c.relevanceScore || null,
+    reason: c.reason,
+  }));
+
+  return {
+    status: eligibleMonetized.length > 0 ? "paid_path_available" as const : "discovery_only" as const,
+    discoveryRunId: runRow.id,
+    candidateCount: allActive.length,
+    eligibleSourceCount: eligibleMonetized.length,
+    unclaimedSourceCount: unclaimed.length,
+    unclaimedSources,
+    agentTrace: rankResult.ok ? rankResult.meta : { error: rankResult.error },
+  };
+}
 
 // ─── Payment Graph (4 nodes) ────────────────────────────────────
 

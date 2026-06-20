@@ -3,6 +3,9 @@
 // Propose a source path using the 15-agent LangGraph workflow.
 // RSSHub-first: picks from paylabs_feed_items with monetization gate.
 //
+// Case A: eligible monetized sources > 0 → full 15-agent paid path
+// Case B: eligible monetized = 0, active feeds exist → discovery-only
+//
 // Flow: tutor_intake → intent_classifier → query_expander → feed_discovery →
 // source_ranker → evidence_allocator → stop_limit_controller → budget_optimizer →
 // source_quality_verifier → provenance_verifier → creator_ownership_verifier → persist
@@ -10,7 +13,7 @@
 export const maxDuration = 300;
 
 import { NextRequest, NextResponse } from "next/server";
-import { proposeSourcePath } from "@/lib/ai-tutor/graph";
+import { proposeSourcePath, discoverOnly } from "@/lib/ai-tutor/graph";
 import { isValidRouteTier } from "@/lib/ai-tutor/route-config";
 
 export async function POST(req: NextRequest) {
@@ -46,8 +49,8 @@ export async function POST(req: NextRequest) {
       routeTier: tier,
     });
 
+    // Case B: no monetized sources — run discovery-only flow
     if (result.error && !result.sourcePathId) {
-      // Typed business-state errors: 409 Conflict
       const noSourceErrors = [
         "No verified monetized sources available",
         "Cannot persist: no verified sources",
@@ -55,21 +58,46 @@ export async function POST(req: NextRequest) {
       const isNoSource = noSourceErrors.some(
         (e) => result.error?.startsWith(e)
       );
+
       if (isNoSource) {
+        // Discovery-only: find unclaimed but relevant sources
+        const discovery = await discoverOnly({
+          userWallet: user_wallet,
+          goal,
+          routeTier: tier,
+        });
+
+        if (discovery.status === "failed") {
+          return NextResponse.json(
+            {
+              error: discovery.error || "Discovery failed",
+              code: "DISCOVERY_FAILED",
+              eligible_source_count: discovery.eligibleSourceCount,
+              source_path_status: "none",
+            },
+            { status: 500 }
+          );
+        }
+
         return NextResponse.json(
           {
-            error: result.error,
-            code: "NO_VERIFIED_MONETIZED_SOURCES",
-            eligible_source_count: (result as Record<string, unknown>).eligibleSourceCount ?? 0,
-            source_path_status: "none",
+            status: "discovery_only",
+            paid_path_available: false,
+            payment_kind: "discovery_fee",
+            eligible_source_count: discovery.eligibleSourceCount,
+            unclaimed_source_count: discovery.unclaimedSourceCount,
+            discovery_run_id: discovery.discoveryRunId,
+            message: "PayLabs charges a discovery fee for AI-powered source routing. Creator payouts begin after ownership is verified.",
+            unclaimed_sources: discovery.unclaimedSources,
           },
-          { status: 409 }
+          { status: 200 }
         );
       }
+
       return NextResponse.json({ error: result.error }, { status: 500 });
     }
 
-    // Build path from verified sources (DB facts only)
+    // Case A: paid path available — existing flow
     const path = (result.verifiedSources as Record<string, unknown>[] || []).map((v, i) => {
       const selected = (result.selectedSources as Record<string, unknown>[] || []).find(
         (s) => s.feed_item_id === v.feed_item_id
@@ -87,7 +115,6 @@ export async function POST(req: NextRequest) {
       };
     });
 
-    // Build selected/excluded from stop-limit terminology
     const selectedSources = (result.selectedSources as Record<string, unknown>[] || []).map(s => ({
       feed_item_id: s.feed_item_id,
       evidence_score: s.evidence_score,
