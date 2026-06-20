@@ -19,7 +19,7 @@ import {
   resolveAgentWallet,
   AGENT_NANOPRICE_USDC,
 } from "../proxy/agent-registry.js";
-import { verifyX402Authorization } from "../proxy/x402.js";
+import { verifyX402Authorization, type SignedAuthorization } from "../proxy/x402.js";
 import { checkDcwApiReachable } from "../services/circleDcw.js";
 import {
   checkX402Config,
@@ -261,7 +261,7 @@ paymentsRoutes.post("/discovery", async (c) => {
 
   // Submit to Gateway for settlement
   const settleResult = await settleX402Payment({
-    signedAuthorization: auth,
+    signedAuthorization: auth as unknown as SignedAuthorization,
     amountBaseUnits: BigInt(Math.round(amountUsdc * 1_000_000)).toString(),
     receiverAddress: treasury.address,
   });
@@ -404,7 +404,7 @@ paymentsRoutes.post("/agent-nanopayment", async (c) => {
 
   // Submit to Gateway
   const settleResult = await settleX402Payment({
-    signedAuthorization: body.signedAuthorization,
+    signedAuthorization: body.signedAuthorization as unknown as SignedAuthorization,
     amountBaseUnits: "1", // 0.000001 USDC = 1 base unit
     receiverAddress: agentWallet,
   });
