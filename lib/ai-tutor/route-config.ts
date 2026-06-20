@@ -58,6 +58,10 @@ export const ROUTE_CONFIG: Record<RouteTier, RouteConfig> = {
 
 // ─── Route Spend Limits ─────────────────────────────────────────
 // Stop-limit source allocation thresholds per route tier.
+// minUserBudgetUsdc = minimum budget required to start this route.
+// actualSpendCapUsdc = backend maximum spend cap for this route.
+// In PR #16 they are intentionally equal for simpler budget semantics.
+// Unused budget remains unspent.
 
 export interface RouteLimits {
   publicLabel: string;
@@ -76,7 +80,7 @@ export const ROUTE_LIMITS: Record<RouteTier, RouteLimits> = {
     maxSources: 2,
     maxPaidAgentCalls: 1,
     creatorPayoutCapUsdc: 0.00005,
-    actualSpendCapUsdc: 0.00006,
+    actualSpendCapUsdc: 0.0005,
     minEvidenceScore: 0.72,
     stopMarginalValueBelow: 0.10,
     minUserBudgetUsdc: 0.0005,
@@ -86,7 +90,7 @@ export const ROUTE_LIMITS: Record<RouteTier, RouteLimits> = {
     maxSources: 5,
     maxPaidAgentCalls: 4,
     creatorPayoutCapUsdc: 0.00007,
-    actualSpendCapUsdc: 0.00009,
+    actualSpendCapUsdc: 0.0007,
     minEvidenceScore: 0.76,
     stopMarginalValueBelow: 0.08,
     minUserBudgetUsdc: 0.0007,
@@ -96,7 +100,7 @@ export const ROUTE_LIMITS: Record<RouteTier, RouteLimits> = {
     maxSources: 8,
     maxPaidAgentCalls: 8,
     creatorPayoutCapUsdc: 0.0001,
-    actualSpendCapUsdc: 0.00015,
+    actualSpendCapUsdc: 0.001,
     minEvidenceScore: 0.80,
     stopMarginalValueBelow: 0.06,
     minUserBudgetUsdc: 0.001,
