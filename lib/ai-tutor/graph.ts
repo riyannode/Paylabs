@@ -44,6 +44,9 @@ import { paymentQuoteAgent } from "./agents/payment-quote-agent";
 import { paymentExecutorAgent } from "./agents/payment-executor-agent";
 import { receiptAuditorAgent } from "./agents/receipt-auditor-agent";
 
+// ─── Paid node wrapper (x402 nanopayment tracking) ───────────
+import { withPaidNode } from "@/lib/paylabs/paid-agent-node";
+
 // ─── Discovery-only imports ────────────────────────────────────
 import { z } from "zod";
 import { generateStructuredJson } from "./llm-structured";
@@ -199,17 +202,17 @@ async function persistProposedSourcePathNode(
 // ─── Proposal Graph (12 nodes) ──────────────────────────────────
 
 const proposalGraph = new StateGraph(PayLabsTutorState)
-  .addNode("tutor_intake", tutorIntakeAgent)
-  .addNode("intent_classifier", intentClassifierAgent)
-  .addNode("query_expander", queryExpanderAgent)
+  .addNode("tutor_intake", withPaidNode("tutor_intake", tutorIntakeAgent))
+  .addNode("intent_classifier", withPaidNode("intent_classifier", intentClassifierAgent))
+  .addNode("query_expander", withPaidNode("query_expander", queryExpanderAgent))
   .addNode("feed_discovery", feedDiscoveryAgent)
-  .addNode("source_ranker", sourceRankerAgent)
+  .addNode("source_ranker", withPaidNode("discovery_ranker", sourceRankerAgent))
   .addNode("evidence_allocator", evidenceAllocatorAgent)
   .addNode("stop_limit_controller", stopLimitControllerAgent)
   .addNode("budget_optimizer", budgetOptimizerAgent)
-  .addNode("source_quality_verifier", sourceQualityVerifierAgent)
-  .addNode("provenance_verifier", provenanceVerifierAgent)
-  .addNode("creator_ownership_verifier", creatorOwnershipVerifierAgent)
+  .addNode("source_quality_verifier", withPaidNode("source_quality_verifier", sourceQualityVerifierAgent))
+  .addNode("provenance_verifier", withPaidNode("provenance_verifier", provenanceVerifierAgent))
+  .addNode("creator_ownership_verifier", withPaidNode("attribution_auditor", creatorOwnershipVerifierAgent))
   .addNode("persist_source_path", persistProposedSourcePathNode)
   .addEdge(START, "tutor_intake")
   .addEdge("tutor_intake", "intent_classifier")
@@ -437,6 +440,7 @@ export async function proposeSourcePath(input: {
   goal: string;
   budgetUsdc: number;
   routeTier?: RouteTier;
+  discoveryRunId?: string;
 }) {
   const tier: RouteTier = input.routeTier || "normal";
   const config = getRouteConfig(tier);
@@ -482,6 +486,7 @@ export async function proposeSourcePath(input: {
     routeConfig: config as unknown as Record<string, unknown>,
     routeLimits: limits,
     effectiveSpendCapUsdc: effectiveCap,
+    discoveryRunId: input.discoveryRunId,
     agentTrace: {},
     topics: [],
     riskNotes: [],
