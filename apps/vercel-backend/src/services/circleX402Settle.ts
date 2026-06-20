@@ -1,35 +1,24 @@
 /**
- * Circle Gateway x402 v2 Settlement Service
+ * Circle Gateway x402 Settlement Service
  *
- * Handles real x402 payment verification and settlement via Circle Gateway.
- * Uses /v1/x402/settle (permissionless, no API key needed).
- * Uses /v1/x402/verify for pre-settlement verification.
+ * Uses @circle-fin/x402-batching BatchFacilitatorClient for settlement.
+ * Replaces hand-rolled EIP-712 + manual Gateway fetch with Circle's official SDK.
  *
- * x402 v2 format: { paymentPayload, paymentRequirements }
- *
- * PR #16: Wire real Circle Gateway x402 settlement for agent nanopayments.
+ * Refactored to match circlefin/arc-nanopayments reference implementation.
  */
-
-import {
-  buildX402PaymentPayload,
-  buildX402PaymentRequirements,
-  type SignedAuthorization,
-} from "../../../../lib/payments/x402.js";
 
 // ─── Constants ───────────────────────────────────────────────
 
-const GATEWAY_BASE_URL_TESTNET = "https://gateway-api-testnet.circle.com/v1";
-const GATEWAY_BASE_URL_MAINNET = "https://gateway-api.circle.com/v1";
-
-const ARC_TESTNET_DOMAIN = 26;
 const ARC_CHAIN_ID = 5042002;
+const USDC_ARC_TESTNET = "0x3600000000000000000000000000000000000000";
+const GATEWAY_WALLET_TESTNET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
+const GATEWAY_BASE_URL_TESTNET = "https://gateway-api-testnet.circle.com/v1";
 
 // ─── Types ───────────────────────────────────────────────────
 
 export interface X402SettleInput {
-  signedAuthorization: SignedAuthorization;
-  amountBaseUnits: string;
-  receiverAddress: string;
+  paymentPayload: Record<string, unknown>;
+  paymentRequirements: Record<string, unknown>;
 }
 
 export interface X402SettleResult {
@@ -48,12 +37,21 @@ export interface GatewayBalanceCheck {
   error?: string;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────
+// ─── SDK Client (lazy async init) ────────────────────────────
 
-function getGatewayBaseUrl(): string {
-  const testnet = process.env.CIRCLE_GATEWAY_TESTNET !== "false";
-  return testnet ? GATEWAY_BASE_URL_TESTNET : GATEWAY_BASE_URL_MAINNET;
+let _facilitator: any = null;
+
+async function getFacilitator() {
+  if (_facilitator) return _facilitator;
+
+  // Dynamic import — works in ESM and CJS
+  const mod = await import("@circle-fin/x402-batching/server");
+  const BatchFacilitatorClient = mod.BatchFacilitatorClient;
+  _facilitator = new BatchFacilitatorClient();
+  return _facilitator;
 }
+
+// ─── Config Check ────────────────────────────────────────────
 
 export function checkX402Config(): {
   configured: boolean;
@@ -70,30 +68,22 @@ export function checkX402Config(): {
   if (!process.env.PAYLABS_HMAC_SECRET) {
     missing.push("PAYLABS_HMAC_SECRET");
   }
-  if (!process.env.CIRCLE_API_KEY) {
-    missing.push("CIRCLE_API_KEY");
-  }
-  if (!process.env.CIRCLE_ENTITY_SECRET) {
-    missing.push("CIRCLE_ENTITY_SECRET");
-  }
 
   return { configured: missing.length === 0, missing };
 }
 
-// ─── Gateway Balance ─────────────────────────────────────────
+// ─── Gateway Balance (direct API — no SDK equivalent) ────────
 
 export async function queryGatewayBalance(
   depositorAddress: string
 ): Promise<GatewayBalanceCheck> {
-  const baseUrl = getGatewayBaseUrl();
-
   try {
-    const res = await fetch(`${baseUrl}/balances`, {
+    const res = await fetch(`${GATEWAY_BASE_URL_TESTNET}/balances`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         token: "USDC",
-        sources: [{ domain: ARC_TESTNET_DOMAIN, depositor: depositorAddress.toLowerCase() }],
+        sources: [{ domain: 26, depositor: depositorAddress.toLowerCase() }],
       }),
       signal: AbortSignal.timeout(10000),
     });
@@ -119,139 +109,111 @@ export async function queryGatewayBalance(
   }
 }
 
-// ─── x402 v2 Settlement ─────────────────────────────────────
+// ─── x402 Settlement via BatchFacilitatorClient ─────────────
 
 /**
- * Submit a signed TransferWithAuthorization to Circle Gateway for x402 v2 settlement.
+ * Verify and settle an x402 payment using Circle's official SDK.
  *
- * Uses /v1/x402/settle with proper v2 format:
- * { paymentPayload, paymentRequirements }
- *
- * Both fields are REQUIRED by the Gateway facilitator.
+ * Matches circlefin/arc-nanopayments pattern:
+ *   facilitator.verify(payload, requirements)
+ *   facilitator.settle(payload, requirements)
  */
 export async function settleX402Payment(
   input: X402SettleInput
 ): Promise<X402SettleResult> {
-  const baseUrl = getGatewayBaseUrl();
-
-  if (!input.receiverAddress || input.receiverAddress.toLowerCase() === "0x0000000000000000000000000000000000000000") {
-    return { ok: false, error: "Receiver is zero address — settlement blocked" };
-  }
-
-  const amount = BigInt(input.amountBaseUnits);
-  if (amount <= 0n) {
-    return { ok: false, error: "Amount must be positive" };
-  }
-
   try {
-    // Build x402 v2 payload and requirements
-    const paymentPayload = buildX402PaymentPayload(
-      input.signedAuthorization,
-      input.receiverAddress,
-      input.amountBaseUnits
+    const facilitator = await getFacilitator();
+
+    // Step 1: Verify
+    const verifyResult = await facilitator.verify(
+      input.paymentPayload,
+      input.paymentRequirements
     );
 
-    const paymentRequirements = buildX402PaymentRequirements(
-      input.receiverAddress,
-      input.amountBaseUnits
-    );
-
-    const body = {
-      paymentPayload,
-      paymentRequirements,
-    };
-
-    const res = await fetch(`${baseUrl}/x402/settle`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(15000),
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "Unknown error");
-      const isInfra = res.status >= 500 || res.status === 429;
+    if (!verifyResult?.isValid) {
       return {
         ok: false,
-        error: `Gateway x402/settle ${res.status}: ${text}`,
+        error: `x402 verify failed: ${verifyResult?.invalidReason || "unknown"}`,
+        gatewayResponse: verifyResult as Record<string, unknown>,
+      };
+    }
+
+    // Step 2: Settle
+    const settleResult = await facilitator.settle(
+      input.paymentPayload,
+      input.paymentRequirements
+    );
+
+    if (!settleResult?.success) {
+      const isInfra =
+        settleResult?.errorReason === "insufficient_balance" ||
+        settleResult?.errorReason === "internal_error";
+      return {
+        ok: false,
+        error: `x402 settle rejected: ${settleResult?.errorReason || "unknown"}`,
         infraFailure: isInfra,
+        gatewayResponse: settleResult as Record<string, unknown>,
       };
     }
 
-    const data = (await res.json()) as Record<string, unknown>;
-
-    // Gateway x402 v2 response: { success, errorReason, transaction, network }
-    if (data.success === false) {
-      return {
-        ok: false,
-        error: `Gateway settle rejected: ${data.errorReason || "unknown"}`,
-        infraFailure: data.errorReason === "insufficient_balance",
-        gatewayResponse: data,
-      };
-    }
-
-    // Extract real refs from Gateway response — never fabricate
-    const paymentRef = (data.paymentRef || data.paymentId || data.id || data.transaction) as string | undefined;
-    const settlementRef = (data.settlementRef || data.settlementId || data.transaction) as string | undefined;
-
-    if (!paymentRef && !settlementRef) {
-      return {
-        ok: false,
-        error: "Gateway returned success but no paymentRef or settlementRef",
-        gatewayResponse: data,
-      };
-    }
+    // Extract real refs from settlement response
+    const paymentRef = (settleResult.paymentRef ||
+      settleResult.paymentId ||
+      settleResult.settlementId ||
+      settleResult.transaction) as string | undefined;
+    const settlementRef = (settleResult.settlementRef ||
+      settleResult.settlementId ||
+      settleResult.transaction) as string | undefined;
 
     return {
       ok: true,
       paymentRef,
       settlementRef,
-      gatewayResponse: data,
+      gatewayResponse: settleResult as Record<string, unknown>,
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     const isTimeout = msg.includes("timeout") || msg.includes("Timeout");
     return {
       ok: false,
-      error: `Gateway x402 settlement failed: ${msg}`,
+      error: `x402 settlement failed: ${msg}`,
       infraFailure: isTimeout,
     };
   }
 }
 
 /**
- * Submit x402 v2 settlement for an agent nanopayment.
+ * Build x402 payment requirements for a given receiver and amount.
+ * Matches circlefin/arc-nanopayments pattern.
  */
-export async function settleAgentNanopayment(input: {
-  signedAuthorization: SignedAuthorization;
-  agentName: string;
-  agentWalletAddress: string;
-  expectedAmountUsdc: string;
-  receiptId: string;
-}): Promise<X402SettleResult> {
-  const amountBaseUnits = BigInt(
-    Math.round(parseFloat(input.expectedAmountUsdc) * 1_000_000)
-  ).toString();
-
-  return settleX402Payment({
-    signedAuthorization: input.signedAuthorization,
-    amountBaseUnits,
-    receiverAddress: input.agentWalletAddress,
-  });
+export function buildPaymentRequirements(
+  receiverAddress: string,
+  amountBaseUnits: string
+) {
+  return {
+    scheme: "exact",
+    network: `eip155:${ARC_CHAIN_ID}`,
+    asset: USDC_ARC_TESTNET,
+    amount: amountBaseUnits,
+    payTo: receiverAddress,
+    maxTimeoutSeconds: 604900,
+    extra: {
+      name: "GatewayWalletBatched",
+      version: "1",
+      verifyingContract: GATEWAY_WALLET_TESTNET,
+    },
+  };
 }
 
-/**
- * Check if Gateway API is reachable.
- */
+// ─── Gateway Reachable Check ─────────────────────────────────
+
 export async function checkGatewayReachable(): Promise<{
   reachable: boolean;
   error?: string;
   supportedDomains?: number[];
 }> {
-  const baseUrl = getGatewayBaseUrl();
-
   try {
-    const res = await fetch(`${baseUrl}/info`, {
+    const res = await fetch(`https://gateway-api-testnet.circle.com/v1/info`, {
       method: "GET",
       signal: AbortSignal.timeout(10000),
     });

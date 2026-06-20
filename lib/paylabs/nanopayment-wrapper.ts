@@ -43,7 +43,9 @@ interface NanopaymentContext extends Record<string, unknown> {
 
 function signAgentContext(agentName: string, receiptId: string, discoveryRunId: string): string {
   const secret = process.env.PAYLABS_HMAC_SECRET;
-  if (!secret) return "";
+  if (!secret) {
+    throw new Error("PAYLABS_HMAC_SECRET is required for agent context signing");
+  }
 
   const payload = [
     `agent_name:${agentName}`,
