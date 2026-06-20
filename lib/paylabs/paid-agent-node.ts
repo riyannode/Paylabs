@@ -55,7 +55,7 @@ import {
 import {
   updateNanopaymentWithSafeRefs,
 } from "@/lib/paylabs/nanopayment-service";
-import { getPaymentFlags } from "@/lib/paylabs/feature-flags";
+import { getPaymentFlags, isX402EnabledForAgent } from "@/lib/paylabs/feature-flags";
 import { toExternalTier } from "@/lib/paylabs/route-tier";
 import type { PayLabsTutorStateType } from "@/lib/ai/state";
 
@@ -111,7 +111,12 @@ export function getDcwSigner(): DcwSigner | null {
  * 402 with payment requirements, then retries with payment.
  */
 function getSellerEndpoint(agentName: PaidAgentName): string {
-  const baseUrl = process.env.NEXT_PUBLIC_PAYLABS_APP_URL || "";
+  const baseUrl = (process.env.NEXT_PUBLIC_PAYLABS_APP_URL || process.env.PAYLABS_APP_URL || "").trim();
+  if (!baseUrl) {
+    throw new Error(
+      `config_error: NEXT_PUBLIC_PAYLABS_APP_URL or PAYLABS_APP_URL must be set for x402 seller endpoints`
+    );
+  }
   // Map paid agent names to their capability endpoint paths
   const endpointMap: Record<string, string> = {
     tutor_intake: "/api/paylabs/agent-capabilities/tutor-intake",
@@ -291,7 +296,32 @@ async function executeX402Payment(
     sellerServiceName: agentName,
     discoveryRunId,
     maxAmountUsdc: AGENT_NANOPRICE_USDC,
+    requirePayment: true,
   });
+
+  // ── Fail closed: seller must return 402 for a paid x402 edge ──
+  if (paymentResult.freeResponse) {
+    await updateNanopaymentWithSafeRefs(receiptId, "failed", {
+      errorSummary: "Seller did not return 402 PAYMENT-REQUIRED for a paid x402 edge",
+    });
+    await emitSafeEvent({
+      run_id: discoveryRunId,
+      agent_name: agentName,
+      event_type: "x402_no_challenge",
+      message: "Seller returned non-402 response for paid edge",
+      safe_payload: {
+        error_summary: "Seller did not return 402 PAYMENT-REQUIRED",
+        seller_status: paymentResult.status,
+      },
+      payment_status: "failed",
+      receipt_ref: receiptId,
+    });
+    return {
+      ok: false,
+      paymentResult,
+      error: "Seller did not return 402 PAYMENT-REQUIRED for a paid x402 edge",
+    };
+  }
 
   if (!paymentResult.ok) {
     // Payment failed — store safe error and fail closed
@@ -394,8 +424,12 @@ export function withPaidNode(
       signedContext,
     };
 
-    // ── Step 1b: Real x402 payment (if flag enabled) ───────────
-    if (flags.agentNanopaymentsEnabled) {
+    // ── Step 1b: Real x402 payment (if flag enabled AND agent in allowlist) ──
+    const shouldRunRealX402 =
+      flags.agentNanopaymentsEnabled &&
+      isX402EnabledForAgent(agentName);
+
+    if (shouldRunRealX402) {
       const x402Result = await executeX402Payment(
         agentName,
         receiptId,
@@ -474,7 +508,7 @@ export function withPaidNode(
           amount_usdc: AGENT_NANOPRICE_USDC,
           payer: payerAgent,
           signed_context: "present",
-          x402_enabled: flags.agentNanopaymentsEnabled,
+          x402_enabled: shouldRunRealX402,
           ...(ctx.x402Payment ? { x402_settled: ctx.x402Payment.settled } : {}),
         },
       },
