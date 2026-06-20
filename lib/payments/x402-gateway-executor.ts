@@ -1,14 +1,12 @@
 /**
  * x402 Gateway Payment Executor
  *
- * Real payment execution via Circle Gateway x402 settlement.
- * Implements the PaymentExecutor interface for discovery fee payments.
+ * PaymentExecutor interface for discovery fee payments.
+ * Actual settlement uses @circle-fin/x402-batching BatchFacilitatorClient
+ * in the API route layer (apps/vercel-backend/src/routes/payments.ts).
  *
- * Uses EIP-3009 TransferWithAuthorization → Gateway /v1/x402/settle.
- * Returns real payment_ref / settlement_ref from Gateway only.
- * Fails closed on any error.
- *
- * PR #16: Wire real Circle Gateway x402 settlement for agent nanopayments.
+ * This executor provides quote() and getReceipt() for LangGraph agents.
+ * pay() delegates to the API route which handles verify → settle via SDK.
  */
 
 import type {
