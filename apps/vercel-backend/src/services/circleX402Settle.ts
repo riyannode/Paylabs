@@ -1,11 +1,20 @@
 /**
- * Circle Gateway x402 Settlement Service
+ * Circle Gateway x402 v2 Settlement Service
  *
  * Handles real x402 payment verification and settlement via Circle Gateway.
  * Uses /v1/x402/settle (permissionless, no API key needed).
+ * Uses /v1/x402/verify for pre-settlement verification.
+ *
+ * x402 v2 format: { paymentPayload, paymentRequirements }
  *
  * PR #16: Wire real Circle Gateway x402 settlement for agent nanopayments.
  */
+
+import {
+  buildX402PaymentPayload,
+  buildX402PaymentRequirements,
+  type SignedAuthorization,
+} from "../../../../lib/payments/x402.js";
 
 // ─── Constants ───────────────────────────────────────────────
 
@@ -13,25 +22,13 @@ const GATEWAY_BASE_URL_TESTNET = "https://gateway-api-testnet.circle.com/v1";
 const GATEWAY_BASE_URL_MAINNET = "https://gateway-api.circle.com/v1";
 
 const ARC_TESTNET_DOMAIN = 26;
-const USDC_ARC_TESTNET = "0x3600000000000000000000000000000000000000";
 const ARC_CHAIN_ID = 5042002;
 
 // ─── Types ───────────────────────────────────────────────────
 
 export interface X402SettleInput {
-  /** Signed TransferWithAuthorization from user wallet */
-  signedAuthorization: {
-    from: string;
-    to: string;
-    value: string;
-    validAfter: string;
-    validBefore: string;
-    nonce: string;
-    signature: string;
-  };
-  /** Amount in USDC base units (6 decimals) */
+  signedAuthorization: SignedAuthorization;
   amountBaseUnits: string;
-  /** Receiver wallet address (treasury or agent) */
   receiverAddress: string;
 }
 
@@ -41,7 +38,6 @@ export interface X402SettleResult {
   settlementRef?: string;
   gatewayResponse?: Record<string, unknown>;
   error?: string;
-  /** True if Gateway rejected due to config/infra issue, not user error */
   infraFailure?: boolean;
 }
 
@@ -59,10 +55,6 @@ function getGatewayBaseUrl(): string {
   return testnet ? GATEWAY_BASE_URL_TESTNET : GATEWAY_BASE_URL_MAINNET;
 }
 
-/**
- * Check if Gateway/x402 route is properly configured.
- * Returns list of missing config items.
- */
 export function checkX402Config(): {
   configured: boolean;
   missing: string[];
@@ -90,10 +82,6 @@ export function checkX402Config(): {
 
 // ─── Gateway Balance ─────────────────────────────────────────
 
-/**
- * Query Gateway unified balance for a depositor on Arc Testnet.
- * Gateway REST /v1/balances is permissionless — no API key needed.
- */
 export async function queryGatewayBalance(
   depositorAddress: string
 ): Promise<GatewayBalanceCheck> {
@@ -131,47 +119,46 @@ export async function queryGatewayBalance(
   }
 }
 
-// ─── x402 Settlement ─────────────────────────────────────────
+// ─── x402 v2 Settlement ─────────────────────────────────────
 
 /**
- * Submit a signed TransferWithAuthorization to Circle Gateway for x402 settlement.
+ * Submit a signed TransferWithAuthorization to Circle Gateway for x402 v2 settlement.
  *
- * Uses /v1/x402/settle — the permissionless x402 settlement endpoint.
- * NOT /transfers (which is for crosschain burn/mint).
+ * Uses /v1/x402/settle with proper v2 format:
+ * { paymentPayload, paymentRequirements }
  *
- * Returns real payment_ref / settlement_ref from Gateway response.
- * Fails closed on error — never returns fake refs.
+ * Both fields are REQUIRED by the Gateway facilitator.
  */
 export async function settleX402Payment(
   input: X402SettleInput
 ): Promise<X402SettleResult> {
   const baseUrl = getGatewayBaseUrl();
 
-  // Validate receiver is not zero address
   if (!input.receiverAddress || input.receiverAddress.toLowerCase() === "0x0000000000000000000000000000000000000000") {
     return { ok: false, error: "Receiver is zero address — settlement blocked" };
   }
 
-  // Validate amount
   const amount = BigInt(input.amountBaseUnits);
   if (amount <= 0n) {
     return { ok: false, error: "Amount must be positive" };
   }
 
   try {
+    // Build x402 v2 payload and requirements
+    const paymentPayload = buildX402PaymentPayload(
+      input.signedAuthorization,
+      input.receiverAddress,
+      input.amountBaseUnits
+    );
+
+    const paymentRequirements = buildX402PaymentRequirements(
+      input.receiverAddress,
+      input.amountBaseUnits
+    );
+
     const body = {
-      chainId: ARC_CHAIN_ID,
-      tokenAddress: USDC_ARC_TESTNET,
-      amount: input.amountBaseUnits,
-      from: input.signedAuthorization.from,
-      to: input.receiverAddress,
-      transferWithAuthorization: {
-        value: input.signedAuthorization.value,
-        validAfter: input.signedAuthorization.validAfter,
-        validBefore: input.signedAuthorization.validBefore,
-        nonce: input.signedAuthorization.nonce,
-        signature: input.signedAuthorization.signature,
-      },
+      paymentPayload,
+      paymentRequirements,
     };
 
     const res = await fetch(`${baseUrl}/x402/settle`, {
@@ -193,9 +180,19 @@ export async function settleX402Payment(
 
     const data = (await res.json()) as Record<string, unknown>;
 
+    // Gateway x402 v2 response: { success, errorReason, transaction, network }
+    if (data.success === false) {
+      return {
+        ok: false,
+        error: `Gateway settle rejected: ${data.errorReason || "unknown"}`,
+        infraFailure: data.errorReason === "insufficient_balance",
+        gatewayResponse: data,
+      };
+    }
+
     // Extract real refs from Gateway response — never fabricate
-    const paymentRef = (data.paymentRef || data.paymentId || data.id) as string | undefined;
-    const settlementRef = (data.settlementRef || data.settlementId) as string | undefined;
+    const paymentRef = (data.paymentRef || data.paymentId || data.id || data.transaction) as string | undefined;
+    const settlementRef = (data.settlementRef || data.settlementId || data.transaction) as string | undefined;
 
     if (!paymentRef && !settlementRef) {
       return {
@@ -223,17 +220,15 @@ export async function settleX402Payment(
 }
 
 /**
- * Submit x402 settlement for an agent nanopayment.
- * Convenience wrapper with agent-specific validation.
+ * Submit x402 v2 settlement for an agent nanopayment.
  */
 export async function settleAgentNanopayment(input: {
-  signedAuthorization: X402SettleInput["signedAuthorization"];
+  signedAuthorization: SignedAuthorization;
   agentName: string;
   agentWalletAddress: string;
-  expectedAmountUsdc: string; // "0.000001"
+  expectedAmountUsdc: string;
   receiptId: string;
 }): Promise<X402SettleResult> {
-  // Convert human-readable to base units
   const amountBaseUnits = BigInt(
     Math.round(parseFloat(input.expectedAmountUsdc) * 1_000_000)
   ).toString();
@@ -247,7 +242,6 @@ export async function settleAgentNanopayment(input: {
 
 /**
  * Check if Gateway API is reachable.
- * Returns { reachable: boolean; error?: string; domains?: number[] }
  */
 export async function checkGatewayReachable(): Promise<{
   reachable: boolean;
@@ -271,12 +265,7 @@ export async function checkGatewayReachable(): Promise<{
     };
 
     const domains = data.domains?.map((d) => d.domain) || [];
-    const arcSupported = domains.includes(ARC_TESTNET_DOMAIN);
-
-    return {
-      reachable: true,
-      supportedDomains: domains,
-    };
+    return { reachable: true, supportedDomains: domains };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return { reachable: false, error: msg };
