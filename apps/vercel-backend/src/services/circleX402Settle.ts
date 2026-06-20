@@ -2,12 +2,12 @@
  * Circle Gateway x402 Settlement Service
  *
  * Uses @circle-fin/x402-batching BatchFacilitatorClient for settlement.
- * Replaces hand-rolled EIP-712 + manual Gateway fetch with Circle's official SDK.
- *
- * Refactored to match circlefin/arc-nanopayments reference implementation.
+ * Matches circlefin/arc-nanopayments reference implementation.
  */
 
 // ─── Constants ───────────────────────────────────────────────
+
+import { createRequire } from "node:module";
 
 const ARC_CHAIN_ID = 5042002;
 const USDC_ARC_TESTNET = "0x3600000000000000000000000000000000000000";
@@ -25,7 +25,8 @@ export interface X402SettleResult {
   ok: boolean;
   paymentRef?: string;
   settlementRef?: string;
-  gatewayResponse?: Record<string, unknown>;
+  /** Sanitized gateway response — no raw signatures or authorization payloads */
+  gatewaySummary?: Record<string, unknown>;
   error?: string;
   infraFailure?: boolean;
 }
@@ -41,12 +42,12 @@ export interface GatewayBalanceCheck {
 
 let _facilitator: any = null;
 
-async function getFacilitator() {
+function getFacilitator() {
   if (_facilitator) return _facilitator;
 
-  // Dynamic import — works in ESM and CJS
-  const mod = await import("@circle-fin/x402-batching/server");
-  const BatchFacilitatorClient = mod.BatchFacilitatorClient;
+  // CJS interop — same pattern as circleDcw.ts
+  const _require = createRequire(import.meta.url);
+  const { BatchFacilitatorClient } = _require("@circle-fin/x402-batching/server");
   _facilitator = new BatchFacilitatorClient();
   return _facilitator;
 }
@@ -68,8 +69,49 @@ export function checkX402Config(): {
   if (!process.env.PAYLABS_HMAC_SECRET) {
     missing.push("PAYLABS_HMAC_SECRET");
   }
+  if (!process.env.CIRCLE_API_KEY) {
+    missing.push("CIRCLE_API_KEY");
+  }
+  if (!process.env.CIRCLE_ENTITY_SECRET) {
+    missing.push("CIRCLE_ENTITY_SECRET");
+  }
 
   return { configured: missing.length === 0, missing };
+}
+
+// ─── Sanitize gateway response ──────────────────────────────
+// Strip raw signatures, authorization payloads, and signed data.
+// Only keep settlement metadata for audit trail.
+
+function sanitizeGatewayResponse(raw: Record<string, unknown>): Record<string, unknown> {
+  const { payload, authorization, signature, paymentPayload, ...safe } = raw as Record<string, unknown>;
+  return {
+    success: safe.success,
+    errorReason: safe.errorReason,
+    transaction: safe.transaction,
+    settlementId: safe.settlementId,
+    network: safe.network,
+  };
+}
+
+// ─── Extract nonce hash from x402 payload ───────────────────
+// For internal duplicate guard. Hash of (from + nonce) to detect replays
+// even if Gateway also rejects them.
+
+export function extractNonceHash(paymentPayload: Record<string, unknown>): string | null {
+  try {
+    const payload = paymentPayload.payload as Record<string, unknown> | undefined;
+    if (!payload) return null;
+    const auth = payload.authorization as Record<string, unknown> | undefined;
+    if (!auth) return null;
+    const from = String(auth.from || "").toLowerCase();
+    const nonce = String(auth.nonce || "");
+    if (!from || !nonce) return null;
+    // Simple hash — not cryptographic, just for DB dedup
+    return `${from}:${nonce}`;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Gateway Balance (direct API — no SDK equivalent) ────────
@@ -111,13 +153,6 @@ export async function queryGatewayBalance(
 
 // ─── x402 Settlement via BatchFacilitatorClient ─────────────
 
-/**
- * Verify and settle an x402 payment using Circle's official SDK.
- *
- * Matches circlefin/arc-nanopayments pattern:
- *   facilitator.verify(payload, requirements)
- *   facilitator.settle(payload, requirements)
- */
 export async function settleX402Payment(
   input: X402SettleInput
 ): Promise<X402SettleResult> {
@@ -134,7 +169,7 @@ export async function settleX402Payment(
       return {
         ok: false,
         error: `x402 verify failed: ${verifyResult?.invalidReason || "unknown"}`,
-        gatewayResponse: verifyResult as Record<string, unknown>,
+        gatewaySummary: sanitizeGatewayResponse(verifyResult as Record<string, unknown>),
       };
     }
 
@@ -152,11 +187,10 @@ export async function settleX402Payment(
         ok: false,
         error: `x402 settle rejected: ${settleResult?.errorReason || "unknown"}`,
         infraFailure: isInfra,
-        gatewayResponse: settleResult as Record<string, unknown>,
+        gatewaySummary: sanitizeGatewayResponse(settleResult as Record<string, unknown>),
       };
     }
 
-    // Extract real refs from settlement response
     const paymentRef = (settleResult.paymentRef ||
       settleResult.paymentId ||
       settleResult.settlementId ||
@@ -169,7 +203,7 @@ export async function settleX402Payment(
       ok: true,
       paymentRef,
       settlementRef,
-      gatewayResponse: settleResult as Record<string, unknown>,
+      gatewaySummary: sanitizeGatewayResponse(settleResult as Record<string, unknown>),
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -182,10 +216,8 @@ export async function settleX402Payment(
   }
 }
 
-/**
- * Build x402 payment requirements for a given receiver and amount.
- * Matches circlefin/arc-nanopayments pattern.
- */
+// ─── Build x402 challenge (payment requirements) ────────────
+
 export function buildPaymentRequirements(
   receiverAddress: string,
   amountBaseUnits: string
@@ -203,6 +235,28 @@ export function buildPaymentRequirements(
       verifyingContract: GATEWAY_WALLET_TESTNET,
     },
   };
+}
+
+/**
+ * Build full x402 challenge payload for PAYMENT-REQUIRED header.
+ * Returns base64-encoded JSON per x402 v2 protocol.
+ */
+export function buildX402Challenge(
+  receiverAddress: string,
+  amountBaseUnits: string,
+  resourceUrl: string
+): string {
+  const requirements = buildPaymentRequirements(receiverAddress, amountBaseUnits);
+  const challenge = {
+    x402Version: 2,
+    accepts: [requirements],
+    resource: {
+      url: resourceUrl,
+      description: "PayLabs payment",
+      mimeType: "application/json",
+    },
+  };
+  return Buffer.from(JSON.stringify(challenge)).toString("base64");
 }
 
 // ─── Gateway Reachable Check ─────────────────────────────────
