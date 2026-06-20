@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { short, shortUrl, usdc } from "@/lib/utils";
+import { getRecentNanopayments, getRecentBatchSettlements } from "@/lib/paylabs/nanopayment-service";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +74,10 @@ export default async function DashboardPage() {
     feedItemRows,
     sourcePaymentRows,
     discoveryRunRows,
+    nanopaymentRows,
+    batchSettlementRows,
+    nanopaymentCount,
+    batchSettlementCount,
   ] = await Promise.all([
     safeCount("paylabs_rsshub_routes", (q: any) => q.eq("is_active", true)),
     safeCount("paylabs_feed_items", (q: any) => q.eq("is_active", true)),
@@ -116,6 +121,11 @@ export default async function DashboardPage() {
         .order("created_at", { ascending: false })
         .limit(25)
     ),
+    // Nanopayments
+    getRecentNanopayments(50),
+    getRecentBatchSettlements(25),
+    safeCount("paylabs_agent_nanopayments"),
+    safeCount("paylabs_agent_batch_settlements"),
   ]);
 
   return (
@@ -135,6 +145,8 @@ export default async function DashboardPage() {
           { label: "Source Payments", value: sourcePayments },
           { label: "Source Payouts", value: usdc(totalSourcePaymentUsdc) },
           { label: "Discovery Runs", value: discoveryRuns },
+          { label: "Agent Nanopayments", value: nanopaymentCount },
+          { label: "Batch Settlements", value: batchSettlementCount },
         ].map((kpi) => (
           <div className="card" key={kpi.label}>
             <div className="muted" style={{ fontSize: 13 }}>
@@ -362,6 +374,137 @@ export default async function DashboardPage() {
                     <td className="data-mono">{r.candidate_count}</td>
                     <td className="data-mono">{r.eligible_source_count}</td>
                     <td className="data-mono">{r.unclaimed_source_count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* ─── Agent Nanopayments Table ──────────────────────── */}
+      <section className="card">
+        <h2 className="section-title">Agent Nanopayments</h2>
+        <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
+          Each paid agent capability call costs exactly 0.000001 USDC. 7 agents per discovery run.
+        </p>
+        {nanopaymentRows.length === 0 ? (
+          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
+            No agent nanopayments yet.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Run ID</th>
+                  <th>Agent Name</th>
+                  <th>Payer</th>
+                  <th>Payee</th>
+                  <th>Route Tier</th>
+                  <th>Settlement</th>
+                  <th>Amount</th>
+                  <th>Status</th>
+                  <th>Receipt</th>
+                  <th>Payment Ref</th>
+                  <th>Settlement Ref</th>
+                </tr>
+              </thead>
+              <tbody>
+                {nanopaymentRows.map((r: any) => (
+                  <tr key={r.id}>
+                    <td className="muted">{timeAgo(r.created_at)}</td>
+                    <td className="data-mono">{short(r.discovery_run_id)}</td>
+                    <td style={{ fontWeight: 600 }}>{r.agent_name}</td>
+                    <td className="data-mono">{short(r.payer_agent)}</td>
+                    <td className="data-mono">{short(r.payee_agent)}</td>
+                    <td>{r.route_tier}</td>
+                    <td>
+                      <span className={`badge ${r.settlement_mode === "nano" ? "badge-success" : "badge-warning"}`}>
+                        {r.settlement_mode}
+                      </span>
+                    </td>
+                    <td className="data-mono">{usdc(r.price_usdc)}</td>
+                    <td>
+                      <span className={`badge ${
+                        r.status === "paid" || r.status === "completed"
+                          ? "badge-success"
+                          : r.status === "failed"
+                          ? "badge-danger"
+                          : "badge-warning"
+                      }`}>
+                        {r.status}
+                      </span>
+                    </td>
+                    <td>
+                      {r.receipt_url ? (
+                        <a href={r.receipt_url} className="data-mono" style={{ fontSize: 11, color: "var(--accent, #6366f1)" }}>
+                          {short(r.receipt_id)}
+                        </a>
+                      ) : "—"}
+                    </td>
+                    <td className="data-mono" style={{ fontSize: 11 }}>
+                      {r.x402_payment_ref ? short(r.x402_payment_ref) : "—"}
+                    </td>
+                    <td className="data-mono" style={{ fontSize: 11 }}>
+                      {r.x402_settlement_ref ? short(r.x402_settlement_ref) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* ─── Batch Settlements Table ───────────────────────── */}
+      <section className="card">
+        <h2 className="section-title">Agent Batch Settlements</h2>
+        {batchSettlementRows.length === 0 ? (
+          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
+            No batch settlements yet.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Run ID</th>
+                  <th>Route Tier</th>
+                  <th>Agent Count</th>
+                  <th>Agent Total</th>
+                  <th>Treasury Fee</th>
+                  <th>Gateway Buffer</th>
+                  <th>Status</th>
+                  <th>Batch ID</th>
+                </tr>
+              </thead>
+              <tbody>
+                {batchSettlementRows.map((r: any) => (
+                  <tr key={r.id}>
+                    <td className="muted">{timeAgo(r.created_at)}</td>
+                    <td className="data-mono">{short(r.discovery_run_id)}</td>
+                    <td>{r.route_tier}</td>
+                    <td className="data-mono">{r.agent_count}</td>
+                    <td className="data-mono">{usdc(r.agent_total_usdc)}</td>
+                    <td className="data-mono">{usdc(r.treasury_fee_usdc)}</td>
+                    <td className="data-mono">{usdc(r.gateway_buffer_usdc)}</td>
+                    <td>
+                      <span className={`badge ${
+                        r.status === "paid"
+                          ? "badge-success"
+                          : r.status === "failed"
+                          ? "badge-danger"
+                          : "badge-warning"
+                      }`}>
+                        {r.status}
+                      </span>
+                    </td>
+                    <td className="data-mono" style={{ fontSize: 11 }}>
+                      {r.circle_batch_id ? short(r.circle_batch_id) : "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>
