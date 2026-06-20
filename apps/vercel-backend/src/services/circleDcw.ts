@@ -7,16 +7,15 @@
  * PR #16: Wire real Circle Gateway x402 settlement.
  */
 
-import {
-  initiateDeveloperControlledWalletsClient,
-  type Wallet,
-  type Blockchain,
-  type AccountType,
-} from "@circle-fin/developer-controlled-wallets";
+import { createRequire } from "node:module";
+
+// CJS interop — @circle-fin/developer-controlled-wallets is CJS-only
+const _require = createRequire(import.meta.url);
+const { initiateDeveloperControlledWalletsClient } = _require("@circle-fin/developer-controlled-wallets");
 
 // ─── SDK Client ──────────────────────────────────────────────
 
-let _client: ReturnType<typeof initiateDeveloperControlledWalletsClient> | null = null;
+let _client: any = null;
 
 function getClient() {
   if (_client) return _client;
@@ -58,8 +57,8 @@ export interface WalletSetInfo {
  */
 export async function createWalletSetWithWallets(input: {
   name: string;
-  chains: Blockchain[];
-  accountType?: AccountType;
+  chains: string[];
+  accountType?: string;
 }): Promise<WalletSetInfo> {
   const client = getClient();
 
@@ -86,7 +85,7 @@ export async function createWalletSetWithWallets(input: {
   return {
     walletSetId: walletSet.id,
     name: input.name,
-    wallets: wallets.map((w: Wallet) => ({
+    wallets: wallets.map((w: any) => ({
       walletId: w.id,
       address: w.address,
       chain: w.blockchain,
@@ -100,8 +99,8 @@ export async function createWalletSetWithWallets(input: {
  */
 export async function createSingleWallet(
   walletSetId: string,
-  chain: Blockchain,
-  accountType: AccountType = "EOA"
+  chain: string,
+  accountType: string = "EOA"
 ): Promise<WalletInfo> {
   const client = getClient();
 
