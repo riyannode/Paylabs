@@ -13,8 +13,8 @@
 export const maxDuration = 300;
 
 import { NextRequest, NextResponse } from "next/server";
-import { proposeSourcePath, discoverOnly } from "@/lib/ai-tutor/graph";
-import { isValidRouteTier } from "@/lib/ai-tutor/route-config";
+import { proposeSourcePath, discoverOnly } from "@/lib/ai/graph";
+import { isValidRouteTier } from "@/lib/ai/route-config";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();

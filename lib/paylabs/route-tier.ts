@@ -14,7 +14,7 @@
  * This module bridges the two without renaming the whole codebase.
  */
 
-import type { RouteTier } from "@/lib/ai-tutor/route-config";
+import type { RouteTier } from "@/lib/ai/route-config";
 
 /** External tier names used in nanopayment API surface */
 export type ExternalRouteTier = "easy" | "normal" | "advanced";
