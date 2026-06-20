@@ -36,3 +36,4 @@ run-migration.mjs
 
 # Local test/utility scripts (keep local, never commit)
 scripts/*.mjs
+.env*
