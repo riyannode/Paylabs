@@ -25,7 +25,9 @@ import {
   updateNanopaymentStatusByReceiptId,
 } from "@/lib/paylabs/nanopayment-service";
 import type { ExternalRouteTier } from "@/lib/paylabs/route-tier";
+import { toInternalTier } from "@/lib/paylabs/route-tier";
 import type { RouteTier } from "@/lib/ai-tutor/route-config";
+import { validateRouteBudget } from "@/lib/ai-tutor/route-config";
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -41,6 +43,12 @@ export interface RunDiscoveryPipelineResult {
   discoveryRunId?: string;
   sourcePathId?: string;
   sourcePathStatus?: string;
+  budgetError?: {
+    routeTier: string;
+    publicLabel: string;
+    minUserBudgetUsdc: number;
+    providedBudgetUsdc: number;
+  };
   nanopayments: {
     total: number;
     completed: number;
@@ -67,8 +75,27 @@ export interface RunDiscoveryPipelineResult {
 export async function runDiscoveryPipeline(
   input: RunDiscoveryPipelineInput
 ): Promise<RunDiscoveryPipelineResult> {
-  const tier = input.routeTier;
+  const tier = input.routeTier; // external tier
   const wallet = input.userWallet.toLowerCase();
+  const internalTier = toInternalTier(tier) as RouteTier;
+  const userBudget = input.budgetUsdc ?? 0.01;
+
+  // ── Step 0: Validate minimum budget ──────────────────────────
+  const budgetCheck = validateRouteBudget(userBudget, internalTier);
+  if (!budgetCheck.ok) {
+    return {
+      ok: false,
+      budgetError: {
+        routeTier: tier,
+        publicLabel: budgetCheck.publicLabel,
+        minUserBudgetUsdc: budgetCheck.minRequired,
+        providedBudgetUsdc: userBudget,
+      },
+      nanopayments: { total: 0, completed: 0, failed: 0, skipped: 0, rows: [] },
+      pipeline: { agentsRun: [], agentsFailed: [], selectedSources: [], verifiedSources: [], estimatedTotalUsdc: 0 },
+      error: `Budget ${userBudget} USDC is below minimum ${budgetCheck.minRequired} USDC for ${budgetCheck.publicLabel} tier`,
+    };
+  }
 
   // ── Step 1: Create discovery run ─────────────────────────────
   const { data: runRow, error: runErr } = await supabaseAdmin()
@@ -123,8 +150,8 @@ export async function runDiscoveryPipeline(
     const result = await proposeSourcePath({
       userWallet: wallet,
       goal: input.goal,
-      budgetUsdc: input.budgetUsdc || 0.01,
-      routeTier: tier as RouteTier,
+      budgetUsdc: userBudget,
+      routeTier: internalTier,
       discoveryRunId,
       paidReceiptIds: Object.fromEntries(receiptByAgent),
     });

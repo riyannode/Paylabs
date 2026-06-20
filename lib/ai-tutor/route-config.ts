@@ -67,6 +67,7 @@ export interface RouteLimits {
   actualSpendCapUsdc: number;
   minEvidenceScore: number;
   stopMarginalValueBelow: number;
+  minUserBudgetUsdc: number;
 }
 
 export const ROUTE_LIMITS: Record<RouteTier, RouteLimits> = {
@@ -78,6 +79,7 @@ export const ROUTE_LIMITS: Record<RouteTier, RouteLimits> = {
     actualSpendCapUsdc: 0.00006,
     minEvidenceScore: 0.72,
     stopMarginalValueBelow: 0.10,
+    minUserBudgetUsdc: 0.0005,
   },
   advanced: {
     publicLabel: "Normal",
@@ -87,6 +89,7 @@ export const ROUTE_LIMITS: Record<RouteTier, RouteLimits> = {
     actualSpendCapUsdc: 0.00009,
     minEvidenceScore: 0.76,
     stopMarginalValueBelow: 0.08,
+    minUserBudgetUsdc: 0.0007,
   },
   premium: {
     publicLabel: "Advanced",
@@ -96,6 +99,7 @@ export const ROUTE_LIMITS: Record<RouteTier, RouteLimits> = {
     actualSpendCapUsdc: 0.00015,
     minEvidenceScore: 0.80,
     stopMarginalValueBelow: 0.06,
+    minUserBudgetUsdc: 0.001,
   },
 } as const;
 
@@ -145,6 +149,29 @@ export function getRouteLimits(tier: string): RouteLimits {
     return ROUTE_LIMITS[tier as RouteTier];
   }
   return ROUTE_LIMITS.normal;
+}
+
+// ─── Minimum Budget Gate ──────────────────────────────────────
+
+/** Get the minimum user budget for a given internal route tier. */
+export function getMinimumUserBudgetUsdc(tier: RouteTier): number {
+  return ROUTE_LIMITS[tier].minUserBudgetUsdc;
+}
+
+/** Validate that user budget meets the minimum for the route tier. */
+export function validateRouteBudget(
+  userBudgetUsdc: number,
+  routeTier: RouteTier
+): { ok: true } | { ok: false; minRequired: number; publicLabel: string } {
+  const limits = ROUTE_LIMITS[routeTier];
+  if (userBudgetUsdc >= limits.minUserBudgetUsdc) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    minRequired: limits.minUserBudgetUsdc,
+    publicLabel: limits.publicLabel,
+  };
 }
 
 export function isValidRouteTier(tier: string): tier is RouteTier {

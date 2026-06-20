@@ -47,6 +47,20 @@ export async function POST(req: NextRequest) {
     });
 
     if (!result.ok) {
+      // Budget validation failure — clean 400, no rows were created
+      if (result.budgetError) {
+        return NextResponse.json({
+          ok: false,
+          status: "budget_below_minimum",
+          route_tier: result.budgetError.routeTier,
+          public_label: result.budgetError.publicLabel,
+          min_user_budget_usdc: result.budgetError.minUserBudgetUsdc,
+          provided_budget_usdc: result.budgetError.providedBudgetUsdc,
+          error: result.error,
+        }, { status: 400 });
+      }
+
+      // Pipeline error — 500
       return NextResponse.json({
         ok: false,
         status: "pipeline_error",
