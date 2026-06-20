@@ -16,7 +16,9 @@ const Schema = z.object({
   })),
 });
 
-const SYSTEM_PROMPT = `You are PayLabs Creator Ownership Verifier Agent. Verify whether selected sources are monetizable. Ownership is not decided by the LLM. Use only DB fields from route/feed data: route verification_status, route is_monetized, route creator_wallet, feed item creator_wallet, feed item is_monetized. You cannot create verification. You cannot approve creator claims. You cannot set creator wallet. You cannot set price. You cannot execute payment. Return structured JSON only.`;
+const SYSTEM_PROMPT = `You are PayLabs Creator Ownership Verifier Agent. Verify whether selected sources are discoverable. Ownership is not decided by the LLM. Use only DB fields from route/feed data: route verification_status, route is_monetized, route creator_wallet, feed item creator_wallet, feed item is_monetized. You cannot create verification. You cannot approve creator claims. You cannot set creator wallet. You cannot set price. You cannot execute payment.
+
+IMPORTANT: Sources that are NOT monetized (is_monetized=false or creator_wallet=null) are still valid for discovery. Mark them as ownership_ok=true, monetization_ok=false. They will have creator_payout_usdc=0 and fee goes to treasury. Only reject sources that don't exist or have no content. Return structured JSON only.`;
 
 export async function creatorOwnershipVerifierAgent(state: PayLabsTutorStateType) {
   const { selectedSources, routeTier } = state;
@@ -57,10 +59,17 @@ export async function creatorOwnershipVerifierAgent(state: PayLabsTutorStateType
   if (!result.ok) return { error: `Creator ownership verifier failed: ${result.error}`, llmErrors: { creator_ownership_verifier: result }, ownershipResults: [], verifiedSources: [], rejectedSources: [], allVerified: false };
 
   // Split into verified/rejected based on ownership results
+  // Unclaimed sources (ownership_ok=true, monetization_ok=false) are valid for discovery
+  // with creator_payout_usdc=0. Only reject if ownership_ok=false (source doesn't exist).
   for (const r of result.data.ownership_results) {
     const original = selected.find(s => s.feed_item_id === r.feed_item_id);
-    if (r.ownership_ok && r.monetization_ok && original) {
-      verifiedSources.push(original);
+    if (r.ownership_ok && original) {
+      verifiedSources.push({
+        ...original,
+        claim_status: r.monetization_ok ? "verified" : "unclaimed",
+        is_creator_payout_eligible: r.monetization_ok,
+        creator_payout_usdc: r.monetization_ok ? undefined : 0,
+      });
     } else {
       rejectedSources.push({ feed_item_id: r.feed_item_id, reason: r.reason });
     }
