@@ -17,7 +17,7 @@
  */
 
 import { createHmac, randomUUID } from "node:crypto";
-import { AGENT_NANOPRICE_USDC, type PaidAgentName, getAgentDef, resolveAgentWallet } from "@/lib/paylabs/agent-registry";
+import { AGENT_NANOPRICE_USDC, type PaidAgentName, getAgentDef, resolveAgentWallet, getPayerForAgent } from "@/lib/paylabs/agent-registry";
 import type { ExternalRouteTier } from "@/lib/paylabs/route-tier";
 
 // ─── Types ─────────────────────────────────────────────────────
@@ -117,7 +117,7 @@ export function createAgentContext(
   const unsigned: Omit<AgentContextPayload, "sig"> = {
     run_id: input.runId,
     agent_call_id: agentCallId,
-    payer_agent: "paylabs_treasury",
+    payer_agent: getPayerForAgent(input.agentName),
     payee_agent: input.agentName,
     agent_name: input.agentName,
     capability: def.capability,
