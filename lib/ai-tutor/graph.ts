@@ -1,32 +1,36 @@
 /**
- * PayLabs Tutor LangGraph Workflow — 15-Agent Production Core
+ * PayLabs Tutor LangGraph Workflow
  *
- * 15 LLM-backed LangGraph agents.
- * 7 are x402-paid audited nodes (withPaidNode wrapper).
- * 8 are free/internal LLM agents with deterministic backend guardrails.
+ * 15 LLM-backed agents + 1 DB persistence node = 16 total nodes.
+ * Proposal graph: 11 LLM agents + 1 DB node (12 nodes).
+ * Payment graph: 4 LLM/deterministic payment agents (4 nodes).
+ *
+ * 7 of the 15 LLM agents are x402-paid audited nodes (withPaidNode wrapper).
+ * 8 of the 15 LLM agents are free/internal with deterministic backend guardrails.
  * persist_source_path is a DB persistence node, not an LLM agent.
  * Payment execution and final payment proof are deterministic, not LLM-controlled.
  *
- * Two separate graphs:
- * 1. Proposal (12 nodes): START → tutor_intake → intent_classifier → query_expander →
- *    feed_discovery → source_ranker → evidence_allocator → stop_limit_controller →
- *    budget_optimizer → source_quality → provenance → creator_ownership →
- *    persist_source_path → END
+ * Proposal graph (12 nodes):
+ *   tutor_intake → intent_classifier → query_expander → feed_discovery →
+ *   source_ranker → evidence_allocator → stop_limit_controller →
+ *   budget_optimizer → source_quality_verifier → provenance_verifier →
+ *   creator_ownership_verifier → persist_source_path → END
  *
- * 2. Payment (4 nodes): START → policy_guard → payment_quote → payment_executor →
- *    receipt_auditor → END
+ * Payment graph (4 nodes):
+ *   policy_guard → payment_quote → payment_executor → receipt_auditor → END
  *
- * x402-paid agents (7):
+ * x402-paid LLM agents (7):
  *   tutor_intake, intent_classifier, query_expander,
- *   source_ranker (discovery_ranker), source_quality_verifier,
- *   provenance_verifier, creator_ownership_verifier (attribution_auditor)
+ *   source_ranker (paid identity: discovery_ranker),
+ *   source_quality_verifier, provenance_verifier,
+ *   creator_ownership_verifier (paid identity: attribution_auditor)
  *
  * Free/internal LLM agents (8):
  *   feed_discovery, evidence_allocator, stop_limit_controller,
  *   budget_optimizer, policy_guard, payment_quote,
  *   payment_executor, receipt_auditor
  *
- * DB persistence node: persist_source_path
+ * DB persistence node (1): persist_source_path
  *
  * Proposal and payment are separate invocations.
  * Payment is impossible until the user approves the source path.

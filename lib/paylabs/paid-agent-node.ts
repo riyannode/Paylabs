@@ -156,9 +156,24 @@ export function withPaidNode(
         payerWallet: userWallet,
         receiptId,
       });
-    } catch {
-      // HMAC secret not configured — continue without signed context
-      signedContext = {} as AgentContextPayload;
+    } catch (e: unknown) {
+      // Fail closed: signed context is required for paid nodes in production.
+      // Mark the row as config_error and throw so the pipeline fails visibly.
+      const msg = e instanceof Error ? e.message : String(e);
+      await updateRowStatus(receiptId, "config_error", msg);
+      await emitSafeEvent({
+        run_id: discoveryRunId,
+        agent_name: agentName,
+        event_type: "config_error",
+        message: "Signed context creation failed — cannot execute paid node",
+        safe_payload: { reason_summary: msg.slice(0, 200) },
+        payment_status: "config_error",
+        receipt_ref: receiptId,
+      });
+      throw new Error(
+        `[paid-node] ${agentName}: createAgentContext failed — ${msg}. ` +
+        `Paid nodes require valid HMAC secret in production.`
+      );
     }
 
     const ctx: PaidNodeContext = {
@@ -224,7 +239,7 @@ export function withPaidNode(
           receipt_url: `/api/paylabs/receipts/${receiptId}`,
           amount_usdc: AGENT_NANOPRICE_USDC,
           payer: payerAgent,
-          signed_context: signedContext.sig ? "present" : "no_hmac_secret",
+          signed_context: "present",
         },
       },
       nanopaymentContexts: [...existingNano, ctx],
