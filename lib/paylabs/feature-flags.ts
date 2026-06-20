@@ -4,6 +4,12 @@
  * All payment-moving flags default false.
  * Code checks these before any real fund movement.
  * Skeleton/audit logic runs regardless of flags.
+ *
+ * Agent allowlist:
+ *   PAYLABS_X402_ENABLED_AGENT_NAMES — comma-separated list of agent names
+ *   that are allowed to run real x402 payment. Default: empty (none).
+ *   Even when PAYLABS_AGENT_NANOPAYMENTS_ENABLED=true, only agents in this
+ *   list will attempt real x402. All others remain audit-only.
  */
 
 export interface PaymentFlags {
@@ -34,6 +40,42 @@ export function getPaymentFlags(): PaymentFlags {
     agentBatchSettlementEnabled: process.env.PAYLABS_AGENT_BATCH_SETTLEMENT_ENABLED === "true",
     agentWalletFloatEnabled: process.env.PAYLABS_AGENT_WALLET_FLOAT_ENABLED === "true",
   };
+}
+
+// ─── Agent x402 Allowlist ──────────────────────────────────────
+
+/**
+ * Parse the x402 agent allowlist from env.
+ * PAYLABS_X402_ENABLED_AGENT_NAMES — comma-separated agent names.
+ * Default: empty array (no agents enabled for real x402).
+ *
+ * Example: PAYLABS_X402_ENABLED_AGENT_NAMES=tutor_intake
+ * Example: PAYLABS_X402_ENABLED_AGENT_NAMES=tutor_intake,intent_classifier
+ */
+export function getX402EnabledAgents(): string[] {
+  const raw = (process.env.PAYLABS_X402_ENABLED_AGENT_NAMES || "").trim();
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/**
+ * Check if a specific agent is enabled for real x402 payment.
+ *
+ * Both conditions must be true:
+ *   1. PAYLABS_AGENT_NANOPAYMENTS_ENABLED === "true" (main gate)
+ *   2. agentName is in PAYLABS_X402_ENABLED_AGENT_NAMES (allowlist)
+ *
+ * If allowlist is empty, no agents run real x402 (safe default).
+ */
+export function isX402EnabledForAgent(agentName: string): boolean {
+  const flags = getPaymentFlags();
+  if (!flags.agentNanopaymentsEnabled) return false;
+  const enabledAgents = getX402EnabledAgents();
+  if (enabledAgents.length === 0) return false;
+  return enabledAgents.includes(agentName.toLowerCase());
 }
 
 /**
