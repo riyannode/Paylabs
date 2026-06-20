@@ -11,6 +11,8 @@ create table if not exists paylabs_discovery_runs (
   eligible_source_count int not null default 0,
   unclaimed_source_count int not null default 0,
   agent_trace jsonb,
+  payment_kind text not null default 'discovery_fee',
+  message text,
   created_at timestamptz not null default now()
 );
 
