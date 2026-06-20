@@ -41,6 +41,7 @@ export interface NanopaymentRow {
   x402_payment_ref: string | null;
   x402_settlement_ref: string | null;
   circle_transfer_id: string | null;
+  nonce_hash: string | null;
   receipt_url: string | null;
   status: string;
   created_at: string;
