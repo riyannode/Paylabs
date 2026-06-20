@@ -33,3 +33,6 @@ next-env.d.ts
 Thumbs.db
 check-schema.mjs
 run-migration.mjs
+
+# Local test/utility scripts (keep local, never commit)
+scripts/*.mjs

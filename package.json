@@ -10,9 +10,11 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "seed:lessons": "tsx scripts/seed-lessons.ts",
-    "clear:legacy-lessons": "tsx scripts/clear-legacy-lessons.ts"
+    "clear:legacy-lessons": "tsx scripts/clear-legacy-lessons.ts",
+    "worker:discovery": "tsx scripts/run-discovery-worker.ts"
   },
   "dependencies": {
+    "@circle-fin/developer-controlled-wallets": "^10.6.0",
     "@langchain/core": "^1.2.0",
     "@langchain/langgraph": "^1.4.4",
     "@langchain/openai": "^1.5.0",

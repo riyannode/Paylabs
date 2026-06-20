@@ -2,13 +2,15 @@
  * PayLabs Tutor LLM Factory — Per-Agent Routing (15 Agents)
  *
  * Each LangGraph agent can be configured with its own provider, API key,
- * base URL, and model through environment variables.
+ * base URL, model, timeout, and maxTokens through environment variables.
  *
  * Config resolution order (per field):
- *   provider: PAYLABS_LLM_PROVIDER_<AGENT_KEY> → PAYLABS_LLM_PROVIDER_DEFAULT → "openai"
- *   api key:  PAYLABS_LLM_API_KEY_<AGENT_KEY>  → PAYLABS_LLM_API_KEY_DEFAULT  → PAYLABS_OPENAI_API_KEY → OPENAI_API_KEY
- *   base URL: PAYLABS_LLM_BASE_URL_<AGENT_KEY> → PAYLABS_LLM_BASE_URL_DEFAULT → undefined
- *   model:    PAYLABS_TUTOR_MODEL_<AGENT_KEY>   → PAYLABS_TUTOR_MODEL_DEFAULT  → PAYLABS_TUTOR_MODEL → "gpt-4o-mini"
+ *   provider:   PAYLABS_LLM_PROVIDER_<AGENT_KEY> → PAYLABS_LLM_PROVIDER_DEFAULT → "openai"
+ *   api key:    PAYLABS_LLM_API_KEY_<AGENT_KEY>  → PAYLABS_LLM_API_KEY_DEFAULT  → PAYLABS_OPENAI_API_KEY → OPENAI_API_KEY
+ *   base URL:   PAYLABS_LLM_BASE_URL_<AGENT_KEY> → PAYLABS_LLM_BASE_URL_DEFAULT → undefined
+ *   model:      PAYLABS_TUTOR_MODEL_<AGENT_KEY>   → PAYLABS_TUTOR_MODEL_DEFAULT  → PAYLABS_TUTOR_MODEL → "gpt-4o-mini"
+ *   timeout:    PAYLABS_LLM_TIMEOUT_<AGENT_KEY>   → PAYLABS_LLM_TIMEOUT_DEFAULT  → PAYLABS_LLM_TIMEOUT_MS → 20000
+ *   maxTokens:  PAYLABS_LLM_MAX_TOKENS_<AGENT_KEY> → PAYLABS_LLM_MAX_TOKENS_DEFAULT → PAYLABS_LLM_MAX_TOKENS → 1024
  *
  * 15 agents:
  *   tutor_intake              → TUTOR_INTAKE
@@ -59,7 +61,7 @@ const AGENT_KEY_MAP: Record<string, string> = {
 };
 
 // ─── Per-config cache ──────────────────────────────────────────
-// Key: "${provider}:${baseUrl || "default"}:${model}:${agentKey}"
+// Key: "${provider}:${baseUrl || "default"}:${model}:${agentKey}:${timeoutMs}:${maxTokens}"
 // Never includes raw API key.
 
 const modelCache = new Map<string, ChatOpenAI>();
@@ -70,12 +72,25 @@ function envOrDefault(suffix: string, fallback?: string): string | undefined {
   return process.env[suffix] ?? fallback;
 }
 
+function envNumber(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function resolveNumberConfig(agentKey: string, baseName: string, fallback: number): number {
+  return envNumber(`${baseName}_${agentKey}`, envNumber(`${baseName}_DEFAULT`, envNumber(baseName, fallback)));
+}
+
 function resolveConfig(agentName?: string): {
   provider: string;
   apiKey: string | undefined;
   baseUrl: string | undefined;
   model: string;
   agentKey: string;
+  timeoutMs: number;
+  maxTokens: number;
 } {
   const agentKey = agentName
     ? AGENT_KEY_MAP[agentName] || agentName.toUpperCase()
@@ -102,7 +117,10 @@ function resolveConfig(agentName?: string): {
     envOrDefault("PAYLABS_TUTOR_MODEL") ??
     "gpt-4o-mini";
 
-  return { provider, apiKey, baseUrl, model, agentKey };
+  const timeoutMs = resolveNumberConfig(agentKey, "PAYLABS_LLM_TIMEOUT_MS", 20000);
+  const maxTokens = resolveNumberConfig(agentKey, "PAYLABS_LLM_MAX_TOKENS", 1024);
+
+  return { provider, apiKey, baseUrl, model, agentKey, timeoutMs, maxTokens };
 }
 
 function buildCacheKey(cfg: {
@@ -110,8 +128,10 @@ function buildCacheKey(cfg: {
   baseUrl?: string;
   model: string;
   agentKey: string;
+  timeoutMs: number;
+  maxTokens: number;
 }): string {
-  return `${cfg.provider}:${cfg.baseUrl || "default"}:${cfg.model}:${cfg.agentKey}`;
+  return `${cfg.provider}:${cfg.baseUrl || "default"}:${cfg.model}:${cfg.agentKey}:${cfg.timeoutMs}:${cfg.maxTokens}`;
 }
 
 // ─── Public API ────────────────────────────────────────────────
@@ -138,7 +158,8 @@ export function getTutorModel(agentName?: string): ChatOpenAI | null {
     model: cfg.model,
     apiKey: cfg.apiKey,
     temperature: 0,
-    maxTokens: 2048,
+    maxTokens: cfg.maxTokens,
+    timeout: cfg.timeoutMs,
     ...(cfg.baseUrl
       ? { configuration: { baseURL: cfg.baseUrl } }
       : {}),
@@ -158,6 +179,8 @@ export function getTutorModelConfig(agentName?: string): {
   baseUrl?: string;
   apiKeyPresent: boolean;
   agentKey: string;
+  timeoutMs: number;
+  maxTokens: number;
 } {
   const cfg = resolveConfig(agentName);
   return {
@@ -166,6 +189,8 @@ export function getTutorModelConfig(agentName?: string): {
     baseUrl: cfg.baseUrl,
     apiKeyPresent: !!cfg.apiKey,
     agentKey: cfg.agentKey,
+    timeoutMs: cfg.timeoutMs,
+    maxTokens: cfg.maxTokens,
   };
 }
 

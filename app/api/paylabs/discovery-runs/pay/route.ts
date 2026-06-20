@@ -1,88 +1,81 @@
 // POST /api/paylabs/discovery-runs/pay
 //
-// Skeleton for discovery fee payment.
-// When flags are false: returns setup_required, no real funds move.
-// When flags are true: real Gateway/x402 settlement (future PR).
+// Enqueue a discovery run for async background execution.
+// Returns HTTP 202 immediately with discovery_run_id.
+// Worker process picks up queued runs and executes LangGraph pipeline.
+//
+// Poll status via: GET /api/paylabs/discovery-runs/[id]/status
 
 import { NextRequest, NextResponse } from "next/server";
-import { getPaymentFlags } from "@/lib/paylabs/feature-flags";
-import { isValidExternalTier, DEFAULT_EXTERNAL_TIER, getDiscoveryFeeTier } from "@/lib/paylabs/route-tier";
-import { createNanopaymentRows, createBatchSettlement } from "@/lib/paylabs/nanopayment-service";
-import { resolveTreasuryWallet } from "@/lib/paylabs/agent-registry";
+import { enqueueDiscoveryRun } from "@/lib/paylabs/discovery-pipeline";
+import { isValidExternalTier, DEFAULT_EXTERNAL_TIER } from "@/lib/paylabs/route-tier";
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
-  const { discovery_run_id, user_wallet } = body;
+  const { user_wallet, goal, budget_usdc } = body;
   const rawTier = (body.route_tier || DEFAULT_EXTERNAL_TIER).toLowerCase();
   const routeTier = isValidExternalTier(rawTier) ? rawTier : DEFAULT_EXTERNAL_TIER;
 
-  if (!discovery_run_id) {
-    return NextResponse.json(
-      { error: "discovery_run_id required" },
-      { status: 400 }
-    );
-  }
-
+  // ── Validate ─────────────────────────────────────────────────
   if (!user_wallet || !user_wallet.startsWith("0x") || user_wallet.length !== 42) {
     return NextResponse.json(
-      { error: "user_wallet must be a valid EVM address" },
+      { error: "user_wallet must be a valid EVM address (0x... 42 chars)" },
       { status: 400 }
     );
   }
 
-  const flags = getPaymentFlags();
-  const feeTier = getDiscoveryFeeTier(routeTier);
-  const treasury = resolveTreasuryWallet();
-
-  // ── Create 7 nanopayment rows (always, for audit trail) ──────
-  const nanoResult = await createNanopaymentRows({
-    discoveryRunId: discovery_run_id,
-    userWallet: user_wallet,
-    routeTier,
-  });
-
-  if (nanoResult.error) {
+  if (!goal || typeof goal !== "string" || !goal.trim()) {
     return NextResponse.json(
-      { error: nanoResult.error },
+      { error: "goal is required (the user's learning/research goal)" },
+      { status: 400 }
+    );
+  }
+
+  // ── Enqueue ──────────────────────────────────────────────────
+  try {
+    const result = await enqueueDiscoveryRun({
+      userWallet: user_wallet,
+      goal: goal.trim(),
+      routeTier,
+      budgetUsdc: typeof budget_usdc === "number" ? budget_usdc : 0.01,
+    });
+
+    if (!result.ok) {
+      // Budget validation failure — 400, no rows created
+      if (result.budgetError) {
+        return NextResponse.json({
+          ok: false,
+          status: "budget_below_minimum",
+          route_tier: result.budgetError.routeTier,
+          public_label: result.budgetError.publicLabel,
+          min_user_budget_usdc: result.budgetError.minUserBudgetUsdc,
+          provided_budget_usdc: result.budgetError.providedBudgetUsdc,
+          error: result.error,
+        }, { status: 400 });
+      }
+
+      // Enqueue failure — 500
+      return NextResponse.json({
+        ok: false,
+        status: "enqueue_failed",
+        error: result.error,
+      }, { status: 500 });
+    }
+
+    // Success — 202 Accepted (queued for background execution)
+    return NextResponse.json({
+      ok: true,
+      status: "queued",
+      discovery_run_id: result.discoveryRunId,
+      route_tier: routeTier,
+      nanopayments: result.nanopayments,
+      message: "Discovery run queued. Poll GET /api/paylabs/discovery-runs/{id}/status for progress.",
+    }, { status: 202 });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json(
+      { ok: false, status: "error", error: msg },
       { status: 500 }
     );
   }
-
-  // ── Create batch settlement record ───────────────────────────
-  const batchResult = await createBatchSettlement({
-    discoveryRunId: discovery_run_id,
-    routeTier,
-  });
-
-  // ── Payment execution ────────────────────────────────────────
-  if (!flags.discoveryFeeEnabled) {
-    // Flags false: no real payment, return planned state
-    return NextResponse.json({
-      status: "planned",
-      message: "Discovery fee payment is disabled. Rows created for audit trail.",
-      route_tier: routeTier,
-      amount_usdc: feeTier.userPaysUsdc,
-      agent_nanopayments: nanoResult.rows.length,
-      settlement_mode: feeTier.settlementMode,
-      treasury_wallet: treasury.address || "not_configured",
-      payment_route: flags.paymentRoute,
-      receipt_ids: nanoResult.rows.map((r) => r.receipt_id),
-      batch_settlement_id: batchResult.row?.id || null,
-    });
-  }
-
-  // Flags true but real settlement not yet implemented:
-  // Return setup_required — do NOT fake payment refs.
-  return NextResponse.json({
-    status: "setup_required",
-    message: "Discovery fee payment is enabled but real Circle Gateway settlement is not yet implemented in this PR. Follow-up PR will wire real x402 settlement.",
-    route_tier: routeTier,
-    amount_usdc: feeTier.userPaysUsdc,
-    agent_nanopayments: nanoResult.rows.length,
-    settlement_mode: feeTier.settlementMode,
-    treasury_wallet: treasury.address || "not_configured",
-    payment_route: flags.paymentRoute,
-    receipt_ids: nanoResult.rows.map((r) => r.receipt_id),
-    batch_settlement_id: batchResult.row?.id || null,
-  });
 }
