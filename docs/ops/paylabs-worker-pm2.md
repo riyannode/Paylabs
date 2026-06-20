@@ -76,8 +76,8 @@ If `llm_key=missing` or `supabase=missing`, the worker will fail on every run.
 
 | Variable | Example | Purpose |
 |----------|---------|---------|
-| `SUPABASE_URL` | `https://qosxyriij...supabase.co` | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | `eyJ...` | Supabase admin key |
+| `SUPABASE_URL` | `https://...supabase.co` | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | `...` | Supabase admin key |
 | `PAYLABS_LLM_PROVIDER_DEFAULT` | `mimo` | LLM provider (NOT `openai` for MiMo) |
 | `PAYLABS_LLM_API_KEY_DEFAULT` | `tp-s...` | Fallback LLM key |
 | `PAYLABS_LLM_API_KEY_<AGENT>` | `tp-s...` | Per-agent LLM keys |
