@@ -16,7 +16,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { verifyAgentContext, type AgentContextPayload } from "@/lib/payments/agent-context";
+import { verifyAgentContext, type AgentContextPayload } from "@/lib/paylabs/x402/agent-context";
 import { getPaymentFlags } from "@/lib/paylabs/feature-flags";
 import type { PaidAgentName } from "@/lib/paylabs/agent-registry";
 
