@@ -20,7 +20,7 @@ export default async function SourcesPage() {
     supabaseAdmin()
       .from("paylabs_feed_items")
       .select(
-        "id, title, summary, canonical_url, author_name, publisher, published_at, creator_wallet, price_per_citation_usdc, price_per_unlock_usdc, normalized_sha256, is_active"
+        "id, title, summary, canonical_url, author_name, publisher, published_at, creator_wallet, is_monetized, price_per_citation_usdc, price_per_unlock_usdc, normalized_sha256, is_active"
       )
       .eq("is_active", true)
       .order("published_at", { ascending: false, nullsFirst: false })
@@ -106,13 +106,13 @@ export default async function SourcesPage() {
                 <div>
                   <span className="muted">Citation</span>{" "}
                   <span className="data-mono">
-                    {usdc(item.price_per_citation_usdc)}
+                    {item.is_monetized ? usdc(item.price_per_citation_usdc) : "Not monetized"}
                   </span>
                 </div>
                 <div>
                   <span className="muted">Unlock</span>{" "}
                   <span className="data-mono">
-                    {usdc(item.price_per_unlock_usdc)}
+                    {item.is_monetized ? usdc(item.price_per_unlock_usdc) : "—"}
                   </span>
                 </div>
               </div>
@@ -135,8 +135,8 @@ export default async function SourcesPage() {
                 >
                   {shortUrl(item.canonical_url, 35)}
                 </a>
-                <span className="data-mono muted">
-                  {item.creator_wallet ? short(item.creator_wallet) : "—"}
+                <span className="badge" style={{ fontSize: 10 }}>
+                  {item.is_monetized ? "Monetized" : "Sample"}
                 </span>
               </div>
 
