@@ -63,23 +63,11 @@ export function createDcwSigner(): DcwSigner {
     async signTypedData(input) {
       const client = getDcwClient();
 
-      // Circle DCW API requires EIP712Domain in the types object.
-      // The BatchEvmScheme library doesn't include it, so we add it here.
-      const typesWithDomain: Record<string, unknown> = {
-        ...input.types,
-        EIP712Domain: [
-          { name: "name", type: "string" },
-          { name: "version", type: "string" },
-          { name: "chainId", type: "uint256" },
-          { name: "verifyingContract", type: "address" },
-        ],
-      };
-
       // DCW SDK expects `data` as a JSON STRING, not an object.
       // Must serialize bigint to string.
       const dataString = JSON.stringify(
         {
-          types: typesWithDomain,
+          types: input.types,
           primaryType: input.primaryType,
           domain: input.domain,
           message: input.message,
