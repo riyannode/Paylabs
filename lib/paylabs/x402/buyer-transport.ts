@@ -331,6 +331,16 @@ export async function callPaidSeller(
     JSON.stringify(fullPaymentPayload)
   ).toString("base64");
 
+  // Safe diagnostic: log payment payload shape (no raw signature)
+  console.log("[buyer-transport] payment payload shape:", {
+    x402Version: paymentPayload.x402Version,
+    hasPayload: !!paymentPayload.payload,
+    hasResource: !!(fullPaymentPayload as Record<string, unknown>).resource,
+    hasAccepted: !!(fullPaymentPayload as Record<string, unknown>).accepted,
+    sellerUrl,
+    buyerAddress: checksummedBuyerAddress,
+  });
+
   // ── Step 7: Retry with payment ───────────────────────────
 
   let retryResp: Response;
