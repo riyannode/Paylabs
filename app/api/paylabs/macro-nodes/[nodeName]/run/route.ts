@@ -200,6 +200,20 @@ async function executeMacroNode(
       data: result,
       childServices: selectedServices,
       paymentMeta,
+      // Surface child service payment details for orchestration payment graph
+      serviceEvaluations: state.serviceEvaluations.map((e) => ({
+        serviceName: e.serviceName,
+        status: e.status,
+        settled: e.settled,
+        mode: e.mode,
+        costUsdc: e.costUsdc,
+      })),
+      paymentEdges: state.paymentEdges.map((e) => ({
+        buyer: e.buyerServiceName,
+        seller: e.sellerServiceName,
+        amountUsdc: e.amountUsdc,
+        status: e.status,
+      })),
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
