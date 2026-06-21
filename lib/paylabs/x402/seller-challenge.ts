@@ -279,14 +279,17 @@ export async function verifyAndSettlePayment(
     const explorerUrl = buildExplorerUrl(requirements.network, txHash);
 
     // Safe log — keys only, never raw payload or signature
+    const txVal = settleData.transaction;
     console.log("[x402-settle-proof]", {
       settled: true,
       hasTxHash: !!txHash,
       txHash,
       explorerUrl,
       settleResultKeys: Object.keys(settleData),
-      transactionType: typeof settleData.transaction,
-      transactionIsHexString: isEvmTxHash(settleData.transaction),
+      transactionType: typeof txVal,
+      transactionLength: typeof txVal === "string" ? txVal.length : null,
+      transactionPrefix: typeof txVal === "string" ? txVal.slice(0, 10) : null,
+      transactionIsHexString: isEvmTxHash(txVal),
     });
 
     return {
