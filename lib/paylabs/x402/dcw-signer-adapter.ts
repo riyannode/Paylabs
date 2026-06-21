@@ -64,17 +64,26 @@ export function createDcwSigner(): DcwSigner {
       const client = getDcwClient();
 
       // DCW SDK expects `data` as a JSON STRING, not an object.
-      // Must serialize bigint to string.
+      // Must serialize bigint to hex string for uint256 fields.
+      // Include EIP712Domain in types — Circle DCW API requires it.
+      const typesWithDomain: Record<string, unknown> = {
+        ...input.types,
+        EIP712Domain: [
+          { name: "name", type: "string" },
+          { name: "version", type: "string" },
+          { name: "chainId", type: "uint256" },
+          { name: "verifyingContract", type: "address" },
+        ],
+      };
       const dataString = JSON.stringify(
         {
-          types: input.types,
+          types: typesWithDomain,
           primaryType: input.primaryType,
           domain: input.domain,
           message: input.message,
         },
         (_key, value) => {
           if (typeof value === "bigint") {
-            // DCW API may expect uint256 as hex string
             return "0x" + value.toString(16);
           }
           return value;
