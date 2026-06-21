@@ -83,8 +83,10 @@ export async function runSettlementMemory(
     startedAt: routerResult.safeCallMeta.timestamp,
     completedAt: new Date().toISOString(),
     error: routerResult.error,
+    settled: routerResult.settled,
+    mode: routerResult.mode,
   });
-  updateBudgetSnapshot(state, "payment_router", routerResult.safeCallMeta.costUsdc);
+  updateBudgetSnapshot(state, "payment_router", routerResult.safeCallMeta.costUsdc, routerResult.settled);
 
   if (!routerResult.ok || !routerResult.data) {
     return {

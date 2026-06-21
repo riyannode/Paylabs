@@ -23,6 +23,8 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     allowedBuyers: ["run_budget_controller"],
     outputSchemaName: "IntentPlannerOutput",
     isActive: true,
+    sellerWalletAddressEnv: "PAYLABS_SERVICE_INTENT_PLANNER_SELLER_WALLET_ADDRESS",
+    buyerWalletIdEnv: "PAYLABS_SERVICE_INTENT_PLANNER_BUYER_WALLET_ID",
   },
   {
     serviceName: "query_builder",
@@ -34,6 +36,8 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     allowedBuyers: ["intent_planner"],
     outputSchemaName: "QueryBuilderOutput",
     isActive: true,
+    sellerWalletAddressEnv: "PAYLABS_SERVICE_QUERY_BUILDER_SELLER_WALLET_ADDRESS",
+    buyerWalletIdEnv: "PAYLABS_SERVICE_QUERY_BUILDER_BUYER_WALLET_ID",
   },
   {
     serviceName: "signal_scout",
@@ -45,6 +49,8 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     allowedBuyers: ["query_builder"],
     outputSchemaName: "SignalScoutOutput",
     isActive: true,
+    sellerWalletAddressEnv: "PAYLABS_SERVICE_SIGNAL_SCOUT_SELLER_WALLET_ADDRESS",
+    buyerWalletIdEnv: "PAYLABS_SERVICE_SIGNAL_SCOUT_BUYER_WALLET_ID",
   },
   {
     serviceName: "intent_matcher",
@@ -56,6 +62,8 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     allowedBuyers: ["signal_scout"],
     outputSchemaName: "IntentMatcherOutput",
     isActive: true,
+    sellerWalletAddressEnv: "PAYLABS_SERVICE_INTENT_MATCHER_SELLER_WALLET_ADDRESS",
+    buyerWalletIdEnv: "PAYLABS_SERVICE_INTENT_MATCHER_BUYER_WALLET_ID",
   },
   {
     serviceName: "source_verifier",
@@ -67,6 +75,8 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     allowedBuyers: ["intent_matcher"],
     outputSchemaName: "SourceVerifierOutput",
     isActive: true,
+    sellerWalletAddressEnv: "PAYLABS_SERVICE_SOURCE_VERIFIER_SELLER_WALLET_ADDRESS",
+    buyerWalletIdEnv: "PAYLABS_SERVICE_SOURCE_VERIFIER_BUYER_WALLET_ID",
   },
   {
     serviceName: "value_allocator",
@@ -78,6 +88,8 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     allowedBuyers: ["source_verifier"],
     outputSchemaName: "ValueAllocatorOutput",
     isActive: true,
+    sellerWalletAddressEnv: "PAYLABS_SERVICE_VALUE_ALLOCATOR_SELLER_WALLET_ADDRESS",
+    buyerWalletIdEnv: "PAYLABS_SERVICE_VALUE_ALLOCATOR_BUYER_WALLET_ID",
   },
   {
     serviceName: "trust_verifier",
@@ -89,6 +101,8 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     allowedBuyers: ["value_allocator"],
     outputSchemaName: "TrustVerifierOutput",
     isActive: true,
+    sellerWalletAddressEnv: "PAYLABS_SERVICE_TRUST_VERIFIER_SELLER_WALLET_ADDRESS",
+    buyerWalletIdEnv: "PAYLABS_SERVICE_TRUST_VERIFIER_BUYER_WALLET_ID",
   },
   {
     serviceName: "payment_decider",
@@ -111,6 +125,8 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     allowedBuyers: ["payment_decider"],
     outputSchemaName: "PaymentRouterOutput",
     isActive: true,
+    sellerWalletAddressEnv: "PAYLABS_SERVICE_PAYMENT_ROUTER_SELLER_WALLET_ADDRESS",
+    buyerWalletIdEnv: "PAYLABS_SERVICE_PAYMENT_ROUTER_BUYER_WALLET_ID",
   },
 ] as const;
 

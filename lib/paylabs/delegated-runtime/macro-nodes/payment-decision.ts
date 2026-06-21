@@ -90,8 +90,10 @@ export async function runPaymentDecision(
     startedAt: matcherResult.safeCallMeta.timestamp,
     completedAt: new Date().toISOString(),
     error: matcherResult.error,
+    settled: matcherResult.settled,
+    mode: matcherResult.mode,
   });
-  updateBudgetSnapshot(state, "intent_matcher", matcherResult.safeCallMeta.costUsdc);
+  updateBudgetSnapshot(state, "intent_matcher", matcherResult.safeCallMeta.costUsdc, matcherResult.settled);
 
   if (!matcherResult.ok || !matcherResult.data) {
     return {
@@ -174,8 +176,10 @@ export async function runPaymentDecision(
     startedAt: verifyResult.safeCallMeta.timestamp,
     completedAt: new Date().toISOString(),
     error: verifyResult.error,
+    settled: verifyResult.settled,
+    mode: verifyResult.mode,
   });
-  updateBudgetSnapshot(state, "source_verifier", verifyResult.safeCallMeta.costUsdc);
+  updateBudgetSnapshot(state, "source_verifier", verifyResult.safeCallMeta.costUsdc, verifyResult.settled);
 
   // Extract quality scores
   const qualityScores = new Map<string, number>();
@@ -217,8 +221,10 @@ export async function runPaymentDecision(
     startedAt: valueResult.safeCallMeta.timestamp,
     completedAt: new Date().toISOString(),
     error: valueResult.error,
+    settled: valueResult.settled,
+    mode: valueResult.mode,
   });
-  updateBudgetSnapshot(state, "value_allocator", valueResult.safeCallMeta.costUsdc);
+  updateBudgetSnapshot(state, "value_allocator", valueResult.safeCallMeta.costUsdc, valueResult.settled);
 
   // Extract value scores
   const valueScores = new Map<string, { roi: number; estimated_value: number; max_allowed_price: number }>();
@@ -263,8 +269,10 @@ export async function runPaymentDecision(
     startedAt: trustResult.safeCallMeta.timestamp,
     completedAt: new Date().toISOString(),
     error: trustResult.error,
+    settled: trustResult.settled,
+    mode: trustResult.mode,
   });
-  updateBudgetSnapshot(state, "trust_verifier", trustResult.safeCallMeta.costUsdc);
+  updateBudgetSnapshot(state, "trust_verifier", trustResult.safeCallMeta.costUsdc, trustResult.settled);
 
   // Extract risk scores
   const riskScores = new Map<string, number>();
@@ -315,8 +323,10 @@ export async function runPaymentDecision(
     startedAt: deciderResult.safeCallMeta.timestamp,
     completedAt: new Date().toISOString(),
     error: deciderResult.error,
+    settled: deciderResult.settled,
+    mode: deciderResult.mode,
   });
-  updateBudgetSnapshot(state, "payment_decider", deciderResult.safeCallMeta.costUsdc);
+  updateBudgetSnapshot(state, "payment_decider", deciderResult.safeCallMeta.costUsdc, deciderResult.settled);
 
   if (!deciderResult.ok || !deciderResult.data) {
     return {
