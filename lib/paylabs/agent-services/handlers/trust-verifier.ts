@@ -3,16 +3,27 @@
  *
  * Reuses: provenance_verifier + creator_ownership_verifier
  * Macro-node: payment_decision
- * Requires LLM: yes (risk summary only — deterministic checks required)
  *
- * Deterministic checks: canonical URL, hashes, claim status, creator wallet, source metadata.
- * Optional LLM: safe risk summary only.
+ * Execution modes:
+ *   - deterministic (default): URL/wallet/claim checks only, no LLM
+ *   - hybrid: deterministic checks + LLM for safe risk summary
+ *   - llm: LLM may assist risk evaluation, deterministic checks are source of truth
+ *
+ * Deterministic checks (source of truth in ALL modes):
+ *   - URL validity (https/http)
+ *   - Creator wallet format (EVM address)
+ *   - Claim status (verified/unclaimed)
+ *   - Provenance signals
+ *
+ * LLM only for safe risk summary/explanation (never for trust decisions).
  */
 
 import { z } from "zod";
-import { generateStructuredJson } from "@/lib/ai/llm-structured";
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
-import { toInternalRouteTier } from "./helpers";
+import {
+  shouldRunServiceAsDeterministic,
+  shouldRunServiceAsHybrid,
+} from "../execution-mode";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 
 const TrustVerifierSchema = z.object({
@@ -25,12 +36,13 @@ const TrustVerifierSchema = z.object({
 
 const SYSTEM_PROMPT = `You are PayLabs Trust Verifier. Evaluate the trustworthiness of a source and its creator. Check provenance signals, creator verification status, and potential risks. You cannot set prices, wallets, or execute payments. Return structured JSON only. Always include a safe_summary field.`;
 
-// Deterministic checks — no LLM
+// ─── Deterministic Checks ───────────────────────────────────
+
 function runDeterministicChecks(input: {
   source_url: string;
   creator_wallet: string | null;
   claim_status: string;
-}): { provenanceOk: boolean; creatorVerified: boolean; warnings: string[] } {
+}): { provenanceOk: boolean; creatorVerified: boolean; riskScore: number; warnings: string[] } {
   const warnings: string[] = [];
 
   // URL must be valid
@@ -59,8 +71,16 @@ function runDeterministicChecks(input: {
     warnings.push("Source is unclaimed — no creator payout");
   }
 
-  return { provenanceOk, creatorVerified, warnings };
+  // Deterministic risk score
+  let riskScore = 0.5; // baseline
+  if (!provenanceOk) riskScore = 0.9;
+  else if (!creatorVerified) riskScore = 0.6;
+  else if (input.claim_status === "verified") riskScore = 0.1;
+
+  return { provenanceOk, creatorVerified, riskScore, warnings };
 }
+
+// ─── Handler ────────────────────────────────────────────────
 
 export const trustVerifierHandler: ServiceHandler = async (
   input: ServiceHandlerInput
@@ -74,15 +94,39 @@ export const trustVerifierHandler: ServiceHandler = async (
       routeTier?: DelegatedRouteTier;
     };
 
-  // Deterministic checks first
+  // ── Deterministic checks (always runs, source of truth) ──
   const det = runDeterministicChecks({ source_url, creator_wallet, claim_status });
 
-  // LLM for safe risk summary (optional)
+  const safeSummary = `Provenance: ${det.provenanceOk ? "ok" : "fail"}, creator: ${det.creatorVerified ? "verified" : "unverified"}, risk: ${det.riskScore.toFixed(2)}. Deterministic.`;
+
+  // ── Deterministic mode: no LLM ──
+  if (shouldRunServiceAsDeterministic("trust_verifier")) {
+    return {
+      ok: true,
+      serviceName: "trust_verifier",
+      data: {
+        risk_score: det.riskScore,
+        provenance_ok: det.provenanceOk,
+        creator_verified: det.creatorVerified,
+        payout_target_hint: creator_wallet,
+        trust_warnings: det.warnings,
+        safe_trust_summary: safeSummary,
+      },
+      safeSummary,
+      settled: false,
+      error: null,
+    };
+  }
+
+  // ── Hybrid or LLM mode: use LLM for risk summary ──
+  const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
+  const { toInternalRouteTier } = await import("./helpers");
+
   const result = await generateStructuredJson<z.infer<typeof TrustVerifierSchema>>({
     agentName: "trust_verifier",
     routeTier: toInternalRouteTier(routeTier || "easy"),
     systemPrompt: SYSTEM_PROMPT,
-    userPrompt: `Source ID: ${feed_item_id}\nURL: ${source_url}\nCreator wallet: ${creator_wallet || "none"}\nClaim status: ${claim_status}\n\nDeterministic checks: provenance=${det.provenanceOk}, creator=${det.creatorVerified}, warnings=${JSON.stringify(det.warnings)}\n\nEvaluate trust. Return structured JSON only.`,
+    userPrompt: `Source ID: ${feed_item_id}\nURL: ${source_url}\nCreator wallet: ${creator_wallet || "none"}\nClaim status: ${claim_status}\n\nDeterministic checks: provenance=${det.provenanceOk}, creator=${det.creatorVerified}, risk=${det.riskScore.toFixed(2)}, warnings=${JSON.stringify(det.warnings)}\n\nEvaluate trust. Return structured JSON only.`,
     schema: TrustVerifierSchema,
   });
 
@@ -92,26 +136,30 @@ export const trustVerifierHandler: ServiceHandler = async (
       ok: true,
       serviceName: "trust_verifier",
       data: {
-        risk_score: det.creatorVerified ? 0.2 : 0.8,
+        risk_score: det.riskScore,
         provenance_ok: det.provenanceOk,
         creator_verified: det.creatorVerified,
         payout_target_hint: creator_wallet,
         trust_warnings: det.warnings,
-        safe_trust_summary: `Provenance: ${det.provenanceOk ? "ok" : "fail"}, creator: ${det.creatorVerified ? "verified" : "unverified"} (deterministic).`,
+        safe_trust_summary: `${safeSummary} (LLM failed, deterministic fallback)`,
       },
-      safeSummary: `Provenance: ${det.provenanceOk ? "ok" : "fail"}, creator: ${det.creatorVerified ? "verified" : "unverified"} (deterministic).`,
+      safeSummary: `${safeSummary} (LLM failed, deterministic fallback)`,
       settled: false,
       error: null,
     };
   }
 
+  // Hybrid: deterministic decisions are source of truth, LLM for summary only
+  // LLM: LLM may suggest risk_score, but deterministic checks override
   return {
     ok: true,
     serviceName: "trust_verifier",
     data: {
-      risk_score: result.data.risk_score,
-      provenance_ok: det.provenanceOk, // deterministic, not LLM
-      creator_verified: det.creatorVerified, // deterministic, not LLM
+      risk_score: shouldRunServiceAsHybrid("trust_verifier")
+        ? det.riskScore // hybrid: deterministic risk score is source of truth
+        : result.data.risk_score, // llm: LLM may suggest (but deterministic checks still override)
+      provenance_ok: det.provenanceOk, // always deterministic
+      creator_verified: det.creatorVerified, // always deterministic
       payout_target_hint: creator_wallet,
       trust_warnings: [...det.warnings, ...result.data.trust_warnings],
       safe_trust_summary: result.data.safe_summary,
