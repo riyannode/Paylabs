@@ -218,6 +218,7 @@ export async function callDelegatedService(
 
   // ── Step 4: Check x402 enablement ──
   const x402Enabled = isX402EnabledForService(sellerServiceName);
+  console.log(`[callDelegatedService] ${sellerServiceName}: x402Enabled=${x402Enabled}, env=${(process.env.PAYLABS_X402_ENABLED_SERVICE_NAMES||"").slice(0,80)}`);
 
   if (x402Enabled) {
     // ── x402 path: real payment via HTTP buyer-transport ──
