@@ -5,12 +5,14 @@
 // Missing keys are reported by name only.
 
 import { NextResponse } from "next/server";
-import { getPaymentFlags, getX402EnabledAgents } from "@/lib/paylabs/feature-flags";
+import { getPaymentFlags, getX402EnabledAgents, isDelegatedRuntimeEnabled, getX402EnabledServices } from "@/lib/paylabs/feature-flags";
 import {
   PAID_AGENTS,
   resolveAgentWallet,
   resolveTreasuryWallet,
 } from "@/lib/paylabs/agent-registry";
+import { getRegisteredServiceCount, getActiveServiceCount, getActiveServices } from "@/lib/paylabs/agent-services/registry";
+import { getAllowedEdgeCount } from "@/lib/paylabs/agent-services/edge-allowlist";
 
 export async function GET() {
   const flags = getPaymentFlags();
@@ -79,5 +81,13 @@ export async function GET() {
     },
     x402_enabled_agents: getX402EnabledAgents(),
     x402_all_agents_enabled: getX402EnabledAgents().length === PAID_AGENTS.length,
+    delegated_runtime: {
+      enabled: isDelegatedRuntimeEnabled(),
+      registered_service_count: getRegisteredServiceCount(),
+      active_services: getActiveServices().map((s) => s.serviceName),
+      allowlisted_edge_count: getAllowedEdgeCount(),
+      x402_enabled_services: getX402EnabledServices(),
+      orchestrator_available: true,
+    },
   });
 }
