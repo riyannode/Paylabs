@@ -75,6 +75,7 @@ export interface OrchestratorRunState {
   paymentEdges: PaymentEdge[];
   safeProgressSummaries: string[];
   delegatedRuntimeEnabled: boolean;
+  brainPlanning: BrainPlanningOutput | null;
   error: string | null;
   startedAt: string;
   completedAt: string | null;
@@ -115,6 +116,16 @@ export interface PaymentEdge {
   settlementRef: string | null;
 }
 
+// ─── LLM Brain Planning Output ─────────────────────────────
+export interface BrainPlanningOutput {
+  normalized_goal: string;
+  route_tier_hint: DelegatedRouteTier;
+  discovery_strategy: string;
+  suggested_query_variants: string[];
+  service_execution_plan: string[];
+  safe_brain_summary: string;
+}
+
 // ─── Orchestrator Output ─────────────────────────────────────
 export interface OrchestratorOutput {
   discoveryRunId: string;
@@ -127,5 +138,6 @@ export interface OrchestratorOutput {
   paymentPlan: PaymentPlanItem[];
   paymentEdges: PaymentEdge[];
   serviceEvaluations: ServiceEvaluation[];
+  brainPlanning: BrainPlanningOutput | null;
   error: string | null;
 }

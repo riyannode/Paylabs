@@ -3,7 +3,7 @@
  *
  * Single-node graph: START → tutor_intake_agent → END
  * Classifies user intent and returns route recommendation + toll quote.
- * Does NOT execute any payment. Does NOT call Runner.
+ * Does NOT execute any payment. Does NOT call the backend executor.
  *
  * Route toll payment is handled separately by:
  * POST /api/paylabs/tutor/route-toll (explicit user confirmation required)

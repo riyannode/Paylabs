@@ -6,6 +6,13 @@
  * 2. Payment Decision Layer
  * 3. Settlement & Memory Layer
  *
+ * The Brain is ALWAYS LLM-assisted. It outputs structured planning
+ * context that the deterministic controller uses for phase execution.
+ *
+ * Brain output is advisory only — the deterministic controller remains
+ * source of truth for: tier routing, service execution order, edge
+ * allowlist, budget guardrails, final status, audit-only settlement.
+ *
  * Tier behavior:
  *   easy/scout: run Discovery Planner only
  *   normal/decision: run Discovery Planner + Payment Decision Layer
@@ -15,10 +22,12 @@
  * This is the ONLY orchestrator.
  */
 
+import { z } from "zod";
 import type {
   OrchestratorInput,
   OrchestratorOutput,
   DelegatedRouteTier,
+  BrainPlanningOutput,
 } from "./types";
 import {
   createOrchestratorState,
@@ -31,6 +40,82 @@ import { runDiscoveryPlanner } from "./macro-nodes/discovery-planner";
 import { runPaymentDecision } from "./macro-nodes/payment-decision";
 import { runSettlementMemory } from "./macro-nodes/settlement-memory";
 
+// ─── Brain Planning Schema ──────────────────────────────────
+
+const BrainPlanningSchema = z.object({
+  normalized_goal: z.string(),
+  route_tier_hint: z.enum(["easy", "normal", "advanced"]),
+  discovery_strategy: z.string(),
+  suggested_query_variants: z.array(z.string()),
+  service_execution_plan: z.array(z.string()),
+  safe_brain_summary: z.string(),
+});
+
+const BRAIN_SYSTEM_PROMPT = `You are the PayLabs Brain — a planning intelligence that analyzes the user's goal and produces a structured execution plan for the delegated agent services.
+
+You output structured JSON only. You CANNOT:
+- Control wallet or signing operations
+- Choose arbitrary payment endpoints
+- Set final payment amounts
+- Bypass edge allowlists or budget guardrails
+- Approve settlements or generate payment references
+- Output raw chain-of-thought
+
+You CAN:
+- Normalize and clarify the user's goal
+- Suggest a route tier (easy/normal/advanced) based on goal complexity and budget
+- Propose a discovery strategy (what to search for, how to rank)
+- Suggest query variants for the query_builder service
+- Outline the execution plan for the 9 agent services
+- Provide a safe human-readable summary
+
+Return structured JSON only.`;
+
+// ─── LLM Brain Planning Step ────────────────────────────────
+
+type BrainPlanningResult =
+  | { ok: true; data: BrainPlanningOutput }
+  | { ok: false; error: string };
+
+async function runBrainPlanningStep(
+  input: OrchestratorInput
+): Promise<BrainPlanningResult> {
+  try {
+    const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
+
+    const result = await generateStructuredJson<z.infer<typeof BrainPlanningSchema>>({
+      agentName: "brain_planner",
+      routeTier: "normal", // Brain uses normal tier config
+      systemPrompt: BRAIN_SYSTEM_PROMPT,
+      userPrompt: `User goal: "${input.userGoal}"
+Budget: ${input.userBudgetUsdc} USDC
+Route tier: ${input.routeTier}
+Discovery run: ${input.discoveryRunId}
+
+Analyze this goal and produce a structured execution plan.`,
+      schema: BrainPlanningSchema,
+    });
+
+    if (!result.ok) {
+      return { ok: false, error: "Brain planning LLM call failed" };
+    }
+
+    return {
+      ok: true,
+      data: {
+        normalized_goal: result.data.normalized_goal,
+        route_tier_hint: result.data.route_tier_hint,
+        discovery_strategy: result.data.discovery_strategy,
+        suggested_query_variants: result.data.suggested_query_variants,
+        service_execution_plan: result.data.service_execution_plan,
+        safe_brain_summary: result.data.safe_brain_summary,
+      },
+    };
+  } catch {
+    return { ok: false, error: "Brain planning unavailable" };
+  }
+}
+
 // ─── Public API ──────────────────────────────────────────────
 
 /**
@@ -39,6 +124,8 @@ import { runSettlementMemory } from "./macro-nodes/settlement-memory";
  * This is the main entry point for the delegated runtime.
  * When PAYLABS_DELEGATED_RUNTIME_ENABLED=true, this replaces
  * the existing proposeSourcePath flow.
+ *
+ * Brain is ALWAYS LLM-assisted. Services default to deterministic.
  */
 export async function executeDelegatedDiscoveryRun(
   input: OrchestratorInput
@@ -50,6 +137,31 @@ export async function executeDelegatedDiscoveryRun(
     state,
     `Orchestrator started: tier=${input.routeTier}, budget=${input.userBudgetUsdc} USDC, phases=${phasesToRun.join(",")}`
   );
+
+  // ── Brain Planning Step (always LLM) ──
+  const brainResult = await runBrainPlanningStep(input);
+
+  if (brainResult.ok) {
+    state.brainPlanning = brainResult.data;
+    addProgressSummary(
+      state,
+      `Brain planning: strategy="${brainResult.data.discovery_strategy.slice(0, 60)}", ${brainResult.data.service_execution_plan.length} services planned, ${brainResult.data.suggested_query_variants.length} query variants`
+    );
+  } else {
+    // Check PAYLABS_LLM_REQUIRED: if true, Brain failure = fail closed
+    const { isLlmRequired } = await import("@/lib/ai/llm");
+    const llmRequired = isLlmRequired();
+
+    if (llmRequired) {
+      // Fail closed: Brain is required, cannot continue without it
+      markOrchestratorComplete(state, "failed", "Brain planning failed and PAYLABS_LLM_REQUIRED=true");
+      addProgressSummary(state, "Brain planning failed — LLM required, orchestrator stopped");
+      return buildOutput(state);
+    }
+
+    // Dev mode: Brain failure is non-fatal, continue with deterministic services
+    addProgressSummary(state, "Brain planning unavailable; continuing in deterministic service mode.");
+  }
 
   try {
     // ── Phase 1: Discovery Planner (always runs) ──
@@ -157,6 +269,7 @@ function buildOutput(state: ReturnType<typeof createOrchestratorState>): Orchest
     paymentPlan: state.paymentPlan,
     paymentEdges: state.paymentEdges,
     serviceEvaluations: state.serviceEvaluations,
+    brainPlanning: state.brainPlanning,
     error: state.error,
   };
 }

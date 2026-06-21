@@ -1,11 +1,19 @@
-export interface RunnerHealthResponse {
+/**
+ * PayLabs Backend Payment Executor — Types
+ *
+ * Types for the backend payment executor HTTP API.
+ * The executor handles Circle DCW signing and Circle Gateway x402 settlement.
+ * PayLabs never calls Circle directly — all payment execution goes through the executor.
+ */
+
+export interface PaymentExecutorHealthResponse {
   ok: boolean;
   service: string;
   time: string;
   version?: string;
 }
 
-export interface RunnerX402Quote {
+export interface PaymentExecutorX402Quote {
   resourceUrl: string;
   amountUsdc: string;
   network: string;
@@ -15,7 +23,7 @@ export interface RunnerX402Quote {
   challenge: Record<string, unknown>;
 }
 
-export interface RunnerX402PayResult {
+export interface PaymentExecutorX402PayResult {
   ok: boolean;
   paymentId?: string;
   authorizationHash?: string;
@@ -28,7 +36,7 @@ export interface RunnerX402PayResult {
   error?: string;
 }
 
-export interface RunnerPaymentReceipt {
+export interface PaymentExecutorReceipt {
   paymentId: string;
   status: string;
   amountUsdc: string;
@@ -37,11 +45,11 @@ export interface RunnerPaymentReceipt {
   explorerUrl?: string;
 }
 
-export class RunnerError extends Error {
+export class PaymentExecutorError extends Error {
   status: number;
   constructor(message: string, status: number) {
     super(message);
-    this.name = "RunnerError";
+    this.name = "PaymentExecutorError";
     this.status = status;
   }
 }

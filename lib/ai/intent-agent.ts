@@ -1,7 +1,7 @@
 /**
  * Agent 1: Intent Agent (LLM-powered)
  * Normalizes user's goal and budget into a safe planning intent.
- * No payment, no Runner, no Circle — read-only.
+ * No payment, no backend executor, no Circle — read-only.
  *
  * Calls actual LLM via invokeJsonAgent with route-specific prompt.
  * If PAYLABS_LLM_REQUIRED=true and LLM fails, returns error (no silent fallback).
