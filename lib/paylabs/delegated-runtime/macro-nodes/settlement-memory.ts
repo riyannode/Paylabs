@@ -14,11 +14,16 @@
  * Status is "payment_plan_ready", not "settled".
  */
 
-import type { OrchestratorRunState, PaymentEdge } from "../types";
-import type { ServiceName } from "../../agent-services/types";
+import type { OrchestratorRunState, PaymentEdge, ServiceName } from "../types";
 import { callDelegatedService } from "../../agent-services/call-delegated-service";
 import { addServiceEvaluation, updateBudgetSnapshot, addProgressSummary } from "../state";
 import { randomUUID } from "node:crypto";
+
+// ─── Service selection guard ──────────────────────────────────
+function isSelected(services: string[] | undefined, name: string): boolean {
+  if (!services || services.length === 0) return true;
+  return services.includes(name);
+}
 
 // ─── Run Settlement & Memory ─────────────────────────────────
 
@@ -32,7 +37,8 @@ export async function runSettlementMemory(
     final_score: number;
     risk_score: number;
     creator_wallet: string | null;
-  }>
+  }>,
+  options?: { selectedServices?: string[]; parentWalletId?: string }
 ): Promise<{
   ok: boolean;
   routedItems: Array<{
@@ -63,6 +69,10 @@ export async function runSettlementMemory(
   }
 
   // ── Payment Router via callDelegatedService ──
+  if (!isSelected(options?.selectedServices, "payment_router")) {
+    addProgressSummary(state, "Settlement: payment_router skipped (not in execution plan)");
+    return { ok: true, routedItems: [], failedItems: [], mode: "audit_only", settled: false, error: null };
+  }
   const routerResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
     buyerAgentName: "payment_decider",
@@ -70,6 +80,7 @@ export async function runSettlementMemory(
     payload: {
       approved_items: approvedItems,
     },
+    buyerWalletIdOverride: options?.parentWalletId,
   });
 
   addServiceEvaluation(state, {
