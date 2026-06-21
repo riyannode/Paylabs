@@ -153,3 +153,43 @@ export function isX402EnabledForService(serviceName: ServiceName): boolean {
   if (enabledServices.length === 0) return false;
   return enabledServices.includes(serviceName.toLowerCase());
 }
+
+// ─── Delegated Inline Execution Flags ──────────────────────
+
+/**
+ * Check if Vercel inline delegated execution is enabled.
+ * When true, API routes can run the orchestrator directly
+ * without the VPS worker / background runner.
+ * Default: false
+ */
+export function isDelegatedInlineExecutionEnabled(): boolean {
+  return process.env.PAYLABS_DELEGATED_INLINE_EXECUTION === "true";
+}
+
+/**
+ * Get the Brain (orchestrator) mode.
+ * "llm" = Brain uses LLM for planning (default, always LLM-assisted).
+ * Brain is NOT switchable to deterministic — it's always LLM.
+ * This flag exists for future "available" / "required" semantics.
+ */
+export function getBrainMode(): string {
+  return (process.env.PAYLABS_BRAIN_MODE || "llm").toLowerCase();
+}
+
+/**
+ * Get the LLM availability mode.
+ * "available" = LLM is available but not required for services.
+ * "required"  = LLM must succeed for Brain step.
+ * Default: "available"
+ */
+export function getLlmMode(): string {
+  return (process.env.PAYLABS_LLM_MODE || "available").toLowerCase();
+}
+
+/**
+ * Re-export execution mode getters for convenience.
+ */
+export {
+  getAgentServiceExecutionMode,
+  isAgentServiceLlmEnabled,
+} from "./agent-services/execution-mode";
