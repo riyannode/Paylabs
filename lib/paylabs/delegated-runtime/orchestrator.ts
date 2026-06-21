@@ -69,7 +69,17 @@ You CAN:
 - Outline the execution plan for the 9 agent services
 - Provide a safe human-readable summary
 
-Return structured JSON only.`;
+Return a JSON object with EXACTLY these fields (no extra fields, no renamed fields):
+{
+  "normalized_goal": string,          // The user's goal, cleaned up and clarified
+  "route_tier_hint": "easy" | "normal" | "advanced",  // Suggested tier based on complexity
+  "discovery_strategy": string,       // What to search for and how to rank results
+  "suggested_query_variants": string[],  // 2-4 query variants for the query_builder
+  "service_execution_plan": string[],    // Ordered list of service steps to execute
+  "safe_brain_summary": string        // Human-readable summary (no secrets, no CoT)
+}
+
+Return ONLY the JSON object. No markdown fences, no explanation before or after.`;
 
 // ─── LLM Brain Planning Step ────────────────────────────────
 
