@@ -1,7 +1,7 @@
 // POST /api/paylabs/source-payments/pay
 //
 // Pay for a source citation/unlock via the LangGraph payment flow.
-// Flow: policy_guard → payment_executor → Runner → paylabs_source_payments
+// Flow: policy_guard → payment_executor → backend executor → paylabs_source_payments
 
 import { NextRequest, NextResponse } from "next/server";
 import { executeSourcePayment } from "@/lib/ai/graph";

@@ -3,7 +3,7 @@
  * Verifies planned sources are real RSSHub-backed content.
  *
  * Two paths:
- * - PAYLABS_AGENT_TO_AGENT_PAYMENTS=true: pay specialist via Runner, call endpoint with proof
+ * - PAYLABS_AGENT_TO_AGENT_PAYMENTS=true: pay specialist via backend executor, call endpoint with proof
  * - PAYLABS_AGENT_TO_AGENT_PAYMENTS=false: local verification (current path)
  *
  * If agent-to-agent payments are enabled and payment fails, BLOCK proposal.
@@ -18,7 +18,7 @@ import { getRouteConfig } from "./route-config";
 import { getPromptsForRoute } from "./route-prompts";
 import { invokeJsonAgent } from "./llm-json";
 import { getActiveAgentProvider, validateAgentServiceBudget, hashAgentServiceInput } from "./agent-providers";
-import { executeAgentServicePurchase } from "@/lib/arclayer-runner/agent-services";
+import { executeAgentServicePurchase } from "@/lib/paylabs/payment-executor/agent-services";
 import { runSourceVerification, type VerificationInput } from "./source-verifier-service";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { z } from "zod";
@@ -232,7 +232,7 @@ async function paidSourceVerification(input: {
   // 3. Determine if payment is required (premium always requires)
   const shouldPay = tier === "premium";
 
-  // 4. Execute payment via Runner
+  // 4. Execute payment via backend executor
   const inputHash = hashAgentServiceInput(sourceMeta);
   const resourceUrl = provider.endpoint_url;
 

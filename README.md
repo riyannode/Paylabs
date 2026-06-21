@@ -16,8 +16,8 @@ flowchart LR
   Verifier --> Path[Source Path]
   Path --> User[User Approval]
   User --> Policy[Policy Guard]
-  Policy --> Runner[ArcLayer Runner]
-  Runner --> Payment[Source Payment]
+  Policy --> Executor[Backend Executor]
+  Executor --> Payment[Source Payment]
   Payment --> Creator[Creator Wallet]
 ```
 
@@ -44,7 +44,7 @@ sequenceDiagram
   participant SV as Source Verifier
   participant PG as Policy Guard
   participant PE as Payment Executor
-  participant R as ArcLayer Runner
+  participant R as Backend Executor
 
   U->>T: Chat (free)
   T->>T: Classify intent, recommend route
@@ -63,9 +63,9 @@ sequenceDiagram
 
 ## Safety Rules
 
-- **Runner is the only payment executor** — no local private keys, no direct Circle calls
-- **No fake payment IDs** — every payment must come from Runner with complete proof
-- **No fake tx hashes** — Runner returns real settlement refs
+- **Backend payment executor is the only payment path** — uses Circle DCW signer + Circle Gateway x402, no local private keys
+- **No fake payment IDs** — every payment must come from the executor with complete proof
+- **No fake tx hashes** — executor returns real Circle Gateway settlement refs
 - **No DB-only unlocks** — payment must complete before status changes
 - **No secrets in logs** — API keys, wallet keys, HMAC secrets are never printed
 - **Backend loads price/wallet/URL from DB** — LLM never sets financial fields
@@ -114,7 +114,7 @@ Single migration: `supabase/migrations/1_rsshub.sql`
 - **LangGraph** — Multi-agent workflow
 - **Supabase** — Postgres + RLS
 - **Circle Gateway** — USDC settlement on Arc
-- **ArcLayer Runner** — Payment execution boundary
+- **Backend payment executor** — Circle DCW signer + Circle Gateway x402 execution boundary
 - **RSSHub** — Open-source content source
 
 ## Development

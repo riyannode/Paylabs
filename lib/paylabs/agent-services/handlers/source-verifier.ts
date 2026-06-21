@@ -3,16 +3,18 @@
  *
  * Reuses: source_quality_verifier
  * Macro-node: payment_decision
- * Requires LLM: yes
+ * Execution modes:
+ *   - deterministic (default): URL/domain/metadata validation, DB flags
+ *   - llm: LLM-powered quality assessment
+ *   - hybrid: deterministic checks + LLM quality explanation
  *
  * Assesses source quality and credibility.
  */
 
 import { z } from "zod";
-import { generateStructuredJson } from "@/lib/ai/llm-structured";
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
-import { toInternalRouteTier } from "./helpers";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
+import { shouldRunServiceAsDeterministic } from "../execution-mode";
 
 const SourceVerifierSchema = z.object({
   quality_score: z.number().min(0).max(1),
@@ -22,7 +24,116 @@ const SourceVerifierSchema = z.object({
   safe_summary: z.string(),
 });
 
-const SYSTEM_PROMPT = `You are PayLabs Source Verifier. Assess the quality and credibility of a source. Check for red flags, domain authority, content freshness, and attribution clarity. You cannot set prices, wallets, or execute payments. Return structured JSON only. Always include a safe_summary field.`;
+// ─── Deterministic Source Verification ──────────────────────
+
+const TRUSTED_DOMAINS = new Set([
+  "arxiv.org", "github.com", "nature.com", "science.org",
+  "ieee.org", "acm.org", "reuters.com", "apnews.com",
+  "bbc.com", "bbc.co.uk", "nytimes.com", "washingtonpost.com",
+  "theguardian.com", "economist.com", "wired.com", "arstechnica.com",
+  "techcrunch.com", "verge.com", "medium.com", "substack.com",
+]);
+
+const SUSPICIOUS_PATTERNS = [
+  /bit\.ly|tinyurl|goo\.gl/i,  // URL shorteners
+  /\.xyz$|\.top$|\.click$/i,    // suspicious TLDs
+  /ad[s]?[\.\-]/i,              // ad domains
+  /clickbait|spam|fake/i,        // obvious red flags
+];
+
+function runDeterministicSourceVerifier(
+  sourceUrl: string,
+  sourceTitle: string,
+  feedItemId?: string
+): {
+  quality_score: number;
+  credibility_score: number;
+  red_flags: string[];
+  confidence: number;
+} {
+  const redFlags: string[] = [];
+  let qualityScore = 0.5; // neutral baseline
+  let credibilityScore = 0.5;
+
+  // URL validation
+  let url: URL;
+  try {
+    url = new URL(sourceUrl);
+  } catch {
+    return {
+      quality_score: 0,
+      credibility_score: 0,
+      red_flags: ["Invalid URL format"],
+      confidence: 0.9,
+    };
+  }
+
+  // Protocol check
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    redFlags.push("Non-HTTP protocol");
+    qualityScore -= 0.3;
+  }
+
+  // HTTPS bonus
+  if (url.protocol === "https:") {
+    credibilityScore += 0.1;
+  }
+
+  // Domain trust
+  const domain = url.hostname.replace(/^www\./, "").toLowerCase();
+  if (TRUSTED_DOMAINS.has(domain)) {
+    credibilityScore += 0.3;
+    qualityScore += 0.2;
+  }
+
+  // Suspicious patterns
+  for (const pattern of SUSPICIOUS_PATTERNS) {
+    if (pattern.test(sourceUrl) || pattern.test(domain)) {
+      redFlags.push(`Suspicious pattern: ${pattern.source}`);
+      qualityScore -= 0.2;
+      credibilityScore -= 0.2;
+    }
+  }
+
+  // Title quality signals
+  if (sourceTitle) {
+    const titleLen = sourceTitle.length;
+    if (titleLen < 10) {
+      redFlags.push("Very short title");
+      qualityScore -= 0.1;
+    }
+    if (titleLen > 200) {
+      redFlags.push("Very long title");
+      qualityScore -= 0.05;
+    }
+    // ALL CAPS title
+    if (sourceTitle === sourceTitle.toUpperCase() && sourceTitle.length > 5) {
+      redFlags.push("ALL CAPS title");
+      qualityScore -= 0.1;
+    }
+  }
+
+  // Feed item ID present = exists in DB
+  if (feedItemId) {
+    credibilityScore += 0.1;
+  }
+
+  // Clamp scores
+  qualityScore = Math.max(0, Math.min(1, qualityScore));
+  credibilityScore = Math.max(0, Math.min(1, credibilityScore));
+
+  // Confidence based on how many checks we could run
+  const confidence = redFlags.length === 0 ? 0.7 : 0.5;
+
+  return {
+    quality_score: Math.round(qualityScore * 100) / 100,
+    credibility_score: Math.round(credibilityScore * 100) / 100,
+    red_flags: redFlags,
+    confidence,
+  };
+}
+
+// ─── Handler ────────────────────────────────────────────────
 
 export const sourceVerifierHandler: ServiceHandler = async (
   input: ServiceHandlerInput
@@ -34,6 +145,35 @@ export const sourceVerifierHandler: ServiceHandler = async (
     routeTier?: DelegatedRouteTier;
   };
 
+  // Deterministic mode (default)
+  if (shouldRunServiceAsDeterministic("source_verifier")) {
+    const det = runDeterministicSourceVerifier(
+      source_url || "",
+      source_title || "",
+      feed_item_id
+    );
+    return {
+      ok: true,
+      serviceName: "source_verifier",
+      data: {
+        quality_score: det.quality_score,
+        credibility_score: det.credibility_score,
+        red_flags: det.red_flags,
+        confidence: det.confidence,
+        safe_quality_summary: `Quality: ${det.quality_score}, credibility: ${det.credibility_score}, flags: ${det.red_flags.length}. Deterministic verification.`,
+      },
+      safeSummary: `Quality: ${det.quality_score}, credibility: ${det.credibility_score}, flags: ${det.red_flags.length}. Deterministic verification.`,
+      settled: false,
+      error: null,
+    };
+  }
+
+  // LLM mode
+  const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
+  const { toInternalRouteTier } = await import("./helpers");
+
+  const SYSTEM_PROMPT = `You are PayLabs Source Verifier. Assess the quality and credibility of a source. Check for red flags, domain authority, content freshness, and attribution clarity. You cannot set prices, wallets, or execute payments. Return structured JSON only. Always include a safe_summary field.`;
+
   const result = await generateStructuredJson<z.infer<typeof SourceVerifierSchema>>({
     agentName: "source_verifier",
     routeTier: toInternalRouteTier(routeTier || "easy"),
@@ -43,13 +183,25 @@ export const sourceVerifierHandler: ServiceHandler = async (
   });
 
   if (!result.ok) {
+    // Fallback: deterministic
+    const det = runDeterministicSourceVerifier(
+      source_url || "",
+      source_title || "",
+      feed_item_id
+    );
     return {
-      ok: false,
+      ok: true,
       serviceName: "source_verifier",
-      data: null,
-      safeSummary: `Source verifier failed: ${result.error}`,
+      data: {
+        quality_score: det.quality_score,
+        credibility_score: det.credibility_score,
+        red_flags: det.red_flags,
+        confidence: det.confidence,
+        safe_quality_summary: `Quality: ${det.quality_score}, credibility: ${det.credibility_score} (LLM failed, deterministic fallback).`,
+      },
+      safeSummary: `Quality: ${det.quality_score}, credibility: ${det.credibility_score} (LLM failed, deterministic fallback).`,
       settled: false,
-      error: result.error,
+      error: null,
     };
   }
 

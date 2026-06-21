@@ -1,12 +1,12 @@
 /**
- * ArcLayer Runner adapter for agent-to-agent service payments.
- * All payment execution goes through Runner — never local keys, never Circle directly.
+ * PayLabs Backend Payment Executor — Agent-to-Agent Service Payments
  *
- * RFB 03: Agent-to-Agent Nanopayment Networks
+ * All payment execution goes through the executor — never local keys, never Circle directly.
+ * Uses Circle DCW signer + Circle Gateway x402 under the hood.
  */
 
-import { runnerFetch } from "./client";
-import { RunnerError } from "./types";
+import { executorFetch } from "./client";
+import { PaymentExecutorError } from "./types";
 
 export interface AgentServicePurchaseInput {
   buyerAgentId: string;
@@ -28,9 +28,10 @@ export interface AgentServicePurchaseResult {
 }
 
 /**
- * Execute agent-to-agent service purchase through ArcLayer Runner.
+ * Execute agent-to-agent service purchase through the backend payment executor.
  * This is the ONLY path for agent-to-agent payments.
  *
+ * Uses Circle DCW signer for signing and Circle Gateway x402 for settlement.
  * Never uses local private keys.
  * Never generates fallback payment IDs.
  * Returns structured result — caller must validate proof completeness.
@@ -60,8 +61,8 @@ export async function executeAgentServicePurchase(
   const idempotencyKey = `agent-service:${input.buyerAgentId}:${input.providerAgentId}:${input.inputHash}:${input.amountUsdc}`;
 
   try {
-    // Use existing Runner fetch boundary — same HMAC auth, same trust boundary
-    const result = await runnerFetch<AgentServicePurchaseResult>(
+    // Use executor fetch boundary — same HMAC auth, same trust boundary
+    const result = await executorFetch<AgentServicePurchaseResult>(
       "POST",
       "/x402/pay",
       {
@@ -83,13 +84,13 @@ export async function executeAgentServicePurchase(
 
     // Validate proof completeness
     if (!result.ok) {
-      return { ok: false, error: result.error || "Runner payment failed" };
+      return { ok: false, error: result.error || "Payment execution failed" };
     }
     if (!result.paymentId) {
-      return { ok: false, error: "Runner returned no paymentId — proof incomplete" };
+      return { ok: false, error: "Executor returned no paymentId — proof incomplete" };
     }
     if (!result.paymentRef && !result.settlementRef) {
-      return { ok: false, error: "Runner returned no paymentRef or settlementRef — proof incomplete" };
+      return { ok: false, error: "Executor returned no paymentRef or settlementRef — proof incomplete" };
     }
 
     return result;
