@@ -226,6 +226,11 @@ export async function callDelegatedService(
 
   // ── Step 4: Check x402 enablement ──
   const x402Enabled = isX402EnabledForService(sellerServiceName);
+  {
+    const rawEnv = (process.env.PAYLABS_X402_ENABLED_SERVICE_NAMES || "").trim();
+    const runtimeEnabled = process.env.PAYLABS_DELEGATED_RUNTIME_ENABLED;
+    console.log(`[x402-diag] ${sellerServiceName}: x402Enabled=${x402Enabled}, runtimeEnabled=${runtimeEnabled}, envLen=${rawEnv.length}, hasOverride=${!!input.buyerWalletIdOverride}, buyerName=${buyerAgentName}`);
+  }
   if (!x402Enabled) {
     const rawEnv = (process.env.PAYLABS_X402_ENABLED_SERVICE_NAMES || "").trim();
     const runtimeEnabled = process.env.PAYLABS_DELEGATED_RUNTIME_ENABLED;
