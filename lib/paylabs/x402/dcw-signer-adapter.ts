@@ -75,12 +75,31 @@ export function createDcwSigner(): DcwSigner {
         (_key, value) => (typeof value === "bigint" ? value.toString() : value)
       );
 
-      const response = await client.signTypedData({
-        walletId: input.walletId,
-        data: dataString,
-      });
+      let response: unknown;
+      try {
+        response = await client.signTypedData({
+          walletId: input.walletId,
+          data: dataString,
+        });
+      } catch (e: unknown) {
+        // Log full DCW API error for debugging (no secrets)
+        const errDetail = e instanceof Error ? e.message : String(e);
+        const axiosResp = (e as Record<string, unknown>)?.response;
+        const respData = axiosResp ? (axiosResp as Record<string, unknown>)?.data : undefined;
+        console.error("[dcw-signer] signTypedData FAILED:", {
+          error: errDetail,
+          responseData: respData ? JSON.stringify(respData).slice(0, 500) : "none",
+          dataLength: dataString.length,
+          primaryType: input.primaryType,
+          messageKeys: Object.keys(input.message || {}),
+          typesKeys: Object.keys(input.types || {}),
+        });
+        throw e;
+      }
 
-      const signature = response?.data?.signature;
+      const signature = (response as Record<string, unknown>)?.data
+        ? ((response as Record<string, unknown>).data as Record<string, unknown>)?.signature
+        : undefined;
       if (!signature) {
         throw new Error("DCW signTypedData returned no signature");
       }
