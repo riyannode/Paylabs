@@ -13,7 +13,7 @@
 // PAYLABS_AGENT_NANOPAYMENTS_ENABLED=true, initializes DCW signer
 // for real x402 service edge payments.
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
