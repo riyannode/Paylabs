@@ -2,6 +2,7 @@
 //
 // Returns nanopayment receipt detail.
 // Read-only — no payment movement.
+// Only returns safe fields — no raw x402 headers, signatures, or secrets.
 
 import { NextRequest, NextResponse } from "next/server";
 import { getNanopaymentByReceipt } from "@/lib/paylabs/nanopayment-service";
@@ -31,18 +32,14 @@ export async function GET(
   return NextResponse.json({
     receipt_id: row.receipt_id,
     discovery_run_id: row.discovery_run_id,
+    agent_name: row.agent_name,
     payer_agent: row.payer_agent,
     payee_agent: row.payee_agent,
-    agent_name: row.agent_name,
     capability: row.capability,
     route_tier: row.route_tier,
-    settlement_mode: row.settlement_mode,
     amount_usdc: row.price_usdc.toString(),
-    agent_wallet: row.agent_wallet,
     payment_route: row.payment_route,
     payment_kind: row.payment_kind,
-    x402_payment_ref: row.x402_payment_ref,
-    x402_settlement_ref: row.x402_settlement_ref,
     status: row.status,
     created_at: row.created_at,
   });
