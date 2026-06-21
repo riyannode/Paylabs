@@ -409,12 +409,8 @@ export default async function DashboardPage() {
                   <th>Payer</th>
                   <th>Payee</th>
                   <th>Route Tier</th>
-                  <th>Settlement</th>
                   <th>Amount</th>
                   <th>Status</th>
-                  <th>Receipt</th>
-                  <th>Payment Ref</th>
-                  <th>Settlement Ref</th>
                 </tr>
               </thead>
               <tbody>
@@ -426,11 +422,6 @@ export default async function DashboardPage() {
                     <td className="data-mono">{short(r.payer_agent)}</td>
                     <td className="data-mono">{short(r.payee_agent)}</td>
                     <td>{r.route_tier}</td>
-                    <td>
-                      <span className={`badge ${r.settlement_mode === "nano" ? "badge-success" : "badge-warning"}`}>
-                        {r.settlement_mode}
-                      </span>
-                    </td>
                     <td className="data-mono">{usdc(r.price_usdc)}</td>
                     <td>
                       <span className={`badge ${
@@ -442,19 +433,6 @@ export default async function DashboardPage() {
                       }`}>
                         {r.status}
                       </span>
-                    </td>
-                    <td>
-                      {r.receipt_url ? (
-                        <a href={r.receipt_url} className="data-mono" style={{ fontSize: 11, color: "var(--accent, #6366f1)" }}>
-                          {short(r.receipt_id)}
-                        </a>
-                      ) : "—"}
-                    </td>
-                    <td className="data-mono" style={{ fontSize: 11 }}>
-                      {r.x402_payment_ref ? short(r.x402_payment_ref) : "—"}
-                    </td>
-                    <td className="data-mono" style={{ fontSize: 11 }}>
-                      {r.x402_settlement_ref ? short(r.x402_settlement_ref) : "—"}
                     </td>
                   </tr>
                 ))}
