@@ -57,15 +57,10 @@ export async function runPaymentDecision(
   totalEstimatedSpend: number;
   error: string | null;
 }> {
-  if (candidates.length === 0) {
-    return {
-      ok: true,
-      approvedItems: [],
-      skippedItems: [],
-      totalEstimatedSpend: 0,
-      error: null,
-    };
-  }
+  // Do NOT short-circuit on empty candidates — child services still need
+  // to be called and paid via x402 even when discovery returned 0 results.
+  // This ensures the payment graph is complete for validation and future
+  // services that may have meaningful behavior with empty input.
 
   // ── Step 1: Intent Matcher ──
   if (!isSelected(options?.selectedServices, "intent_matcher")) {
