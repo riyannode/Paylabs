@@ -164,7 +164,12 @@ export async function POST(req: NextRequest) {
           worker_used: false,
           phases_completed: result.phasesCompleted,
           brain_planning: result.brainPlanning
-            ? { safe_summary: result.brainPlanning.safe_brain_summary }
+            ? {
+                safe_summary: result.brainPlanning.safe_brain_summary,
+                selected_macro_nodes: result.brainPlanning.selected_macro_nodes,
+                selected_services: result.brainPlanning.selected_services,
+                planned_cost_usdc: result.brainPlanning.planned_cost_usdc,
+              }
             : null,
           service_evaluations: result.serviceEvaluations.map((e) => ({
             service: e.serviceName,
@@ -196,6 +201,13 @@ export async function POST(req: NextRequest) {
             safe_summary: result.brainPlanning.safe_brain_summary,
             discovery_strategy: result.brainPlanning.discovery_strategy,
             query_variants: result.brainPlanning.suggested_query_variants,
+            // ── Deterministic quote planning ──
+            selected_macro_nodes: result.brainPlanning.selected_macro_nodes,
+            selected_services: result.brainPlanning.selected_services,
+            max_registry_checks: result.brainPlanning.max_registry_checks,
+            max_source_accesses: result.brainPlanning.max_source_accesses,
+            planned_cost_usdc: result.brainPlanning.planned_cost_usdc,
+            planned_cost_breakdown: result.brainPlanning.planned_cost_breakdown,
           }
         : null,
       payment_plan: result.paymentPlan,

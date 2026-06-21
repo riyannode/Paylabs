@@ -22,7 +22,7 @@
  */
 
 import { createRequire } from "node:module";
-import type { Address, Hex } from "viem";
+import { getAddress, type Address, type Hex } from "viem";
 
 // CJS interop — @circle-fin/x402-batching has CJS entry
 const _require = createRequire(import.meta.url);
@@ -257,10 +257,24 @@ export async function callPaidSeller(
     return { ok: false, error: `Buyer wallet has invalid address: ${buyerAddress}` };
   }
 
+  // Checksum the address — DCW API may return lowercase, but
+  // BatchEvmScheme.signAuthorization() uses getAddress() which checksums.
+  // The signed message must use the same checksummed form.
+  let checksummedBuyerAddress: Address;
+  try {
+    checksummedBuyerAddress = getAddress(buyerAddress);
+  } catch {
+    return { ok: false, error: `Buyer wallet address is not a valid EVM address: ${buyerAddress}` };
+  }
+
   // ── Step 5: Create payment payload via BatchEvmScheme ────
 
   const signer: BatchEvmSignerLike = {
-    address: buyerAddress.toLowerCase() as Address,
+    // MUST be checksummed — BatchEvmScheme.signAuthorization() calls
+    // getAddress() on signer.address, producing a checksummed from-address
+    // in the EIP-712 message. If we pass lowercase, the signed message
+    // differs from what Gateway verifies.
+    address: checksummedBuyerAddress,
     signTypedData: async (params) => {
       const signature = await dcwSigner.signTypedData({
         walletId: buyerWalletId,
