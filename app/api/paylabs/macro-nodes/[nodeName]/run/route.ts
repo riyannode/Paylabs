@@ -6,10 +6,10 @@
  * Payment graph: Brain → macro-node → child services
  *
  * DUAL MODE:
- * - x402 enabled: 402 challenge → verify → settle → execute macro-node runner
- * - audit-only: execute macro-node runner directly
+ * - x402 enabled: 402 challenge → verify → settle → execute macro-node graph
+ * - audit-only: execute macro-node graph directly
  *
- * After settlement, the macro-node runner executes its child services.
+ * After settlement, the macro-node LangGraph executes its child services.
  * Child services are paid by the macro-node's buyer wallet (not Brain's).
  */
 
@@ -27,10 +27,7 @@ import {
   type X402ChallengeRequirements,
 } from "@/lib/paylabs/x402/seller-challenge";
 import { isDelegatedRuntimeEnabled } from "@/lib/paylabs/feature-flags";
-import { createOrchestratorState, addProgressSummary } from "@/lib/paylabs/delegated-runtime/state";
-import { runDiscoveryPlanner } from "@/lib/paylabs/delegated-runtime/macro-nodes/discovery-planner";
-import { runPaymentDecision } from "@/lib/paylabs/delegated-runtime/macro-nodes/payment-decision";
-import { runSettlementMemory } from "@/lib/paylabs/delegated-runtime/macro-nodes/settlement-memory";
+import { createOrchestratorState, addProgressSummary, addServiceEvaluation } from "@/lib/paylabs/delegated-runtime/state";
 import type { MacroNodePhase, OrchestratorInput } from "@/lib/paylabs/delegated-runtime/types";
 
 export async function POST(
@@ -71,7 +68,6 @@ export async function POST(
     payload?: Record<string, unknown>;
   };
 
-  // Payload from upstream (Brain/previous macro-node) for data forwarding
   const nodePayload: Record<string, unknown> = payload || {};
 
   if (!discoveryRunId || !userGoal || !routeTier) {
@@ -160,7 +156,7 @@ export async function POST(
   }, (settleResult.paymentMeta as Record<string, unknown>) ?? null, nodePayload);
 }
 
-// ─── Execute Macro-Node Runner ───────────────────────────────
+// ─── Execute Macro-Node via LangGraph ────────────────────────
 
 async function executeMacroNode(
   nodeName: MacroNodePhase,
@@ -171,7 +167,6 @@ async function executeMacroNode(
   const nodeConfig = getMacroNodeConfig(nodeName);
   const state = createOrchestratorState(input);
 
-  // Resolve this node's buyer wallet ID — child services use it
   let parentWalletId: string | undefined;
   try {
     parentWalletId = resolveNodeBuyerWalletId(nodeConfig);
@@ -180,21 +175,62 @@ async function executeMacroNode(
   }
 
   const selectedServices = nodeConfig.childServices;
-  const opts = { selectedServices, parentWalletId };
 
   try {
     let result: unknown;
 
     if (nodeName === "discovery_planner") {
-      result = await runDiscoveryPlanner(state, opts);
+      const { runDiscoveryPlannerGraph } = await import("@/lib/paylabs/langgraph/macro-nodes/discovery-planner-graph");
+      const graphResult = await runDiscoveryPlannerGraph({
+        discoveryRunId: input.discoveryRunId,
+        userGoal: input.userGoal,
+        routeTier: input.routeTier,
+        userBudgetUsdc: input.userBudgetUsdc,
+        selectedServices,
+        parentWalletId,
+      });
+      for (const ev of graphResult.serviceEvaluations) {
+        addServiceEvaluation(state, ev);
+      }
+      result = { ok: graphResult.ok, rankedCandidates: graphResult.rankedCandidates, easySummary: graphResult.easySummary };
+
     } else if (nodeName === "payment_decision") {
-      // Payload from upstream: { ranked_candidates } from discovery_planner
-      const candidates = (payload?.ranked_candidates || []) as Parameters<typeof runPaymentDecision>[1];
-      result = await runPaymentDecision(state, candidates, opts);
+      const { runPaymentDecisionGraph } = await import("@/lib/paylabs/langgraph/macro-nodes/payment-decision-graph");
+      const candidates = (payload?.ranked_candidates || []) as Array<{
+        feed_item_id: string; source_url?: string; title: string; publisher: string; rank: number; relevance_score: number;
+      }>;
+      const graphResult = await runPaymentDecisionGraph({
+        discoveryRunId: input.discoveryRunId,
+        userGoal: input.userGoal,
+        routeTier: input.routeTier,
+        userBudgetUsdc: input.userBudgetUsdc,
+        candidates,
+        selectedServices,
+        parentWalletId,
+      });
+      for (const ev of graphResult.serviceEvaluations) {
+        addServiceEvaluation(state, ev);
+      }
+      result = { ok: graphResult.ok, approvedItems: graphResult.approvedItems, skippedItems: graphResult.skippedItems, normalSummary: graphResult.normalSummary };
+
     } else if (nodeName === "settlement_memory") {
-      // Payload from upstream: { approved_items } from payment_decision
-      const approvedItems = (payload?.approved_items || []) as Parameters<typeof runSettlementMemory>[1];
-      result = await runSettlementMemory(state, approvedItems, opts);
+      const { runSettlementMemoryGraph } = await import("@/lib/paylabs/langgraph/macro-nodes/settlement-memory-graph");
+      const approvedItems = (payload?.approved_items || []) as Array<{
+        feed_item_id: string; source_url: string; source_title: string; approved_price_usdc: number; final_score: number; risk_score: number; creator_wallet: string | null;
+      }>;
+      const graphResult = await runSettlementMemoryGraph({
+        discoveryRunId: input.discoveryRunId,
+        userGoal: input.userGoal,
+        routeTier: input.routeTier,
+        userBudgetUsdc: input.userBudgetUsdc,
+        approvedItems,
+        selectedServices,
+        parentWalletId,
+      });
+      for (const ev of graphResult.serviceEvaluations) {
+        addServiceEvaluation(state, ev);
+      }
+      result = { ok: graphResult.ok, routedItems: graphResult.routedItems, failedItems: graphResult.failedItems, advancedSummary: graphResult.advancedSummary };
     }
 
     return NextResponse.json({
@@ -207,7 +243,6 @@ async function executeMacroNode(
       data: result,
       childServices: selectedServices,
       paymentMeta,
-      // Surface child service payment details for orchestration payment graph
       serviceEvaluations: state.serviceEvaluations.map((e) => ({
         serviceName: e.serviceName,
         status: e.status,
