@@ -73,9 +73,13 @@ Return structured JSON only.`;
 
 // ─── LLM Brain Planning Step ────────────────────────────────
 
+type BrainPlanningResult =
+  | { ok: true; data: BrainPlanningOutput }
+  | { ok: false; error: string };
+
 async function runBrainPlanningStep(
   input: OrchestratorInput
-): Promise<BrainPlanningOutput | null> {
+): Promise<BrainPlanningResult> {
   try {
     const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
 
@@ -93,21 +97,22 @@ Analyze this goal and produce a structured execution plan.`,
     });
 
     if (!result.ok) {
-      // Brain LLM failure is non-fatal — orchestrator continues with defaults
-      return null;
+      return { ok: false, error: "Brain planning LLM call failed" };
     }
 
     return {
-      normalized_goal: result.data.normalized_goal,
-      route_tier_hint: result.data.route_tier_hint,
-      discovery_strategy: result.data.discovery_strategy,
-      suggested_query_variants: result.data.suggested_query_variants,
-      service_execution_plan: result.data.service_execution_plan,
-      safe_brain_summary: result.data.safe_brain_summary,
+      ok: true,
+      data: {
+        normalized_goal: result.data.normalized_goal,
+        route_tier_hint: result.data.route_tier_hint,
+        discovery_strategy: result.data.discovery_strategy,
+        suggested_query_variants: result.data.suggested_query_variants,
+        service_execution_plan: result.data.service_execution_plan,
+        safe_brain_summary: result.data.safe_brain_summary,
+      },
     };
   } catch {
-    // Brain planning failure is non-fatal
-    return null;
+    return { ok: false, error: "Brain planning unavailable" };
   }
 }
 
@@ -134,23 +139,28 @@ export async function executeDelegatedDiscoveryRun(
   );
 
   // ── Brain Planning Step (always LLM) ──
-  const brainOutput = await runBrainPlanningStep(input);
-  state.brainPlanning = brainOutput;
+  const brainResult = await runBrainPlanningStep(input);
 
-  if (brainOutput) {
+  if (brainResult.ok) {
+    state.brainPlanning = brainResult.data;
     addProgressSummary(
       state,
-      `Brain planning: strategy="${brainOutput.discovery_strategy.slice(0, 60)}", ${brainOutput.service_execution_plan.length} services planned, ${brainOutput.suggested_query_variants.length} query variants`
+      `Brain planning: strategy="${brainResult.data.discovery_strategy.slice(0, 60)}", ${brainResult.data.service_execution_plan.length} services planned, ${brainResult.data.suggested_query_variants.length} query variants`
     );
-    // Brain may suggest a different tier, but controller uses the original
-    if (brainOutput.route_tier_hint !== input.routeTier) {
-      addProgressSummary(
-        state,
-        `Brain suggested tier "${brainOutput.route_tier_hint}" but controller uses original tier "${input.routeTier}"`
-      );
-    }
   } else {
-    addProgressSummary(state, "Brain planning: skipped (LLM unavailable or failed)");
+    // Check PAYLABS_LLM_REQUIRED: if true, Brain failure = fail closed
+    const { isLlmRequired } = await import("@/lib/ai/llm");
+    const llmRequired = isLlmRequired();
+
+    if (llmRequired) {
+      // Fail closed: Brain is required, cannot continue without it
+      markOrchestratorComplete(state, "failed", "Brain planning failed and PAYLABS_LLM_REQUIRED=true");
+      addProgressSummary(state, "Brain planning failed — LLM required, orchestrator stopped");
+      return buildOutput(state);
+    }
+
+    // Dev mode: Brain failure is non-fatal, continue with deterministic services
+    addProgressSummary(state, "Brain planning unavailable; continuing in deterministic service mode.");
   }
 
   try {

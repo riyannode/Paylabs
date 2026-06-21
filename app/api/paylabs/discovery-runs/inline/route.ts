@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
       queued_at: now,
       started_at: now,
       budget_usdc: budgetUsdc,
-      runner_id: "vercel-inline",
+      runner_id: "vercel-inline", // DB column kept for schema compatibility
       worker_heartbeat_at: now,
     })
     .select("id")
@@ -134,7 +134,9 @@ export async function POST(req: NextRequest) {
         candidate_count: result.serviceEvaluations?.length || 0,
         error_summary: result.error ? result.error.slice(0, 500) : null,
         agent_trace: {
-          runner: "vercel-inline",
+          execution_origin: "vercel_inline",
+          execution_mode: "inline_delegated",
+          worker_used: false,
           phases_completed: result.phasesCompleted,
           brain_planning: result.brainPlanning
             ? { safe_summary: result.brainPlanning.safe_brain_summary }
@@ -154,6 +156,9 @@ export async function POST(req: NextRequest) {
       discovery_run_id: discoveryRunId,
       status: result.status,
       route_tier: result.routeTier,
+      execution_origin: "vercel_inline",
+      execution_mode: "inline_delegated",
+      worker_used: false,
       phases_completed: result.phasesCompleted,
       brain_planning: result.brainPlanning
         ? {
@@ -170,7 +175,9 @@ export async function POST(req: NextRequest) {
       error: result.error,
     });
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
+    // Sanitize: never expose raw stack traces, prompts, or internal details
+    const rawMsg = e instanceof Error ? e.message : String(e);
+    const safeMsg = rawMsg.length > 200 ? rawMsg.slice(0, 200) + "..." : rawMsg;
 
     // Mark run as failed
     await supabaseAdmin()
@@ -178,7 +185,7 @@ export async function POST(req: NextRequest) {
       .update({
         status: "failed",
         completed_at: new Date().toISOString(),
-        error_summary: `Inline execution failed: ${msg}`.slice(0, 500),
+        error_summary: `Inline execution failed: ${safeMsg}`.slice(0, 500),
       })
       .eq("id", discoveryRunId);
 
@@ -186,7 +193,7 @@ export async function POST(req: NextRequest) {
       {
         ok: false,
         discovery_run_id: discoveryRunId,
-        error: `Inline execution failed: ${msg}`,
+        error: `Inline execution failed: ${safeMsg}`,
       },
       { status: 500 }
     );
