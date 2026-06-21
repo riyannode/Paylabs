@@ -11,6 +11,7 @@ import type {
   BudgetSnapshot,
   MacroNodePhase,
   ServiceEvaluation,
+  BrainPlanningOutput,
 } from "./types";
 import type { ServiceName } from "../agent-services/types";
 
@@ -59,6 +60,7 @@ export function createOrchestratorState(input: OrchestratorInput): OrchestratorR
     paymentEdges: [],
     safeProgressSummaries: [],
     delegatedRuntimeEnabled: true,
+    brainPlanning: null,
     error: null,
     startedAt: new Date().toISOString(),
     completedAt: null,

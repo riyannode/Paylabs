@@ -14,6 +14,7 @@ export type {
   ConsensusDecision,
   PaymentPlanItem,
   PaymentEdge,
+  BrainPlanningOutput,
 } from "./types";
 
 export { executeDelegatedDiscoveryRun } from "./orchestrator";
