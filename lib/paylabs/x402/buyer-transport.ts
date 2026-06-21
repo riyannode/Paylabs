@@ -309,7 +309,7 @@ export async function callPaidSeller(
   // BatchEvmScheme only returns {x402Version, payload} — we must add resource + accepted
   const fullPaymentPayload = {
     ...paymentPayload,
-    resource: (challenge as Record<string, unknown>).resource,
+    resource: (challenge as unknown as Record<string, unknown>).resource,
     accepted: gatewayReq,
   };
 
