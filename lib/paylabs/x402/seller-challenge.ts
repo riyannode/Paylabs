@@ -193,6 +193,14 @@ export async function verifyAndSettlePayment(
   try {
     const verifyResult = await facilitator.verify(paymentPayload, requirements);
     if (!verifyResult?.isValid) {
+      console.error("[seller-challenge] verify FAILED:", {
+        isValid: verifyResult?.isValid,
+        invalidReason: verifyResult?.invalidReason,
+        payer: verifyResult?.payer,
+        amount: requirements.amount,
+        network: requirements.network,
+        payTo: requirements.payTo,
+      });
       return {
         ok: false,
         settled: false,
