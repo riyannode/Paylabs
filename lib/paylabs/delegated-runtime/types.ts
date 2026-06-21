@@ -43,6 +43,10 @@ export interface BudgetSnapshot {
   spentUsdc: number;
   remainingUsdc: number;
   serviceSpend: Record<ServiceName, number>;
+  /** Fees actually settled via x402 (real spend) */
+  settledServiceFeesUsdc: number;
+  /** Fees estimated/committed but not settled (audit-only) */
+  estimatedServiceFeesUsdc: number;
 }
 
 // ─── Service Evaluation ──────────────────────────────────────
@@ -57,6 +61,17 @@ export interface ServiceEvaluation {
   startedAt: string | null;
   completedAt: string | null;
   error: string | null;
+  /** Whether payment was settled via x402 (true) or audit-only (false) */
+  settled: boolean;
+  /** Execution mode for this evaluation */
+  mode: "audit_only" | "x402";
+  /** Safe payment metadata (only present when settled=true). Never stores raw signatures. */
+  paymentMeta?: {
+    amountAtomic: string;
+    payTo: string;
+    network: string;
+    x402Version: number;
+  };
 }
 
 // ─── Orchestrator Run State ──────────────────────────────────

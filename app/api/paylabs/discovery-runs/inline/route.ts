@@ -9,8 +9,9 @@
 // directly (with LLM Brain + deterministic services), and returns
 // the full structured result.
 //
-// This route does NOT modify the existing quote/enqueue flow.
-// Service endpoints remain audit-only. No real delegated x402.
+// When PAYLABS_X402_ENABLED_SERVICE_NAMES is set and
+// PAYLABS_AGENT_NANOPAYMENTS_ENABLED=true, initializes DCW signer
+// for real x402 service edge payments.
 
 export const maxDuration = 30;
 
@@ -19,6 +20,8 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import {
   isDelegatedRuntimeEnabled,
   isDelegatedInlineExecutionEnabled,
+  getX402EnabledServices,
+  getPaymentFlags,
 } from "@/lib/paylabs/feature-flags";
 import { isValidExternalTier, DEFAULT_EXTERNAL_TIER } from "@/lib/paylabs/route-tier";
 import type { ExternalRouteTier } from "@/lib/paylabs/route-tier";
@@ -105,6 +108,24 @@ export async function POST(req: NextRequest) {
 
   // ── Run orchestrator directly ─────────────────────────────
   try {
+    // ── Inject DCW signer if x402 service edges are enabled ──
+    const paymentFlags = getPaymentFlags();
+    const x402Services = getX402EnabledServices();
+    const needsDcwSigner =
+      paymentFlags.agentNanopaymentsEnabled && x402Services.length > 0;
+
+    if (needsDcwSigner) {
+      const { setDcwSigner, getDcwSigner } = await import(
+        "@/lib/paylabs/paid-agent-node"
+      );
+      if (!getDcwSigner()) {
+        const { createDcwSigner } = await import(
+          "@/lib/paylabs/x402/dcw-signer-adapter"
+        );
+        setDcwSigner(createDcwSigner());
+      }
+    }
+
     const { executeDelegatedDiscoveryRun } = await import(
       "@/lib/paylabs/delegated-runtime/orchestrator"
     );
@@ -126,6 +147,10 @@ export async function POST(req: NextRequest) {
       ? result.paymentPlan.length > 0 ? "paid_path_available" : "discovery_only"
       : "failed";
 
+    // Determine if any service was x402-settled
+    const anySettled = result.serviceEvaluations?.some((e) => e.settled) ?? false;
+    const overallMode = anySettled ? "x402" : "audit_only";
+
     await supabaseAdmin()
       .from("paylabs_discovery_runs")
       .update({
@@ -145,7 +170,13 @@ export async function POST(req: NextRequest) {
             service: e.serviceName,
             status: e.status,
             summary: e.safeSummary,
+            settled: e.settled,
+            mode: e.mode,
           })),
+          budget_snapshot: {
+            settled_service_fees_usdc: result.budgetSnapshot.settledServiceFeesUsdc,
+            estimated_service_fees_usdc: result.budgetSnapshot.estimatedServiceFeesUsdc,
+          },
         },
       })
       .eq("id", discoveryRunId);
@@ -170,8 +201,8 @@ export async function POST(req: NextRequest) {
       payment_plan: result.paymentPlan,
       safe_progress_summaries: result.safeProgressSummaries,
       budget_snapshot: result.budgetSnapshot,
-      settled: false,
-      mode: "audit_only",
+      settled: anySettled,
+      mode: overallMode,
       error: result.error,
     });
   } catch (e: unknown) {

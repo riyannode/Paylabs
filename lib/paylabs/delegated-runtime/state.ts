@@ -52,6 +52,8 @@ export function createOrchestratorState(input: OrchestratorInput): OrchestratorR
       spentUsdc: 0,
       remainingUsdc: input.userBudgetUsdc,
       serviceSpend: {} as Record<ServiceName, number>,
+      settledServiceFeesUsdc: 0,
+      estimatedServiceFeesUsdc: 0,
     },
     macroNodeProgress,
     serviceEvaluations: [],
@@ -79,13 +81,20 @@ export function addServiceEvaluation(
 export function updateBudgetSnapshot(
   state: OrchestratorRunState,
   serviceName: ServiceName,
-  costUsdc: number
+  costUsdc: number,
+  settled: boolean = false
 ): void {
   state.budgetSnapshot.serviceSpend[serviceName] =
     (state.budgetSnapshot.serviceSpend[serviceName] || 0) + costUsdc;
   state.budgetSnapshot.spentUsdc += costUsdc;
   state.budgetSnapshot.remainingUsdc =
     state.budgetSnapshot.totalBudgetUsdc - state.budgetSnapshot.spentUsdc;
+
+  if (settled) {
+    state.budgetSnapshot.settledServiceFeesUsdc += costUsdc;
+  } else {
+    state.budgetSnapshot.estimatedServiceFeesUsdc += costUsdc;
+  }
 }
 
 export function setMacroPhaseStatus(

@@ -60,8 +60,10 @@ export async function runDiscoveryPlanner(
     startedAt: intentResult.safeCallMeta.timestamp,
     completedAt: new Date().toISOString(),
     error: intentResult.error,
+    settled: intentResult.settled,
+    mode: intentResult.mode,
   });
-  updateBudgetSnapshot(state, "intent_planner", intentResult.safeCallMeta.costUsdc);
+  updateBudgetSnapshot(state, "intent_planner", intentResult.safeCallMeta.costUsdc, intentResult.settled);
 
   if (!intentResult.ok || !intentResult.data) {
     return {
@@ -106,8 +108,10 @@ export async function runDiscoveryPlanner(
     startedAt: queryResult.safeCallMeta.timestamp,
     completedAt: new Date().toISOString(),
     error: queryResult.error,
+    settled: queryResult.settled,
+    mode: queryResult.mode,
   });
-  updateBudgetSnapshot(state, "query_builder", queryResult.safeCallMeta.costUsdc);
+  updateBudgetSnapshot(state, "query_builder", queryResult.safeCallMeta.costUsdc, queryResult.settled);
 
   if (!queryResult.ok || !queryResult.data) {
     return {
@@ -150,8 +154,10 @@ export async function runDiscoveryPlanner(
     startedAt: signalResult.safeCallMeta.timestamp,
     completedAt: new Date().toISOString(),
     error: signalResult.error,
+    settled: signalResult.settled,
+    mode: signalResult.mode,
   });
-  updateBudgetSnapshot(state, "signal_scout", signalResult.safeCallMeta.costUsdc);
+  updateBudgetSnapshot(state, "signal_scout", signalResult.safeCallMeta.costUsdc, signalResult.settled);
 
   if (!signalResult.ok || !signalResult.data) {
     return {
