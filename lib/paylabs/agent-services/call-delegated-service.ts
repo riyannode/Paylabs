@@ -146,6 +146,7 @@ export async function callDelegatedService(
   // ── Step 1: Edge allowlist validation ──
   const edgeResult = assertAllowedAgentServiceEdge(buyerAgentName, sellerServiceName);
   if (!edgeResult.allowed) {
+    console.log(`[callDelegatedService] ${sellerServiceName}: EDGE NOT ALLOWED: ${buyerAgentName} → ${sellerServiceName}`);
     return {
       ok: false,
       serviceName: sellerServiceName,
@@ -171,6 +172,7 @@ export async function callDelegatedService(
     const parsed = inputSchema.safeParse(payload);
     if (!parsed.success) {
       const issues = parsed.error.issues.map((i: { path: (string | number)[]; message: string }) => `${i.path.join(".")}: ${i.message}`).join("; ");
+      console.log(`[callDelegatedService] ${sellerServiceName}: SCHEMA FAILED: ${issues}`);
       return {
         ok: false,
         serviceName: sellerServiceName,
