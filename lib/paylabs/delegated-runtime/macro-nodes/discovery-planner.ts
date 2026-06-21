@@ -10,7 +10,7 @@
  * 3. Discovers and ranks candidate sources
  *
  * All calls go through callDelegatedService() (edge + schema validation).
- * Edge chain: run_budget_controller → intent_planner → query_builder → signal_scout
+ * Edge chain: discovery_planner → intent_planner → query_builder → signal_scout
  */
 
 import type { OrchestratorRunState, ServiceName } from "../types";
@@ -50,7 +50,7 @@ export async function runDiscoveryPlanner(
   }
   const intentResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
-    buyerAgentName: "run_budget_controller",
+    buyerAgentName: "discovery_planner",
     sellerServiceName: "intent_planner",
     payload: {
       goal: state.userGoal,
@@ -102,7 +102,7 @@ export async function runDiscoveryPlanner(
   }
   const queryResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
-    buyerAgentName: "intent_planner",
+    buyerAgentName: "discovery_planner",
     sellerServiceName: "query_builder",
     payload: {
       normalized_goal: intentData.normalized_goal,
@@ -152,7 +152,7 @@ export async function runDiscoveryPlanner(
   }
   const signalResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
-    buyerAgentName: "query_builder",
+    buyerAgentName: "discovery_planner",
     sellerServiceName: "signal_scout",
     payload: {
       expanded_queries: queryData.expanded_queries,
