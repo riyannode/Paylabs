@@ -461,13 +461,18 @@ async function executeX402Path(params: {
   }
 
   // ── Extract seller response data ──
-  const sellerData = callResult.data as Record<string, unknown> | null;
+  // x402 seller returns {ok, serviceName, data: handlerOutput, ...}
+  // Unwrap to return just the handler output (matching audit-only path)
+  const sellerResponse = callResult.data as Record<string, unknown> | null;
   const sellerOk = callResult.ok && (callResult.status === 200 || callResult.status === 409);
+  const handlerData = sellerResponse && typeof sellerResponse === "object" && "data" in sellerResponse
+    ? (sellerResponse.data as Record<string, unknown> | null)
+    : sellerResponse;
 
   return {
     ok: sellerOk,
     serviceName: sellerServiceName,
-    data: sellerData,
+    data: handlerData,
     safeSummary: sellerOk
       ? `x402 settled: ${sellerServiceName} via ${buyerAgentName}`
       : `x402 settled but seller returned HTTP ${callResult.status}`,
