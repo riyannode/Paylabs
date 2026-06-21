@@ -1,6 +1,6 @@
 /**
  * PayLabs Tutor Tools
- * Read-only tools for RSSHub/feed queries + privileged tools for Runner execution.
+ * Read-only tools for RSSHub/feed queries + privileged tools for backend executor.
  * Trust boundary: privileged tools go through Payment Adapter only.
  *
  * Phase 1: monetization gate — only verified+monetized sources pass.
@@ -290,7 +290,7 @@ export async function runPolicyChecks(
   );
   checks.within_max_source_cost = citationPrice <= maxSourceCost;
 
-  // 8. Payment adapter availability (replaces runner_available)
+  // 8. Payment adapter availability
   checks.payment_adapter_configured = !!process.env.PAYLABS_PAYMENT_EXECUTOR;
 
   // Final decision

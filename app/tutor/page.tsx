@@ -194,7 +194,7 @@ export default function TutorPage() {
     if (!sourcePathId) { setStatusMsg("Error: No source_path_id. Propose and approve first."); return; }
     if (pathStatus !== "approved") { setStatusMsg("Error: Path must be approved before paying."); return; }
     setPayingSourceId(sourceId);
-    setStatusMsg("Paying via ArcLayer Runner...");
+    setStatusMsg("Paying via Circle Gateway x402...");
     try {
       const res = await fetch("/api/paylabs/source-payments/pay", {
         method: "POST",

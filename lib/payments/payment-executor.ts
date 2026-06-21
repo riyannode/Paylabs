@@ -8,7 +8,7 @@
  *   circle_sdk — alias for x402
  *
  * Default: noop (fail-closed)
- * No hardcoded Runner in LangGraph.
+ * No hardcoded payment executor in LangGraph.
  */
 import type { PaymentExecutor } from "@/lib/paylabs/x402/types";
 import { NoopPaymentExecutor } from "./noop-executor";

@@ -2,7 +2,7 @@
  * Tutor Intake Agent State
  *
  * Separate from PayLabsTutorState — this graph runs BEFORE the proposal flow.
- * It classifies user intent, optionally charges a route toll via x402/Runner,
+ * It classifies user intent, optionally charges a route toll via Circle Gateway x402,
  * and prepares proposal inputs.
  *
  * The intake agent itself does NOT:
@@ -81,7 +81,7 @@ export const TutorIntakeState = Annotation.Root({
   // Route toll wallet address (from PAYLABS_ROUTE_TOLL_WALLET env)
   routeTollWallet: Annotation<string | undefined>,
 
-  // Payment proof fields from Runner
+  // Payment proof fields from backend executor
   routePaymentId: Annotation<string | undefined>,
   routePaymentRef: Annotation<string | undefined>,
   routeSettlementRef: Annotation<string | undefined>,
