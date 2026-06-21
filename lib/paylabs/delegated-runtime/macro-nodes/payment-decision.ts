@@ -15,9 +15,15 @@
  * Edge chain: signal_scout → intent_matcher → source_verifier → value_allocator → trust_verifier → payment_decider
  */
 
-import type { OrchestratorRunState } from "../types";
+import type { OrchestratorRunState, ServiceName } from "../types";
 import { callDelegatedService } from "../../agent-services/call-delegated-service";
 import { addServiceEvaluation, updateBudgetSnapshot, addProgressSummary } from "../state";
+
+// ─── Service selection guard ──────────────────────────────────
+function isSelected(services: ServiceName[] | undefined, name: ServiceName): boolean {
+  if (!services || services.length === 0) return true;
+  return services.includes(name);
+}
 
 // ─── Run Payment Decision ────────────────────────────────────
 
@@ -30,7 +36,8 @@ export async function runPaymentDecision(
     publisher: string;
     rank: number;
     relevance_score: number;
-  }>
+  }>,
+  options?: { selectedServices?: ServiceName[]; parentWalletId?: string }
 ): Promise<{
   ok: boolean;
   approvedItems: Array<{
@@ -61,8 +68,10 @@ export async function runPaymentDecision(
   }
 
   // ── Step 1: Intent Matcher ──
-  // Edge: signal_scout → intent_matcher
-  // Evaluates candidate relevance against the normalized goal.
+  if (!isSelected(options?.selectedServices, "intent_matcher")) {
+    addProgressSummary(state, "Payment Decision: intent_matcher skipped");
+    return { ok: false, approvedItems: [], skippedItems: [], totalEstimatedSpend: 0, error: "intent_matcher not in execution plan" };
+  }
   const matcherResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
     buyerAgentName: "signal_scout",
@@ -77,6 +86,7 @@ export async function runPaymentDecision(
       })),
       routeTier: state.routeTier,
     },
+    buyerWalletIdOverride: options?.parentWalletId,
   });
 
   addServiceEvaluation(state, {
@@ -150,7 +160,10 @@ export async function runPaymentDecision(
   }
 
   // ── Step 2: Source Verifier (batch) ──
-  // Edge: intent_matcher → source_verifier
+  if (!isSelected(options?.selectedServices, "source_verifier")) {
+    addProgressSummary(state, "Payment Decision: source_verifier skipped");
+    return { ok: false, approvedItems: [], skippedItems: [], totalEstimatedSpend: 0, error: "source_verifier not in execution plan" };
+  }
   const verifyResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
     buyerAgentName: "intent_matcher",
@@ -163,6 +176,7 @@ export async function runPaymentDecision(
       })),
       routeTier: state.routeTier,
     },
+    buyerWalletIdOverride: options?.parentWalletId,
   });
 
   addServiceEvaluation(state, {
@@ -193,7 +207,10 @@ export async function runPaymentDecision(
   }
 
   // ── Step 3: Value Allocator (batch) ──
-  // Edge: source_verifier → value_allocator
+  if (!isSelected(options?.selectedServices, "value_allocator")) {
+    addProgressSummary(state, "Payment Decision: value_allocator skipped");
+    return { ok: false, approvedItems: [], skippedItems: [], totalEstimatedSpend: 0, error: "value_allocator not in execution plan" };
+  }
   const valueResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
     buyerAgentName: "source_verifier",
@@ -208,6 +225,7 @@ export async function runPaymentDecision(
       remaining_budget_usdc: state.budgetSnapshot.remainingUsdc,
       routeTier: state.routeTier,
     },
+    buyerWalletIdOverride: options?.parentWalletId,
   });
 
   addServiceEvaluation(state, {
@@ -242,7 +260,10 @@ export async function runPaymentDecision(
   }
 
   // ── Step 4: Trust Verifier (batch) ──
-  // Edge: value_allocator → trust_verifier
+  if (!isSelected(options?.selectedServices, "trust_verifier")) {
+    addProgressSummary(state, "Payment Decision: trust_verifier skipped");
+    return { ok: false, approvedItems: [], skippedItems: [], totalEstimatedSpend: 0, error: "trust_verifier not in execution plan" };
+  }
   const trustResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
     buyerAgentName: "value_allocator",
@@ -256,6 +277,7 @@ export async function runPaymentDecision(
       })),
       routeTier: state.routeTier,
     },
+    buyerWalletIdOverride: options?.parentWalletId,
   });
 
   addServiceEvaluation(state, {
@@ -299,7 +321,10 @@ export async function runPaymentDecision(
   }));
 
   // ── Step 5: Payment Decider (batch, deterministic) ──
-  // Edge: trust_verifier → payment_decider
+  if (!isSelected(options?.selectedServices, "payment_decider")) {
+    addProgressSummary(state, "Payment Decision: payment_decider skipped");
+    return { ok: false, approvedItems: [], skippedItems: [], totalEstimatedSpend: 0, error: "payment_decider not in execution plan" };
+  }
   const deciderResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
     buyerAgentName: "trust_verifier",
@@ -310,6 +335,7 @@ export async function runPaymentDecision(
       spent_usdc: state.budgetSnapshot.spentUsdc,
       routeTier: state.routeTier,
     },
+    buyerWalletIdOverride: options?.parentWalletId,
   });
 
   addServiceEvaluation(state, {

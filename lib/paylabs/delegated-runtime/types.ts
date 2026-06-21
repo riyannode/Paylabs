@@ -9,6 +9,7 @@
  */
 
 import type { ServiceName } from "../agent-services/types";
+export type { ServiceName };
 
 // ─── Route Tiers ──────────────────────────────────────────────
 export type DelegatedRouteTier = "easy" | "normal" | "advanced";
@@ -74,6 +75,32 @@ export interface ServiceEvaluation {
   };
 }
 
+// ─── Frozen Execution Plan ────────────────────────────────────
+export interface ExecutionPlan {
+  selectedMacroNodes: MacroNodePhase[];
+  selectedServices: ServiceName[];
+  servicesByMacroNode: Record<MacroNodePhase, ServiceName[]>;
+  plannedCostUsdc: number;
+  plannedCostBreakdown: {
+    macro_node_fees_usdc: number;
+    service_edge_fees_usdc: number;
+    registry_check_fees_usdc: number;
+    source_access_fees_usdc: number;
+  };
+  locked: boolean;
+}
+
+// ─── Payment Graph Edge ───────────────────────────────────────
+export interface PaymentGraphEdge {
+  edgeId: string;
+  buyer: string;
+  seller: string;
+  amountUsdc: number;
+  status: "planned" | "paid" | "skipped";
+  nodeType: "brain" | "macro_node" | "service";
+  paymentRef: string | null;
+}
+
 // ─── Orchestrator Run State ──────────────────────────────────
 export interface OrchestratorRunState {
   discoveryRunId: string;
@@ -91,6 +118,8 @@ export interface OrchestratorRunState {
   safeProgressSummaries: string[];
   delegatedRuntimeEnabled: boolean;
   brainPlanning: BrainPlanningOutput | null;
+  executionPlan: ExecutionPlan | null;
+  paymentGraph: PaymentGraphEdge[];
   error: string | null;
   startedAt: string;
   completedAt: string | null;
@@ -172,5 +201,6 @@ export interface OrchestratorOutput {
   paymentEdges: PaymentEdge[];
   serviceEvaluations: ServiceEvaluation[];
   brainPlanning: BrainPlanningOutput | null;
+  paymentGraph: PaymentGraphEdge[];
   error: string | null;
 }

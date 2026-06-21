@@ -41,6 +41,8 @@ export interface CallDelegatedServiceInput {
   buyerAgentName: string;
   sellerServiceName: ServiceName;
   payload: Record<string, unknown>;
+  /** Override buyer wallet ID for payment graph (macro-node → child). */
+  buyerWalletIdOverride?: string;
 }
 
 // ─── Output ──────────────────────────────────────────────────
@@ -227,6 +229,7 @@ export async function callDelegatedService(
       config: config!,
       costUsdc,
       timestamp,
+      buyerWalletIdOverride: input.buyerWalletIdOverride,
     });
   }
 
@@ -307,6 +310,7 @@ async function executeX402Path(params: {
   config: { endpointPath: string; sellerWalletAddressEnv?: string; buyerWalletIdEnv?: string; priceUsdc: number };
   costUsdc: number;
   timestamp: string;
+  buyerWalletIdOverride?: string;
 }): Promise<CallDelegatedServiceOutput> {
   const {
     discoveryRunId,
@@ -336,10 +340,14 @@ async function executeX402Path(params: {
     return failClosed(sellerServiceName, buyerAgentName, costUsdc, timestamp, msg);
   }
 
-  // ── Resolve buyer wallet ID ──
+  // ── Resolve buyer wallet ID (override from parent node if provided) ──
   let buyerWalletId: string;
   try {
-    buyerWalletId = resolveBuyerWalletId(config);
+    if (params.buyerWalletIdOverride) {
+      buyerWalletId = params.buyerWalletIdOverride;
+    } else {
+      buyerWalletId = resolveBuyerWalletId(config);
+    }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return failClosed(sellerServiceName, buyerAgentName, costUsdc, timestamp, msg);
