@@ -152,7 +152,8 @@ export interface PaymentPlanItem {
 // ─── Payment Edge ────────────────────────────────────────────
 export interface PaymentEdge {
   edgeId: string;
-  buyerServiceName: ServiceName;
+  /** Buyer can be a macro-node (discovery_planner, payment_decision, settlement_memory) or a service */
+  buyerServiceName: ServiceName | MacroNodePhase;
   sellerServiceName: ServiceName;
   amountUsdc: number;
   status: "planned" | "executed" | "failed" | "skipped";

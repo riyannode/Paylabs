@@ -71,6 +71,9 @@ export async function POST(
     payload?: Record<string, unknown>;
   };
 
+  // Payload from upstream (Brain/previous macro-node) for data forwarding
+  const nodePayload: Record<string, unknown> = payload || {};
+
   if (!discoveryRunId || !userGoal || !routeTier) {
     return NextResponse.json(
       { ok: false, error: "Missing required fields: discoveryRunId, userGoal, routeTier" },
@@ -87,7 +90,7 @@ export async function POST(
       userWallet: userWallet || "",
       userBudgetUsdc: userBudgetUsdc || 0,
       routeTier: routeTier as OrchestratorInput["routeTier"],
-    }, null);
+    }, null, nodePayload);
   }
 
   // ── x402 path ──
@@ -147,7 +150,7 @@ export async function POST(
     userWallet: userWallet || "",
     userBudgetUsdc: userBudgetUsdc || 0,
     routeTier: routeTier as OrchestratorInput["routeTier"],
-  }, (settleResult.paymentMeta as Record<string, unknown>) ?? null);
+  }, (settleResult.paymentMeta as Record<string, unknown>) ?? null, nodePayload);
 }
 
 // ─── Execute Macro-Node Runner ───────────────────────────────
@@ -155,7 +158,8 @@ export async function POST(
 async function executeMacroNode(
   nodeName: MacroNodePhase,
   input: OrchestratorInput,
-  paymentMeta: Record<string, unknown> | null
+  paymentMeta: Record<string, unknown> | null,
+  payload?: Record<string, unknown>,
 ) {
   const nodeConfig = getMacroNodeConfig(nodeName);
   const state = createOrchestratorState(input);
@@ -177,14 +181,13 @@ async function executeMacroNode(
     if (nodeName === "discovery_planner") {
       result = await runDiscoveryPlanner(state, opts);
     } else if (nodeName === "payment_decision") {
-      // Need candidates from discovery — use payload or empty
-      const candidates = (input as unknown as { payload?: { candidates?: unknown[] } })
-        .payload?.candidates || [];
-      result = await runPaymentDecision(state, candidates as Parameters<typeof runPaymentDecision>[1], opts);
+      // Payload from upstream: { ranked_candidates } from discovery_planner
+      const candidates = (payload?.ranked_candidates || []) as Parameters<typeof runPaymentDecision>[1];
+      result = await runPaymentDecision(state, candidates, opts);
     } else if (nodeName === "settlement_memory") {
-      const approvedItems = (input as unknown as { payload?: { approvedItems?: unknown[] } })
-        .payload?.approvedItems || [];
-      result = await runSettlementMemory(state, approvedItems as Parameters<typeof runSettlementMemory>[1], opts);
+      // Payload from upstream: { approved_items } from payment_decision
+      const approvedItems = (payload?.approved_items || []) as Parameters<typeof runSettlementMemory>[1];
+      result = await runSettlementMemory(state, approvedItems, opts);
     }
 
     return NextResponse.json({
