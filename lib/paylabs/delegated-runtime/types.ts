@@ -101,6 +101,10 @@ export interface PaymentGraphEdge {
   status: "planned" | "paid" | "skipped";
   nodeType: "brain" | "macro_node" | "service";
   paymentRef: string | null;
+  /** Real txHash from Gateway settle (if available) */
+  txHash?: string | null;
+  /** Block explorer URL (if txHash available) */
+  explorerUrl?: string | null;
 }
 
 // ─── Orchestrator Run State ──────────────────────────────────

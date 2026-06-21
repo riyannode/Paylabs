@@ -249,6 +249,8 @@ async function executeMacroNode(
         settled: e.settled,
         mode: e.mode,
         costUsdc: e.costUsdc,
+        txHash: e.paymentMeta?.txHash ?? null,
+        explorerUrl: e.paymentMeta?.explorerUrl ?? null,
       })),
       paymentEdges: state.paymentEdges.map((e) => ({
         buyer: e.buyerServiceName,
