@@ -6,7 +6,7 @@
  *
  * Hard rules:
  * - Cannot execute payment
- * - Cannot call Runner
+ * - Cannot call the backend payment executor
  * - Cannot call Circle
  * - Cannot call wallet APIs
  * - Cannot call contracts

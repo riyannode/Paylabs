@@ -2,7 +2,7 @@
 //
 // Tutor Intake Agent — FREE classification only.
 // Classifies user intent and returns route recommendation + toll quote.
-// Does NOT execute any payment. Does NOT call Runner. Does NOT return 402.
+// Does NOT execute any payment. Does NOT call the backend executor. Does NOT return 402.
 //
 // Route toll payment happens separately at POST /api/paylabs/tutor/route-toll
 // (explicit user confirmation required).

@@ -1,7 +1,7 @@
 /**
  * Agent 4: Policy Guard Agent (LLM reasoning + deterministic decision)
  * Gates every source payment before money can move.
- * No payment, no Runner — read-only validation.
+ * No payment, no backend executor — read-only validation.
  *
  * LLM provides policy reasoning/explanation, but final allow/block
  * is deterministic from runPolicyChecks. LLM CANNOT override failed checks.

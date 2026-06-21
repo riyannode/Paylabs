@@ -1,4 +1,4 @@
--- Paylabs schema — prefixed tables to avoid collision with ArcLayer
+-- Paylabs schema — prefixed tables to avoid collision with other apps
 -- Run via: npm run db:migrate
 
 create extension if not exists pgcrypto;
