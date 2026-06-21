@@ -187,7 +187,9 @@ export async function verifyAndSettlePayment(
     };
   }
 
-  const facilitator = new FacilitatorClient();
+  const facilitator = new FacilitatorClient({
+    url: "https://gateway-api-testnet.circle.com",
+  });
 
   // ── Verify ─────────────────────────────────────────────────
   try {
