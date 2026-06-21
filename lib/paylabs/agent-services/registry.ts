@@ -48,7 +48,7 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
   },
   {
     serviceName: "intent_matcher",
-    macroNode: "discovery_planner",
+    macroNode: "payment_decision",
     reusedAgents: ["source_ranker"],
     requiresLlm: true,
     priceUsdc: 0.000001,

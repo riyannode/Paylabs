@@ -2,23 +2,20 @@
  * Payment Decision Macro-Node
  *
  * Phase 2 of the delegated runtime.
- * Services: source_verifier → value_allocator → trust_verifier → payment_decider
+ * Services: intent_matcher → source_verifier → value_allocator → trust_verifier → payment_decider
  *
- * This phase evaluates the candidate BATCH through each service once.
- * One service edge = one service call = one service fee.
- * Does NOT loop per-candidate (that would multiply fees).
- *
- * Flow:
- * 1. source_verifier evaluates the batch → quality scores per candidate
- * 2. value_allocator evaluates the batch → ROI/value per candidate
- * 3. trust_verifier evaluates the batch → risk scores per candidate
- * 4. payment_decider aggregates all scores → approved/skipped decisions
+ * This phase:
+ * 1. Matches candidates against intent (intent_matcher)
+ * 2. Verifies source quality and credibility (source_verifier — batch)
+ * 3. Allocates value and computes max allowed price (value_allocator — batch)
+ * 4. Verifies trust, provenance, and creator ownership (trust_verifier — batch)
+ * 5. Makes deterministic payment approval decisions (payment_decider — batch)
  *
  * All calls go through callDelegatedService() (edge + schema validation).
+ * Edge chain: signal_scout → intent_matcher → source_verifier → value_allocator → trust_verifier → payment_decider
  */
 
 import type { OrchestratorRunState } from "../types";
-import type { ServiceName } from "../../agent-services/types";
 import { callDelegatedService } from "../../agent-services/call-delegated-service";
 import { addServiceEvaluation, updateBudgetSnapshot, addProgressSummary } from "../state";
 
@@ -63,6 +60,70 @@ export async function runPaymentDecision(
     };
   }
 
+  // ── Step 1: Intent Matcher ──
+  // Edge: signal_scout → intent_matcher
+  // Evaluates candidate relevance against the normalized goal.
+  const matcherResult = await callDelegatedService({
+    discoveryRunId: state.discoveryRunId,
+    buyerAgentName: "signal_scout",
+    sellerServiceName: "intent_matcher",
+    payload: {
+      normalized_goal: state.userGoal,
+      candidates: candidates.slice(0, 10).map((c) => ({
+        feed_item_id: c.feed_item_id,
+        title: c.title,
+        publisher: c.publisher,
+        rank: c.rank,
+      })),
+      routeTier: state.routeTier,
+    },
+  });
+
+  addServiceEvaluation(state, {
+    serviceName: "intent_matcher",
+    macroNode: "payment_decision",
+    input: { candidate_count: candidates.length },
+    output: matcherResult.data,
+    safeSummary: matcherResult.safeSummary,
+    status: matcherResult.ok ? "completed" : "failed",
+    costUsdc: matcherResult.safeCallMeta.costUsdc,
+    startedAt: matcherResult.safeCallMeta.timestamp,
+    completedAt: new Date().toISOString(),
+    error: matcherResult.error,
+  });
+  updateBudgetSnapshot(state, "intent_matcher", matcherResult.safeCallMeta.costUsdc);
+
+  if (!matcherResult.ok || !matcherResult.data) {
+    return {
+      ok: false,
+      approvedItems: [],
+      skippedItems: [],
+      totalEstimatedSpend: 0,
+      error: `Intent matcher failed: ${matcherResult.error}`,
+    };
+  }
+
+  const matcherData = matcherResult.data as {
+    approved_for_quality_check: boolean;
+    relevance_score: number;
+  };
+
+  // If intent matcher rejects candidates, skip remaining evaluation
+  if (!matcherData.approved_for_quality_check) {
+    addProgressSummary(state, `Payment Decision: intent matcher rejected candidates (relevance: ${matcherData.relevance_score.toFixed(2)}). Skipping quality/value/trust evaluation.`);
+    return {
+      ok: true,
+      approvedItems: [],
+      skippedItems: candidates.map((c) => ({
+        feed_item_id: c.feed_item_id,
+        source_url: c.source_url || "",
+        skip_reason: "Intent matcher: candidates not approved for quality check",
+      })),
+      totalEstimatedSpend: 0,
+      error: null,
+    };
+  }
+
   // Load feed items for metadata (wallet, price, claim status)
   const { getFeedItemById } = await import("@/lib/ai/tools");
 
@@ -86,7 +147,8 @@ export async function runPaymentDecision(
     });
   }
 
-  // ── Batch 1: Source Verifier (one call for whole batch) ──
+  // ── Step 2: Source Verifier (batch) ──
+  // Edge: intent_matcher → source_verifier
   const verifyResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
     buyerAgentName: "intent_matcher",
@@ -115,7 +177,7 @@ export async function runPaymentDecision(
   });
   updateBudgetSnapshot(state, "source_verifier", verifyResult.safeCallMeta.costUsdc);
 
-  // Extract quality scores (handler returns per-candidate results in data)
+  // Extract quality scores
   const qualityScores = new Map<string, number>();
   if (verifyResult.ok && verifyResult.data) {
     const results = verifyResult.data.results as Array<{ feed_item_id: string; quality_score: number }> | undefined;
@@ -126,7 +188,8 @@ export async function runPaymentDecision(
     }
   }
 
-  // ── Batch 2: Value Allocator (one call for whole batch) ──
+  // ── Step 3: Value Allocator (batch) ──
+  // Edge: source_verifier → value_allocator
   const valueResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
     buyerAgentName: "source_verifier",
@@ -172,7 +235,8 @@ export async function runPaymentDecision(
     }
   }
 
-  // ── Batch 3: Trust Verifier (one call for whole batch) ──
+  // ── Step 4: Trust Verifier (batch) ──
+  // Edge: value_allocator → trust_verifier
   const trustResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
     buyerAgentName: "value_allocator",
@@ -226,7 +290,8 @@ export async function runPaymentDecision(
     creator_wallet: c.creator_wallet,
   }));
 
-  // ── Batch 4: Payment Decider (deterministic aggregator, one call) ──
+  // ── Step 5: Payment Decider (batch, deterministic) ──
+  // Edge: trust_verifier → payment_decider
   const deciderResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
     buyerAgentName: "trust_verifier",
@@ -281,7 +346,7 @@ export async function runPaymentDecision(
     total_estimated_spend: number;
   };
 
-  const summary = `Payment Decision: ${deciderData.approved_items.length}/${evaluations.length} approved, total spend: ${deciderData.total_estimated_spend.toFixed(6)} USDC. 4 service calls (batch-based).`;
+  const summary = `Payment Decision: intent_matcher(${matcherData.relevance_score.toFixed(2)}) → source_verifier → value_allocator → trust_verifier → payment_decider. ${deciderData.approved_items.length}/${evaluations.length} approved, total: ${deciderData.total_estimated_spend.toFixed(6)} USDC. 5 service calls.`;
   addProgressSummary(state, summary);
 
   return {
