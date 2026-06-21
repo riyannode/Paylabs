@@ -358,10 +358,18 @@ export async function callPaidSeller(
     retryData = await retryResp.text().catch(() => null);
   }
 
+  const errorMsg = !retryResp.ok
+    ? `Seller returned HTTP ${retryResp.status} after payment` +
+      (retryData && typeof retryData === "object" && "error" in retryData
+        ? `: ${(retryData as Record<string, unknown>).error}`
+        : "")
+    : undefined;
+
   return {
     ok: retryResp.ok,
     status: retryResp.status,
     data: retryData,
+    error: errorMsg,
     paymentMetadata: extractPaymentMetadata(gatewayReq, paymentPayload),
   };
 }
