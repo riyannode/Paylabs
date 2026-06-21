@@ -156,7 +156,7 @@ async function runX402Orchestration(params: {
     amountUsdc: 0.000001,
     status: "paid",
     nodeType: "brain",
-    paymentRef: "x402-settled",
+    paymentRef: null,
   });
 
   const brainData = brainResult.data.data as Record<string, unknown> | undefined;
@@ -230,7 +230,7 @@ async function runX402Orchestration(params: {
       amountUsdc: 0.000001,
       status: "paid",
       nodeType: "macro_node",
-      paymentRef: "x402-settled",
+      paymentRef: null,
     });
 
     macroNodeResults[node] = nodeResult.data;
@@ -249,7 +249,7 @@ async function runX402Orchestration(params: {
           amountUsdc: ev.costUsdc || 0.000001,
           status: ev.settled ? "paid" : (ev.status === "completed" ? "skipped" : "skipped"),
           nodeType: "service",
-          paymentRef: ev.settled ? "x402-settled" : null,
+          paymentRef: null,
         });
       }
     }

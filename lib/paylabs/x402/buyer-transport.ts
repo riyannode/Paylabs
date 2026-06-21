@@ -101,6 +101,10 @@ export interface X402BuyerCallResult {
     payTo: string;
     network: string;
     x402Version: number;
+    /** Transaction hash if seller returned it */
+    txHash?: string | null;
+    /** Block explorer URL if txHash available */
+    explorerUrl?: string | null;
   };
   /** Error message if failed */
   error?: string;
@@ -401,7 +405,7 @@ export async function callPaidSeller(
     status: retryResp.status,
     data: retryData,
     error: errorMsg,
-    paymentMetadata: extractPaymentMetadata(gatewayReq, paymentPayload),
+    paymentMetadata: extractPaymentMetadata(gatewayReq, paymentPayload, retryData),
   };
 }
 
@@ -410,16 +414,26 @@ export async function callPaidSeller(
 /**
  * Extract safe payment metadata for audit trail.
  * Never stores raw signatures or authorization payloads.
+ * Preserves txHash and explorerUrl from seller response if returned.
  */
 function extractPaymentMetadata(
   requirements: PaymentRequirementsLike,
-  payload: { x402Version: number; payload: unknown }
+  payload: { x402Version: number; payload: unknown },
+  sellerResponse?: unknown
 ): X402BuyerCallResult["paymentMetadata"] {
+  // Extract txHash/explorerUrl from seller response if present
+  const sellerData = sellerResponse as Record<string, unknown> | null | undefined;
+  const sellerMeta = sellerData?.paymentMeta as Record<string, unknown> | undefined;
+  const txHash = sellerMeta?.txHash as string | null | undefined;
+  const explorerUrl = sellerMeta?.explorerUrl as string | null | undefined;
+
   return {
     amountAtomic: requirements.amount,
     payTo: requirements.payTo,
     network: requirements.network,
     x402Version: payload.x402Version,
+    txHash: txHash ?? null,
+    explorerUrl: explorerUrl ?? null,
   };
 }
 
