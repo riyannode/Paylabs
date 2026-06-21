@@ -144,6 +144,13 @@ export async function POST(
     );
   }
 
+  // Inject DCW signer for child service x402 payments
+  const { setDcwSigner, getDcwSigner } = await import("@/lib/paylabs/paid-agent-node");
+  if (!getDcwSigner()) {
+    const { createDcwSigner } = await import("@/lib/paylabs/x402/dcw-signer-adapter");
+    setDcwSigner(createDcwSigner());
+  }
+
   return executeMacroNode(nodeName as MacroNodePhase, {
     discoveryRunId,
     userGoal,
