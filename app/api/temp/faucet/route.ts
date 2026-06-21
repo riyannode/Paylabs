@@ -1,4 +1,4 @@
-// POST /api/temp/faucet — one-time use to fund buyer wallets via Circle testnet faucet + deposit to Gateway
+// POST /api/temp/faucet — use Circle testnet faucet + deposit to Gateway
 import { NextRequest, NextResponse } from "next/server";
 import { createRequire } from "node:module";
 const _require = createRequire(import.meta.url);
@@ -15,28 +15,45 @@ function getClient() {
 }
 
 export async function POST(req: NextRequest) {
-  let body: { walletIds?: string[]; amountUsdc?: string };
+  let body: { walletIds?: string[]; addresses?: string[] };
   try { body = await req.json(); } catch { return NextResponse.json({ ok: false, error: "Invalid JSON" }, { status: 400 }); }
 
   const walletIds = body.walletIds || [];
-  const amountUsdc = body.amountUsdc || "0.001";
-  const amountAtomic = Math.round(parseFloat(amountUsdc) * 1_000_000).toString();
-
-  const results: Array<{ walletId: string; status: string; error?: string }> = [];
+  const addresses = body.addresses || [];
+  const results: Array<{ walletId?: string; address?: string; step: string; status: string; detail?: any }> = [];
 
   try {
     const client = getClient();
 
+    // Step 1: Use Circle's testnet faucet for each address
+    for (let i = 0; i < addresses.length; i++) {
+      const address = addresses[i];
+      const walletId = walletIds[i] || "unknown";
+      try {
+        console.log(`[faucet] Requesting testnet tokens for ${address}...`);
+        const faucetResp = await client.requestTestnetTokens({
+          address,
+          blockchain: "ARC-TESTNET",
+          usdc: true,
+        });
+        results.push({ walletId, address, step: "faucet", status: "ok", detail: faucetResp.data });
+      } catch (e: any) {
+        results.push({
+          walletId, address, step: "faucet", status: "error",
+          detail: { message: e.message, code: e.code, status: e.status, response: e.response?.data },
+        });
+      }
+    }
+
+    // Step 2: Wait for faucet to settle
+    await new Promise(r => setTimeout(r, 10000));
+
+    // Step 3: Deposit to Gateway for each wallet
     for (const walletId of walletIds) {
       try {
-        // Step 1: Check wallet balance first
-        const balResp = await client.getWalletBalance({ walletId });
-        const balances = balResp.data?.tokenBalances || [];
-        const usdcBal = balances.find((b: any) => b.token?.symbol === "USDC");
-        const usdcAmount = usdcBal?.amount || "0";
-        console.log(`[faucet] ${walletId}: USDC balance = ${usdcAmount}`);
+        console.log(`[faucet] Depositing 0.001 USDC to Gateway for ${walletId}...`);
+        const amountAtomic = "1000"; // 0.001 USDC
 
-        // Step 2: Try approve
         const approveResp = await client.createContractExecutionTransaction({
           walletId,
           contractAddress: USDC_ARC,
@@ -48,12 +65,11 @@ export async function POST(req: NextRequest) {
 
         const approveTx = approveResp.data;
         if (!approveTx?.id) {
-          results.push({ walletId, status: "approve_failed", error: JSON.stringify(approveResp.data).slice(0, 200) });
+          results.push({ walletId, step: "approve", status: "failed", detail: approveResp.data });
           continue;
         }
 
-        // Step 3: Wait a bit for approve to settle, then deposit
-        await new Promise(r => setTimeout(r, 5000));
+        await new Promise(r => setTimeout(r, 8000));
 
         const depositResp = await client.createContractExecutionTransaction({
           walletId,
@@ -65,23 +81,17 @@ export async function POST(req: NextRequest) {
         });
 
         const depositTx = depositResp.data;
-        if (!depositTx?.id) {
-          results.push({ walletId, status: "deposit_failed", error: JSON.stringify(depositResp.data).slice(0, 200) });
-          continue;
-        }
-
-        results.push({ walletId, status: "ok", });
+        results.push({ walletId, step: "deposit", status: depositTx?.id ? "ok" : "failed", detail: depositTx });
       } catch (e: any) {
         results.push({
-          walletId,
-          status: "error",
-          error: e.message || String(e),
+          walletId, step: "deposit", status: "error",
+          detail: { message: e.message, code: e.code, status: e.status, response: e.response?.data },
         });
       }
     }
 
     return NextResponse.json({ ok: true, results });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e.message, results }, { status: 500 });
+    return NextResponse.json({ ok: false, error: e.message }, { status: 500 });
   }
 }
