@@ -139,6 +139,24 @@ export interface BrainPlanningOutput {
   suggested_query_variants: string[];
   service_execution_plan: string[];
   safe_brain_summary: string;
+  // ── Deterministic quote planning fields ──
+  /** Macro-nodes Brain selected for this run */
+  selected_macro_nodes: MacroNodePhase[];
+  /** Specific services Brain selected under those macro-nodes */
+  selected_services: ServiceName[];
+  /** Max registry/source checks Brain recommends */
+  max_registry_checks: number;
+  /** Max source accesses Brain recommends */
+  max_source_accesses: number;
+  /** Deterministic planned cost (computed from registry, NOT LLM) */
+  planned_cost_usdc: number;
+  /** Per-category cost breakdown */
+  planned_cost_breakdown: {
+    macro_node_fees_usdc: number;
+    service_edge_fees_usdc: number;
+    registry_check_fees_usdc: number;
+    source_access_fees_usdc: number;
+  };
 }
 
 // ─── Orchestrator Output ─────────────────────────────────────
