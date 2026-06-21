@@ -305,9 +305,16 @@ export async function callPaidSeller(
   }
 
   // ── Step 6: Encode payment signature (base64) ────────────
+  // Circle Gateway verify expects {x402Version, payload, resource, accepted}
+  // BatchEvmScheme only returns {x402Version, payload} — we must add resource + accepted
+  const fullPaymentPayload = {
+    ...paymentPayload,
+    resource: (challenge as Record<string, unknown>).resource,
+    accepted: gatewayReq,
+  };
 
   const paymentSignatureValue = Buffer.from(
-    JSON.stringify(paymentPayload)
+    JSON.stringify(fullPaymentPayload)
   ).toString("base64");
 
   // ── Step 7: Retry with payment ───────────────────────────
