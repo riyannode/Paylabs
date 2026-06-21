@@ -1,16 +1,17 @@
 /**
- * ArcLayer Runner — Route Toll Payment
+ * PayLabs Backend Payment Executor — Route Toll Payment
  *
- * Executes a tiny x402 route toll through Runner before the proposal graph runs.
+ * Executes a Circle x402 route toll through the executor before the proposal graph runs.
  * This is the ONLY path for route toll payments.
  *
+ * Uses Circle DCW signer for signing and Circle Gateway x402 for settlement.
  * Never uses local private keys.
  * Never generates fallback payment IDs.
  * Never calls Circle directly.
  * Returns structured result — caller must validate proof completeness.
  */
 
-import { runnerFetch } from "./client";
+import { executorFetch } from "./client";
 
 export interface RouteTollInput {
   userWallet: string;
@@ -33,9 +34,10 @@ export interface RouteTollResult {
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 /**
- * Execute route toll payment through ArcLayer Runner.
+ * Execute route toll payment through the backend payment executor.
  * This is the ONLY path for route toll payments.
  *
+ * Uses Circle DCW signer + Circle Gateway x402.
  * Never uses local private keys.
  * Never generates fallback payment IDs.
  * Returns structured result — caller must validate proof completeness.
@@ -78,7 +80,7 @@ export async function executeRouteTollPayment(
   const idempotencyKey = `route-toll:${input.userWallet}:${input.routeTier}:${input.inputHash}:${input.amountUsdc}`;
 
   try {
-    const result = await runnerFetch<RouteTollResult>("POST", "/x402/pay", {
+    const result = await executorFetch<RouteTollResult>("POST", "/x402/pay", {
       type: "route_toll_pay",
       routeTier: input.routeTier,
       routeLabel: input.routeLabel,
@@ -96,14 +98,14 @@ export async function executeRouteTollPayment(
     if (!result.paymentId) {
       return {
         ok: false,
-        error: "Runner returned no paymentId — proof incomplete",
+        error: "Executor returned no paymentId — proof incomplete",
       };
     }
     if (!result.paymentRef && !result.settlementRef) {
       return {
         ok: false,
         error:
-          "Runner returned no paymentRef or settlementRef — proof incomplete",
+          "Executor returned no paymentRef or settlementRef — proof incomplete",
       };
     }
 

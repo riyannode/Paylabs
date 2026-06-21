@@ -3,16 +3,18 @@
  *
  * Reuses: source_ranker (feed discovery + ranking)
  * Macro-node: discovery_planner
- * Requires LLM: yes
+ * Execution modes:
+ *   - deterministic (default): DB/feed ranking using recency, metadata, keywords
+ *   - llm: LLM-powered relevance ranking
+ *   - hybrid: deterministic ranking + LLM relevance explanation
  *
  * Discovers and ranks feed items by relevance to expanded queries.
  */
 
 import { z } from "zod";
-import { generateStructuredJson } from "@/lib/ai/llm-structured";
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
-import { toInternalRouteTier } from "./helpers";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
+import { shouldRunServiceAsDeterministic } from "../execution-mode";
 
 const SignalScoutSchema = z.object({
   ranked_sources: z.array(z.object({
@@ -24,7 +26,94 @@ const SignalScoutSchema = z.object({
   safe_summary: z.string(),
 });
 
-const SYSTEM_PROMPT = `You are PayLabs Signal Scout. Rank the provided feed items by relevance to the user's queries. Select the most useful items for the user's research need. You cannot set prices, wallets, or execute payments. Return structured JSON only. Always include a safe_summary field.`;
+// ─── Deterministic Signal Scoring ───────────────────────────
+
+function scoreItemDeterministic(
+  item: Record<string, unknown>,
+  expandedQueries: string[],
+  entityTerms: string[]
+): number {
+  let score = 0;
+  const title = String(item.title || "").toLowerCase();
+  const summary = String(item.summary || "").toLowerCase();
+  const publisher = String(item.publisher || "").toLowerCase();
+  const authorName = String(item.author_name || "").toLowerCase();
+
+  // Keyword overlap with queries
+  for (const query of expandedQueries) {
+    const words = query.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
+    for (const word of words) {
+      if (title.includes(word)) score += 3;
+      if (summary.includes(word)) score += 1;
+      if (publisher.includes(word)) score += 1;
+    }
+  }
+
+  // Entity term match
+  for (const entity of entityTerms) {
+    const lower = entity.toLowerCase();
+    if (title.includes(lower)) score += 5;
+    if (summary.includes(lower)) score += 2;
+    if (authorName.includes(lower)) score += 2;
+  }
+
+  // Recency bonus (prefer newer items)
+  const publishedAt = item.published_at ? new Date(item.published_at as string).getTime() : 0;
+  if (publishedAt > 0) {
+    const ageHours = (Date.now() - publishedAt) / (1000 * 60 * 60);
+    if (ageHours < 24) score += 3;
+    else if (ageHours < 72) score += 2;
+    else if (ageHours < 168) score += 1;
+  }
+
+  // Publisher diversity bonus
+  if (publisher && publisher.length > 0) score += 1;
+
+  return score;
+}
+
+function runDeterministicSignalScout(
+  allActive: Record<string, unknown>[],
+  expandedQueries: string[],
+  entityTerms: string[]
+): Array<{
+  feed_item_id: string;
+  title: string;
+  publisher: string;
+  rank: number;
+  relevance_score: number;
+  reason: string;
+}> {
+  // Score each item
+  const scored = allActive.map((item) => ({
+    item,
+    score: scoreItemDeterministic(item, expandedQueries, entityTerms),
+  }));
+
+  // Sort by score descending, then by recency
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    const aTime = new Date(String(a.item.published_at || 0)).getTime();
+    const bTime = new Date(String(b.item.published_at || 0)).getTime();
+    return bTime - aTime;
+  });
+
+  // Normalize scores to 0-1 range
+  const maxScore = Math.max(scored[0]?.score || 1, 1);
+
+  return scored.slice(0, 10).map((entry, i) => ({
+    feed_item_id: String(entry.item.id || ""),
+    title: String(entry.item.title || ""),
+    publisher: String(entry.item.publisher || ""),
+    rank: i + 1,
+    relevance_score: Math.min(entry.score / maxScore, 1),
+    reason: entry.score > 0
+      ? `Keyword/entity match (score: ${entry.score})`
+      : "Recency fallback",
+  }));
+}
+
+// ─── Handler ────────────────────────────────────────────────
 
 export const signalScoutHandler: ServiceHandler = async (
   input: ServiceHandlerInput
@@ -55,6 +144,34 @@ export const signalScoutHandler: ServiceHandler = async (
     };
   }
 
+  // Deterministic mode (default)
+  if (shouldRunServiceAsDeterministic("signal_scout")) {
+    const ranked = runDeterministicSignalScout(
+      allActive,
+      expanded_queries || [],
+      entity_terms || []
+    );
+    return {
+      ok: true,
+      serviceName: "signal_scout",
+      data: {
+        ranked_candidates: ranked,
+        top_candidates: ranked.slice(0, 3).map((r) => r.feed_item_id),
+        quick_relevance_notes: ranked.slice(0, 5).map((r) => r.reason),
+        safe_signal_summary: `Ranked ${ranked.length} items by keyword/entity match + recency. Deterministic scoring.`,
+      },
+      safeSummary: `Ranked ${ranked.length} items by keyword/entity match + recency. Deterministic scoring.`,
+      settled: false,
+      error: null,
+    };
+  }
+
+  // LLM mode
+  const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
+  const { toInternalRouteTier } = await import("./helpers");
+
+  const SYSTEM_PROMPT = `You are PayLabs Signal Scout. Rank the provided feed items by relevance to the user's queries. Select the most useful items for the user's research need. You cannot set prices, wallets, or execute payments. Return structured JSON only. Always include a safe_summary field.`;
+
   // Safe metadata for LLM — no wallet, no price
   const feedMeta = allActive.map((item) => ({
     id: item.id,
@@ -74,30 +191,28 @@ export const signalScoutHandler: ServiceHandler = async (
   });
 
   if (!result.ok) {
-    // Fallback: recency order
-    const fallback = allActive.slice(0, 10).map((item, i) => ({
-      feed_item_id: item.id as string,
-      title: String(item.title || ""),
-      publisher: String(item.publisher || ""),
-      rank: i + 1,
-      relevance_score: 0,
-    }));
+    // Fallback: deterministic ranking
+    const ranked = runDeterministicSignalScout(
+      allActive,
+      expanded_queries || [],
+      entity_terms || []
+    );
     return {
       ok: true,
       serviceName: "signal_scout",
       data: {
-        ranked_candidates: fallback,
-        top_candidates: fallback.slice(0, 3).map((f) => f.feed_item_id),
-        quick_relevance_notes: ["LLM ranking unavailable, using recency order"],
-        safe_signal_summary: `Fallback: ${fallback.length} recent items (LLM ranking unavailable).`,
+        ranked_candidates: ranked,
+        top_candidates: ranked.slice(0, 3).map((r) => r.feed_item_id),
+        quick_relevance_notes: ranked.slice(0, 5).map((r) => r.reason),
+        safe_signal_summary: `Fallback: ${ranked.length} items ranked deterministically (LLM unavailable).`,
       },
-      safeSummary: `Fallback: ${fallback.length} recent items (LLM ranking unavailable).`,
+      safeSummary: `Fallback: ${ranked.length} items ranked deterministically (LLM unavailable).`,
       settled: false,
       error: null,
     };
   }
 
-  const ranked = result.data.ranked_sources.filter((r) =>
+  const llmRanked = result.data.ranked_sources.filter((r) =>
     allActive.some((f) => f.id === r.feed_item_id)
   );
 
@@ -105,15 +220,15 @@ export const signalScoutHandler: ServiceHandler = async (
     ok: true,
     serviceName: "signal_scout",
     data: {
-      ranked_candidates: ranked.map((r) => ({
+      ranked_candidates: llmRanked.map((r) => ({
         feed_item_id: r.feed_item_id,
         title: String(allActive.find((f) => f.id === r.feed_item_id)?.title || ""),
         publisher: String(allActive.find((f) => f.id === r.feed_item_id)?.publisher || ""),
         rank: r.rank,
         relevance_score: r.relevance_score,
       })),
-      top_candidates: ranked.slice(0, 3).map((r) => r.feed_item_id),
-      quick_relevance_notes: ranked.slice(0, 5).map((r) => r.reason),
+      top_candidates: llmRanked.slice(0, 3).map((r) => r.feed_item_id),
+      quick_relevance_notes: llmRanked.slice(0, 5).map((r) => r.reason),
       safe_signal_summary: result.data.safe_summary,
     },
     safeSummary: result.data.safe_summary,

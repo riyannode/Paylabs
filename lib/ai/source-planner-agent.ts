@@ -1,7 +1,7 @@
 /**
  * Agent 2: Source Planner Agent (LLM-powered)
  * Selects feed items from RSSHub routes into an ordered source path.
- * No payment, no Runner — read-only planning.
+ * No payment, no backend executor — read-only planning.
  *
  * Calls actual LLM via invokeJsonAgent with route-specific prompt.
  *
