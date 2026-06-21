@@ -1,21 +1,24 @@
 /**
  * Payment Router Handler
  *
- * Reuses: payment_quote + payment_executor
  * Macro-node: settlement_memory
  * Requires LLM: no
  *
  * Only routes approved items. No LLM.
+ * This handler is ALWAYS audit-only in this PR.
+ * x402 real payment routing is NOT implemented.
+ *
  * Fails closed if:
  *   - no approved items
- *   - policy failure
  *   - invalid wallet
  *   - invalid source URL
- *   - missing real payment result
- *   - fake refs
+ *   - price <= 0
  *
- * In audit/internal mode (default), marks settled=false and does not execute real payments.
- * In x402 mode, uses PR #19 infrastructure for real payments.
+ * Output uses routed_items (not paid_items) to avoid implying
+ * that real payment has occurred. Status is always "planned".
+ * settled is always false. mode is always "audit_only".
+ *
+ * No fake payment_ref, settlement_ref, tx_hash, or batch_id.
  */
 
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
@@ -23,7 +26,7 @@ import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "
 export const paymentRouterHandler: ServiceHandler = async (
   input: ServiceHandlerInput
 ): Promise<ServiceHandlerOutput> => {
-  const { approved_items, discovery_run_id } = input.payload as {
+  const { approved_items } = input.payload as {
     approved_items: Array<{
       feed_item_id: string;
       source_url: string;
@@ -31,7 +34,6 @@ export const paymentRouterHandler: ServiceHandler = async (
       approved_price_usdc: number;
       creator_wallet: string | null;
     }>;
-    discovery_run_id: string;
   };
 
   // Fail closed: no approved items
@@ -46,16 +48,15 @@ export const paymentRouterHandler: ServiceHandler = async (
     };
   }
 
-  // Validate each item
-  const paidItems: Array<{
+  // Validate and route each item
+  const routedItems: Array<{
     feed_item_id: string;
     source_url: string;
-    payment_ref: string | null;
-    settlement_ref: string | null;
     amount_usdc: number;
+    status: "planned";
   }> = [];
 
-  const failedPayments: Array<{
+  const failedItems: Array<{
     feed_item_id: string;
     source_url: string;
     error: string;
@@ -72,7 +73,7 @@ export const paymentRouterHandler: ServiceHandler = async (
     }
 
     if (!validUrl) {
-      failedPayments.push({
+      failedItems.push({
         feed_item_id: item.feed_item_id,
         source_url: item.source_url,
         error: "Invalid source URL",
@@ -82,7 +83,7 @@ export const paymentRouterHandler: ServiceHandler = async (
 
     // Validate wallet if present
     if (item.creator_wallet && !/^0x[a-fA-F0-9]{40}$/.test(item.creator_wallet)) {
-      failedPayments.push({
+      failedItems.push({
         feed_item_id: item.feed_item_id,
         source_url: item.source_url,
         error: "Invalid creator wallet format",
@@ -92,7 +93,7 @@ export const paymentRouterHandler: ServiceHandler = async (
 
     // Validate price
     if (item.approved_price_usdc <= 0) {
-      failedPayments.push({
+      failedItems.push({
         feed_item_id: item.feed_item_id,
         source_url: item.source_url,
         error: "Invalid price (zero or negative)",
@@ -100,32 +101,30 @@ export const paymentRouterHandler: ServiceHandler = async (
       continue;
     }
 
-    // In audit/internal mode: mark as planned, not executed
-    // Real x402 payment would happen here when PAYLABS_X402_ENABLED_SERVICE_NAMES includes this service
-    paidItems.push({
+    // Valid item — mark as planned (audit-only, not executed)
+    routedItems.push({
       feed_item_id: item.feed_item_id,
       source_url: item.source_url,
-      payment_ref: null, // null = no real payment executed (audit mode)
-      settlement_ref: null, // null = no real settlement (audit mode)
       amount_usdc: item.approved_price_usdc,
+      status: "planned",
     });
   }
 
-  const totalRouted = paidItems.reduce((sum, i) => sum + i.amount_usdc, 0);
-  const safeSummary = `Routed ${paidItems.length}/${approved_items.length} items, total: ${totalRouted.toFixed(6)} USDC. ${failedPayments.length} failed. Mode: audit (no real payment).`;
+  const totalPlanned = routedItems.reduce((sum, i) => sum + i.amount_usdc, 0);
+  const safeSummary = `Audit-only: ${routedItems.length}/${approved_items.length} items validated and planned, total: ${totalPlanned.toFixed(6)} USDC. ${failedItems.length} failed validation. No real payment executed — payment_plan_ready only.`;
 
   return {
     ok: true,
     serviceName: "payment_router",
     data: {
-      paid_items: paidItems,
-      failed_payments: failedPayments,
-      payment_refs: [], // empty = no real payment refs
-      settlement_refs: [], // empty = no real settlement refs
+      routed_items: routedItems,
+      failed_items: failedItems,
+      mode: "audit_only",
+      settled: false,
       safe_payment_summary: safeSummary,
     },
     safeSummary,
-    settled: false, // audit mode — not settled
+    settled: false, // always false in audit mode
     error: null,
   };
 };

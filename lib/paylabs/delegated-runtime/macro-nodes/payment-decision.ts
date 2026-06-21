@@ -4,16 +4,22 @@
  * Phase 2 of the delegated runtime.
  * Services: source_verifier → value_allocator → trust_verifier → payment_decider
  *
- * This phase:
- * 1. Verifies source quality and credibility
- * 2. Allocates value and computes max allowed price
- * 3. Verifies trust, provenance, and creator ownership
- * 4. Makes deterministic payment approval decisions
+ * This phase evaluates the candidate BATCH through each service once.
+ * One service edge = one service call = one service fee.
+ * Does NOT loop per-candidate (that would multiply fees).
+ *
+ * Flow:
+ * 1. source_verifier evaluates the batch → quality scores per candidate
+ * 2. value_allocator evaluates the batch → ROI/value per candidate
+ * 3. trust_verifier evaluates the batch → risk scores per candidate
+ * 4. payment_decider aggregates all scores → approved/skipped decisions
+ *
+ * All calls go through callDelegatedService() (edge + schema validation).
  */
 
 import type { OrchestratorRunState } from "../types";
-import type { ServiceHandlerInput, ServiceName } from "../../agent-services/types";
-import { SERVICE_HANDLERS } from "../../agent-services/handlers";
+import type { ServiceName } from "../../agent-services/types";
+import { callDelegatedService } from "../../agent-services/call-delegated-service";
 import { addServiceEvaluation, updateBudgetSnapshot, addProgressSummary } from "../state";
 
 // ─── Run Payment Decision ────────────────────────────────────
@@ -60,161 +66,192 @@ export async function runPaymentDecision(
   // Load feed items for metadata (wallet, price, claim status)
   const { getFeedItemById } = await import("@/lib/ai/tools");
 
-  // ── Evaluate each candidate through source_verifier → value_allocator → trust_verifier ──
-  const evaluations: Array<{
+  // Prepare candidate metadata for batch evaluation
+  const candidateMeta: Array<{
     feed_item_id: string;
     source_url: string;
     source_title: string;
-    quality_score: number;
-    risk_score: number;
-    roi_score: number;
-    estimated_value: number;
-    max_allowed_price: number;
     creator_wallet: string | null;
+    claim_status: string;
   }> = [];
 
   for (const candidate of candidates.slice(0, 10)) {
-    const feedItem = await getFeedItemById(candidate.feed_item_id) as Record<string, unknown> | null;
-    const sourceUrl = String(feedItem?.canonical_url || candidate.source_url || "");
-    const sourceTitle = String(feedItem?.title || candidate.title || "");
-    const creatorWallet = feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : null;
-    const claimStatus = String(feedItem?.verification_status || "unclaimed");
-
-    // ── Source Verifier ──
-    const verifyInput: ServiceHandlerInput = {
-      discoveryRunId: state.discoveryRunId,
-      serviceName: "source_verifier",
-      payload: {
-        feed_item_id: candidate.feed_item_id,
-        source_url: sourceUrl,
-        source_title: sourceTitle,
-        routeTier: state.routeTier,
-      },
-    };
-
-    const verifyResult = await SERVICE_HANDLERS.source_verifier(verifyInput);
-    addServiceEvaluation(state, {
-      serviceName: "source_verifier",
-      macroNode: "payment_decision",
-      input: verifyInput.payload,
-      output: verifyResult.data,
-      safeSummary: verifyResult.safeSummary,
-      status: verifyResult.ok ? "completed" : "failed",
-      costUsdc: 0.000001,
-      startedAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
-      error: verifyResult.error,
-    });
-    updateBudgetSnapshot(state, "source_verifier", 0.000001);
-
-    const qualityScore = verifyResult.ok && verifyResult.data
-      ? (verifyResult.data as { quality_score: number }).quality_score
-      : 0;
-
-    // ── Value Allocator ──
-    const valueInput: ServiceHandlerInput = {
-      discoveryRunId: state.discoveryRunId,
-      serviceName: "value_allocator",
-      payload: {
-        source_url: sourceUrl,
-        source_title: sourceTitle,
-        quality_score: qualityScore,
-        remaining_budget_usdc: state.budgetSnapshot.remainingUsdc,
-        routeTier: state.routeTier,
-      },
-    };
-
-    const valueResult = await SERVICE_HANDLERS.value_allocator(valueInput);
-    addServiceEvaluation(state, {
-      serviceName: "value_allocator",
-      macroNode: "payment_decision",
-      input: valueInput.payload,
-      output: valueResult.data,
-      safeSummary: valueResult.safeSummary,
-      status: valueResult.ok ? "completed" : "failed",
-      costUsdc: 0.000001,
-      startedAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
-      error: valueResult.error,
-    });
-    updateBudgetSnapshot(state, "value_allocator", 0.000001);
-
-    const valueData = valueResult.data as {
-      roi_score: number;
-      estimated_value: number;
-      max_allowed_price: number;
-    } | null;
-
-    // ── Trust Verifier ──
-    const trustInput: ServiceHandlerInput = {
-      discoveryRunId: state.discoveryRunId,
-      serviceName: "trust_verifier",
-      payload: {
-        feed_item_id: candidate.feed_item_id,
-        source_url: sourceUrl,
-        creator_wallet: creatorWallet,
-        claim_status: claimStatus,
-        routeTier: state.routeTier,
-      },
-    };
-
-    const trustResult = await SERVICE_HANDLERS.trust_verifier(trustInput);
-    addServiceEvaluation(state, {
-      serviceName: "trust_verifier",
-      macroNode: "payment_decision",
-      input: trustInput.payload,
-      output: trustResult.data,
-      safeSummary: trustResult.safeSummary,
-      status: trustResult.ok ? "completed" : "failed",
-      costUsdc: 0.000001,
-      startedAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
-      error: trustResult.error,
-    });
-    updateBudgetSnapshot(state, "trust_verifier", 0.000001);
-
-    const trustData = trustResult.data as {
-      risk_score: number;
-    } | null;
-
-    evaluations.push({
+    const feedItem = (await getFeedItemById(candidate.feed_item_id)) as Record<string, unknown> | null;
+    candidateMeta.push({
       feed_item_id: candidate.feed_item_id,
-      source_url: sourceUrl,
-      source_title: sourceTitle,
-      quality_score: qualityScore,
-      risk_score: trustData?.risk_score ?? 0.5,
-      roi_score: valueData?.roi_score ?? 0,
-      estimated_value: valueData?.estimated_value ?? 0,
-      max_allowed_price: valueData?.max_allowed_price ?? 0,
-      creator_wallet: creatorWallet,
+      source_url: String(feedItem?.canonical_url || candidate.source_url || ""),
+      source_title: String(feedItem?.title || candidate.title || ""),
+      creator_wallet: feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : null,
+      claim_status: String(feedItem?.verification_status || "unclaimed"),
     });
   }
 
-  // ── Payment Decider (deterministic aggregator) ──
-  const deciderInput: ServiceHandlerInput = {
+  // ── Batch 1: Source Verifier (one call for whole batch) ──
+  const verifyResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
-    serviceName: "payment_decider",
+    buyerAgentName: "intent_matcher",
+    sellerServiceName: "source_verifier",
+    payload: {
+      candidates: candidateMeta.map((c) => ({
+        feed_item_id: c.feed_item_id,
+        source_url: c.source_url,
+        source_title: c.source_title,
+      })),
+      routeTier: state.routeTier,
+    },
+  });
+
+  addServiceEvaluation(state, {
+    serviceName: "source_verifier",
+    macroNode: "payment_decision",
+    input: { candidate_count: candidateMeta.length },
+    output: verifyResult.data,
+    safeSummary: verifyResult.safeSummary,
+    status: verifyResult.ok ? "completed" : "failed",
+    costUsdc: verifyResult.safeCallMeta.costUsdc,
+    startedAt: verifyResult.safeCallMeta.timestamp,
+    completedAt: new Date().toISOString(),
+    error: verifyResult.error,
+  });
+  updateBudgetSnapshot(state, "source_verifier", verifyResult.safeCallMeta.costUsdc);
+
+  // Extract quality scores (handler returns per-candidate results in data)
+  const qualityScores = new Map<string, number>();
+  if (verifyResult.ok && verifyResult.data) {
+    const results = verifyResult.data.results as Array<{ feed_item_id: string; quality_score: number }> | undefined;
+    if (results) {
+      for (const r of results) {
+        qualityScores.set(r.feed_item_id, r.quality_score);
+      }
+    }
+  }
+
+  // ── Batch 2: Value Allocator (one call for whole batch) ──
+  const valueResult = await callDelegatedService({
+    discoveryRunId: state.discoveryRunId,
+    buyerAgentName: "source_verifier",
+    sellerServiceName: "value_allocator",
+    payload: {
+      candidates: candidateMeta.map((c) => ({
+        feed_item_id: c.feed_item_id,
+        source_url: c.source_url,
+        source_title: c.source_title,
+        quality_score: qualityScores.get(c.feed_item_id) ?? 0,
+      })),
+      remaining_budget_usdc: state.budgetSnapshot.remainingUsdc,
+      routeTier: state.routeTier,
+    },
+  });
+
+  addServiceEvaluation(state, {
+    serviceName: "value_allocator",
+    macroNode: "payment_decision",
+    input: { candidate_count: candidateMeta.length, remaining_budget: state.budgetSnapshot.remainingUsdc },
+    output: valueResult.data,
+    safeSummary: valueResult.safeSummary,
+    status: valueResult.ok ? "completed" : "failed",
+    costUsdc: valueResult.safeCallMeta.costUsdc,
+    startedAt: valueResult.safeCallMeta.timestamp,
+    completedAt: new Date().toISOString(),
+    error: valueResult.error,
+  });
+  updateBudgetSnapshot(state, "value_allocator", valueResult.safeCallMeta.costUsdc);
+
+  // Extract value scores
+  const valueScores = new Map<string, { roi: number; estimated_value: number; max_allowed_price: number }>();
+  if (valueResult.ok && valueResult.data) {
+    const results = valueResult.data.results as Array<{ feed_item_id: string; roi_score: number; estimated_value: number; max_allowed_price: number }> | undefined;
+    if (results) {
+      for (const r of results) {
+        valueScores.set(r.feed_item_id, {
+          roi: r.roi_score,
+          estimated_value: r.estimated_value,
+          max_allowed_price: r.max_allowed_price,
+        });
+      }
+    }
+  }
+
+  // ── Batch 3: Trust Verifier (one call for whole batch) ──
+  const trustResult = await callDelegatedService({
+    discoveryRunId: state.discoveryRunId,
+    buyerAgentName: "value_allocator",
+    sellerServiceName: "trust_verifier",
+    payload: {
+      candidates: candidateMeta.map((c) => ({
+        feed_item_id: c.feed_item_id,
+        source_url: c.source_url,
+        creator_wallet: c.creator_wallet,
+        claim_status: c.claim_status,
+      })),
+      routeTier: state.routeTier,
+    },
+  });
+
+  addServiceEvaluation(state, {
+    serviceName: "trust_verifier",
+    macroNode: "payment_decision",
+    input: { candidate_count: candidateMeta.length },
+    output: trustResult.data,
+    safeSummary: trustResult.safeSummary,
+    status: trustResult.ok ? "completed" : "failed",
+    costUsdc: trustResult.safeCallMeta.costUsdc,
+    startedAt: trustResult.safeCallMeta.timestamp,
+    completedAt: new Date().toISOString(),
+    error: trustResult.error,
+  });
+  updateBudgetSnapshot(state, "trust_verifier", trustResult.safeCallMeta.costUsdc);
+
+  // Extract risk scores
+  const riskScores = new Map<string, number>();
+  if (trustResult.ok && trustResult.data) {
+    const results = trustResult.data.results as Array<{ feed_item_id: string; risk_score: number }> | undefined;
+    if (results) {
+      for (const r of results) {
+        riskScores.set(r.feed_item_id, r.risk_score);
+      }
+    }
+  }
+
+  // ── Aggregate evaluations for payment_decider ──
+  const evaluations = candidateMeta.map((c) => ({
+    feed_item_id: c.feed_item_id,
+    source_url: c.source_url,
+    source_title: c.source_title,
+    quality_score: qualityScores.get(c.feed_item_id) ?? 0,
+    risk_score: riskScores.get(c.feed_item_id) ?? 0.5,
+    roi_score: valueScores.get(c.feed_item_id)?.roi ?? 0,
+    estimated_value: valueScores.get(c.feed_item_id)?.estimated_value ?? 0,
+    max_allowed_price: valueScores.get(c.feed_item_id)?.max_allowed_price ?? 0,
+    creator_wallet: c.creator_wallet,
+  }));
+
+  // ── Batch 4: Payment Decider (deterministic aggregator, one call) ──
+  const deciderResult = await callDelegatedService({
+    discoveryRunId: state.discoveryRunId,
+    buyerAgentName: "trust_verifier",
+    sellerServiceName: "payment_decider",
     payload: {
       evaluations,
       total_budget_usdc: state.budgetSnapshot.totalBudgetUsdc,
       spent_usdc: state.budgetSnapshot.spentUsdc,
       routeTier: state.routeTier,
     },
-  };
+  });
 
-  const deciderResult = await SERVICE_HANDLERS.payment_decider(deciderInput);
   addServiceEvaluation(state, {
     serviceName: "payment_decider",
     macroNode: "payment_decision",
-    input: deciderInput.payload,
+    input: { evaluation_count: evaluations.length },
     output: deciderResult.data,
     safeSummary: deciderResult.safeSummary,
     status: deciderResult.ok ? "completed" : "failed",
-    costUsdc: 0,
-    startedAt: new Date().toISOString(),
+    costUsdc: deciderResult.safeCallMeta.costUsdc,
+    startedAt: deciderResult.safeCallMeta.timestamp,
     completedAt: new Date().toISOString(),
     error: deciderResult.error,
   });
+  updateBudgetSnapshot(state, "payment_decider", deciderResult.safeCallMeta.costUsdc);
 
   if (!deciderResult.ok || !deciderResult.data) {
     return {
@@ -244,7 +281,7 @@ export async function runPaymentDecision(
     total_estimated_spend: number;
   };
 
-  const summary = `Payment Decision: ${deciderData.approved_items.length}/${evaluations.length} approved, total spend: ${deciderData.total_estimated_spend.toFixed(6)} USDC.`;
+  const summary = `Payment Decision: ${deciderData.approved_items.length}/${evaluations.length} approved, total spend: ${deciderData.total_estimated_spend.toFixed(6)} USDC. 4 service calls (batch-based).`;
   addProgressSummary(state, summary);
 
   return {

@@ -4,13 +4,13 @@
  * POST /api/paylabs/agent-services/[serviceName]/run
  *
  * Behavior:
- * - validate serviceName exists
- * - validate request body with schema
- * - validate buyer/seller edge allowlist if buyerAgentName is provided
- * - if service is x402-enabled through PAYLABS_X402_ENABLED_SERVICE_NAMES,
- *   use PR #19 x402 challenge/verify/settle logic
- * - otherwise run in audit/internal mode and clearly mark settled=false
- * - call mapped handler
+ * - validate serviceName exists (400 if invalid)
+ * - require buyerAgentName (400 if missing — fail closed)
+ * - validate buyer→seller edge allowlist (403 if not allowed — fail closed)
+ * - validate request body with per-service Zod schema (400 if invalid)
+ * - ALL service endpoints are audit-only in this PR
+ * - x402 service challenge/verify/settle is NOT implemented
+ * - call handler directly, mark settled=false, mode=audit_only
  * - return structured output only
  * - never return raw chain-of-thought
  * - never return raw x-payment header/signature
@@ -19,11 +19,10 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { isValidServiceName } from "@/lib/paylabs/agent-services/registry";
-import { getServiceConfig } from "@/lib/paylabs/agent-services/registry";
+import { isValidServiceName, getServiceConfig } from "@/lib/paylabs/agent-services/registry";
 import { assertAllowedAgentServiceEdge } from "@/lib/paylabs/agent-services/edge-allowlist";
 import { SERVICE_HANDLERS } from "@/lib/paylabs/agent-services/handlers";
-import { isX402EnabledForService } from "@/lib/paylabs/feature-flags";
+import { getInputSchema } from "@/lib/paylabs/agent-services/schemas";
 import type { ServiceHandlerInput, ServiceName } from "@/lib/paylabs/agent-services/types";
 
 export async function POST(
@@ -38,7 +37,6 @@ export async function POST(
       {
         ok: false,
         error: `Invalid service name: ${serviceName}`,
-        valid_services: Object.keys(SERVICE_HANDLERS),
       },
       { status: 400 }
     );
@@ -50,10 +48,7 @@ export async function POST(
   // ── Validate service is active ──
   if (!config || !config.isActive) {
     return NextResponse.json(
-      {
-        ok: false,
-        error: `Service ${serviceName} is not active`,
-      },
+      { ok: false, error: `Service ${serviceName} is not active` },
       { status: 400 }
     );
   }
@@ -75,6 +70,27 @@ export async function POST(
     payload?: Record<string, unknown>;
   };
 
+  // ── Require buyerAgentName — fail closed ──
+  if (!buyerAgentName || typeof buyerAgentName !== "string") {
+    return NextResponse.json(
+      { ok: false, error: "Missing or invalid buyerAgentName (required)" },
+      { status: 400 }
+    );
+  }
+
+  // ── Validate edge allowlist — fail closed ──
+  const edgeResult = assertAllowedAgentServiceEdge(buyerAgentName, serviceNameTyped);
+  if (!edgeResult.allowed) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: edgeResult.error,
+        edge: `${buyerAgentName} → ${serviceName}`,
+      },
+      { status: 403 }
+    );
+  }
+
   // ── Validate required fields ──
   if (!payload || typeof payload !== "object") {
     return NextResponse.json(
@@ -90,33 +106,29 @@ export async function POST(
     );
   }
 
-  // ── Validate edge allowlist ──
-  if (buyerAgentName) {
-    const edgeResult = assertAllowedAgentServiceEdge(buyerAgentName, serviceNameTyped);
-    if (!edgeResult.allowed) {
+  // ── Validate payload with per-service Zod schema ──
+  const inputSchema = getInputSchema(serviceNameTyped);
+  if (inputSchema) {
+    const parsed = inputSchema.safeParse(payload);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map(
+        (i: { path: (string | number)[]; message: string }) =>
+          `${i.path.join(".")}: ${i.message}`
+      );
       return NextResponse.json(
         {
           ok: false,
-          error: edgeResult.error,
-          edge: `${buyerAgentName} → ${serviceName}`,
+          error: "Invalid payload",
+          validation_errors: issues,
         },
-        { status: 403 }
+        { status: 400 }
       );
     }
   }
 
-  // ── Check x402 mode ──
-  const isX402 = isX402EnabledForService(serviceNameTyped);
-
-  // ── Build handler input ──
-  const handlerInput: ServiceHandlerInput = {
-    discoveryRunId,
-    serviceName: serviceNameTyped,
-    buyerAgentName: buyerAgentName || undefined,
-    payload,
-  };
-
-  // ── Call handler ──
+  // ── Call handler — audit-only mode ──
+  // x402 service challenge/verify/settle is NOT implemented in this PR.
+  // All service endpoints are audit-only. settled=false always.
   const handler = SERVICE_HANDLERS[serviceNameTyped];
   if (!handler) {
     return NextResponse.json(
@@ -125,42 +137,30 @@ export async function POST(
     );
   }
 
+  const handlerInput: ServiceHandlerInput = {
+    discoveryRunId,
+    serviceName: serviceNameTyped,
+    buyerAgentName,
+    payload,
+  };
+
   try {
     const result = await handler(handlerInput);
 
-    // ── If x402 enabled, return 402 challenge ──
-    // In x402 mode, the service would return a 402 PAYMENT-REQUIRED response
-    // that the buyer must sign and retry. For now, mark the x402 status.
-    if (isX402 && !result.settled) {
-      return NextResponse.json(
-        {
-          ...result,
-          x402_required: true,
-          x402_service: serviceName,
-          message: `Service ${serviceName} requires x402 payment. Include PAYMENT-SIGNATURE header.`,
-        },
-        { status: 402 }
-      );
-    }
-
-    // ── Return structured output only ──
-    // Strip any accidental raw chain-of-thought or secrets
+    // Always audit-only: settled=false, no x402 challenge
     return NextResponse.json({
       ok: result.ok,
       serviceName: result.serviceName,
       data: result.data,
       safeSummary: result.safeSummary,
-      settled: result.settled,
+      settled: false,
+      mode: "audit_only",
       error: result.error,
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json(
-      {
-        ok: false,
-        serviceName,
-        error: `Handler error: ${msg}`,
-      },
+      { ok: false, serviceName, error: `Handler error: ${msg}` },
       { status: 500 }
     );
   }
