@@ -1,3 +1,5 @@
+import type { ServiceName } from "./agent-services/types";
+
 /**
  * Payment Feature Flags
  *
@@ -10,6 +12,12 @@
  *   that are allowed to run real x402 payment. Default: empty (none).
  *   Even when PAYLABS_AGENT_NANOPAYMENTS_ENABLED=true, only agents in this
  *   list will attempt real x402. All others remain audit-only.
+ *
+ * Delegated runtime:
+ *   PAYLABS_DELEGATED_RUNTIME_ENABLED — enable the delegated agentic runtime.
+ *   Default: false (existing flow unchanged).
+ *   PAYLABS_X402_ENABLED_SERVICE_NAMES — comma-separated service names
+ *   for delegated service x402 payment. Default: empty (none).
  */
 
 export interface PaymentFlags {
@@ -101,4 +109,47 @@ export function isGatewaySettlementConfigured(): boolean {
     flags.paymentExecutor === "circle_sdk" &&
     isAnyPaymentEnabled()
   );
+}
+
+// ─── Delegated Runtime Flags ────────────────────────────────────
+
+/**
+ * Check if the delegated agentic runtime is enabled.
+ * Default: false (existing flow unchanged).
+ */
+export function isDelegatedRuntimeEnabled(): boolean {
+  return process.env.PAYLABS_DELEGATED_RUNTIME_ENABLED === "true";
+}
+
+/**
+ * Parse the x402 service allowlist from env.
+ * PAYLABS_X402_ENABLED_SERVICE_NAMES — comma-separated service names.
+ * Default: empty array (no services enabled for real x402).
+ *
+ * Example: PAYLABS_X402_ENABLED_SERVICE_NAMES=intent_planner
+ * Example: PAYLABS_X402_ENABLED_SERVICE_NAMES=intent_planner,query_builder
+ */
+export function getX402EnabledServices(): string[] {
+  const raw = (process.env.PAYLABS_X402_ENABLED_SERVICE_NAMES || "").trim();
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/**
+ * Check if a specific delegated service is enabled for real x402 payment.
+ *
+ * Both conditions must be true:
+ *   1. PAYLABS_DELEGATED_RUNTIME_ENABLED === "true" (main gate)
+ *   2. serviceName is in PAYLABS_X402_ENABLED_SERVICE_NAMES (allowlist)
+ *
+ * If allowlist is empty, no services run real x402 (safe default).
+ */
+export function isX402EnabledForService(serviceName: ServiceName): boolean {
+  if (!isDelegatedRuntimeEnabled()) return false;
+  const enabledServices = getX402EnabledServices();
+  if (enabledServices.length === 0) return false;
+  return enabledServices.includes(serviceName.toLowerCase());
 }
