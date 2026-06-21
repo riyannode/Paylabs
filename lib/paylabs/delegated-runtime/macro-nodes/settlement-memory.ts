@@ -56,16 +56,11 @@ export async function runSettlementMemory(
   settled: false;
   error: string | null;
 }> {
+  // Do NOT short-circuit on empty approved items — payment_router still
+  // needs to be called and paid via x402 even when upstream returned 0 results.
+  // This ensures the payment graph is complete for validation.
   if (approvedItems.length === 0) {
-    addProgressSummary(state, "Settlement: no approved items to route. Payment plan empty.");
-    return {
-      ok: true,
-      routedItems: [],
-      failedItems: [],
-      mode: "audit_only",
-      settled: false,
-      error: null,
-    };
+    addProgressSummary(state, "Settlement: no approved items — calling payment_router with empty input.");
   }
 
   // ── Payment Router via callDelegatedService ──
