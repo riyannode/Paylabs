@@ -2,16 +2,15 @@
  * Discovery Planner Macro-Node
  *
  * Phase 1 of the delegated runtime.
- * Services: intent_planner → query_builder → signal_scout → intent_matcher
+ * Services: intent_planner → query_builder → signal_scout
  *
  * This phase:
  * 1. Classifies user intent and normalizes the goal
  * 2. Expands goal into discovery queries
  * 3. Discovers and ranks candidate sources
- * 4. Matches candidates against intent
  *
  * All calls go through callDelegatedService() (edge + schema validation).
- * Edge chain: run_budget_controller → intent_planner → query_builder → signal_scout → intent_matcher
+ * Edge chain: run_budget_controller → intent_planner → query_builder → signal_scout
  */
 
 import type { OrchestratorRunState } from "../types";
@@ -35,7 +34,6 @@ export async function runDiscoveryPlanner(
     rank: number;
     relevance_score: number;
   }>;
-  approvedForQualityCheck: boolean;
   error: string | null;
 }> {
   // ── Step 1: Intent Planner ──
@@ -73,7 +71,6 @@ export async function runDiscoveryPlanner(
       constraints: [],
       routeTierHint: state.routeTier,
       rankedCandidates: [],
-      approvedForQualityCheck: false,
       error: `Intent planner failed: ${intentResult.error}`,
     };
   }
@@ -120,7 +117,6 @@ export async function runDiscoveryPlanner(
       constraints: intentData.constraints,
       routeTierHint: intentData.route_tier_hint,
       rankedCandidates: [],
-      approvedForQualityCheck: false,
       error: `Query builder failed: ${queryResult.error}`,
     };
   }
@@ -165,7 +161,6 @@ export async function runDiscoveryPlanner(
       constraints: intentData.constraints,
       routeTierHint: intentData.route_tier_hint,
       rankedCandidates: [],
-      approvedForQualityCheck: false,
       error: `Signal scout failed: ${signalResult.error}`,
     };
   }
@@ -181,38 +176,7 @@ export async function runDiscoveryPlanner(
     top_candidates: string[];
   };
 
-  // ── Step 4: Intent Matcher ──
-  // Edge: signal_scout → intent_matcher
-  const matcherResult = await callDelegatedService({
-    discoveryRunId: state.discoveryRunId,
-    buyerAgentName: "signal_scout",
-    sellerServiceName: "intent_matcher",
-    payload: {
-      normalized_goal: intentData.normalized_goal,
-      candidates: signalData.ranked_candidates.slice(0, 10),
-      routeTier: state.routeTier,
-    },
-  });
-
-  addServiceEvaluation(state, {
-    serviceName: "intent_matcher",
-    macroNode: "discovery_planner",
-    input: { candidate_count: signalData.ranked_candidates.length },
-    output: matcherResult.data,
-    safeSummary: matcherResult.safeSummary,
-    status: matcherResult.ok ? "completed" : "failed",
-    costUsdc: matcherResult.safeCallMeta.costUsdc,
-    startedAt: matcherResult.safeCallMeta.timestamp,
-    completedAt: new Date().toISOString(),
-    error: matcherResult.error,
-  });
-  updateBudgetSnapshot(state, "intent_matcher", matcherResult.safeCallMeta.costUsdc);
-
-  const matcherData = matcherResult.data as {
-    approved_for_quality_check: boolean;
-  } | null;
-
-  const summary = `Discovery Planner: ${signalData.ranked_candidates.length} candidates ranked, ${signalData.top_candidates.length} top candidates, intent match: ${matcherData?.approved_for_quality_check ? "approved" : "not approved"}. 4 service calls (chain).`;
+  const summary = `Discovery Planner: ${signalData.ranked_candidates.length} candidates ranked, ${signalData.top_candidates.length} top candidates. 3 service calls (chain).`;
   addProgressSummary(state, summary);
 
   return {
@@ -222,7 +186,6 @@ export async function runDiscoveryPlanner(
     constraints: intentData.constraints,
     routeTierHint: intentData.route_tier_hint,
     rankedCandidates: signalData.ranked_candidates,
-    approvedForQualityCheck: matcherData?.approved_for_quality_check ?? false,
     error: null,
   };
 }
