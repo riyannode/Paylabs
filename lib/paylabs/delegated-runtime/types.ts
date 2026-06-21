@@ -72,6 +72,8 @@ export interface ServiceEvaluation {
     payTo: string;
     network: string;
     x402Version: number;
+    txHash?: string | null;
+    explorerUrl?: string | null;
   };
 }
 

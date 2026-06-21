@@ -73,6 +73,10 @@ export interface VerifyAndSettleResult {
     payTo: string;
     network: string;
     x402Version: number;
+    /** Transaction hash if available from facilitator settle */
+    txHash: string | null;
+    /** Block explorer URL if txHash is valid */
+    explorerUrl: string | null;
   };
   /** Payer address if verified */
   payer?: string;
@@ -221,6 +225,12 @@ export async function verifyAndSettlePayment(
   // ── Settle ─────────────────────────────────────────────────
   try {
     const settleResult = await facilitator.settle(paymentPayload, requirements);
+    const settleData = settleResult as Record<string, unknown>;
+
+    // Extract txHash from settle result
+    const rawTxHash = settleData?.txHash as string | undefined;
+    const txHash = rawTxHash && /^0x[a-fA-F0-9]{64}$/.test(rawTxHash) ? rawTxHash : null;
+    const explorerUrl = txHash ? `https://arc-testnet.blockscout.com/tx/${txHash}` : null;
 
     return {
       ok: true,
@@ -230,8 +240,10 @@ export async function verifyAndSettlePayment(
         payTo: requirements.payTo,
         network: requirements.network,
         x402Version: 2,
+        txHash,
+        explorerUrl,
       },
-      payer: (settleResult as Record<string, unknown>)?.payer as string | undefined,
+      payer: settleData?.payer as string | undefined,
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

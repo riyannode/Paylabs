@@ -112,14 +112,15 @@ export function createServiceNode(
     // Build payment edge if settled
     const edges: PaymentEdge[] = [];
     if (result.settled) {
+      const realTxHash = result.paymentMeta?.txHash as string | null | undefined;
       edges.push({
         edgeId: randomUUID(),
         buyerServiceName: macroNode as ServiceEvaluation["macroNode"],
         sellerServiceName: serviceName,
         amountUsdc: result.safeCallMeta.costUsdc,
         status: "executed",
-        paymentRef: "x402-settled",
-        settlementRef: null,
+        paymentRef: null, // no real paymentId from GatewayWalletBatched
+        settlementRef: realTxHash || null, // real txHash if available
       });
     }
 
