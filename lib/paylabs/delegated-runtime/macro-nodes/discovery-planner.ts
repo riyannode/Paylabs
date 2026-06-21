@@ -13,14 +13,21 @@
  * Edge chain: run_budget_controller → intent_planner → query_builder → signal_scout
  */
 
-import type { OrchestratorRunState } from "../types";
+import type { OrchestratorRunState, ServiceName } from "../types";
 import { callDelegatedService } from "../../agent-services/call-delegated-service";
 import { addServiceEvaluation, updateBudgetSnapshot, addProgressSummary } from "../state";
+
+// ─── Service selection guard ──────────────────────────────────
+function isSelected(services: ServiceName[] | undefined, name: ServiceName): boolean {
+  if (!services || services.length === 0) return true;
+  return services.includes(name);
+}
 
 // ─── Run Discovery Planner ───────────────────────────────────
 
 export async function runDiscoveryPlanner(
-  state: OrchestratorRunState
+  state: OrchestratorRunState,
+  options?: { selectedServices?: ServiceName[]; parentWalletId?: string }
 ): Promise<{
   ok: boolean;
   normalizedGoal: string | null;
@@ -37,7 +44,10 @@ export async function runDiscoveryPlanner(
   error: string | null;
 }> {
   // ── Step 1: Intent Planner ──
-  // Edge: run_budget_controller → intent_planner
+  if (!isSelected(options?.selectedServices, "intent_planner")) {
+    addProgressSummary(state, "Discovery Planner: intent_planner skipped (not in execution plan)");
+    return { ok: false, normalizedGoal: null, intentType: null, constraints: [], routeTierHint: state.routeTier, rankedCandidates: [], error: "intent_planner not in execution plan" };
+  }
   const intentResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
     buyerAgentName: "run_budget_controller",
@@ -47,6 +57,7 @@ export async function runDiscoveryPlanner(
       budgetUsdc: state.userBudgetUsdc,
       routeTier: state.routeTier,
     },
+    buyerWalletIdOverride: options?.parentWalletId,
   });
 
   addServiceEvaluation(state, {
@@ -85,7 +96,10 @@ export async function runDiscoveryPlanner(
   };
 
   // ── Step 2: Query Builder ──
-  // Edge: intent_planner → query_builder
+  if (!isSelected(options?.selectedServices, "query_builder")) {
+    addProgressSummary(state, "Discovery Planner: query_builder skipped");
+    return { ok: false, normalizedGoal: intentData.normalized_goal, intentType: intentData.intent_type, constraints: intentData.constraints, routeTierHint: intentData.route_tier_hint, rankedCandidates: [], error: "query_builder not in execution plan" };
+  }
   const queryResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
     buyerAgentName: "intent_planner",
@@ -95,6 +109,7 @@ export async function runDiscoveryPlanner(
       topics: intentData.constraints,
       routeTier: state.routeTier,
     },
+    buyerWalletIdOverride: options?.parentWalletId,
   });
 
   addServiceEvaluation(state, {
@@ -131,7 +146,10 @@ export async function runDiscoveryPlanner(
   };
 
   // ── Step 3: Signal Scout ──
-  // Edge: query_builder → signal_scout
+  if (!isSelected(options?.selectedServices, "signal_scout")) {
+    addProgressSummary(state, "Discovery Planner: signal_scout skipped");
+    return { ok: false, normalizedGoal: intentData.normalized_goal, intentType: intentData.intent_type, constraints: intentData.constraints, routeTierHint: intentData.route_tier_hint, rankedCandidates: [], error: "signal_scout not in execution plan" };
+  }
   const signalResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
     buyerAgentName: "query_builder",
@@ -141,6 +159,7 @@ export async function runDiscoveryPlanner(
       entity_terms: queryData.entity_terms,
       routeTier: state.routeTier,
     },
+    buyerWalletIdOverride: options?.parentWalletId,
   });
 
   addServiceEvaluation(state, {
