@@ -27,6 +27,14 @@ export interface MacroNodeConfig {
   fixedNodeFeeUsdc: number;
   endpointPath: string;
   childServices: ServiceName[];
+  /** Tier this macro-node belongs to */
+  tierLabel: "easy" | "normal" | "advanced";
+  /** Brain → this macro uses exact_nano (fixed-price x402) */
+  brainPaymentScheme: "exact_nano";
+  /** How this macro pays its children: batch_child (many) or exact_nano (one) */
+  childPaymentScheme: "batch_child" | "exact_nano";
+  /** Which tiered summary key this macro produces */
+  outputSummaryKey: "easy_summary" | "normal_summary" | "advanced_summary";
 }
 
 export type DelegatedNodeConfig = BrainNodeConfig | MacroNodeConfig;
@@ -52,6 +60,10 @@ export const MACRO_NODES: Record<MacroNodePhase, MacroNodeConfig> = {
     fixedNodeFeeUsdc: 0.000001,
     endpointPath: "/api/paylabs/macro-nodes/discovery_planner/run",
     childServices: ["intent_planner", "query_builder", "signal_scout"],
+    tierLabel: "easy",
+    brainPaymentScheme: "exact_nano",
+    childPaymentScheme: "batch_child",
+    outputSummaryKey: "easy_summary",
   },
   payment_decision: {
     nodeType: "macro_node",
@@ -64,6 +76,10 @@ export const MACRO_NODES: Record<MacroNodePhase, MacroNodeConfig> = {
       "intent_matcher", "source_verifier", "value_allocator",
       "trust_verifier", "payment_decider",
     ],
+    tierLabel: "normal",
+    brainPaymentScheme: "exact_nano",
+    childPaymentScheme: "batch_child",
+    outputSummaryKey: "normal_summary",
   },
   settlement_memory: {
     nodeType: "macro_node",
@@ -73,6 +89,10 @@ export const MACRO_NODES: Record<MacroNodePhase, MacroNodeConfig> = {
     fixedNodeFeeUsdc: 0.000001,
     endpointPath: "/api/paylabs/macro-nodes/settlement_memory/run",
     childServices: ["payment_router"],
+    tierLabel: "advanced",
+    brainPaymentScheme: "exact_nano",
+    childPaymentScheme: "exact_nano",
+    outputSummaryKey: "advanced_summary",
   },
 };
 
