@@ -75,7 +75,7 @@ export async function runSettlementMemory(
   }
   const routerResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
-    buyerAgentName: "payment_decider",
+    buyerAgentName: "settlement_memory",
     sellerServiceName: "payment_router",
     payload: {
       approved_items: approvedItems,
@@ -128,7 +128,7 @@ export async function runSettlementMemory(
   for (const routed of routerData.routed_items) {
     const edge: PaymentEdge = {
       edgeId: randomUUID(),
-      buyerServiceName: "payment_decider",
+      buyerServiceName: "settlement_memory",
       sellerServiceName: "payment_router",
       amountUsdc: routed.amount_usdc,
       status: "planned", // audit-only: never "executed"

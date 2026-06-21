@@ -12,7 +12,7 @@
  * 5. Makes deterministic payment approval decisions (payment_decider — batch)
  *
  * All calls go through callDelegatedService() (edge + schema validation).
- * Edge chain: signal_scout → intent_matcher → source_verifier → value_allocator → trust_verifier → payment_decider
+ * Edge chain: payment_decision → intent_matcher → source_verifier → value_allocator → trust_verifier → payment_decider
  */
 
 import type { OrchestratorRunState, ServiceName } from "../types";
@@ -74,7 +74,7 @@ export async function runPaymentDecision(
   }
   const matcherResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
-    buyerAgentName: "signal_scout",
+    buyerAgentName: "payment_decision",
     sellerServiceName: "intent_matcher",
     payload: {
       normalized_goal: state.userGoal,
@@ -166,7 +166,7 @@ export async function runPaymentDecision(
   }
   const verifyResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
-    buyerAgentName: "intent_matcher",
+    buyerAgentName: "payment_decision",
     sellerServiceName: "source_verifier",
     payload: {
       candidates: candidateMeta.map((c) => ({
@@ -213,7 +213,7 @@ export async function runPaymentDecision(
   }
   const valueResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
-    buyerAgentName: "source_verifier",
+    buyerAgentName: "payment_decision",
     sellerServiceName: "value_allocator",
     payload: {
       candidates: candidateMeta.map((c) => ({
@@ -266,7 +266,7 @@ export async function runPaymentDecision(
   }
   const trustResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
-    buyerAgentName: "value_allocator",
+    buyerAgentName: "payment_decision",
     sellerServiceName: "trust_verifier",
     payload: {
       candidates: candidateMeta.map((c) => ({
@@ -327,7 +327,7 @@ export async function runPaymentDecision(
   }
   const deciderResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
-    buyerAgentName: "trust_verifier",
+    buyerAgentName: "payment_decision",
     sellerServiceName: "payment_decider",
     payload: {
       evaluations,
