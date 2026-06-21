@@ -52,12 +52,19 @@ async function resolveAppUrl(): Promise<string> {
   return base.replace(/\/+$/, "");
 }
 
+type X402CallResult = {
+  ok: boolean;
+  data: Record<string, unknown> | null;
+  error: string | null;
+  paymentMetadata?: { txHash?: string | null; explorerUrl?: string | null } | null;
+};
+
 async function callBrainX402(dcwSigner: import("@/lib/paylabs/x402/buyer-transport").DcwSigner, body: {
   userGoal: string;
   routeTier: string;
   userBudgetUsdc: number;
   discoveryRunId: string;
-}): Promise<{ ok: boolean; data: Record<string, unknown> | null; error: string | null }> {
+}): Promise<X402CallResult> {
   const { callPaidSeller } = await import("@/lib/paylabs/x402/buyer-transport");
 
   const base = await resolveAppUrl();
@@ -79,6 +86,7 @@ async function callBrainX402(dcwSigner: import("@/lib/paylabs/x402/buyer-transpo
     ok: result.ok,
     data: result.data as Record<string, unknown> | null,
     error: result.error || null,
+    paymentMetadata: result.paymentMetadata ?? null,
   };
 }
 
@@ -93,7 +101,7 @@ async function callMacroNodeX402(
     userWallet: string;
     payload?: Record<string, unknown>;
   }
-): Promise<{ ok: boolean; data: Record<string, unknown> | null; error: string | null }> {
+): Promise<X402CallResult> {
   const { callPaidSeller } = await import("@/lib/paylabs/x402/buyer-transport");
 
   const base = await resolveAppUrl();
@@ -113,6 +121,7 @@ async function callMacroNodeX402(
     ok: result.ok,
     data: result.data as Record<string, unknown> | null,
     error: result.error || null,
+    paymentMetadata: result.paymentMetadata ?? null,
   };
 }
 
@@ -157,6 +166,8 @@ async function runX402Orchestration(params: {
     status: "paid",
     nodeType: "brain",
     paymentRef: null,
+    txHash: brainResult.paymentMetadata?.txHash ?? null,
+    explorerUrl: brainResult.paymentMetadata?.explorerUrl ?? null,
   });
 
   const brainData = brainResult.data.data as Record<string, unknown> | undefined;
@@ -231,6 +242,8 @@ async function runX402Orchestration(params: {
       status: "paid",
       nodeType: "macro_node",
       paymentRef: null,
+      txHash: nodeResult.paymentMetadata?.txHash ?? null,
+      explorerUrl: nodeResult.paymentMetadata?.explorerUrl ?? null,
     });
 
     macroNodeResults[node] = nodeResult.data;
