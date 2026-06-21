@@ -239,6 +239,7 @@ async function runX402Orchestration(params: {
     // Extract child service payment edges from macro-node serviceEvaluations
     const childEvals = nodeResult.data.serviceEvaluations as Array<{
       serviceName: string; status: string; settled: boolean; mode: string; costUsdc: number;
+      txHash?: string | null; explorerUrl?: string | null;
     }> | undefined;
     if (childEvals) {
       for (const ev of childEvals) {
@@ -250,6 +251,8 @@ async function runX402Orchestration(params: {
           status: ev.settled ? "paid" : (ev.status === "completed" ? "skipped" : "skipped"),
           nodeType: "service",
           paymentRef: null,
+          txHash: ev.txHash ?? null,
+          explorerUrl: ev.explorerUrl ?? null,
         });
       }
     }
@@ -560,6 +563,8 @@ async function runX402Path(
             seller: e.seller,
             node_type: e.nodeType,
             status: e.status,
+            tx_hash: e.txHash ?? null,
+            explorer_url: e.explorerUrl ?? null,
           })),
           budget_snapshot: {
             settled_service_fees_usdc: result.budgetSnapshot.settledServiceFeesUsdc,
@@ -600,6 +605,8 @@ async function runX402Path(
         amount_usdc: e.amountUsdc,
         status: e.status,
         node_type: e.nodeType,
+        tx_hash: e.txHash ?? null,
+        explorer_url: e.explorerUrl ?? null,
       })),
       safe_progress_summaries: result.safeProgressSummaries,
       budget_snapshot: result.budgetSnapshot,
