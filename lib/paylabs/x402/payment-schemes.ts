@@ -1,28 +1,27 @@
 /**
- * PayLabs x402 Payment Scheme Routing
+ * PayLabs x402 Payment Scheme Routing (Circle-only)
  *
- * Explicit scheme types for tiered x402 payment architecture:
- * - Brain → macro = exact_nano (fixed-price x402 per request, small amount)
- * - Macro → many child = batch_child (batch settlement, when implemented)
- * - Macro → one child = exact_nano (fixed-price x402)
+ * All payment edges use Circle GatewayWalletBatched x402.
+ * No non-Circle x402 settlement implementations.
  *
- * Current repo uses GatewayWalletBatched (Circle's exact x402 with batched
- * on-chain settlement). This is NOT true batch settlement (no channel/voucher
- * storage, no claim/settle manager).
- *
- * Rules:
- * - exact_nano and batch_child are INTERNAL implementation details only.
- * - Do NOT expose as user-selectable settlement modes.
- * - Default flags = false → preserves current PR #22 behavior.
+ * Payment model:
+ *   controller/user → Brain         = circle_gateway_wallet_batched (treasury 0.000003)
+ *   Brain → macro-node              = circle_gateway_wallet_batched (macro allocation)
+ *   macro-node → child services     = per-child circle_gateway_wallet_batched (fallback)
+ *                                     or grouped child (if Circle SDK supports it)
  */
 
-// ─── Scheme Types ───────────────────────────────────────────
+// ─── Circle Payment Modes ───────────────────────────────────
 
-export type PayLabsX402Scheme =
-  | "exact_nano"
-  | "batch_child";
+export type CircleX402PaymentMode =
+  | "circle_gateway_wallet_batched"
+  | "circle_gateway_wallet_batched_grouped_child"
+  | "circle_gateway_wallet_batched_per_child_fallback";
+
+// ─── Payment Layers ─────────────────────────────────────────
 
 export type PayLabsPaymentLayer =
+  | "controller_to_brain"
   | "brain_to_macro"
   | "macro_to_child";
 
@@ -35,86 +34,48 @@ export interface PaymentSchemeParams {
 }
 
 /**
- * Resolve which x402 scheme to use for a payment edge.
+ * Resolve which Circle x402 payment mode to use for a payment edge.
  *
  * Rules:
- * - brain_to_macro always uses exact_nano
- * - macro_to_child with >1 child uses batch_child (when enabled)
- * - macro_to_child with 1 child uses exact_nano
- *
- * If batch_child is disabled and macro has >1 children:
- * - fail closed if x402 child payment is required
- * - otherwise fall back to exact_nano (one-at-a-time)
+ * - controller_to_brain = circle_gateway_wallet_batched
+ * - brain_to_macro = circle_gateway_wallet_batched
+ * - macro_to_child = grouped child if Circle SDK supports it cleanly,
+ *                    otherwise per-child fallback
  */
 export function resolvePaymentSchemeForEdge(
   params: PaymentSchemeParams
-): { scheme: PayLabsX402Scheme; reason: string } {
+): { mode: CircleX402PaymentMode; reason: string } {
   const { layer, childServiceCount, macroNodeName } = params;
 
-  // Brain → macro is always exact_nano
-  if (layer === "brain_to_macro") {
-    return { scheme: "exact_nano", reason: "brain_to_macro always uses exact_nano" };
-  }
-
-  // Macro → one child: exact_nano
-  if (childServiceCount <= 1) {
+  // controller → Brain and Brain → macro always use GatewayWalletBatched
+  if (layer === "controller_to_brain" || layer === "brain_to_macro") {
     return {
-      scheme: "exact_nano",
-      reason: `${macroNodeName} has ${childServiceCount} child(ren) — exact_nano`,
+      mode: "circle_gateway_wallet_batched",
+      reason: `${layer} always uses circle_gateway_wallet_batched`,
     };
   }
 
-  // Macro → many children: batch_child if enabled, else exact_nano fallback
-  if (isBatchChildSchemeEnabled()) {
+  // macro → child: use grouped child if enabled, else per-child fallback
+  if (isGroupedChildPaymentEnabled() && childServiceCount > 1) {
     return {
-      scheme: "batch_child",
-      reason: `${macroNodeName} has ${childServiceCount} children — batch_child enabled`,
+      mode: "circle_gateway_wallet_batched_grouped_child",
+      reason: `${macroNodeName} has ${childServiceCount} children — grouped Circle child payment`,
     };
   }
 
-  // batch_child disabled — fall back to exact_nano (one-at-a-time)
+  // Per-child fallback (always acceptable)
   return {
-    scheme: "exact_nano",
-    reason: `${macroNodeName} has ${childServiceCount} children but batch_child disabled — exact_nano fallback`,
+    mode: "circle_gateway_wallet_batched_per_child_fallback",
+    reason: `${macroNodeName} has ${childServiceCount} child(ren) — per-child Circle x402 fallback`,
   };
 }
 
 // ─── Feature Flag Helpers ───────────────────────────────────
 
 /**
- * Check if exact_nano scheme is enabled.
- * Default: false (preserves current PR #22 behavior).
+ * Check if grouped Circle child payment is enabled.
+ * Default: false (per-child fallback is safe and always works).
  */
-export function isExactNanoSchemeEnabled(): boolean {
-  return process.env.PAYLABS_X402_EXACT_NANO_ENABLED === "true";
-}
-
-/**
- * Check if batch_child scheme is enabled.
- * Default: false (no real batch settlement implemented yet).
- *
- * WARNING: Current repo does NOT implement official x402 batch-settlement
- * (no channel/voucher storage, no claim/settle manager). Do NOT enable
- * this flag in production until those are implemented.
- */
-export function isBatchChildSchemeEnabled(): boolean {
-  return process.env.PAYLABS_X402_CHILD_BATCH_ENABLED === "true";
-}
-
-/**
- * Check if the official x402 batch-settlement scheme should be used
- * (vs the current GatewayWalletBatched exact-like flow).
- * Default: false.
- */
-export function isOfficialBatchSchemeEnabled(): boolean {
-  return process.env.PAYLABS_X402_CHILD_BATCH_USE_OFFICIAL_SCHEME === "true";
-}
-
-/**
- * Check if tiered bundle payment routing is enabled.
- * When false, current PR #22 flat x402 behavior is preserved.
- * Default: false.
- */
-export function isTieredBundlePaymentsEnabled(): boolean {
-  return process.env.PAYLABS_TIERED_BUNDLE_PAYMENTS_ENABLED === "true";
+export function isGroupedChildPaymentEnabled(): boolean {
+  return process.env.PAYLABS_X402_GROUPED_CHILD_ENABLED === "true";
 }

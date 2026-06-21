@@ -43,7 +43,7 @@ export function createServiceNode(
   payloadFn: (state: Record<string, unknown>) => Record<string, unknown>,
   options?: {
     paymentLayer?: "macro_to_child";
-    paymentSchemeOverride?: "exact_nano" | "batch_child";
+    paymentSchemeOverride?: "circle_gateway_wallet_batched" | "circle_gateway_wallet_batched_grouped_child" | "circle_gateway_wallet_batched_per_child_fallback";
   }
 ): (state: Record<string, unknown>) => Promise<Record<string, unknown>> {
   return async (state: Record<string, unknown>) => {

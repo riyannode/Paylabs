@@ -43,10 +43,10 @@ export interface CallDelegatedServiceInput {
   payload: Record<string, unknown>;
   /** Override buyer wallet ID for payment graph (macro-node → child). */
   buyerWalletIdOverride?: string;
-  /** Payment layer: brain_to_macro or macro_to_child */
-  paymentLayer?: "brain_to_macro" | "macro_to_child";
-  /** Override payment scheme for this edge */
-  paymentSchemeOverride?: "exact_nano" | "batch_child";
+  /** Payment layer: controller_to_brain, brain_to_macro, or macro_to_child */
+  paymentLayer?: "controller_to_brain" | "brain_to_macro" | "macro_to_child";
+  /** Override Circle payment mode for this edge */
+  paymentSchemeOverride?: "circle_gateway_wallet_batched" | "circle_gateway_wallet_batched_grouped_child" | "circle_gateway_wallet_batched_per_child_fallback";
 }
 
 // ─── Output ──────────────────────────────────────────────────

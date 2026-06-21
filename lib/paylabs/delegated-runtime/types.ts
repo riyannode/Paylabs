@@ -48,6 +48,20 @@ export interface BudgetSnapshot {
   settledServiceFeesUsdc: number;
   /** Fees estimated/committed but not settled (audit-only) */
   estimatedServiceFeesUsdc: number;
+  /** User budget total */
+  userBudgetUsdc?: number;
+  /** User budget used (controller→brain + brain→macro allocations) */
+  userBudgetUsedUsdc?: number;
+  /** Remaining user budget (not child payments) */
+  remainingBudgetUsdc?: number;
+  /** Treasury fee (controller→brain) */
+  treasuryFeeUsdc?: number;
+  /** Total macro allocation (brain→macro nodes) */
+  macroAllocationUsdc?: number;
+  /** Child payment volume (macro→child, internal to macro allocation) */
+  childPaymentVolumeUsdc?: number;
+  /** Gross payment volume (userBudgetUsed + childPaymentVolume) */
+  grossPaymentVolumeUsdc?: number;
 }
 
 // ─── Service Evaluation ──────────────────────────────────────
@@ -165,6 +179,24 @@ export interface PaymentEdge {
   status: "planned" | "executed" | "failed" | "skipped";
   paymentRef: string | null;
   settlementRef: string | null;
+  /** Payment layer: controller_to_brain, brain_to_macro, macro_to_child */
+  layer?: "controller_to_brain" | "brain_to_macro" | "macro_to_child";
+  /** Accounting role: user_budget_spend or macro_internal_child_spend */
+  accountingRole?: "user_budget_spend" | "macro_internal_child_spend";
+  /** Source of funds: user_budget or macro_allocation */
+  sourceOfFunds?: "user_budget" | "macro_allocation";
+  /** Circle x402 payment mode used */
+  paymentMode?: "circle_gateway_wallet_batched" | "circle_gateway_wallet_batched_grouped_child" | "circle_gateway_wallet_batched_per_child_fallback";
+  /** Base macro-node fee (excludes child budget) */
+  nodeFeeUsdc?: number;
+  /** Child budget portion of allocation */
+  childBudgetUsdc?: number;
+  /** Total allocation (nodeFee + childBudget) */
+  allocationUsdc?: number;
+  /** Real txHash from Gateway settle (null if not available) */
+  txHash?: string | null;
+  /** Block explorer URL (null if txHash not available) */
+  explorerUrl?: string | null;
 }
 
 // ─── LLM Brain Planning Output ─────────────────────────────

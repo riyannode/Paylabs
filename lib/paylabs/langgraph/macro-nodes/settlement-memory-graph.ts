@@ -2,7 +2,7 @@
  * Settlement Memory LangGraph
  *
  * Phase 3 of the delegated runtime.
- * Services: payment_router (only 1 child → exact_nano, NOT batch)
+ * Services: payment_router (only 1 child → per-child Circle x402)
  *
  * Graph: START → payment_router → process_result → build_summary → END
  *
@@ -11,7 +11,7 @@
  * - Must NOT sign payments
  * - Must NOT settle payments
  * - Service nodes call callDelegatedService()
- * - settlement_memory has only 1 child → exact_nano payment
+ * - settlement_memory has only 1 child → per-child Circle x402
  * - Returns routedItems + advanced_summary
  */
 
@@ -23,7 +23,7 @@ import type { BudgetSnapshot } from "../../delegated-runtime/types";
 import { randomUUID } from "node:crypto";
 
 // ─── Node: Payment Router ───────────────────────────────────
-// settlement_memory has only 1 child → exact_nano (not batch_child)
+// settlement_memory has only 1 child → per-child Circle x402
 
 const paymentRouterNode = createServiceNode(
   "payment_router",
@@ -33,7 +33,7 @@ const paymentRouterNode = createServiceNode(
   }),
   {
     paymentLayer: "macro_to_child",
-    paymentSchemeOverride: "exact_nano",
+    paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback",
   }
 );
 
@@ -78,7 +78,7 @@ async function buildAdvancedSummary(state: SettlementMemoryStateType) {
   const failed = state.failedItems?.length || 0;
 
   const summary = `Settlement: ${routed} items routed, ${failed} failed. ` +
-    `Mode: audit-only. 1 service executed (exact_nano).`;
+    `Mode: Circle x402. 1 service executed (per-child fallback).`;
 
   return {
     progressSummaries: [summary],

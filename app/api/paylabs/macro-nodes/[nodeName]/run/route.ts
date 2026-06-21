@@ -19,6 +19,7 @@ import {
   isValidMacroNodeName,
   resolveNodeSellerWallet,
   resolveNodeBuyerWalletId,
+  getMacroNodeAllocationUsdc,
 } from "@/lib/paylabs/delegated-runtime/node-registry";
 import {
   buildX402Challenge,
@@ -104,13 +105,15 @@ export async function POST(
     req.headers.get("x-payment") ??
     req.headers.get("X-Payment");
 
-  const amountAtomic = Math.round(nodeConfig.fixedNodeFeeUsdc * 1_000_000).toString();
+  // Use full macro allocation (base fee + child budget), not just base fee
+  const macroAllocationUsdc = getMacroNodeAllocationUsdc(nodeName as MacroNodePhase);
+  const amountAtomic = Math.round(macroAllocationUsdc * 1_000_000).toString();
 
   if (!paymentHeader) {
     const challenge = buildX402Challenge(sellerAddress, amountAtomic, req.url);
     const encoded = encodeChallengeHeader(challenge);
     const response = NextResponse.json(
-      { ok: false, error: "Payment required", x402: true, node: nodeName, amount_usdc: nodeConfig.fixedNodeFeeUsdc.toString() },
+      { ok: false, error: "Payment required", x402: true, node: nodeName, amount_usdc: macroAllocationUsdc.toString() },
       { status: 402 }
     );
     response.headers.set("PAYMENT-REQUIRED", encoded);

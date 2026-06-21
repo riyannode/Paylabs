@@ -3,11 +3,24 @@
  *
  * Defines x402 payment config for Brain and macro-node endpoints.
  * Payment graph:
- *   run_budget_controller → Brain → macro-node → child service
+ *   controller/user → Brain (treasury) → macro-node (allocation) → child service
+ *
+ * All payments use Circle GatewayWalletBatched x402.
  */
 
 import type { MacroNodePhase } from "./types";
 import type { ServiceName } from "../agent-services/types";
+
+// ─── Constants ───────────────────────────────────────────────
+
+/** Controller/user → Brain treasury payment */
+export const BRAIN_TREASURY_FEE_USDC = 0.000003;
+
+/** Brain → macro-node base fee (excludes child budget) */
+export const MACRO_NODE_FEE_USDC = 0.000001;
+
+/** Each child service costs 0.000001 USDC */
+export const CHILD_SERVICE_FEE_USDC = 0.000001;
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -29,10 +42,10 @@ export interface MacroNodeConfig {
   childServices: ServiceName[];
   /** Tier this macro-node belongs to */
   tierLabel: "easy" | "normal" | "advanced";
-  /** Brain → this macro uses exact_nano (fixed-price x402) */
-  brainPaymentScheme: "exact_nano";
-  /** How this macro pays its children: batch_child (many) or exact_nano (one) */
-  childPaymentScheme: "batch_child" | "exact_nano";
+  /** Circle GatewayWalletBatched x402 */
+  brainPaymentMode: "circle_gateway_wallet_batched";
+  /** How this macro pays its children: per-child Circle x402 fallback */
+  childPaymentMode: "circle_gateway_wallet_batched_per_child_fallback";
   /** Which tiered summary key this macro produces */
   outputSummaryKey: "easy_summary" | "normal_summary" | "advanced_summary";
 }
@@ -45,7 +58,7 @@ export const BRAIN_NODE: BrainNodeConfig = {
   nodeType: "brain",
   sellerWalletAddressEnv: "PAYLABS_BRAIN_SELLER_WALLET_ADDRESS",
   buyerWalletIdEnv: "PAYLABS_BRAIN_BUYER_WALLET_ID",
-  fixedBrainFeeUsdc: 0.000001,
+  fixedBrainFeeUsdc: BRAIN_TREASURY_FEE_USDC, // 0.000003
   endpointPath: "/api/paylabs/brain/run",
 };
 
@@ -57,12 +70,12 @@ export const MACRO_NODES: Record<MacroNodePhase, MacroNodeConfig> = {
     nodeName: "discovery_planner",
     sellerWalletAddressEnv: "PAYLABS_NODE_DISCOVERY_PLANNER_SELLER_WALLET_ADDRESS",
     buyerWalletIdEnv: "PAYLABS_NODE_DISCOVERY_PLANNER_BUYER_WALLET_ID",
-    fixedNodeFeeUsdc: 0.000001,
+    fixedNodeFeeUsdc: MACRO_NODE_FEE_USDC, // 0.000001 (base, allocation = base + children)
     endpointPath: "/api/paylabs/macro-nodes/discovery_planner/run",
     childServices: ["intent_planner", "query_builder", "signal_scout"],
     tierLabel: "easy",
-    brainPaymentScheme: "exact_nano",
-    childPaymentScheme: "batch_child",
+    brainPaymentMode: "circle_gateway_wallet_batched",
+    childPaymentMode: "circle_gateway_wallet_batched_per_child_fallback",
     outputSummaryKey: "easy_summary",
   },
   payment_decision: {
@@ -70,15 +83,15 @@ export const MACRO_NODES: Record<MacroNodePhase, MacroNodeConfig> = {
     nodeName: "payment_decision",
     sellerWalletAddressEnv: "PAYLABS_NODE_PAYMENT_DECISION_SELLER_WALLET_ADDRESS",
     buyerWalletIdEnv: "PAYLABS_NODE_PAYMENT_DECISION_BUYER_WALLET_ID",
-    fixedNodeFeeUsdc: 0.000001,
+    fixedNodeFeeUsdc: MACRO_NODE_FEE_USDC, // 0.000001 (base)
     endpointPath: "/api/paylabs/macro-nodes/payment_decision/run",
     childServices: [
       "intent_matcher", "source_verifier", "value_allocator",
       "trust_verifier", "payment_decider",
     ],
     tierLabel: "normal",
-    brainPaymentScheme: "exact_nano",
-    childPaymentScheme: "batch_child",
+    brainPaymentMode: "circle_gateway_wallet_batched",
+    childPaymentMode: "circle_gateway_wallet_batched_per_child_fallback",
     outputSummaryKey: "normal_summary",
   },
   settlement_memory: {
@@ -86,12 +99,12 @@ export const MACRO_NODES: Record<MacroNodePhase, MacroNodeConfig> = {
     nodeName: "settlement_memory",
     sellerWalletAddressEnv: "PAYLABS_NODE_SETTLEMENT_MEMORY_SELLER_WALLET_ADDRESS",
     buyerWalletIdEnv: "PAYLABS_NODE_SETTLEMENT_MEMORY_BUYER_WALLET_ID",
-    fixedNodeFeeUsdc: 0.000001,
+    fixedNodeFeeUsdc: MACRO_NODE_FEE_USDC, // 0.000001 (base)
     endpointPath: "/api/paylabs/macro-nodes/settlement_memory/run",
     childServices: ["payment_router"],
     tierLabel: "advanced",
-    brainPaymentScheme: "exact_nano",
-    childPaymentScheme: "exact_nano",
+    brainPaymentMode: "circle_gateway_wallet_batched",
+    childPaymentMode: "circle_gateway_wallet_batched_per_child_fallback",
     outputSummaryKey: "advanced_summary",
   },
 };
@@ -108,6 +121,81 @@ export function getMacroNodeConfig(nodeName: MacroNodePhase): MacroNodeConfig {
 
 export function isValidMacroNodeName(name: string): name is MacroNodePhase {
   return name in MACRO_NODES;
+}
+
+/**
+ * Get child budget for a macro-node (sum of child service fees).
+ */
+export function getMacroNodeChildBudgetUsdc(nodeName: MacroNodePhase): number {
+  const config = MACRO_NODES[nodeName];
+  return config.childServices.length * CHILD_SERVICE_FEE_USDC;
+}
+
+/**
+ * Get total allocation for a macro-node (base fee + child budget).
+ *
+ * Formula: MACRO_NODE_FEE_USDC + childCount * CHILD_SERVICE_FEE_USDC
+ *
+ * discovery_planner: 0.000001 + 3 * 0.000001 = 0.000004
+ * payment_decision:  0.000001 + 5 * 0.000001 = 0.000006
+ * settlement_memory: 0.000001 + 1 * 0.000001 = 0.000002
+ */
+export function getMacroNodeAllocationUsdc(nodeName: MacroNodePhase): number {
+  const config = MACRO_NODES[nodeName];
+  return MACRO_NODE_FEE_USDC + config.childServices.length * CHILD_SERVICE_FEE_USDC;
+}
+
+/**
+ * Get all macro allocations for a given route tier.
+ */
+export function getTierMacroAllocations(routeTier: "easy" | "normal" | "advanced"): {
+  macroNodes: MacroNodePhase[];
+  allocations: Record<MacroNodePhase, number>;
+  totalMacroAllocationUsdc: number;
+} {
+  const tierPhaseMap: Record<"easy" | "normal" | "advanced", MacroNodePhase[]> = {
+    easy: ["discovery_planner"],
+    normal: ["discovery_planner", "payment_decision"],
+    advanced: ["discovery_planner", "payment_decision", "settlement_memory"],
+  };
+  const macroNodes = tierPhaseMap[routeTier];
+  const allocations: Partial<Record<MacroNodePhase, number>> = {};
+  let total = 0;
+  for (const node of macroNodes) {
+    const alloc = getMacroNodeAllocationUsdc(node);
+    allocations[node] = alloc;
+    total += alloc;
+  }
+  return {
+    macroNodes,
+    allocations: allocations as Record<MacroNodePhase, number>,
+    totalMacroAllocationUsdc: total,
+  };
+}
+
+/**
+ * Get total user budget used for a tier (treasury + macro allocations).
+ *
+ * easy:     0.000003 + 0.000004 = 0.000007
+ * normal:   0.000003 + 0.000004 + 0.000006 = 0.000013
+ * advanced: 0.000003 + 0.000004 + 0.000006 + 0.000002 = 0.000015
+ */
+export function getTierUserBudgetUsedUsdc(routeTier: "easy" | "normal" | "advanced"): number {
+  const { totalMacroAllocationUsdc } = getTierMacroAllocations(routeTier);
+  return BRAIN_TREASURY_FEE_USDC + totalMacroAllocationUsdc;
+}
+
+/**
+ * Get total child payment volume for a tier (sum of all children across macro nodes).
+ */
+export function getTierChildPaymentVolumeUsdc(routeTier: "easy" | "normal" | "advanced"): number {
+  const { macroNodes } = getTierMacroAllocations(routeTier);
+  let total = 0;
+  for (const node of macroNodes) {
+    const config = MACRO_NODES[node];
+    total += config.childServices.length * CHILD_SERVICE_FEE_USDC;
+  }
+  return total;
 }
 
 export function resolveNodeSellerWallet(config: DelegatedNodeConfig): string {
