@@ -5,7 +5,7 @@
 // Missing keys are reported by name only.
 
 import { NextResponse } from "next/server";
-import { getPaymentFlags } from "@/lib/paylabs/feature-flags";
+import { getPaymentFlags, getX402EnabledAgents } from "@/lib/paylabs/feature-flags";
 import {
   PAID_AGENTS,
   resolveAgentWallet,
@@ -71,5 +71,13 @@ export async function GET() {
       agent_nanopayments: flags.agentNanopaymentsEnabled,
       batch_settlement: flags.agentBatchSettlementEnabled,
     },
+    x402_flow: {
+      seller_challenge: flags.agentNanopaymentsEnabled,
+      buyer_transport: flags.agentNanopaymentsEnabled,
+      gateway_balance_check: flags.agentNanopaymentsEnabled,
+      dcw_signer: flags.agentNanopaymentsEnabled,
+    },
+    x402_enabled_agents: getX402EnabledAgents(),
+    x402_all_agents_enabled: getX402EnabledAgents().length === PAID_AGENTS.length,
   });
 }

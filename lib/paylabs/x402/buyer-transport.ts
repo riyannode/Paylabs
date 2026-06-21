@@ -80,6 +80,13 @@ export interface X402BuyerCallInput {
   discoveryRunId?: string;
   /** Max amount the buyer is willing to pay (USDC decimal string) */
   maxAmountUsdc: string;
+  /**
+   * If true, seller MUST return HTTP 402 with PAYMENT-REQUIRED header.
+   * Non-402 responses are treated as errors (fail closed).
+   * Use for paid x402 edges where a free response is invalid.
+   * Default: false (non-402 treated as free response).
+   */
+  requirePayment?: boolean;
 }
 
 export interface X402BuyerCallResult {
@@ -132,6 +139,7 @@ export async function callPaidSeller(
     buyerWalletId,
     sellerServiceName,
     maxAmountUsdc,
+    requirePayment = false,
   } = input;
 
   // ── Step 1: Initial request (no payment) ─────────────────
@@ -155,7 +163,16 @@ export async function callPaidSeller(
   }
 
   // If not 402, treat as free response (seller doesn't require payment)
+  // But if requirePayment is true, fail closed — seller MUST return 402
   if (initialResp.status !== 402) {
+    if (requirePayment) {
+      return {
+        ok: false,
+        status: initialResp.status,
+        error: `Seller did not return 402 PAYMENT-REQUIRED (got HTTP ${initialResp.status}). requirePayment=true, failing closed.`,
+        freeResponse: true,
+      };
+    }
     let data: unknown;
     try {
       data = await initialResp.json();

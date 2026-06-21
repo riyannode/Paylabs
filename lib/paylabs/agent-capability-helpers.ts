@@ -4,8 +4,21 @@
  * Shared validation logic for all 7 paid agent capability endpoints.
  * Enforces 3 request headers and 3 response headers.
  *
+ * TWO MODES (controlled by PAYLABS_AGENT_NANOPAYMENTS_ENABLED):
+ *
+ * Mode 1: Audit-only (flag = false, default)
+ *   - Validates HMAC-signed context
+ *   - Returns DB status
+ *   - Does NOT execute agent (execution via unified pipeline)
+ *
+ * Mode 2: Real x402 (flag = true)
+ *   - If no payment header: returns 402 + PAYMENT-REQUIRED challenge
+ *   - If payment header present: verifies/settles via Circle x402
+ *   - Then executes the real agent logic
+ *   - Returns agent output + safe payment metadata
+ *
  * Request headers:
- *   x-payment              — Gateway/x402 payment payload (disabled by flag)
+ *   x-payment              — Gateway/x402 payment payload (base64 JSON)
  *   x-paylabs-agent-context — Signed compact JSON with agent context
  *   x-paylabs-receipt-link  — PayLabs receipt URL
  *
@@ -18,7 +31,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAgentContext, type AgentContextPayload } from "@/lib/paylabs/x402/agent-context";
 import { getPaymentFlags } from "@/lib/paylabs/feature-flags";
-import type { PaidAgentName } from "@/lib/paylabs/agent-registry";
+import { AGENT_NANOPRICE_USDC, resolveAgentWallet, type PaidAgentName } from "@/lib/paylabs/agent-registry";
+import {
+  buildX402Challenge,
+  encodeChallengeHeader,
+  verifyAndSettlePayment,
+  type X402ChallengeRequirements,
+} from "@/lib/paylabs/x402/seller-challenge";
 
 // ─── Constants ─────────────────────────────────────────────────
 
@@ -63,9 +82,7 @@ export type AgentCallValidation = ValidatedAgentCall | InvalidAgentCall;
  * 4. Agent name matches expected
  * 5. Price is 0.000001
  * 6. x-paylabs-receipt-link present
- * 7. x-payment present when payments enabled (future)
- *
- * Returns validated context or error.
+ * 7. x-payment present when payments enabled
  */
 export function validateAgentRequest(
   req: NextRequest,
@@ -121,6 +138,118 @@ export function validateAgentRequest(
   };
 }
 
+// ─── x402 Challenge Response ───────────────────────────────────
+
+/**
+ * Build a 402 response with proper PAYMENT-REQUIRED header.
+ * The buyer decodes this header to get payment requirements,
+ * signs via BatchEvmScheme + DCW signTypedData, then retries.
+ *
+ * The challenge includes:
+ *   - x402Version: 2
+ *   - scheme: exact
+ *   - network: eip155:5042002 (Arc Testnet)
+ *   - asset: USDC address
+ *   - amount: agent nanoprice in atomic units
+ *   - payTo: seller (agent) wallet address
+ *   - extra: GatewayWalletBatched verifying contract
+ */
+export function build402ChallengeResponse(
+  agentName: PaidAgentName
+): NextResponse {
+  const sellerAddress = resolveAgentWallet(agentName);
+  if (!sellerAddress) {
+    return NextResponse.json(
+      { error: `Seller wallet not configured for ${agentName}` },
+      { status: 500 }
+    );
+  }
+
+  // Convert USDC human-readable to atomic (6 decimals)
+  const amountAtomic = Math.round(
+    parseFloat(AGENT_NANOPRICE_USDC) * 1_000_000
+  ).toString();
+
+  const challenge = buildX402Challenge(sellerAddress, amountAtomic);
+  const encoded = encodeChallengeHeader(challenge);
+
+  const response = NextResponse.json(
+    {
+      error: "Payment required",
+      x402: true,
+      amount_usdc: AGENT_NANOPRICE_USDC,
+      agent_name: agentName,
+    },
+    { status: 402 }
+  );
+
+  // Set the PAYMENT-REQUIRED header (base64 encoded JSON)
+  response.headers.set("PAYMENT-REQUIRED", encoded);
+
+  return response;
+}
+
+// ─── x402 Payment Verification ─────────────────────────────────
+
+/**
+ * Verify and settle an x402 payment from the PAYMENT-SIGNATURE header.
+ * Returns the settlement result — ok + safe metadata, or error.
+ */
+export async function verifyPaymentHeader(
+  paymentSignatureBase64: string,
+  agentName: PaidAgentName
+): Promise<{
+  ok: boolean;
+  payer?: string;
+  safePayment?: {
+    amountAtomic: string;
+    payTo: string;
+    network: string;
+  };
+  error?: string;
+}> {
+  const sellerAddress = resolveAgentWallet(agentName);
+  if (!sellerAddress) {
+    return { ok: false, error: `Seller wallet not configured for ${agentName}` };
+  }
+
+  const amountAtomic = Math.round(
+    parseFloat(AGENT_NANOPRICE_USDC) * 1_000_000
+  ).toString();
+
+  const requirements: X402ChallengeRequirements = {
+    scheme: "exact",
+    network: "eip155:5042002",
+    asset: "0x3600000000000000000000000000000000000000",
+    amount: amountAtomic,
+    payTo: sellerAddress.toLowerCase(),
+    maxTimeoutSeconds: 604900,
+    extra: {
+      name: "GatewayWalletBatched",
+      version: "1",
+      verifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+    },
+  };
+
+  const result = await verifyAndSettlePayment(paymentSignatureBase64, requirements);
+
+  if (!result.ok) {
+    return { ok: false, error: result.error };
+  }
+
+  return {
+    ok: true,
+    payer: result.payer,
+    safePayment: result.paymentMeta
+      ? {
+          amountAtomic: result.paymentMeta.amountAtomic,
+          payTo: result.paymentMeta.payTo,
+          network: result.paymentMeta.network,
+        }
+      : undefined,
+  };
+}
+
 // ─── Response Builder ──────────────────────────────────────────
 
 /**
@@ -156,8 +285,6 @@ export function buildAgentError(
 /**
  * Look up nanopayment row status by receipt_id.
  * Returns the actual DB status — never a fake hardcoded value.
- * The real agent execution happens via the unified LangGraph pipeline
- * (POST /api/paylabs/discovery-runs/pay), not through these endpoints.
  */
 export async function getAgentCapabilityStatus(
   context: AgentContextPayload
