@@ -15,10 +15,11 @@
 //
 // x402 ORCHESTRATION CHAIN (when PAYLABS_BRAIN_X402_ENABLED or
 // PAYLABS_NODE_X402_ENABLED):
-//   controller → Brain (x402 via callPaidSeller)
-//   controller → discovery_planner (x402, payload from Brain)
-//   controller → payment_decision (x402, payload from discovery)
-//   controller → settlement_memory (x402, payload from payment)
+//   run_budget_controller → Brain (x402 via callPaidSeller)
+//   Brain → discovery_planner (x402, payload from Brain)
+//   Brain → payment_decision (x402, payload from discovery)
+//   Brain → settlement_memory (x402, payload from payment)
+//   Each macro-node → child services (x402, via parent macro-node buyer wallet)
 
 export const maxDuration = 300;
 
@@ -61,7 +62,9 @@ async function callBrainX402(dcwSigner: import("@/lib/paylabs/x402/buyer-transpo
     sellerUrl: `${base}/api/paylabs/brain/run`,
     method: "POST",
     body,
-    buyerWalletId: process.env.PAYLABS_CONTROLLER_BUYER_WALLET_ID || "",
+    buyerWalletId: process.env.PAYLABS_CONTROLLER_BUYER_WALLET_ID
+      || process.env.PAYLABS_RUN_BUDGET_CONTROLLER_BUYER_WALLET_ID
+      || "",
     buyerAgentName: "run_budget_controller",
     sellerServiceName: "brain" as import("@/lib/paylabs/agent-services/types").ServiceName,
     discoveryRunId: body.discoveryRunId,
@@ -170,7 +173,7 @@ async function runX402Orchestration(params: {
       safeProgressSummaries, paymentGraph, brainData || null, null, null);
   }
 
-  // ── Steps 2-4: Macro-nodes (controller → macro-node → child) ──
+  // ── Steps 2-4: Macro-nodes (Brain → macro-node → child) ──
   const macroNodeResults: Record<string, Record<string, unknown>> = {};
 
   for (const node of macroNodes) {
@@ -285,6 +288,11 @@ function buildX402Output(
     riskScore: item.risk_score,
   }));
 
+  // Compute settled spend from paymentGraph
+  const settledSpendUsdc = paymentGraph
+    .filter((e) => e.status === "paid")
+    .reduce((sum, e) => sum + e.amountUsdc, 0);
+
   return {
     discoveryRunId,
     status,
@@ -293,10 +301,10 @@ function buildX402Output(
     safeProgressSummaries,
     budgetSnapshot: {
       totalBudgetUsdc: userBudgetUsdc,
-      spentUsdc: 0,
-      remainingUsdc: userBudgetUsdc,
+      spentUsdc: settledSpendUsdc,
+      remainingUsdc: Math.max(0, userBudgetUsdc - settledSpendUsdc),
       serviceSpend: {} as Record<string, number>,
-      settledServiceFeesUsdc: 0,
+      settledServiceFeesUsdc: settledSpendUsdc,
       estimatedServiceFeesUsdc: 0,
     },
     consensusDecisions: [],
@@ -423,6 +431,39 @@ async function runX402Path(
       throw new Error("DCW signer initialization failed");
     }
 
+    // ── Env preflight: fail closed if any required x402 env is missing ──
+    const requiredEnvs = [
+      "PAYLABS_DELEGATED_RUNTIME_ENABLED",
+      "PAYLABS_DELEGATED_INLINE_EXECUTION",
+      "PAYLABS_AGENT_NANOPAYMENTS_ENABLED",
+      "PAYLABS_BRAIN_X402_ENABLED",
+      "PAYLABS_NODE_X402_ENABLED",
+      "PAYLABS_APP_URL",
+      "PAYLABS_BRAIN_SELLER_WALLET_ADDRESS",
+      "PAYLABS_NODE_DISCOVERY_PLANNER_SELLER_WALLET_ADDRESS",
+    ];
+    const missingEnvs = requiredEnvs.filter((k) => !process.env[k]);
+    if (missingEnvs.length > 0) {
+      throw new Error(`config_error: missing required x402 envs: ${missingEnvs.join(", ")}`);
+    }
+
+    // Controller buyer wallet — support both naming conventions
+    const controllerBuyerWalletId = process.env.PAYLABS_CONTROLLER_BUYER_WALLET_ID
+      || process.env.PAYLABS_RUN_BUDGET_CONTROLLER_BUYER_WALLET_ID;
+    if (!controllerBuyerWalletId) {
+      throw new Error("config_error: missing controller buyer wallet id (set PAYLABS_CONTROLLER_BUYER_WALLET_ID or PAYLABS_RUN_BUDGET_CONTROLLER_BUYER_WALLET_ID)");
+    }
+
+    // Brain buyer wallet
+    if (!process.env.PAYLABS_BRAIN_BUYER_WALLET_ID) {
+      throw new Error("config_error: missing PAYLABS_BRAIN_BUYER_WALLET_ID");
+    }
+
+    // Discovery planner buyer wallet (for child service payments)
+    if (!process.env.PAYLABS_NODE_DISCOVERY_PLANNER_BUYER_WALLET_ID) {
+      throw new Error("config_error: missing PAYLABS_NODE_DISCOVERY_PLANNER_BUYER_WALLET_ID");
+    }
+
     const result = await runX402Orchestration({
       discoveryRunId,
       userGoal: goal,
@@ -436,6 +477,11 @@ async function runX402Path(
     const newStatus = result.status === "completed"
       ? result.paymentPlan.length > 0 ? "paid_path_available" : "discovery_only"
       : "failed";
+
+    // Compute settled from actual paymentGraph — never assume settled on partial failure
+    const fullySettled = result.status === "completed"
+      && result.paymentGraph.length > 0
+      && result.paymentGraph.every((e) => e.status === "paid");
 
     await supabaseAdmin()
       .from("paylabs_discovery_runs")
@@ -506,8 +552,8 @@ async function runX402Path(
       })),
       safe_progress_summaries: result.safeProgressSummaries,
       budget_snapshot: result.budgetSnapshot,
-      settled: true,
-      mode: "x402",
+      settled: fullySettled,
+      mode: fullySettled ? "x402" : "x402_failed",
       error: result.error,
     });
   } catch (e: unknown) {
