@@ -165,7 +165,7 @@ function extractTxHash(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
 
   const obj = value as Record<string, unknown>;
-  const transaction = obj.transaction as Record<string, unknown> | undefined;
+  const transaction = obj.transaction;
   const receipt = obj.receipt as Record<string, unknown> | undefined;
   const settlement = obj.settlement as Record<string, unknown> | undefined;
 
@@ -173,7 +173,8 @@ function extractTxHash(value: unknown): string | null {
     obj.txHash,
     obj.transactionHash,
     obj.hash,
-    transaction?.hash,
+    // transaction may be a string (txHash) or an object with .hash
+    typeof transaction === "string" ? transaction : (transaction as Record<string, unknown>)?.hash,
     receipt?.transactionHash,
     settlement?.txHash,
     settlement?.transactionHash,
@@ -284,6 +285,8 @@ export async function verifyAndSettlePayment(
       txHash,
       explorerUrl,
       settleResultKeys: Object.keys(settleData),
+      transactionType: typeof settleData.transaction,
+      transactionIsHexString: isEvmTxHash(settleData.transaction),
     });
 
     return {
