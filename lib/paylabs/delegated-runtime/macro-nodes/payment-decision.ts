@@ -117,7 +117,7 @@ export async function runPaymentDecision(
 
   // If intent matcher rejects candidates, skip remaining evaluation
   if (!matcherData.approved_for_quality_check) {
-    addProgressSummary(state, `Payment Decision: intent matcher rejected candidates (relevance: ${matcherData.relevance_score.toFixed(2)}). Skipping quality/value/trust evaluation.`);
+    addProgressSummary(state, `Payment Decision: intent matcher rejected candidates (relevance: ${(matcherData.relevance_score ?? 0).toFixed(2)}). Skipping quality/value/trust evaluation.`);
     return {
       ok: true,
       approvedItems: [],
@@ -377,7 +377,7 @@ export async function runPaymentDecision(
     total_estimated_spend: number;
   };
 
-  const summary = `Payment Decision: intent_matcher(${matcherData.relevance_score.toFixed(2)}) → source_verifier → value_allocator → trust_verifier → payment_decider. ${deciderData.approved_items.length}/${evaluations.length} approved, total: ${deciderData.total_estimated_spend.toFixed(6)} USDC. 5 service calls.`;
+  const summary = `Payment Decision: intent_matcher(${(matcherData.relevance_score ?? 0).toFixed(2)}) → source_verifier → value_allocator → trust_verifier → payment_decider. ${deciderData.approved_items?.length ?? 0}/${evaluations.length} approved, total: ${(deciderData.total_estimated_spend ?? 0).toFixed(6)} USDC. 5 service calls.`;
   addProgressSummary(state, summary);
 
   return {
