@@ -155,6 +155,52 @@ export function encodeChallengeHeader(challenge: X402ChallengeResponse): string 
   return Buffer.from(JSON.stringify(challenge)).toString("base64");
 }
 
+// ─── TxHash Extraction Helpers ────────────────────────────────
+
+function isEvmTxHash(value: unknown): value is string {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
+}
+
+function extractTxHash(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+
+  const obj = value as Record<string, unknown>;
+  const transaction = obj.transaction as Record<string, unknown> | undefined;
+  const receipt = obj.receipt as Record<string, unknown> | undefined;
+  const settlement = obj.settlement as Record<string, unknown> | undefined;
+
+  const candidates = [
+    obj.txHash,
+    obj.transactionHash,
+    obj.hash,
+    transaction?.hash,
+    receipt?.transactionHash,
+    settlement?.txHash,
+    settlement?.transactionHash,
+    settlement?.hash,
+  ];
+
+  for (const candidate of candidates) {
+    if (isEvmTxHash(candidate)) return candidate;
+  }
+
+  return null;
+}
+
+function buildExplorerUrl(network: string, txHash: string | null): string | null {
+  if (!txHash) return null;
+
+  if (network === "eip155:5042002") {
+    const base =
+      process.env.PAYLABS_ARC_TESTNET_EXPLORER_TX_BASE ||
+      "https://arc-testnet.blockscout.com/tx";
+
+    return `${base.replace(/\/+$/, "")}/${txHash}`;
+  }
+
+  return null;
+}
+
 // ─── Verify + Settle ──────────────────────────────────────────
 
 /**
@@ -227,10 +273,18 @@ export async function verifyAndSettlePayment(
     const settleResult = await facilitator.settle(paymentPayload, requirements);
     const settleData = settleResult as Record<string, unknown>;
 
-    // Extract txHash from settle result
-    const rawTxHash = settleData?.txHash as string | undefined;
-    const txHash = rawTxHash && /^0x[a-fA-F0-9]{64}$/.test(rawTxHash) ? rawTxHash : null;
-    const explorerUrl = txHash ? `https://arc-testnet.blockscout.com/tx/${txHash}` : null;
+    // Extract txHash — check multiple possible locations in SDK response
+    const txHash = extractTxHash(settleResult);
+    const explorerUrl = buildExplorerUrl(requirements.network, txHash);
+
+    // Safe log — keys only, never raw payload or signature
+    console.log("[x402-settle-proof]", {
+      settled: true,
+      hasTxHash: !!txHash,
+      txHash,
+      explorerUrl,
+      settleResultKeys: Object.keys(settleData),
+    });
 
     return {
       ok: true,
