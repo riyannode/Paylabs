@@ -275,6 +275,20 @@ export async function executeDiscoveryRun(
 
   // ── Step 4: Run LangGraph pipeline ──────────────────────────
   let pipelineResult: Record<string, unknown>;
+
+  // ── Step 4a: Inject DCW signer if real x402 enabled ─────────
+  // The DCW signer is needed by withPaidNode() when agentNanopaymentsEnabled=true.
+  // Lazy init: only imported and set when the flag is on.
+  const { getPaymentFlags } = await import("@/lib/paylabs/feature-flags");
+  const flags = getPaymentFlags();
+  if (flags.agentNanopaymentsEnabled) {
+    const { setDcwSigner, getDcwSigner } = await import("@/lib/paylabs/paid-agent-node");
+    if (!getDcwSigner()) {
+      const { createDcwSigner } = await import("@/lib/paylabs/x402/dcw-signer-adapter");
+      setDcwSigner(createDcwSigner());
+    }
+  }
+
   try {
     // Update heartbeat before long-running pipeline
     await supabaseAdmin()

@@ -276,3 +276,65 @@ export async function updateNanopaymentStatusByReceiptId(
     .update(update)
     .eq("receipt_id", receiptId);
 }
+
+/**
+ * Update nanopayment with safe x402 payment metadata after real payment.
+ * Stores only safe fields — never raw signatures or authorization payloads.
+ *
+ * Safe fields:
+ *   - status (completed/failed/insufficient_gateway_balance/config_error)
+ *   - x402_payment_ref (if real)
+ *   - x402_settlement_ref (if real)
+ *   - metadata.safe_payment (amount, payTo, network, x402Version)
+ */
+export async function updateNanopaymentWithSafeRefs(
+  receiptId: string,
+  status: string,
+  safeRefs?: {
+    paymentRef?: string;
+    settlementRef?: string;
+    safePayment?: {
+      amountAtomic: string;
+      payTo: string;
+      network: string;
+    };
+    errorSummary?: string;
+  }
+): Promise<void> {
+  const update: Record<string, unknown> = { status };
+
+  if (safeRefs?.paymentRef) {
+    update.x402_payment_ref = safeRefs.paymentRef;
+  }
+  if (safeRefs?.settlementRef) {
+    update.x402_settlement_ref = safeRefs.settlementRef;
+  }
+
+  // Store safe metadata — never raw signatures
+  const metadata: Record<string, unknown> = {};
+  if (safeRefs?.safePayment) {
+    metadata.safe_payment = safeRefs.safePayment;
+    metadata.x402_version = 2;
+  }
+  if (safeRefs?.errorSummary) {
+    metadata.error_summary = safeRefs.errorSummary.slice(0, 300);
+  }
+  if (Object.keys(metadata).length > 0) {
+    update.metadata = metadata;
+  }
+
+  await supabaseAdmin()
+    .from("paylabs_agent_nanopayments")
+    .update(update)
+    .eq("receipt_id", receiptId);
+}
+
+// ─── Valid Status Values ───────────────────────────────────────
+// Canonical statuses for paylabs_agent_nanopayments:
+//   planned                    — row created, payment not attempted
+//   running                    — agent executing
+//   completed                  — agent finished, payment settled (if enabled)
+//   failed                     — agent execution failed
+//   config_error               — HMAC secret or wallet config missing
+//   insufficient_gateway_balance — buyer wallet has no Gateway balance
+//   skipped                    — payment not required (flag off or free tier)
