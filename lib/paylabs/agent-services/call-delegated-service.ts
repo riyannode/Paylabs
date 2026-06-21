@@ -345,6 +345,7 @@ async function executeX402Path(params: {
     sellerWalletAddress = resolveSellerWallet(config);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
+    console.log(`[x402-fail] ${sellerServiceName}: resolveSellerWallet FAILED: ${msg}`);
     return failClosed(sellerServiceName, buyerAgentName, costUsdc, timestamp, msg);
   }
 
@@ -358,12 +359,14 @@ async function executeX402Path(params: {
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
+    console.log(`[x402-fail] ${sellerServiceName}: resolveBuyerWalletId FAILED: ${msg}`);
     return failClosed(sellerServiceName, buyerAgentName, costUsdc, timestamp, msg);
   }
 
   // ── Get DCW signer ──
   const dcwSigner = getDcwSigner();
   if (!dcwSigner) {
+    console.log(`[x402-fail] ${sellerServiceName}: DCW signer not initialized`);
     return failClosed(
       sellerServiceName,
       buyerAgentName,
@@ -392,6 +395,7 @@ async function executeX402Path(params: {
   const maxAmountUsdc = config.priceUsdc > 0 ? config.priceUsdc.toString() : "0.000001";
   const balanceCheck = await verifySufficientBalance(buyerAddress, maxAmountUsdc);
   if (!balanceCheck.ok) {
+    console.log(`[x402-fail] ${sellerServiceName}: insufficient balance: ${balanceCheck.error}`);
     return failClosed(
       sellerServiceName,
       buyerAgentName,
