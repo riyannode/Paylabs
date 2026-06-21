@@ -279,8 +279,9 @@ export async function executeDiscoveryRun(
   // ── Step 4a: Inject DCW signer if real x402 enabled ─────────
   // The DCW signer is needed by withPaidNode() when agentNanopaymentsEnabled=true.
   // Lazy init: only imported and set when the flag is on.
-  const { getPaymentFlags } = await import("@/lib/paylabs/feature-flags");
+  const { getPaymentFlags, isDelegatedRuntimeEnabled } = await import("@/lib/paylabs/feature-flags");
   const flags = getPaymentFlags();
+  const useDelegatedRuntime = isDelegatedRuntimeEnabled();
   if (flags.agentNanopaymentsEnabled) {
     const { setDcwSigner, getDcwSigner } = await import("@/lib/paylabs/paid-agent-node");
     if (!getDcwSigner()) {
@@ -296,15 +297,41 @@ export async function executeDiscoveryRun(
       .update({ worker_heartbeat_at: new Date().toISOString() })
       .eq("id", discoveryRunId);
 
-    const result = await proposeSourcePath({
-      userWallet: wallet,
-      goal,
-      budgetUsdc: Number(runRow.budget_usdc) || 0.01,
-      routeTier: internalTier,
-      discoveryRunId,
-      paidReceiptIds: Object.fromEntries(receiptByAgent),
-    });
-    pipelineResult = result as Record<string, unknown>;
+    if (useDelegatedRuntime) {
+      // ── Delegated Runtime Path ──
+      const { executeDelegatedDiscoveryRun } = await import("@/lib/paylabs/delegated-runtime/orchestrator");
+      const { toExternalTier } = await import("@/lib/paylabs/route-tier");
+      const externalTier = toExternalTier(internalTier) as "easy" | "normal" | "advanced";
+      const delegatedResult = await executeDelegatedDiscoveryRun({
+        discoveryRunId,
+        userGoal: goal,
+        userWallet: wallet,
+        userBudgetUsdc: Number(runRow.budget_usdc) || 0.01,
+        routeTier: externalTier,
+        paidReceiptIds: Object.fromEntries(receiptByAgent),
+      });
+      // Map delegated result to pipeline result format
+      pipelineResult = {
+        sourcePathId: undefined,
+        sourcePathStatus: delegatedResult.status === "completed" ? "proposed" : "none",
+        selectedSources: delegatedResult.paymentPlan || [],
+        verifiedSources: delegatedResult.serviceEvaluations || [],
+        estimatedTotalUsdc: delegatedResult.budgetSnapshot?.spentUsdc || 0,
+        delegatedOutput: delegatedResult,
+        error: delegatedResult.error,
+      };
+    } else {
+      // ── Existing LangGraph Path ──
+      const result = await proposeSourcePath({
+        userWallet: wallet,
+        goal,
+        budgetUsdc: Number(runRow.budget_usdc) || 0.01,
+        routeTier: internalTier,
+        discoveryRunId,
+        paidReceiptIds: Object.fromEntries(receiptByAgent),
+      });
+      pipelineResult = result as Record<string, unknown>;
+    }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     // Pipeline crashed — mark all nanopayments as failed
