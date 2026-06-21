@@ -3,17 +3,18 @@
  *
  * Reuses: tutor_intake + intent_classifier
  * Macro-node: discovery_planner
- * Requires LLM: yes
+ * Execution modes:
+ *   - deterministic (default): rule-based classification from keywords
+ *   - llm: LLM-powered intent classification
+ *   - hybrid: deterministic + LLM explanation
  *
- * Combines tutor intake and intent classification into a single service call.
  * Output: normalized_goal, intent_type, constraints, route_tier_hint, safe_intent_summary
  */
 
 import { z } from "zod";
-import { generateStructuredJson } from "@/lib/ai/llm-structured";
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
-import { toInternalRouteTier } from "./helpers";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
+import { shouldRunServiceAsDeterministic } from "../execution-mode";
 
 const IntentPlannerSchema = z.object({
   cleaned_goal: z.string(),
@@ -24,7 +25,61 @@ const IntentPlannerSchema = z.object({
   safe_summary: z.string(),
 });
 
-const SYSTEM_PROMPT = `You are PayLabs Intent Planner. Combine tutor intake and intent classification into a single step. Turn the user's raw request into a safe source-payment task. Identify the goal, intent type, constraints, and suggested route tier. You cannot select sources, set prices, set wallets, execute payments, or invent URLs. Return structured JSON only. Always include a safe_summary field that is a 1-2 sentence human-readable summary of the intent classification.`;
+// ─── Deterministic Intent Classification ────────────────────
+
+const INTENT_KEYWORDS: Record<string, string[]> = {
+  source_path_request: ["find", "discover", "search", "source", "article", "paper", "feed", "content", "research", "news", "blog", "rss"],
+  source_payment_request: ["pay", "buy", "purchase", "subscribe", "access", "unlock", "premium", "paid"],
+  creator_dashboard_request: ["dashboard", "creator", "earnings", "revenue", "analytics", "stats", "report"],
+  creator_claim_request: ["claim", "verify", "ownership", "wallet", "connect", "register"],
+};
+
+function classifyIntentDeterministic(goal: string): string {
+  const lower = goal.toLowerCase();
+  for (const [intent, keywords] of Object.entries(INTENT_KEYWORDS)) {
+    if (keywords.some((kw) => lower.includes(kw))) return intent;
+  }
+  return "source_path_request";
+}
+
+function suggestTierFromBudget(budgetUsdc: number): "easy" | "normal" | "advanced" {
+  if (budgetUsdc >= 0.01) return "advanced";
+  if (budgetUsdc >= 0.005) return "normal";
+  return "easy";
+}
+
+function extractConstraints(goal: string): string[] {
+  const constraints: string[] = [];
+  const lower = goal.toLowerCase();
+  if (lower.includes("recent") || lower.includes("latest")) constraints.push("recency_priority");
+  if (lower.includes("verified") || lower.includes("trusted")) constraints.push("trust_required");
+  if (lower.includes("free") || lower.includes("no cost")) constraints.push("free_only");
+  if (lower.includes("premium") || lower.includes("high quality")) constraints.push("quality_priority");
+  return constraints;
+}
+
+function runDeterministicIntentPlanner(
+  goal: string,
+  budgetUsdc: number
+): {
+  normalized_goal: string;
+  intent_type: string;
+  constraints: string[];
+  route_tier_hint: "easy" | "normal" | "advanced";
+} {
+  const intentType = classifyIntentDeterministic(goal);
+  const routeTier = suggestTierFromBudget(budgetUsdc);
+  const constraints = extractConstraints(goal);
+  const normalizedGoal = goal.trim().replace(/\s+/g, " ").slice(0, 500);
+  return {
+    normalized_goal: normalizedGoal,
+    intent_type: intentType,
+    constraints,
+    route_tier_hint: routeTier,
+  };
+}
+
+// ─── Handler ────────────────────────────────────────────────
 
 export const intentPlannerHandler: ServiceHandler = async (
   input: ServiceHandlerInput
@@ -35,6 +90,31 @@ export const intentPlannerHandler: ServiceHandler = async (
     routeTier?: DelegatedRouteTier;
   };
 
+  // Deterministic mode (default)
+  if (shouldRunServiceAsDeterministic("intent_planner")) {
+    const det = runDeterministicIntentPlanner(goal || "", budgetUsdc || 0);
+    return {
+      ok: true,
+      serviceName: "intent_planner",
+      data: {
+        normalized_goal: det.normalized_goal,
+        intent_type: det.intent_type,
+        constraints: det.constraints,
+        route_tier_hint: det.route_tier_hint,
+        safe_intent_summary: `Intent: ${det.intent_type}, tier: ${det.route_tier_hint}, constraints: ${det.constraints.length}. Deterministic classification.`,
+      },
+      safeSummary: `Intent: ${det.intent_type}, tier: ${det.route_tier_hint}, constraints: ${det.constraints.length}. Deterministic classification.`,
+      settled: false,
+      error: null,
+    };
+  }
+
+  // LLM mode
+  const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
+  const { toInternalRouteTier } = await import("./helpers");
+
+  const SYSTEM_PROMPT = `You are PayLabs Intent Planner. Combine tutor intake and intent classification into a single step. Turn the user's raw request into a safe source-payment task. Identify the goal, intent type, constraints, and suggested route tier. You cannot select sources, set prices, set wallets, execute payments, or invent URLs. Return structured JSON only. Always include a safe_summary field that is a 1-2 sentence human-readable summary of the intent classification.`;
+
   const result = await generateStructuredJson<z.infer<typeof IntentPlannerSchema>>({
     agentName: "intent_planner",
     routeTier: toInternalRouteTier(routeTier || "easy"),
@@ -44,13 +124,21 @@ export const intentPlannerHandler: ServiceHandler = async (
   });
 
   if (!result.ok) {
+    // Fallback: deterministic
+    const det = runDeterministicIntentPlanner(goal || "", budgetUsdc || 0);
     return {
-      ok: false,
+      ok: true,
       serviceName: "intent_planner",
-      data: null,
-      safeSummary: `Intent planner failed: ${result.error}`,
+      data: {
+        normalized_goal: det.normalized_goal,
+        intent_type: det.intent_type,
+        constraints: det.constraints,
+        route_tier_hint: det.route_tier_hint,
+        safe_intent_summary: `Intent: ${det.intent_type}, tier: ${det.route_tier_hint} (LLM failed, deterministic fallback).`,
+      },
+      safeSummary: `Intent: ${det.intent_type}, tier: ${det.route_tier_hint} (LLM failed, deterministic fallback).`,
       settled: false,
-      error: result.error,
+      error: null,
     };
   }
 
