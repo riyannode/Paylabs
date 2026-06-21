@@ -76,24 +76,15 @@ export async function runDiscoveryPlanner(
   });
   updateBudgetSnapshot(state, "intent_planner", intentResult.safeCallMeta.costUsdc, intentResult.settled);
 
-  if (!intentResult.ok || !intentResult.data) {
-    return {
-      ok: false,
-      normalizedGoal: null,
-      intentType: null,
-      constraints: [],
-      routeTierHint: state.routeTier,
-      rankedCandidates: [],
-      error: `Intent planner failed: ${intentResult.error}`,
-    };
-  }
-
-  const intentData = intentResult.data as {
-    normalized_goal: string;
-    intent_type: string;
-    constraints: string[];
-    route_tier_hint: string;
-  };
+  // Use defaults if intent_planner fails — don't stop the pipeline
+  const intentData = (!intentResult.ok || !intentResult.data)
+    ? { normalized_goal: state.userGoal, intent_type: "unknown", constraints: [] as string[], route_tier_hint: state.routeTier }
+    : (intentResult.data as {
+        normalized_goal: string;
+        intent_type: string;
+        constraints: string[];
+        route_tier_hint: string;
+      });
 
   // ── Step 2: Query Builder ──
   if (!isSelected(options?.selectedServices, "query_builder")) {
@@ -128,22 +119,13 @@ export async function runDiscoveryPlanner(
   });
   updateBudgetSnapshot(state, "query_builder", queryResult.safeCallMeta.costUsdc, queryResult.settled);
 
-  if (!queryResult.ok || !queryResult.data) {
-    return {
-      ok: false,
-      normalizedGoal: intentData.normalized_goal,
-      intentType: intentData.intent_type,
-      constraints: intentData.constraints,
-      routeTierHint: intentData.route_tier_hint,
-      rankedCandidates: [],
-      error: `Query builder failed: ${queryResult.error}`,
-    };
-  }
-
-  const queryData = queryResult.data as {
-    expanded_queries: string[];
-    entity_terms: string[];
-  };
+  // Use defaults if query_builder fails — don't stop the pipeline
+  const queryData = (!queryResult.ok || !queryResult.data)
+    ? { expanded_queries: [] as string[], entity_terms: [] as string[] }
+    : (queryResult.data as {
+        expanded_queries: string[];
+        entity_terms: string[];
+      });
 
   // ── Step 3: Signal Scout ──
   if (!isSelected(options?.selectedServices, "signal_scout")) {
@@ -178,28 +160,19 @@ export async function runDiscoveryPlanner(
   });
   updateBudgetSnapshot(state, "signal_scout", signalResult.safeCallMeta.costUsdc, signalResult.settled);
 
-  if (!signalResult.ok || !signalResult.data) {
-    return {
-      ok: false,
-      normalizedGoal: intentData.normalized_goal,
-      intentType: intentData.intent_type,
-      constraints: intentData.constraints,
-      routeTierHint: intentData.route_tier_hint,
-      rankedCandidates: [],
-      error: `Signal scout failed: ${signalResult.error}`,
-    };
-  }
-
-  const signalData = signalResult.data as {
-    ranked_candidates: Array<{
-      feed_item_id: string;
-      title: string;
-      publisher: string;
-      rank: number;
-      relevance_score: number;
-    }>;
-    top_candidates: string[];
-  };
+  // Use defaults if signal_scout fails — don't stop the pipeline
+  const signalData = (!signalResult.ok || !signalResult.data)
+    ? { ranked_candidates: [] as Array<{ feed_item_id: string; title: string; publisher: string; rank: number; relevance_score: number }>, top_candidates: [] as string[] }
+    : (signalResult.data as {
+        ranked_candidates: Array<{
+          feed_item_id: string;
+          title: string;
+          publisher: string;
+          rank: number;
+          relevance_score: number;
+        }>;
+        top_candidates: string[];
+      });
 
   const summary = `Discovery Planner: ${signalData.ranked_candidates.length} candidates ranked, ${signalData.top_candidates.length} top candidates. 3 service calls (chain).`;
   addProgressSummary(state, summary);
