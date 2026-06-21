@@ -235,20 +235,20 @@ async function runX402Orchestration(params: {
 
     macroNodeResults[node] = nodeResult.data;
 
-    // Extract child service payment edges from macro-node response
-    const childPaymentEdges = nodeResult.data.paymentEdges as Array<{
-      buyer: string; seller: string; amountUsdc: number; status: string;
+    // Extract child service payment edges from macro-node serviceEvaluations
+    const childEvals = nodeResult.data.serviceEvaluations as Array<{
+      serviceName: string; status: string; settled: boolean; mode: string; costUsdc: number;
     }> | undefined;
-    if (childPaymentEdges) {
-      for (const edge of childPaymentEdges) {
+    if (childEvals) {
+      for (const ev of childEvals) {
         paymentGraph.push({
           edgeId: randomUUID(),
-          buyer: edge.buyer,
-          seller: edge.seller,
-          amountUsdc: edge.amountUsdc,
-          status: edge.status === "executed" ? "paid" : (edge.status as "paid" | "skipped"),
+          buyer: node,  // parent macro-node is the buyer
+          seller: ev.serviceName,
+          amountUsdc: ev.costUsdc || 0.000001,
+          status: ev.settled ? "paid" : (ev.status === "completed" ? "skipped" : "skipped"),
           nodeType: "service",
-          paymentRef: edge.status === "executed" ? "x402-settled" : null,
+          paymentRef: ev.settled ? "x402-settled" : null,
         });
       }
     }
