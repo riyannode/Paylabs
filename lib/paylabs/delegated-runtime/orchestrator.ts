@@ -124,7 +124,7 @@ export async function executeDelegatedDiscoveryRun(
     setMacroPhaseStatus(state, "settlement_memory", "completed");
     addProgressSummary(
       state,
-      `Settlement completed: ${settlementResult.paidItems.length} routed, ${settlementResult.failedPayments.length} failed`
+      `Settlement completed (audit-only): ${settlementResult.routedItems.length} planned, ${settlementResult.failedItems.length} failed validation. Mode: payment_plan_ready.`
     );
 
     markOrchestratorComplete(state, "completed");

@@ -6,6 +6,7 @@
  */
 
 import { z } from "zod";
+import type { ServiceName } from "./types";
 
 // ─── Intent Planner ──────────────────────────────────────────
 export const IntentPlannerInput = z.object({
@@ -219,3 +220,77 @@ export const PaymentRouterOutput = z.object({
   safe_payment_summary: z.string(),
 });
 export type PaymentRouterOutput = z.infer<typeof PaymentRouterOutput>;
+// ─── Payment Router (audit-mode output) ─────────────────────
+export const PaymentRouterAuditOutput = z.object({
+  routed_items: z.array(z.object({
+    feed_item_id: z.string(),
+    source_url: z.string(),
+    amount_usdc: z.number(),
+    status: z.literal("planned"),
+  })),
+  failed_items: z.array(z.object({
+    feed_item_id: z.string(),
+    source_url: z.string(),
+    error: z.string(),
+  })),
+  mode: z.literal("audit_only"),
+  settled: z.literal(false),
+  safe_payment_summary: z.string(),
+});
+export type PaymentRouterAuditOutput = z.infer<typeof PaymentRouterAuditOutput>;
+
+// ─── Batch Input Schemas (for Payment Decision phase) ────────
+
+export const BatchSourceVerifierInput = z.object({
+  candidates: z.array(z.object({
+    feed_item_id: z.string(),
+    source_url: z.string(),
+    source_title: z.string(),
+  })),
+  routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
+});
+export type BatchSourceVerifierInput = z.infer<typeof BatchSourceVerifierInput>;
+
+export const BatchValueAllocatorInput = z.object({
+  candidates: z.array(z.object({
+    feed_item_id: z.string(),
+    source_url: z.string(),
+    source_title: z.string(),
+    quality_score: z.number(),
+  })),
+  remaining_budget_usdc: z.number().min(0),
+  routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
+});
+export type BatchValueAllocatorInput = z.infer<typeof BatchValueAllocatorInput>;
+
+export const BatchTrustVerifierInput = z.object({
+  candidates: z.array(z.object({
+    feed_item_id: z.string(),
+    source_url: z.string(),
+    creator_wallet: z.string().nullable(),
+    claim_status: z.string(),
+  })),
+  routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
+});
+export type BatchTrustVerifierInput = z.infer<typeof BatchTrustVerifierInput>;
+
+// ─── Schema Lookup ───────────────────────────────────────────
+
+const INPUT_SCHEMA_MAP: Partial<Record<ServiceName, z.ZodType<unknown>>> = {
+  intent_planner: IntentPlannerInput,
+  query_builder: QueryBuilderInput,
+  signal_scout: SignalScoutInput,
+  intent_matcher: IntentMatcherInput,
+  source_verifier: SourceVerifierInput,
+  value_allocator: ValueAllocatorInput,
+  trust_verifier: TrustVerifierInput,
+  payment_decider: PaymentDeciderInput,
+  payment_router: PaymentRouterInput,
+};
+
+/**
+ * Get the input Zod schema for a service, or null if not found.
+ */
+export function getInputSchema(serviceName: ServiceName): z.ZodType<unknown> | null {
+  return INPUT_SCHEMA_MAP[serviceName] ?? null;
+}

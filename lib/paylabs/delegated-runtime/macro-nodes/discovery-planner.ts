@@ -9,20 +9,14 @@
  * 2. Expands goal into discovery queries
  * 3. Discovers and ranks candidate sources
  * 4. Matches candidates against intent
+ *
+ * All calls go through callDelegatedService() (edge + schema validation).
+ * Edge chain: run_budget_controller → intent_planner → query_builder → signal_scout → intent_matcher
  */
 
 import type { OrchestratorRunState } from "../types";
-import type { ServiceHandlerInput, ServiceHandlerOutput, ServiceName } from "../../agent-services/types";
-import { SERVICE_HANDLERS } from "../../agent-services/handlers";
+import { callDelegatedService } from "../../agent-services/call-delegated-service";
 import { addServiceEvaluation, updateBudgetSnapshot, addProgressSummary } from "../state";
-
-// ─── Services in this phase ──────────────────────────────────
-const PHASE_SERVICES: ServiceName[] = [
-  "intent_planner",
-  "query_builder",
-  "signal_scout",
-  "intent_matcher",
-];
 
 // ─── Run Discovery Planner ───────────────────────────────────
 
@@ -45,30 +39,31 @@ export async function runDiscoveryPlanner(
   error: string | null;
 }> {
   // ── Step 1: Intent Planner ──
-  const intentInput: ServiceHandlerInput = {
+  // Edge: run_budget_controller → intent_planner
+  const intentResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
-    serviceName: "intent_planner",
+    buyerAgentName: "run_budget_controller",
+    sellerServiceName: "intent_planner",
     payload: {
       goal: state.userGoal,
       budgetUsdc: state.userBudgetUsdc,
       routeTier: state.routeTier,
     },
-  };
+  });
 
-  const intentResult = await SERVICE_HANDLERS.intent_planner(intentInput);
   addServiceEvaluation(state, {
     serviceName: "intent_planner",
     macroNode: "discovery_planner",
-    input: intentInput.payload,
+    input: { goal: state.userGoal },
     output: intentResult.data,
     safeSummary: intentResult.safeSummary,
     status: intentResult.ok ? "completed" : "failed",
-    costUsdc: 0.000001,
-    startedAt: new Date().toISOString(),
+    costUsdc: intentResult.safeCallMeta.costUsdc,
+    startedAt: intentResult.safeCallMeta.timestamp,
     completedAt: new Date().toISOString(),
     error: intentResult.error,
   });
-  updateBudgetSnapshot(state, "intent_planner", 0.000001);
+  updateBudgetSnapshot(state, "intent_planner", intentResult.safeCallMeta.costUsdc);
 
   if (!intentResult.ok || !intentResult.data) {
     return {
@@ -91,30 +86,31 @@ export async function runDiscoveryPlanner(
   };
 
   // ── Step 2: Query Builder ──
-  const queryInput: ServiceHandlerInput = {
+  // Edge: intent_planner → query_builder
+  const queryResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
-    serviceName: "query_builder",
+    buyerAgentName: "intent_planner",
+    sellerServiceName: "query_builder",
     payload: {
       normalized_goal: intentData.normalized_goal,
       topics: intentData.constraints,
       routeTier: state.routeTier,
     },
-  };
+  });
 
-  const queryResult = await SERVICE_HANDLERS.query_builder(queryInput);
   addServiceEvaluation(state, {
     serviceName: "query_builder",
     macroNode: "discovery_planner",
-    input: queryInput.payload,
+    input: { normalized_goal: intentData.normalized_goal },
     output: queryResult.data,
     safeSummary: queryResult.safeSummary,
     status: queryResult.ok ? "completed" : "failed",
-    costUsdc: 0.000001,
-    startedAt: new Date().toISOString(),
+    costUsdc: queryResult.safeCallMeta.costUsdc,
+    startedAt: queryResult.safeCallMeta.timestamp,
     completedAt: new Date().toISOString(),
     error: queryResult.error,
   });
-  updateBudgetSnapshot(state, "query_builder", 0.000001);
+  updateBudgetSnapshot(state, "query_builder", queryResult.safeCallMeta.costUsdc);
 
   if (!queryResult.ok || !queryResult.data) {
     return {
@@ -135,30 +131,31 @@ export async function runDiscoveryPlanner(
   };
 
   // ── Step 3: Signal Scout ──
-  const signalInput: ServiceHandlerInput = {
+  // Edge: query_builder → signal_scout
+  const signalResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
-    serviceName: "signal_scout",
+    buyerAgentName: "query_builder",
+    sellerServiceName: "signal_scout",
     payload: {
       expanded_queries: queryData.expanded_queries,
       entity_terms: queryData.entity_terms,
       routeTier: state.routeTier,
     },
-  };
+  });
 
-  const signalResult = await SERVICE_HANDLERS.signal_scout(signalInput);
   addServiceEvaluation(state, {
     serviceName: "signal_scout",
     macroNode: "discovery_planner",
-    input: signalInput.payload,
+    input: { query_count: queryData.expanded_queries.length },
     output: signalResult.data,
     safeSummary: signalResult.safeSummary,
     status: signalResult.ok ? "completed" : "failed",
-    costUsdc: 0.000001,
-    startedAt: new Date().toISOString(),
+    costUsdc: signalResult.safeCallMeta.costUsdc,
+    startedAt: signalResult.safeCallMeta.timestamp,
     completedAt: new Date().toISOString(),
     error: signalResult.error,
   });
-  updateBudgetSnapshot(state, "signal_scout", 0.000001);
+  updateBudgetSnapshot(state, "signal_scout", signalResult.safeCallMeta.costUsdc);
 
   if (!signalResult.ok || !signalResult.data) {
     return {
@@ -185,36 +182,37 @@ export async function runDiscoveryPlanner(
   };
 
   // ── Step 4: Intent Matcher ──
-  const matcherInput: ServiceHandlerInput = {
+  // Edge: signal_scout → intent_matcher
+  const matcherResult = await callDelegatedService({
     discoveryRunId: state.discoveryRunId,
-    serviceName: "intent_matcher",
+    buyerAgentName: "signal_scout",
+    sellerServiceName: "intent_matcher",
     payload: {
       normalized_goal: intentData.normalized_goal,
-      candidates: signalData.ranked_candidates.slice(0, 10), // top 10
+      candidates: signalData.ranked_candidates.slice(0, 10),
       routeTier: state.routeTier,
     },
-  };
+  });
 
-  const matcherResult = await SERVICE_HANDLERS.intent_matcher(matcherInput);
   addServiceEvaluation(state, {
     serviceName: "intent_matcher",
     macroNode: "discovery_planner",
-    input: matcherInput.payload,
+    input: { candidate_count: signalData.ranked_candidates.length },
     output: matcherResult.data,
     safeSummary: matcherResult.safeSummary,
     status: matcherResult.ok ? "completed" : "failed",
-    costUsdc: 0.000001,
-    startedAt: new Date().toISOString(),
+    costUsdc: matcherResult.safeCallMeta.costUsdc,
+    startedAt: matcherResult.safeCallMeta.timestamp,
     completedAt: new Date().toISOString(),
     error: matcherResult.error,
   });
-  updateBudgetSnapshot(state, "intent_matcher", 0.000001);
+  updateBudgetSnapshot(state, "intent_matcher", matcherResult.safeCallMeta.costUsdc);
 
   const matcherData = matcherResult.data as {
     approved_for_quality_check: boolean;
   } | null;
 
-  const summary = `Discovery Planner: ${signalData.ranked_candidates.length} candidates ranked, ${signalData.top_candidates.length} top candidates, intent match: ${matcherData?.approved_for_quality_check ? "approved" : "not approved"}.`;
+  const summary = `Discovery Planner: ${signalData.ranked_candidates.length} candidates ranked, ${signalData.top_candidates.length} top candidates, intent match: ${matcherData?.approved_for_quality_check ? "approved" : "not approved"}. 4 service calls (chain).`;
   addProgressSummary(state, summary);
 
   return {
