@@ -189,6 +189,14 @@ export interface BrainPlanningOutput {
   };
 }
 
+// ─── Tiered Run Summaries ─────────────────────────────────
+export interface TieredRunSummaries {
+  easy_summary?: string;
+  normal_summary?: string;
+  advanced_summary?: string;
+  final_summary: string;
+}
+
 // ─── Orchestrator Output ─────────────────────────────────────
 export interface OrchestratorOutput {
   discoveryRunId: string;
@@ -203,5 +211,6 @@ export interface OrchestratorOutput {
   serviceEvaluations: ServiceEvaluation[];
   brainPlanning: BrainPlanningOutput | null;
   paymentGraph: PaymentGraphEdge[];
+  tieredSummaries?: TieredRunSummaries;
   error: string | null;
 }

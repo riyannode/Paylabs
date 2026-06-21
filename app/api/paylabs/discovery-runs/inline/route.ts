@@ -34,7 +34,7 @@ import {
 import { isValidExternalTier, DEFAULT_EXTERNAL_TIER } from "@/lib/paylabs/route-tier";
 import type { ExternalRouteTier } from "@/lib/paylabs/route-tier";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
-import type { OrchestratorOutput, PaymentGraphEdge } from "@/lib/paylabs/delegated-runtime/types";
+import type { OrchestratorOutput, PaymentGraphEdge, TieredRunSummaries } from "@/lib/paylabs/delegated-runtime/types";
 import { TIER_PHASE_MAP } from "@/lib/paylabs/delegated-runtime/state";
 import { randomUUID } from "node:crypto";
 
@@ -310,6 +310,34 @@ function buildX402Output(
     riskScore: item.risk_score,
   }));
 
+  // ── Build tiered summaries from macro-node results ──
+  const tieredSummaries: TieredRunSummaries = {
+    final_summary: safeProgressSummaries.join(" | "),
+  };
+
+  // easy_summary from discovery_planner
+  const discoveryResult = macroNodeResults?.["discovery_planner"];
+  if (discoveryResult) {
+    const d = (discoveryResult.data as Record<string, unknown>) || discoveryResult;
+    const candidates = (d.ranked_candidates as unknown[]) || [];
+    tieredSummaries.easy_summary = `Discovery: ${candidates.length} candidates found.`;
+  }
+
+  // normal_summary from payment_decision
+  if (paymentRunnerData) {
+    const approved = (paymentRunnerData.approved_items as unknown[]) || [];
+    const skipped = (paymentRunnerData.skipped_items as unknown[]) || [];
+    tieredSummaries.normal_summary = `Payment Decision: ${approved.length} approved, ${skipped.length} skipped.`;
+  }
+
+  // advanced_summary from settlement_memory
+  const settlementResult = macroNodeResults?.["settlement_memory"];
+  if (settlementResult) {
+    const s = (settlementResult.data as Record<string, unknown>) || settlementResult;
+    const routed = (s.routed_items as unknown[]) || [];
+    tieredSummaries.advanced_summary = `Settlement: ${routed.length} items routed.`;
+  }
+
   // Compute settled spend from paymentGraph
   const settledSpendUsdc = paymentGraph
     .filter((e) => e.status === "paid")
@@ -335,6 +363,7 @@ function buildX402Output(
     serviceEvaluations: [],
     brainPlanning: brainData as OrchestratorOutput["brainPlanning"],
     paymentGraph,
+    tieredSummaries,
     error,
   };
 }
@@ -574,6 +603,7 @@ async function runX402Path(
       })),
       safe_progress_summaries: result.safeProgressSummaries,
       budget_snapshot: result.budgetSnapshot,
+      tiered_summaries: result.tieredSummaries,
       settled: fullySettled,
       mode: fullySettled ? "x402" : "x402_failed",
       error: result.error,
@@ -717,6 +747,7 @@ async function runInProcessPath(
       payment_plan: result.paymentPlan,
       safe_progress_summaries: result.safeProgressSummaries,
       budget_snapshot: result.budgetSnapshot,
+      tiered_summaries: result.tieredSummaries,
       settled: anySettled,
       mode: overallMode,
       error: result.error,
