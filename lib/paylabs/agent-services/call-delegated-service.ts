@@ -78,13 +78,14 @@ export interface CallDelegatedServiceOutput {
  * Fails closed if no base URL is configured (never silently builds relative URL).
  */
 function resolveSellerUrl(serviceEndpointPath: string): string {
-  // VERCEL_URL is auto-set by Vercel to the current deployment URL (no protocol)
+  // Prefer VERCEL_URL (auto-set by Vercel to current deployment hostname)
+  // to avoid chicken-and-egg: PAYLABS_APP_URL may point to old deployment
   const vercelUrl = process.env.VERCEL_URL
     ? `https://${process.env.VERCEL_URL}`
     : undefined;
   const baseUrl =
-    process.env.PAYLABS_APP_URL ||
     vercelUrl ||
+    process.env.PAYLABS_APP_URL ||
     process.env.NEXT_PUBLIC_PAYLABS_APP_URL ||
     "";
   if (!baseUrl) {
