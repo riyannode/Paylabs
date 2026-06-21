@@ -100,35 +100,13 @@ export async function runPaymentDecision(
   });
   updateBudgetSnapshot(state, "intent_matcher", matcherResult.safeCallMeta.costUsdc, matcherResult.settled);
 
-  if (!matcherResult.ok || !matcherResult.data) {
-    return {
-      ok: false,
-      approvedItems: [],
-      skippedItems: [],
-      totalEstimatedSpend: 0,
-      error: `Intent matcher failed: ${matcherResult.error}`,
-    };
-  }
+  const matcherData = (matcherResult.ok && matcherResult.data)
+    ? (matcherResult.data as { approved_for_quality_check: boolean; relevance_score: number })
+    : { approved_for_quality_check: false, relevance_score: 0 };
 
-  const matcherData = matcherResult.data as {
-    approved_for_quality_check: boolean;
-    relevance_score: number;
-  };
-
-  // If intent matcher rejects candidates, skip remaining evaluation
+  // Log rejection but continue pipeline — don't skip remaining services
   if (!matcherData.approved_for_quality_check) {
-    addProgressSummary(state, `Payment Decision: intent matcher rejected candidates (relevance: ${(matcherData.relevance_score ?? 0).toFixed(2)}). Skipping quality/value/trust evaluation.`);
-    return {
-      ok: true,
-      approvedItems: [],
-      skippedItems: candidates.map((c) => ({
-        feed_item_id: c.feed_item_id,
-        source_url: c.source_url || "",
-        skip_reason: "Intent matcher: candidates not approved for quality check",
-      })),
-      totalEstimatedSpend: 0,
-      error: null,
-    };
+    addProgressSummary(state, `Payment Decision: intent matcher rejected candidates (relevance: ${(matcherData.relevance_score ?? 0).toFixed(2)}). Continuing to remaining services.`);
   }
 
   // Load feed items for metadata (wallet, price, claim status)
