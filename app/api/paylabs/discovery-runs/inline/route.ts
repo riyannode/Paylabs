@@ -15,11 +15,11 @@
 //
 // x402 ORCHESTRATION CHAIN (when PAYLABS_BRAIN_X402_ENABLED or
 // PAYLABS_NODE_X402_ENABLED):
-//   run_budget_controller → Brain (x402 via callPaidSeller)
-//   Brain → discovery_planner (x402, payload from Brain)
-//   Brain → payment_decision (x402, payload from discovery)
-//   Brain → settlement_memory (x402, payload from payment)
-//   Each macro-node → child services (x402, via parent macro-node buyer wallet)
+//   run_budget_controller → Brain (treasury 0.000003 USDC via Circle x402)
+//   Brain → discovery_planner (macro allocation 0.000004 USDC via Circle x402)
+//   Brain → payment_decision (macro allocation 0.000006 USDC via Circle x402)
+//   Brain → settlement_memory (macro allocation 0.000002 USDC via Circle x402)
+//   Each macro-node → child services (0.000001 USDC each, per-child Circle x402)
 
 export const maxDuration = 300;
 
@@ -36,6 +36,8 @@ import type { ExternalRouteTier } from "@/lib/paylabs/route-tier";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 import type { OrchestratorOutput, PaymentGraphEdge, TieredRunSummaries } from "@/lib/paylabs/delegated-runtime/types";
 import { TIER_PHASE_MAP } from "@/lib/paylabs/delegated-runtime/state";
+import { BRAIN_TREASURY_FEE_USDC, getMacroNodeAllocationUsdc } from "@/lib/paylabs/delegated-runtime/node-registry";
+import type { MacroNodePhase } from "@/lib/paylabs/delegated-runtime/types";
 import { randomUUID } from "node:crypto";
 
 // ─── x402 Orchestration via callPaidSeller ──────────────────
@@ -157,12 +159,12 @@ async function runX402Orchestration(params: {
       [`Brain x402 failed: ${brainResult.error}`], paymentGraph, null, null, `Brain x402 failed: ${brainResult.error}`);
   }
 
-  // Record controller → Brain edge
+  // Record controller → Brain edge (treasury payment)
   paymentGraph.push({
     edgeId: randomUUID(),
     buyer: "run_budget_controller",
     seller: "brain",
-    amountUsdc: 0.000001,
+    amountUsdc: BRAIN_TREASURY_FEE_USDC,
     status: "paid",
     nodeType: "brain",
     paymentRef: null,
@@ -223,7 +225,7 @@ async function runX402Orchestration(params: {
         edgeId: randomUUID(),
         buyer: "brain",
         seller: node,
-        amountUsdc: 0.000001,
+        amountUsdc: getMacroNodeAllocationUsdc(node as MacroNodePhase),
         status: "skipped",
         nodeType: "macro_node",
         paymentRef: null,
@@ -233,12 +235,12 @@ async function runX402Orchestration(params: {
         paymentGraph, brainData || null, macroNodeResults, `Macro-node ${node} x402 failed: ${nodeResult.error}`);
     }
 
-    // Record Brain → macro-node edge
+    // Record Brain → macro-node edge (macro allocation payment)
     paymentGraph.push({
       edgeId: randomUUID(),
       buyer: "brain",
       seller: node,
-      amountUsdc: 0.000001,
+      amountUsdc: getMacroNodeAllocationUsdc(node as MacroNodePhase),
       status: "paid",
       nodeType: "macro_node",
       paymentRef: null,
@@ -359,6 +361,21 @@ function buildX402Output(
     .filter((e) => e.status === "paid")
     .reduce((sum, e) => sum + e.amountUsdc, 0);
 
+  // Compute user budget spend (controller→brain + brain→macro edges only)
+  const userBudgetSpendEdges = paymentGraph.filter(
+    (e) => (e.buyer === "run_budget_controller" && e.seller === "brain") ||
+           (e.buyer === "brain" && e.nodeType === "macro_node")
+  );
+  const userBudgetUsedUsdc = userBudgetSpendEdges
+    .filter((e) => e.status === "paid")
+    .reduce((sum, e) => sum + e.amountUsdc, 0);
+
+  // Compute child payment volume (macro→child edges)
+  const childPaymentEdges = paymentGraph.filter((e) => e.nodeType === "service");
+  const childPaymentVolumeUsdc = childPaymentEdges
+    .filter((e) => e.status === "paid")
+    .reduce((sum, e) => sum + e.amountUsdc, 0);
+
   return {
     discoveryRunId,
     status,
@@ -368,10 +385,17 @@ function buildX402Output(
     budgetSnapshot: {
       totalBudgetUsdc: userBudgetUsdc,
       spentUsdc: settledSpendUsdc,
-      remainingUsdc: Math.max(0, userBudgetUsdc - settledSpendUsdc),
+      remainingUsdc: Math.max(0, userBudgetUsdc - userBudgetUsedUsdc),
       serviceSpend: {} as Record<string, number>,
       settledServiceFeesUsdc: settledSpendUsdc,
       estimatedServiceFeesUsdc: 0,
+      userBudgetUsdc,
+      userBudgetUsedUsdc,
+      remainingBudgetUsdc: Math.max(0, userBudgetUsdc - userBudgetUsedUsdc),
+      treasuryFeeUsdc: BRAIN_TREASURY_FEE_USDC,
+      macroAllocationUsdc: userBudgetUsedUsdc - BRAIN_TREASURY_FEE_USDC,
+      childPaymentVolumeUsdc,
+      grossPaymentVolumeUsdc: userBudgetUsedUsdc + childPaymentVolumeUsdc,
     },
     consensusDecisions: [],
     paymentPlan,
