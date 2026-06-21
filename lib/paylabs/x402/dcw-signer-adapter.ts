@@ -72,7 +72,13 @@ export function createDcwSigner(): DcwSigner {
           domain: input.domain,
           message: input.message,
         },
-        (_key, value) => (typeof value === "bigint" ? value.toString() : value)
+        (_key, value) => {
+          if (typeof value === "bigint") {
+            // DCW API may expect uint256 as hex string
+            return "0x" + value.toString(16);
+          }
+          return value;
+        }
       );
 
       let response: any; // eslint-disable-line @typescript-eslint/no-explicit-any
