@@ -235,8 +235,6 @@ async function runX402Orchestration(params: {
 
     macroNodeResults[node] = nodeResult.data;
 
-    // DEBUG: log macro-node serviceEvaluations
-    console.log(`[inline] macro-node ${node} serviceEvaluations:`, JSON.stringify(nodeResult.data.serviceEvaluations));
 
     // Extract child service payment edges from macro-node serviceEvaluations
     const childEvals = nodeResult.data.serviceEvaluations as Array<{
