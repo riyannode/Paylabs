@@ -43,9 +43,12 @@ import { randomUUID } from "node:crypto";
 // callPaidSeller handles: send → 402 challenge → sign → retry.
 
 async function resolveAppUrl(): Promise<string> {
-  const base = process.env.PAYLABS_APP_URL
-    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "");
-  if (!base) throw new Error("config_error: No PAYLABS_APP_URL or VERCEL_URL");
+  // Prefer VERCEL_URL (auto-set by Vercel to current deployment hostname)
+  // to avoid chicken-and-egg: PAYLABS_APP_URL may point to old deployment
+  const base = (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "")
+    || process.env.PAYLABS_APP_URL
+    || "";
+  if (!base) throw new Error("config_error: No VERCEL_URL or PAYLABS_APP_URL");
   return base.replace(/\/+$/, "");
 }
 
