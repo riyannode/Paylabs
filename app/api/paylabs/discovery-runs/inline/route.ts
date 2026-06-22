@@ -660,14 +660,22 @@ async function runX402Path(
       // Return HTTP 402 with x402 challenge for customer entry payment
       const { headerValue } = buildCustomerEntryChallenge(
         quote.plannedCostUsdc,
-        `${await resolveAppUrl()}/api/paylabs/discovery-runs/inline`,
+        `${await resolveAppUrl()}/api/paylabs/discovery-runs/inline?runId=${discoveryRunId}&tier=${routeTier}`,
       );
 
       // Store pending entry payment status
+      // Merge: preserve existing agent_trace, add entry_payment
+      const { data: existingTrace } = await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .select("agent_trace")
+        .eq("id", discoveryRunId)
+        .single();
       await supabaseAdmin()
         .from("paylabs_discovery_runs")
         .update({
+          entry_payment_status: "awaiting_payment",
           agent_trace: {
+            ...((existingTrace?.agent_trace as Record<string, unknown>) || {}),
             entry_payment: {
               status: "awaiting_payment",
               amount_usdc: quote.plannedCostUsdc,
@@ -705,6 +713,27 @@ async function runX402Path(
       quote.plannedCostUsdc,
     );
 
+    // Blocker 1: fail closed if payer != userWallet
+    if (entryResult.ok && entryResult.settled) {
+      const payer = entryResult.payer?.toLowerCase();
+      const claimedUserWallet = userWallet.toLowerCase();
+      if (!payer || payer !== claimedUserWallet) {
+        await supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .update({
+            status: "failed",
+            completed_at: new Date().toISOString(),
+            error_summary: `entry_payment_payer_mismatch: expected=${claimedUserWallet} got=${payer || "null"}`.slice(0, 500),
+            entry_payment_status: "payer_mismatch",
+          })
+          .eq("id", discoveryRunId);
+        return NextResponse.json(
+          { ok: false, error: "Entry payment payer does not match claimed user wallet" },
+          { status: 403 }
+        );
+      }
+    }
+
     if (!entryResult.ok || !entryResult.settled) {
       const entryErrorMsg = entryResult.error || "Entry payment verification failed";
 
@@ -741,7 +770,13 @@ async function runX402Path(
       entryResult,
     );
 
-    // Update DB with entry payment metadata (no raw signatures stored)
+    // Blocker 3: merge — preserve existing agent_trace, add entry_payment
+    const { data: traceBeforeSettle } = await supabaseAdmin()
+      .from("paylabs_discovery_runs")
+      .select("agent_trace")
+      .eq("id", discoveryRunId)
+      .single();
+
     await supabaseAdmin()
       .from("paylabs_discovery_runs")
       .update({
@@ -752,6 +787,7 @@ async function runX402Path(
         entry_payment_tx_hash: entryPaymentData.entry_payment_tx_hash,
         entry_payment_explorer_url: entryPaymentData.entry_payment_explorer_url,
         agent_trace: {
+          ...((traceBeforeSettle?.agent_trace as Record<string, unknown>) || {}),
           entry_payment: {
             status: entryPaymentData.entry_payment_status,
             amount_usdc: entryPaymentData.entry_payment_amount_usdc,
@@ -761,6 +797,7 @@ async function runX402Path(
             tier: entryPaymentData.selected_tier,
             planned_cost_usdc: entryPaymentData.quote_planned_cost_usdc,
             expected_payment_edges: entryPaymentData.quote_expected_payment_edges,
+            payer: entryResult.payer ?? null,
           },
         },
       })
