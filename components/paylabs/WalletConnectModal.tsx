@@ -92,19 +92,17 @@ export default function WalletConnectModal({
         </button>
 
         <div className="pl-wallet-tabs-v3">
-          {!isConnected && (
-            <button
-              className={tab === "login" ? "active" : ""}
-              onClick={() => setTab("login")}
-            >
-              Login
-            </button>
-          )}
+          <button
+            className={tab === "login" ? "active" : ""}
+            onClick={() => setTab("login")}
+          >
+            Login
+          </button>
           <button
             className={tab === "gateway" ? "active" : ""}
             onClick={() => setTab("gateway")}
           >
-            {isConnected ? "Wallet" : "Gateway"}
+            Gateway
           </button>
         </div>
 
