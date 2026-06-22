@@ -766,7 +766,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
     const body = {
       goal: prompt.trim(),
       user_wallet: walletInfo.address,
-      route_tier: tier,
+      route_tier: "auto",
       budget_usdc: Number(budget),
       customer_wallet_type: walletInfo.walletType,
       ...(ucwSession ? { customer_auth_method: "social" as const } : {}),
@@ -910,16 +910,9 @@ export default function PayLabsChatClient({ analytics }: Props) {
               }}
             />
             <div className="pl-search-actions">
-              <select
-                value={tier}
-                onChange={(e) => setTier(e.target.value as "easy" | "normal" | "advanced")}
-              >
-                <option value="easy">Easy</option>
-                <option value="normal">Normal</option>
-                <option value="advanced">Advanced</option>
-              </select>
+<span className="pl-plan-auto">Plan: Auto</span>
               <div className="pl-budget">
-                <span>Budget</span>
+                <span>Max budget</span>
                 <input value={budget} onChange={(e) => setBudget(e.target.value)} type="number" step="0.001" min="0" />
                 <small>USDC</small>
               </div>
