@@ -415,7 +415,17 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         }
 
         // If we have device token but no user token → SDK needs to finalize OAuth
+        // ONLY if we actually have an OAuth hash in the URL (post-redirect).
+        // If no hash, this is a stale session — destroy it and start fresh.
         if (data.hasDeviceToken && !data.hasUserToken) {
+          const hasOAuthHash = window.location.hash.includes("access_token") || window.location.hash.includes("id_token");
+          if (!hasOAuthHash) {
+            // Stale session — device token saved but OAuth never completed
+            console.log("[UCW] Stale session (deviceToken but no OAuth hash) — destroying");
+            fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST" }).catch(() => {});
+            setWalletState("not_connected");
+            return;
+          }
           setWalletState("connecting");
           const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
           const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
@@ -531,6 +541,8 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
   // ── Connect via Google (UCW social login) ──
   const connectGoogle = useCallback(async () => {
+    // Guard: prevent re-entry if already connecting
+    if (walletState === "connecting") return;
     setWalletState("connecting");
     setWalletError(null);
 
@@ -622,7 +634,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       setWalletState("not_connected");
       setWalletError(e instanceof Error ? e.message : "Connection failed.");
     }
-  }, [planned]);
+  }, [planned, walletState]);
 
 // finalizeUcwLogin removed — server-side session handles finalization.
 
@@ -658,6 +670,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
   // ── Connect via Email OTP ──
   const connectEmail = useCallback(async (email: string) => {
+    if (walletState === "connecting") return;
     setWalletState("connecting");
     setWalletError(null);
     try {
@@ -717,10 +730,11 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       setWalletState("not_connected");
       setWalletError(e instanceof Error ? e.message : "Email login failed.");
     }
-  }, [planned]);
+  }, [planned, walletState]);
 
   // ── Connect via PIN ──
   const connectPin = useCallback(async () => {
+    if (walletState === "connecting") return;
     setWalletState("connecting");
     setWalletError(null);
     try {
@@ -780,7 +794,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       setWalletState("not_connected");
       setWalletError(e instanceof Error ? e.message : "PIN login failed.");
     }
-  }, [planned]);
+  }, [planned, walletState]);
 
   // ── Gateway deposit (UCW contract execution) ──
   const depositGateway = useCallback(async () => {
