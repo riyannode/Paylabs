@@ -14,22 +14,8 @@ type Analytics = {
   topWallet?: { address: string; runs: number } | null;
 };
 
-type ExplorerRun = {
-  id: string;
-  route_tier: string | null;
-  status: string | null;
-  paid_edges: number;
-  user_wallet: string | null;
-  created_at: string | null;
-};
-
-type FeedItem = {
-  id: string;
-  title: string | null;
-  publisher: string | null;
-  author_name: string | null;
-  canonical_url: string | null;
-  is_monetized: boolean | null;
+type Props = {
+  analytics: Analytics;
 };
 
 type SafeRunResult = {
@@ -43,12 +29,6 @@ type SafeRunResult = {
   totalEdges: number;
   receiptReady: boolean;
   safeSummary: string;
-};
-
-type Props = {
-  analytics: Analytics;
-  explorerRuns: ExplorerRun[];
-  feedItems: FeedItem[];
 };
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -209,7 +189,7 @@ async function signWithEoa(params: {
 
 // ─── Main Component ─────────────────────────────────────────
 
-export default function PayLabsChatClient({ analytics, explorerRuns, feedItems }: Props) {
+export default function PayLabsChatClient({ analytics }: Props) {
   // Chat state
   const [prompt, setPrompt] = useState("");
   const [tier, setTier] = useState<"easy" | "normal" | "advanced">("easy");
@@ -371,8 +351,6 @@ export default function PayLabsChatClient({ analytics, explorerRuns, feedItems }
     <div className="pl-app">
       <SidebarPanel
         analytics={analytics}
-        explorerRuns={explorerRuns}
-        feedItems={feedItems}
       />
 
       <main className="pl-main">
