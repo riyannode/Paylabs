@@ -4,7 +4,7 @@ RSSHub-first source discovery, AI source paths, and x402 source payments on [Arc
 
 ## What it does
 
-PayLabs discovers content through [RSSHub](https://docs.rsshub.app/) routes, builds AI-curated source paths, and executes per-citation payments via [Circle Gateway](https://www.circle.com/en/gateway) on Arc testnet.
+PayLabs discovers content through [RSSHub](https://docs.rsshub.app/) routes, builds AI-curated source paths, and executes payments via [Circle Gateway](https://www.circle.com/en/gateway) on Arc testnet.
 
 ```mermaid
 flowchart LR
