@@ -53,7 +53,7 @@ export interface CustomerEntryPaymentResult {
 
 export interface CustomerEntryPaymentData {
   customer_wallet_address: string;
-  customer_wallet_type: "circle_user_controlled";
+  customer_wallet_type: "circle_user_controlled" | "external_eoa";
   customer_auth_method?: "social" | "email" | "pin";
   entry_payment_status: "pending" | "paid" | "failed";
   entry_payment_amount_usdc: number;
@@ -145,11 +145,12 @@ export async function verifyAndSettleCustomerEntry(
 export function buildCustomerEntryPaymentData(
   customerWalletAddress: string,
   quote: { routeTier: string; plannedCostUsdc: number; expectedPaymentEdges: number },
-  result: CustomerEntryPaymentResult
+  result: CustomerEntryPaymentResult,
+  walletType: "circle_user_controlled" | "external_eoa" = "external_eoa"
 ): CustomerEntryPaymentData {
   return {
     customer_wallet_address: customerWalletAddress.toLowerCase(),
-    customer_wallet_type: "circle_user_controlled",
+    customer_wallet_type: walletType,
     entry_payment_status: result.settled ? "paid" : "failed",
     entry_payment_amount_usdc: quote.plannedCostUsdc,
     entry_payment_tx_hash: result.paymentMeta?.txHash ?? null,

@@ -946,7 +946,7 @@ async function runX402Path(
         tx_hash: entryResult.paymentMeta?.txHash ?? null,
         explorer_url: entryResult.paymentMeta?.explorerUrl ?? null,
         customer_wallet: userWallet,
-        customer_wallet_type: "circle_user_controlled",
+        customer_wallet_type: entryPaymentData.customer_wallet_type,
       },
       error: result.error,
       visibility_error: visibilityError,
