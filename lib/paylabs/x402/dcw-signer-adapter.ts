@@ -63,22 +63,49 @@ export function createDcwSigner(): DcwSigner {
     async signTypedData(input) {
       const client = getDcwClient();
 
-      // DCW SDK expects `data` as a JSON STRING, not an object.
-      // Must serialize bigint to string.
+      // Circle DCW API expects EIP-712 typed data as a JSON string.
+      // Per Circle docs, EIP712Domain MUST be in types, and uint256
+      // values must be decimal strings (not hex).
+      const typesWithDomain: Record<string, unknown> = {
+        EIP712Domain: [
+          { name: "name", type: "string" },
+          { name: "version", type: "string" },
+          { name: "chainId", type: "uint256" },
+          { name: "verifyingContract", type: "address" },
+        ],
+        ...input.types,
+      };
       const dataString = JSON.stringify(
         {
-          domain: input.domain,
-          types: input.types,
+          types: typesWithDomain,
           primaryType: input.primaryType,
+          domain: input.domain,
           message: input.message,
         },
         (_key, value) => (typeof value === "bigint" ? value.toString() : value)
       );
 
-      const response = await client.signTypedData({
-        walletId: input.walletId,
-        data: dataString,
-      });
+      let response: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+      try {
+        response = await client.signTypedData({
+          walletId: input.walletId,
+          data: dataString,
+        });
+      } catch (e: unknown) {
+        // Log full DCW API error for debugging (no secrets)
+        const errDetail = e instanceof Error ? e.message : String(e);
+        const axiosResp = (e as any)?.response; // eslint-disable-line
+        const respData = axiosResp?.data;
+        console.error("[dcw-signer] signTypedData FAILED:", {
+          error: errDetail,
+          responseData: respData ? JSON.stringify(respData).slice(0, 500) : "none",
+          dataLength: dataString.length,
+          primaryType: input.primaryType,
+          messageKeys: Object.keys(input.message || {}),
+          typesKeys: Object.keys(input.types || {}),
+        });
+        throw e;
+      }
 
       const signature = response?.data?.signature;
       if (!signature) {
