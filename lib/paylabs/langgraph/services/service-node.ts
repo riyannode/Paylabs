@@ -165,6 +165,7 @@ export function createServiceNode(
       error: result.error,
       settled: result.settled,
       mode: result.mode,
+      paymentMeta: result.paymentMeta == null ? undefined : result.paymentMeta,
     };
 
     // Build payment edge if settled

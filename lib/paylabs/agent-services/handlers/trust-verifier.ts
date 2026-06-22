@@ -85,13 +85,60 @@ function runDeterministicChecks(input: {
 export const trustVerifierHandler: ServiceHandler = async (
   input: ServiceHandlerInput
 ): Promise<ServiceHandlerOutput> => {
-  const { feed_item_id, source_url, creator_wallet, claim_status, routeTier } =
+  const routeTier = (input.payload as { routeTier?: DelegatedRouteTier }).routeTier;
+
+  // ── Batch mode: payload.candidates is an array ──
+  const candidates = (input.payload as {
+    candidates?: Array<{ feed_item_id: string; source_url: string; creator_wallet: string | null; claim_status: string }>
+  }).candidates;
+
+  if (Array.isArray(candidates)) {
+    const results: Array<{
+      feed_item_id: string;
+      risk_score: number;
+      provenance_ok: boolean;
+      creator_verified: boolean;
+      payout_target_hint: string | null;
+      trust_warnings: string[];
+      safe_trust_summary: string;
+    }> = [];
+
+    for (const c of candidates) {
+      const det = runDeterministicChecks({
+        source_url: c.source_url,
+        creator_wallet: c.creator_wallet,
+        claim_status: c.claim_status,
+      });
+      const safeSummary = `Provenance: ${det.provenanceOk ? "ok" : "fail"}, creator: ${det.creatorVerified ? "verified" : "unverified"}, risk: ${det.riskScore.toFixed(2)}. Deterministic.`;
+      results.push({
+        feed_item_id: c.feed_item_id,
+        risk_score: det.riskScore,
+        provenance_ok: det.provenanceOk,
+        creator_verified: det.creatorVerified,
+        payout_target_hint: c.creator_wallet,
+        trust_warnings: det.warnings,
+        safe_trust_summary: safeSummary,
+      });
+    }
+
+    const summary = `Trust Verifier batch: ${results.length} candidates, ${results.filter(r => r.risk_score < 0.5).length} low-risk.`;
+    return {
+      ok: true,
+      serviceName: "trust_verifier",
+      data: { results },
+      safeSummary: summary,
+      settled: false,
+      error: null,
+    };
+  }
+
+  // ── Single-item mode (backward compatible) ──
+  const { feed_item_id, source_url, creator_wallet, claim_status } =
     input.payload as {
       feed_item_id: string;
       source_url: string;
       creator_wallet: string | null;
       claim_status: string;
-      routeTier?: DelegatedRouteTier;
     };
 
   // ── Deterministic checks (always runs, source of truth) ──

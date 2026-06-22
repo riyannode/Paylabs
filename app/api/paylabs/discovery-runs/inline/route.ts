@@ -199,13 +199,18 @@ async function runX402Orchestration(params: {
       const prev = macroNodeResults["discovery_planner"];
       if (prev) {
         const d = (prev.data as Record<string, unknown>) || prev;
-        payload = { ranked_candidates: d.ranked_candidates };
+        // Macro-node returns camelCase (rankedCandidates)
+        payload = { ranked_candidates: (d.rankedCandidates as unknown[]) || (d.ranked_candidates as unknown[]) || [] };
       }
     } else if (node === "settlement_memory") {
       const prev = macroNodeResults["payment_decision"];
       if (prev) {
         const d = (prev.data as Record<string, unknown>) || prev;
-        payload = { approved_items: d.approved_items, skipped_items: d.skipped_items };
+        // Macro-node returns camelCase (approvedItems/skippedItems)
+        payload = {
+          approved_items: (d.approvedItems as unknown[]) || (d.approved_items as unknown[]) || [],
+          skipped_items: (d.skippedItems as unknown[]) || (d.skipped_items as unknown[]) || [],
+        };
       }
     }
 
@@ -255,6 +260,7 @@ async function runX402Orchestration(params: {
     const childEvals = nodeResult.data.serviceEvaluations as Array<{
       serviceName: string; status: string; settled: boolean; mode: string; costUsdc: number;
       txHash?: string | null; explorerUrl?: string | null;
+      error?: string | null;
     }> | undefined;
     if (childEvals) {
       for (const ev of childEvals) {
@@ -263,24 +269,28 @@ async function runX402Orchestration(params: {
           buyer: node,  // parent macro-node is the buyer
           seller: ev.serviceName,
           amountUsdc: ev.costUsdc || 0.000001,
-          status: ev.settled ? "paid" : (ev.status === "completed" ? "skipped" : "skipped"),
+          status: ev.settled ? "paid" : ev.status === "failed" ? "failed" : "skipped",
           nodeType: "service",
           paymentRef: null,
           txHash: ev.txHash ?? null,
           explorerUrl: ev.explorerUrl ?? null,
+          error: ev.error ?? null,
+          mode: ev.mode,
         });
       }
     }
 
     const runnerData = (nodeResult.data.data as Record<string, unknown>) || nodeResult.data;
     if (node === "discovery_planner") {
-      const candidates = (runnerData.ranked_candidates as unknown[]) || [];
+      // Macro-node returns camelCase (rankedCandidates), not snake_case
+      const candidates = (runnerData.rankedCandidates as unknown[]) || (runnerData.ranked_candidates as unknown[]) || [];
       safeProgressSummaries.push(`Discovery planner: ${candidates.length} candidates`);
     } else if (node === "payment_decision") {
-      const approved = (runnerData.approved_items as unknown[]) || [];
+      // Macro-node returns camelCase (approvedItems/skippedItems)
+      const approved = (runnerData.approvedItems as unknown[]) || (runnerData.approved_items as unknown[]) || [];
       safeProgressSummaries.push(`Payment decision: ${approved.length} approved`);
     } else if (node === "settlement_memory") {
-      const routed = (runnerData.routed_items as unknown[]) || [];
+      const routed = (runnerData.routedItems as unknown[]) || (runnerData.routed_items as unknown[]) || [];
       safeProgressSummaries.push(`Settlement: ${routed.length} items routed`);
     }
   }
@@ -309,14 +319,22 @@ function buildX402Output(
   const paymentRunnerData = paymentResult
     ? ((paymentResult.data as Record<string, unknown>) || paymentResult)
     : null;
-  const approvedItems = (paymentRunnerData?.approved_items as Array<{
+  // Macro-node returns camelCase (approvedItems), fallback to snake_case
+  const approvedItems = ((paymentRunnerData?.approvedItems as Array<{
     feed_item_id: string;
     source_url: string;
     source_title: string;
     approved_price_usdc: number;
     final_score: number;
     risk_score: number;
-  }>) || [];
+  }>) || (paymentRunnerData?.approved_items as Array<{
+    feed_item_id: string;
+    source_url: string;
+    source_title: string;
+    approved_price_usdc: number;
+    final_score: number;
+    risk_score: number;
+  }>)) || [];
   const paymentPlan = approvedItems.map((item) => ({
     itemId: item.feed_item_id,
     sourceUrl: item.source_url,
@@ -337,14 +355,14 @@ function buildX402Output(
   const discoveryResult = macroNodeResults?.["discovery_planner"];
   if (discoveryResult) {
     const d = (discoveryResult.data as Record<string, unknown>) || discoveryResult;
-    const candidates = (d.ranked_candidates as unknown[]) || [];
+    const candidates = (d.rankedCandidates as unknown[]) || (d.ranked_candidates as unknown[]) || [];
     tieredSummaries.easy_summary = `Discovery: ${candidates.length} candidates found.`;
   }
 
   // normal_summary from payment_decision
   if (paymentRunnerData) {
-    const approved = (paymentRunnerData.approved_items as unknown[]) || [];
-    const skipped = (paymentRunnerData.skipped_items as unknown[]) || [];
+    const approved = (paymentRunnerData.approvedItems as unknown[]) || (paymentRunnerData.approved_items as unknown[]) || [];
+    const skipped = (paymentRunnerData.skippedItems as unknown[]) || (paymentRunnerData.skipped_items as unknown[]) || [];
     tieredSummaries.normal_summary = `Payment Decision: ${approved.length} approved, ${skipped.length} skipped.`;
   }
 
@@ -352,7 +370,7 @@ function buildX402Output(
   const settlementResult = macroNodeResults?.["settlement_memory"];
   if (settlementResult) {
     const s = (settlementResult.data as Record<string, unknown>) || settlementResult;
-    const routed = (s.routed_items as unknown[]) || [];
+    const routed = (s.routedItems as unknown[]) || (s.routed_items as unknown[]) || [];
     tieredSummaries.advanced_summary = `Settlement: ${routed.length} items routed.`;
   }
 
@@ -602,6 +620,8 @@ async function runX402Path(
             status: e.status,
             tx_hash: e.txHash ?? null,
             explorer_url: e.explorerUrl ?? null,
+            error: e.error ?? null,
+            mode: e.mode ?? null,
           })),
           budget_snapshot: {
             settled_service_fees_usdc: result.budgetSnapshot.settledServiceFeesUsdc,
@@ -644,6 +664,8 @@ async function runX402Path(
         node_type: e.nodeType,
         tx_hash: e.txHash ?? null,
         explorer_url: e.explorerUrl ?? null,
+        error: e.error ?? null,
+        mode: e.mode ?? null,
       })),
       safe_progress_summaries: result.safeProgressSummaries,
       budget_snapshot: result.budgetSnapshot,
