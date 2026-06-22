@@ -20,8 +20,8 @@ import {
   encodeChallengeHeader,
   verifyAndSettlePayment,
   X402_VERSION,
-} from "./seller-challenge.js";
-import type { X402ChallengeRequirements } from "./seller-challenge.js";
+} from "./seller-challenge";
+import type { X402ChallengeRequirements } from "./seller-challenge";
 
 // ─── Types ────────────────────────────────────────────────────
 
