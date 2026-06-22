@@ -9,7 +9,6 @@ export type WalletState =
   | "needs_gateway_deposit"
   | "ready_to_approve"
   | "approving"
-  | "depositing"
   | "paid"
   | "failed";
 
@@ -36,8 +35,7 @@ type Props = {
   onConnectGoogle: () => void;
   onConnectEmail: (email: string) => void;
   onConnectPin: () => void;
-  onDepositGateway: (amountUsdc: number) => void;
-  onRefreshBalance?: () => void;
+  onDepositGateway: () => void;
   onApprove: () => void;
   showEoaFallback?: boolean;
   onConnectEoa?: () => void;
@@ -67,20 +65,26 @@ export default function WalletConnectModal({
   onConnectEmail,
   onConnectPin,
   onDepositGateway,
-  onRefreshBalance,
   onApprove,
   showEoaFallback = false,
   onConnectEoa,
   debugLog,
 }: Props) {
+  const [tab, setTab] = useState<"login" | "gateway">("login");
+
   const isConnected = !!walletInfo?.address;
   const gatewayBalance = asNumber(ucwBalance?.gateway);
   const currentRunCost = asNumber(plannedCost);
   const gatewayReady = isConnected && gatewayBalance >= currentRunCost;
-  const isDepositing = walletState === "depositing" || walletState === "approving";
 
-  const [tab, setTab] = useState<"login" | "gateway">("login");
-  const [depositAmount, setDepositAmount] = useState("0.02");
+  const statusLabel = useMemo(() => {
+    if (!isConnected) return "Not connected";
+    if (walletState === "needs_gateway_deposit") return "Deposit needed";
+    if (walletState === "approving") return "Approving";
+    if (walletState === "paid") return "Paid";
+    if (gatewayReady) return "Ready";
+    return "Connected";
+  }, [isConnected, walletState, gatewayReady]);
 
   if (!open) return null;
 
@@ -106,54 +110,45 @@ export default function WalletConnectModal({
           </button>
         </div>
 
-        {/* ── LOGIN TAB ── */}
         {tab === "login" && (
           <div className="pl-wallet-content-v3">
-            {!isConnected && (
-              <div className="pl-login-stack-v3">
-                <button
-                  className="pl-login-option-v3"
-                  onClick={onConnectGoogle}
-                  disabled={walletState === "connecting"}
-                >
-                  <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
-                  <b>Social</b>
+            <div className="pl-login-stack-v3">
+              <button
+                className="pl-login-option-v3"
+                onClick={onConnectGoogle}
+                disabled={walletState === "connecting"}
+              >
+                <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
+                <b>Social</b>
+              </button>
+
+              <button
+                className="pl-login-option-v3"
+                onClick={() => {
+                  const next = window.prompt("Enter email for OTP");
+                  if (next) onConnectEmail(next);
+                }}
+                disabled={walletState === "connecting"}
+              >
+                <span className="pl-login-icon-v3"><MailIcon /></span>
+                <b>Email</b>
+              </button>
+
+              <button
+                className="pl-login-option-v3"
+                onClick={onConnectPin}
+                disabled={walletState === "connecting"}
+              >
+                <span className="pl-login-icon-v3"><LockIcon /></span>
+                <b>PIN</b>
+              </button>
+
+              {showEoaFallback && onConnectEoa && (
+                <button className="pl-eoa-fallback-v3" onClick={onConnectEoa}>
+                  Browser wallet
                 </button>
-
-                <button
-                  className="pl-login-option-v3"
-                  onClick={() => {
-                    const next = window.prompt("Enter email for OTP");
-                    if (next) onConnectEmail(next);
-                  }}
-                  disabled={walletState === "connecting"}
-                >
-                  <span className="pl-login-icon-v3"><MailIcon /></span>
-                  <b>Email</b>
-                </button>
-
-                <button
-                  className="pl-login-option-v3"
-                  onClick={onConnectPin}
-                  disabled={walletState === "connecting"}
-                >
-                  <span className="pl-login-icon-v3"><LockIcon /></span>
-                  <b>PIN</b>
-                </button>
-
-                {showEoaFallback && onConnectEoa && (
-                  <button className="pl-eoa-fallback-v3" onClick={onConnectEoa}>
-                    Browser wallet
-                  </button>
-                )}
-              </div>
-            )}
-
-            {walletState === "connecting" && (
-              <div style={{ textAlign: "center", padding: "12px 0", color: "#888", fontSize: 13 }}>
-                Connecting… (you&apos;ll be redirected to Google)
-              </div>
-            )}
+              )}
+            </div>
 
             <WalletRunSummary
               walletInfo={walletInfo}
@@ -176,7 +171,6 @@ export default function WalletConnectModal({
           </div>
         )}
 
-        {/* ── GATEWAY / WALLET TAB ── */}
         {tab === "gateway" && (
           <div className="pl-wallet-content-v3">
             <WalletRunSummary
@@ -187,68 +181,18 @@ export default function WalletConnectModal({
               gatewayReady={gatewayReady}
             />
 
-            {/* Not connected — ask to login */}
             {!isConnected && (
               <button className="pl-primary-v3" onClick={() => setTab("login")}>
                 Login first
               </button>
             )}
 
-            {/* Connected + needs deposit */}
-            {isConnected && !gatewayReady && !isDepositing && (
-              <>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, marginTop: 8 }}>
-                  <label style={{ fontSize: 13, color: "#666", whiteSpace: "nowrap" }}>Amount (USDC)</label>
-                  <input
-                    type="number"
-                    min="0.001"
-                    step="0.001"
-                    value={depositAmount}
-                    onChange={(e) => setDepositAmount(e.target.value)}
-                    style={{ flex: 1, padding: "6px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 14 }}
-                  />
-                </div>
-                <button
-                  className="pl-primary-v3"
-                  onClick={() => onDepositGateway(parseFloat(depositAmount) || 0.02)}
-                  disabled={parseFloat(depositAmount) <= 0}
-                >
-                  Deposit {depositAmount} USDC to Gateway
-                </button>
-                {onRefreshBalance && (
-                  <button
-                    className="pl-eoa-fallback-v3"
-                    onClick={onRefreshBalance}
-                    style={{ marginTop: 6 }}
-                  >
-                    ↻ Refresh balance
-                  </button>
-                )}
-              </>
+            {isConnected && !gatewayReady && (
+              <button className="pl-primary-v3" onClick={onDepositGateway}>
+                Deposit to Gateway
+              </button>
             )}
 
-            {/* Connected + depositing in progress */}
-            {isConnected && isDepositing && (
-              <div style={{ textAlign: "center", padding: "16px 0" }}>
-                <div style={{ fontSize: 14, color: "#555", marginBottom: 8 }}>
-                  Depositing to Gateway…
-                </div>
-                <div style={{ fontSize: 12, color: "#888" }}>
-                  Approve the transaction in the popup, then wait for confirmation.
-                </div>
-                {onRefreshBalance && (
-                  <button
-                    className="pl-eoa-fallback-v3"
-                    onClick={onRefreshBalance}
-                    style={{ marginTop: 12 }}
-                  >
-                    ↻ Refresh balance
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* Connected + gateway ready */}
             {isConnected && gatewayReady && (
               <button className="pl-primary-v3" onClick={onApprove}>
                 Run with x402
@@ -382,29 +326,29 @@ function MailIcon() {
 }
 
 function LockIcon() {
-  return <Svg><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 1 1 8 0v4" /></Svg>;
+  return <Svg><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></Svg>;
 }
 
 function WalletIcon() {
-  return <Svg><rect x="2" y="6" width="20" height="14" rx="2" /><path d="M2 10h20" /></Svg>;
+  return <Svg><path d="M20 7H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1Z" /><path d="M16 12h5v5h-5a2.5 2.5 0 0 1 0-5Z" /></Svg>;
 }
 
 function CoinsIcon() {
-  return <Svg><circle cx="9" cy="9" r="7" /><path d="M14.5 14.5 19 19" /><circle cx="15" cy="15" r="5" /></Svg>;
+  return <Svg><circle cx="12" cy="12" r="9" /><path d="M12 7v10" /><path d="M15 9.5A3 3 0 0 0 12 8a3 3 0 0 0 0 6 3 3 0 0 1 0 6 3 3 0 0 1-3-1.5" /></Svg>;
 }
 
 function GatewayIcon() {
-  return <Svg><path d="M12 2L2 7l10 5 10-5-10-5Z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" /></Svg>;
+  return <Svg><path d="M4 17a8 8 0 0 1 16 0" /><path d="M8 17a4 4 0 0 1 8 0" /><path d="M4 21h16" /><path d="M12 17v4" /></Svg>;
 }
 
 function PieIcon() {
-  return <Svg><path d="M21.21 15.89A10 10 0 1 1 8 2.83" /><path d="M22 12A10 10 0 0 0 12 2v10Z" /></Svg>;
+  return <Svg><path d="M21 12A9 9 0 1 1 12 3v9Z" /><path d="M12 3a9 9 0 0 1 9 9h-9Z" /></Svg>;
 }
 
 function TrendIcon() {
-  return <Svg><polyline points="22 7 13.5 15.5 8.5 10.5 2 17" /><polyline points="16 7 22 7 22 13" /></Svg>;
+  return <Svg><path d="m4 16 5-5 4 4 7-8" /><path d="M15 7h5v5" /></Svg>;
 }
 
 function CopyIcon() {
-  return <Svg><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></Svg>;
+  return <Svg><rect x="9" y="9" width="11" height="11" rx="2" /><rect x="4" y="4" width="11" height="11" rx="2" /></Svg>;
 }
