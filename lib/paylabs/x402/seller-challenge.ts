@@ -97,8 +97,14 @@ const ARC_NETWORK = "eip155:5042002";
 /** x402 protocol version */
 export const X402_VERSION = 2;
 
-/** Default timeout for payment authorization (7 days) */
-const DEFAULT_MAX_TIMEOUT = 604800;
+/**
+ * Default timeout for payment authorization.
+ * MUST match GATEWAY_AUTH_VALIDITY_WINDOW_SECONDS from @circle-fin/x402-batching
+ * to avoid implicit Math.max bump during verify/settle.
+ * SDK value = GATEWAY_MIN_AUTH_VALIDITY_SECONDS (7 days) + buffer (100s) = 604900.
+ * Client MUST use BatchEvmScheme.createPaymentPayload() — NOT raw EIP-712 signing.
+ */
+const DEFAULT_MAX_TIMEOUT = 604900;
 
 // ─── Build 402 Challenge ──────────────────────────────────────
 

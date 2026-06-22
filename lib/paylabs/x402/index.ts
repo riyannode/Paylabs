@@ -71,5 +71,18 @@ export {
   verifyAndSettlePayment,
 } from "./seller-challenge.js";
 
+// ─── Customer Entry Payment (user x402 gate before internal runtime) ──
+export type {
+  CustomerEntryPaymentResult,
+  CustomerEntryPaymentData,
+} from "./customer-entry-payment.js";
+
+export {
+  buildCustomerEntryChallenge,
+  verifyAndSettleCustomerEntry,
+  buildCustomerEntryPaymentData,
+  ENTRY_SELLER_ENV,
+} from "./customer-entry-payment.js";
+
 // ─── DCW Signer Adapter (lazy init, calls Circle API) ─────────
 export { createDcwSigner } from "./dcw-signer-adapter.js";

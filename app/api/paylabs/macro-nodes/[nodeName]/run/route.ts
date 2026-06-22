@@ -78,7 +78,7 @@ export async function POST(
     );
   }
 
-  const x402Enabled = !!process.env[`PAYLABS_NODE_X402_ENABLED`];
+  const x402Enabled = process.env.PAYLABS_NODE_X402_ENABLED === "true";
 
   if (!x402Enabled) {
     return executeMacroNode(nodeName as MacroNodePhase, {
