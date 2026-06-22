@@ -174,7 +174,7 @@ export async function runSettlementMemoryGraph(
 
     const routed = result.routedItems?.length || 0;
     const failed = result.failedItems?.length || 0;
-    const advancedSummary = `Settlement: ${routed} items routed, ${failed} failed. Mode: audit-only. 1 service executed.`;
+    const advancedSummary = `Settlement: ${routed} items routed, ${failed} failed. Mode: Circle x402. 1 service executed (per-child fallback).`;
 
     return {
       ok: !result.error,
