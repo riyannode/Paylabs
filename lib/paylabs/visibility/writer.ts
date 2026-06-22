@@ -27,31 +27,117 @@ export async function writePayLabsVisibility(
   const now = new Date().toISOString();
   const paymentGraph = result.paymentGraph;
 
-  // ── Run events (one per payment graph edge) ──
-  const runEvents = paymentGraph.map((edge, i) => ({
+  // ── Run events: run_started + per-edge + run_completed/run_failed ──
+  const runEvents: Array<{
+    discovery_run_id: string;
+    user_wallet: string | null;
+    route_tier: string;
+    event_type: string;
+    actor_type: string;
+    actor_name: string;
+    target_type: string;
+    target_name: string;
+    status: string;
+    mode: string | null;
+    amount_usdc: number | null;
+    amount_atomic: null;
+    network: null;
+    pay_to: string | null;
+    x402_version: number | null;
+    tx_hash: string | null;
+    explorer_url: string | null;
+    error: string | null;
+    safe_summary: string;
+    sequence: number;
+    metadata: Record<string, unknown>;
+    created_at: string;
+  }> = [];
+
+  // run_started event
+  runEvents.push({
     discovery_run_id: discoveryRunId,
     user_wallet: userWallet,
     route_tier: routeTier,
-    event_type: `payment_edge_${edge.status}`,
-    actor_type: edge.nodeType,
-    actor_name: edge.buyer,
-    target_type: "service",
-    target_name: edge.seller,
-    status: safeEdgeStatus(edge),
-    mode: edgeMode(edge),
-    amount_usdc: edge.amountUsdc,
+    event_type: "run_started",
+    actor_type: "controller",
+    actor_name: "run_budget_controller",
+    target_type: "run",
+    target_name: discoveryRunId,
+    status: "running",
+    mode: null,
+    amount_usdc: null,
     amount_atomic: null,
     network: null,
-    pay_to: edge.seller,
-    x402_version: 2,
-    tx_hash: edge.txHash ?? null,
-    explorer_url: edge.explorerUrl ?? null,
-    error: edge.error ?? null,
-    safe_summary: `${edge.buyer} → ${edge.seller}: ${edge.status}`,
-    sequence: i + 1,
+    pay_to: null,
+    x402_version: null,
+    tx_hash: null,
+    explorer_url: null,
+    error: null,
+    safe_summary: `Run started: tier=${routeTier}`,
+    sequence: 0,
     metadata: {},
     created_at: now,
-  }));
+  });
+
+  // per-edge events
+  paymentGraph.forEach((edge, i) => {
+    runEvents.push({
+      discovery_run_id: discoveryRunId,
+      user_wallet: userWallet,
+      route_tier: routeTier,
+      event_type: `payment_edge_${edge.status}`,
+      actor_type: edge.nodeType,
+      actor_name: edge.buyer,
+      target_type: "service",
+      target_name: edge.seller,
+      status: safeEdgeStatus(edge),
+      mode: edgeMode(edge),
+      amount_usdc: edge.amountUsdc,
+      amount_atomic: null,
+      network: null,
+      pay_to: edge.seller,
+      x402_version: 2,
+      tx_hash: edge.txHash ?? null,
+      explorer_url: edge.explorerUrl ?? null,
+      error: edge.error ?? null,
+      safe_summary: `${edge.buyer} → ${edge.seller}: ${edge.status}`,
+      sequence: i + 1,
+      metadata: {},
+      created_at: now,
+    });
+  });
+
+  // run_completed or run_failed event
+  runEvents.push({
+    discovery_run_id: discoveryRunId,
+    user_wallet: userWallet,
+    route_tier: routeTier,
+    event_type: result.status === "completed" ? "run_completed" : "run_failed",
+    actor_type: "system",
+    actor_name: "paylabs_runtime",
+    target_type: "run",
+    target_name: discoveryRunId,
+    status: result.status === "completed" ? "completed" : "failed",
+    mode: null,
+    amount_usdc: null,
+    amount_atomic: null,
+    network: null,
+    pay_to: null,
+    x402_version: null,
+    tx_hash: null,
+    explorer_url: null,
+    error: result.error ?? null,
+    safe_summary:
+      result.status === "completed"
+        ? "Run completed"
+        : `Run failed: ${result.error ?? "unknown error"}`,
+    sequence: runEvents.length,
+    metadata: {
+      payment_edges: paymentGraph.length,
+      payment_plan_items: result.paymentPlan?.length ?? 0,
+    },
+    created_at: now,
+  });
 
   // ── Service payment events (one per edge) ──
   const servicePaymentRows = paymentGraph.map((edge) => ({
