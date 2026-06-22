@@ -351,7 +351,10 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           console.log("[UCW] Restoring SDK — deviceToken present, socialLoginProvider:", localStorage.getItem("socialLoginProvider"), "hash:", window.location.hash ? "present" : "empty");
 
           let callbackFired = false;
-          const sdk = new W3SSdk(
+          // W3SSdk is a singleton — constructor returns existing instance.
+          // MUST use updateConfigs to set callback on the existing instance.
+          const sdk = new W3SSdk({ appSettings: { appId } });
+          sdk.updateConfigs(
             {
               appSettings: { appId },
               loginConfigs: {
@@ -575,6 +578,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
       // Trigger Google OAuth redirect
       const { SocialLoginProvider } = await import("@circle-fin/w3s-pw-web-sdk/dist/src/types");
+      console.log("[UCW] performLogin — socialLoginProvider will be:", SocialLoginProvider.GOOGLE);
       sdk.performLogin(SocialLoginProvider.GOOGLE);
     } catch (e: unknown) {
       setWalletState("not_connected");
