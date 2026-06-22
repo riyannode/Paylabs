@@ -310,7 +310,7 @@ export async function callPaidSeller(
         asset: gatewayReq.asset,
         amount: gatewayReq.amount,
         payTo: gatewayReq.payTo,
-        maxTimeoutSeconds: gatewayReq.maxTimeoutSeconds || 604800,
+        maxTimeoutSeconds: gatewayReq.maxTimeoutSeconds || 604900, // GATEWAY_AUTH_VALIDITY_WINDOW_SECONDS
         extra: gatewayReq.extra,
       }
     );
