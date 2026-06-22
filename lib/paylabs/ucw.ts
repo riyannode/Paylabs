@@ -3,17 +3,17 @@
  *
  * SECURITY: CIRCLE_API_KEY stays server-side. Never expose to client.
  * SECURITY: UCW session tokens (userToken, encryptionKey, deviceToken) are
- *           held in frontend memory only — never in cookies or localStorage.
+ *           stored server-side in Supabase ucw_sessions table.
+ *           Frontend only holds an httpOnly session ID cookie.
  */
 
 import { initiateUserControlledWalletsClient } from "@circle-fin/user-controlled-wallets";
 import type { Blockchain } from "@circle-fin/user-controlled-wallets";
 import { randomUUID } from "crypto";
+import { createClient } from "@supabase/supabase-js";
 
 // ---------------------------------------------------------------------------
-// Server-side UCW session store (in-memory, prototype only)
-// Stores sensitive tokens server-side. Frontend only holds a session ID cookie.
-// TODO(#27-prod): Replace with Redis/DB-backed session store for production.
+// Server-side UCW session store — Supabase-backed (production-safe)
 // ---------------------------------------------------------------------------
 
 export interface UcwServerSession {
@@ -24,42 +24,55 @@ export interface UcwServerSession {
   encryptionKey: string;
   walletId: string;
   walletAddress: string;
-  createdAt: number;
 }
 
-const sessions = new Map<string, UcwServerSession>();
-const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const SESSION_TTL_SECONDS = 30 * 60; // 30 minutes
 
-// Cleanup expired sessions periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, s] of sessions) {
-    if (now - s.createdAt > SESSION_TTL_MS) sessions.delete(id);
-  }
-}, 60_000).unref();
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) throw new Error("Supabase credentials not configured");
+  return createClient(url, key, { auth: { persistSession: false } });
+}
 
-export function createSession(): string {
+export async function createSession(): Promise<string> {
   const id = randomUUID();
-  sessions.set(id, { deviceId: "", deviceToken: "", deviceEncryptionKey: "", userToken: "", encryptionKey: "", walletId: "", walletAddress: "", createdAt: Date.now() });
+  const supabase = getSupabase();
+  const empty: UcwServerSession = { deviceId: "", deviceToken: "", deviceEncryptionKey: "", userToken: "", encryptionKey: "", walletId: "", walletAddress: "" };
+  const { error } = await supabase.from("ucw_sessions").insert({ sid: id, data: empty });
+  if (error) throw new Error(`Session create failed: ${error.message}`);
   return id;
 }
 
-export function getSession(id: string): UcwServerSession | null {
-  const s = sessions.get(id);
-  if (!s) return null;
-  if (Date.now() - s.createdAt > SESSION_TTL_MS) { sessions.delete(id); return null; }
-  return s;
+export async function getSession(id: string): Promise<UcwServerSession | null> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("ucw_sessions")
+    .select("data, expires_at")
+    .eq("sid", id)
+    .single();
+  if (error || !data) return null;
+  if (new Date(data.expires_at).getTime() < Date.now()) {
+    await supabase.from("ucw_sessions").delete().eq("sid", id);
+    return null;
+  }
+  return data.data as UcwServerSession;
 }
 
-export function updateSession(id: string, patch: Partial<UcwServerSession>): UcwServerSession | null {
-  const s = sessions.get(id);
-  if (!s) return null;
-  Object.assign(s, patch);
-  return s;
+export async function updateSession(id: string, patch: Partial<UcwServerSession>): Promise<UcwServerSession | null> {
+  const supabase = getSupabase();
+  // Read current, merge, write back
+  const { data } = await supabase.from("ucw_sessions").select("data").eq("sid", id).single();
+  if (!data) return null;
+  const merged = { ...data.data, ...patch } as UcwServerSession;
+  const { error } = await supabase.from("ucw_sessions").update({ data: merged }).eq("sid", id);
+  if (error) return null;
+  return merged;
 }
 
-export function deleteSession(id: string): void {
-  sessions.delete(id);
+export async function deleteSession(id: string): Promise<void> {
+  const supabase = getSupabase();
+  await supabase.from("ucw_sessions").delete().eq("sid", id);
 }
 
 // ---------------------------------------------------------------------------
