@@ -11,6 +11,16 @@
  *   4. Backend verifies + settles via BatchFacilitatorClient
  *   5. Only after settlement → run internal delegated runtime
  *
+ * Client-side signing requirement:
+ *   Frontend MUST use @circle-fin/x402-batching BatchEvmScheme.createPaymentPayload()
+ *   to sign the EIP-712 authorization. The SDK handles the validity window buffer
+ *   (GATEWAY_AUTH_VALIDITY_WINDOW_SECONDS = 604900s). Raw EIP-712 signing will
+ *   produce authorization_validity_too_short errors from Gateway.
+ *
+ *   After BatchEvmScheme returns {x402Version, payload}, the client MUST wrap:
+ *     { x402Version, payload, resource: challenge.resource, accepted: requirement }
+ *   Then base64-encode that JSON as the PAYMENT-SIGNATURE header value.
+ *
  * Internal edges remain unchanged (platform DCW wallets).
  * Customer signs only ONCE for the entry payment.
  */
@@ -107,7 +117,7 @@ export async function verifyAndSettleCustomerEntry(
     asset: "0x3600000000000000000000000000000000000000", // USDC
     amount: amountAtomic,
     payTo: sellerAddress.toLowerCase(),
-    maxTimeoutSeconds: 604800,
+    maxTimeoutSeconds: 604900, // MUST match GATEWAY_AUTH_VALIDITY_WINDOW_SECONDS
     extra: {
       name: "GatewayWalletBatched",
       version: "1",
