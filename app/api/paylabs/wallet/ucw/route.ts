@@ -205,14 +205,18 @@ export async function POST(req: NextRequest) {
         let walletId: string | null = null;
         let walletAddress: string | null = null;
         if (!initResult.challengeId) {
-          // Existing user — wallets already exist
+          // Existing user — wallets should already exist
           const wallets = await listWallets(ut);
-          if (wallets.length > 0) {
-            walletId = wallets[0].id;
-            walletAddress = wallets[0].address;
-            const updatedW = await updateSession(sid, { walletId, walletAddress });
-            if (!updatedW) console.error("[UCW] Failed to save walletId/walletAddress to session");
+          if (wallets.length === 0) {
+            return NextResponse.json(
+              { error: "No Circle wallet found after login and no wallet creation challenge returned" },
+              { status: 404 }
+            );
           }
+          walletId = wallets[0].id;
+          walletAddress = wallets[0].address;
+          const updatedW = await updateSession(sid, { walletId, walletAddress });
+          if (!updatedW) return NextResponse.json({ error: "Session save wallet failed" }, { status: 500 });
         }
         return NextResponse.json({
           ok: true,
