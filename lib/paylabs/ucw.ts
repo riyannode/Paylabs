@@ -11,6 +11,58 @@ import type { Blockchain } from "@circle-fin/user-controlled-wallets";
 import { randomUUID } from "crypto";
 
 // ---------------------------------------------------------------------------
+// Server-side UCW session store (in-memory, prototype only)
+// Stores sensitive tokens server-side. Frontend only holds a session ID cookie.
+// TODO(#27-prod): Replace with Redis/DB-backed session store for production.
+// ---------------------------------------------------------------------------
+
+export interface UcwServerSession {
+  deviceId: string;
+  deviceToken: string;
+  deviceEncryptionKey: string;
+  userToken: string;
+  encryptionKey: string;
+  walletId: string;
+  walletAddress: string;
+  createdAt: number;
+}
+
+const sessions = new Map<string, UcwServerSession>();
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+// Cleanup expired sessions periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, s] of sessions) {
+    if (now - s.createdAt > SESSION_TTL_MS) sessions.delete(id);
+  }
+}, 60_000).unref();
+
+export function createSession(): string {
+  const id = randomUUID();
+  sessions.set(id, { deviceId: "", deviceToken: "", deviceEncryptionKey: "", userToken: "", encryptionKey: "", walletId: "", walletAddress: "", createdAt: Date.now() });
+  return id;
+}
+
+export function getSession(id: string): UcwServerSession | null {
+  const s = sessions.get(id);
+  if (!s) return null;
+  if (Date.now() - s.createdAt > SESSION_TTL_MS) { sessions.delete(id); return null; }
+  return s;
+}
+
+export function updateSession(id: string, patch: Partial<UcwServerSession>): UcwServerSession | null {
+  const s = sessions.get(id);
+  if (!s) return null;
+  Object.assign(s, patch);
+  return s;
+}
+
+export function deleteSession(id: string): void {
+  sessions.delete(id);
+}
+
+// ---------------------------------------------------------------------------
 // SDK singleton
 // ---------------------------------------------------------------------------
 
