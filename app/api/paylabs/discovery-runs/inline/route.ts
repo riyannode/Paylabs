@@ -547,7 +547,6 @@ async function runX402Path(
       "PAYLABS_APP_URL",
       "PAYLABS_BRAIN_SELLER_WALLET_ADDRESS",
       "PAYLABS_NODE_DISCOVERY_PLANNER_SELLER_WALLET_ADDRESS",
-      "PAYLABS_ENTRY_PAYMENT_SELLER_WALLET_ADDRESS",
     ];
     const missingEnvs = requiredEnvs.filter((k) => !process.env[k]);
     if (missingEnvs.length > 0) {
