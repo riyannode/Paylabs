@@ -151,6 +151,7 @@ export async function createUserToken(userId: string) {
   const resp = await client.createUserToken({ userId });
   return {
     userToken: resp.data?.userToken,
+    encryptionKey: resp.data?.encryptionKey,
   };
 }
 
