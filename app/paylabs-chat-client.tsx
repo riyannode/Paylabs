@@ -31,16 +31,8 @@ type SafeRunResult = {
   safeSummary: string;
 };
 
-/** Persisted UCW session (survives OAuth redirect via cookie) */
-type UcwSession = {
-  deviceId: string;
-  deviceToken: string;
-  deviceEncryptionKey: string;
-  userToken: string;
-  encryptionKey: string;
-  walletId: string;
-  walletAddress: string;
-};
+// UCW sensitive tokens are stored server-side in httpOnly session cookie.
+// Frontend only holds wallet address + wallet ID (non-sensitive) in memory.
 
 // ─── Helpers ────────────────────────────────────────────────
 
@@ -221,15 +213,12 @@ async function signWithEoa(params: {
 async function signWithUcw(params: {
   challenge: Record<string, unknown>;
   walletAddress: string;
-  walletId: string;
-  userToken: string;
   ucwSdk: { execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void };
 }): Promise<string> {
-  const { challenge, walletAddress, walletId, userToken, ucwSdk } = params;
+  const { challenge, walletAddress, ucwSdk } = params;
   const { domain, types, message, requirement, x402Version } = buildEip712Params(challenge, walletAddress);
 
-  // Step 1: Backend creates signTypedData challenge
-  // UCW API expects EIP-712 data with EIP712Domain in types
+  // Backend reads walletId/userToken from httpOnly session cookie
   const signData = {
     domain,
     types: {
@@ -250,10 +239,11 @@ async function signWithUcw(params: {
     },
   };
 
+  // sign-challenge reads userToken/walletId from httpOnly session
   const signResp = await fetch("/api/paylabs/wallet/ucw?action=sign-challenge", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ userToken, walletId, data: signData }),
+    body: JSON.stringify({ data: signData }),
   });
   if (!signResp.ok) {
     const err = await signResp.json().catch(() => ({}));
@@ -279,35 +269,12 @@ async function signWithUcw(params: {
 
 // ─── UCW Balance Fetcher ────────────────────────────────────
 
-async function fetchUcwBalance(walletId: string, userToken: string, walletAddress: string): Promise<UcwBalance> {
-  const [usdcResp, gwResp] = await Promise.all([
-    fetch("/api/paylabs/wallet/ucw?action=balance", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ walletId, userToken }),
-    }),
-    fetch("/api/paylabs/wallet/ucw?action=gateway-balance", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address: walletAddress }),
-    }),
-  ]);
-
-  let usdc = "0";
-  let gateway = "0";
-
-  if (usdcResp.ok) {
-    const data = (await usdcResp.json()) as { balances: Array<{ amount: string; token: string }> };
-    const usdcBalance = data.balances?.find((b) => b.token === "USDC");
-    usdc = usdcBalance?.amount ?? "0";
-  }
-
-  if (gwResp.ok) {
-    const data = (await gwResp.json()) as { balance: string };
-    gateway = data.balance ?? "0";
-  }
-
-  return { usdc, gateway };
+/** Fetch balance via server-side session (tokens stay server-side) */
+async function fetchSessionBalance(): Promise<UcwBalance> {
+  const resp = await fetch("/api/paylabs/wallet/ucw?action=session-balance", { method: "POST" });
+  if (!resp.ok) return { usdc: "0", gateway: "0" };
+  const data = (await resp.json()) as { usdc: string; gateway: string };
+  return { usdc: data.usdc ?? "0", gateway: data.gateway ?? "0" };
 }
 
 // ─── Main Component ─────────────────────────────────────────
@@ -328,15 +295,109 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [walletError, setWalletError] = useState<string | null>(null);
   const [ucwBalance, setUcwBalance] = useState<UcwBalance | null>(null);
 
-  // UCW session (persisted in cookie across OAuth redirect)
-  const [ucwSession, setUcwSession] = useState<UcwSession | null>(null);
+  // UCW state — wallet info in memory, tokens server-side
+  const [ucwWalletId, setUcwWalletId] = useState<string | null>(null);
   const ucwSdkRef = useRef<unknown>(null); // W3SSdk instance
 
   // TODO(#27): Replace with backend quote once inline route returns plannedCostUsdc.
 // For now, this is a frontend estimate used only for run gating (balance < cost → block).
 const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
-// Session is memory-only — no restoration on mount.
+  // ── Post-redirect: restore SDK from server session ──
+  useEffect(() => {
+    const restoreAfterRedirect = async () => {
+      try {
+        const resp = await fetch("/api/paylabs/wallet/ucw?action=session-restore", { method: "POST" });
+        if (!resp.ok) return; // no session
+        const data = (await resp.json()) as { hasDeviceToken: boolean; hasUserToken: boolean; walletId: string | null; walletAddress: string | null };
+
+        // If we already have a wallet from a previous session, just restore UI
+        if (data.walletId && data.walletAddress && data.hasUserToken) {
+          setUcwWalletId(data.walletId);
+          setWalletInfo({ address: data.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
+          setWalletState("connected");
+          const balance = await fetchSessionBalance();
+          setUcwBalance(balance);
+          setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+          return;
+        }
+
+        // If we have device token but no user token → SDK needs to finalize OAuth
+        if (data.hasDeviceToken && !data.hasUserToken) {
+          setWalletState("connecting");
+          const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
+          const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
+          if (!appId) return;
+
+          // Get device token from server session
+          const dtResp = await fetch("/api/paylabs/wallet/ucw?action=session-get-device", { method: "POST" });
+          if (!dtResp.ok) return;
+          const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
+
+          const sdk = new W3SSdk(
+            {
+              appSettings: { appId },
+              loginConfigs: { deviceToken, deviceEncryptionKey },
+            },
+            async (error: unknown, result: unknown) => {
+              if (error) {
+                setWalletState("not_connected");
+                setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown"}`);
+                return;
+              }
+              const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
+              // Save to server session + finalize (init user, list wallets)
+              const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ userToken, encryptionKey }),
+              });
+              if (!saveResp.ok) {
+                setWalletState("not_connected");
+                setWalletError("Failed to save login session");
+                return;
+              }
+              const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null };
+
+              // If new user needs PIN challenge
+              if (saveData.challengeId) {
+                await new Promise<void>((resolve, reject) => {
+                  sdk.execute(saveData.challengeId!, (err: unknown) => {
+                    if (err) reject(err instanceof Error ? err : new Error(String(err)));
+                    else resolve();
+                  });
+                });
+                // Save wallet after challenge
+                if (saveData.walletId && saveData.walletAddress) {
+                  await fetch("/api/paylabs/wallet/ucw?action=session-save-wallet", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ walletId: saveData.walletId, walletAddress: saveData.walletAddress }),
+                  });
+                }
+              }
+
+              // Update UI
+              if (saveData.walletAddress) {
+                setUcwWalletId(saveData.walletId);
+                setWalletInfo({ address: saveData.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
+                setWalletState("connected");
+                const balance = await fetchSessionBalance();
+                setUcwBalance(balance);
+                setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+              }
+            },
+          );
+          ucwSdkRef.current = sdk;
+          await sdk.getDeviceId();
+          // SDK detects OAuth redirect → fires onLoginComplete automatically
+        }
+      } catch {
+        // Silent — no session to restore
+      }
+    };
+    restoreAfterRedirect();
+  }, [planned]);
 
   // ── Connect via Google (UCW social login) ──
   const connectGoogle = useCallback(async () => {
@@ -344,171 +405,102 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
     setWalletError(null);
 
     try {
-      // Dynamic import — browser-only SDK
       const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
       const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
       if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
 
-      // Check if we have a saved session in memory
-      if (ucwSession?.userToken && ucwSession?.walletId) {
-        // Restore from memory
-        setWalletInfo({
-          address: ucwSession.walletAddress,
-          walletType: "circle_user_controlled",
-          network: "Arc Testnet",
-        });
-        setWalletState("connected");
-        // Fetch balance
-        const balance = await fetchUcwBalance(ucwSession.walletId, ucwSession.userToken, ucwSession.walletAddress);
-        setUcwBalance(balance);
-        // Check if Gateway balance is sufficient
-        if (parseFloat(balance.gateway) < parseFloat(planned)) {
-          setWalletState("needs_gateway_deposit");
-        } else {
-          setWalletState("ready_to_approve");
-        }
-        return;
-      }
+      // Create server-side session (sets httpOnly cookie)
+      await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST" });
 
-      // Step 1: Initialize SDK and get deviceId
-      const onLoginComplete = (error: unknown, result: unknown) => {
-        if (error) {
-          setWalletState("not_connected");
-          setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown error"}`);
-          return;
-        }
-        const { userToken: ut, encryptionKey: ek } = result as { userToken: string; encryptionKey: string };
-        setUcwSession((prev) => prev ? { ...prev, userToken: ut, encryptionKey: ek } : null);
-      };
-
-      const existingDeviceToken = ucwSession?.deviceToken ?? "";
-      const existingDeviceEncKey = ucwSession?.deviceEncryptionKey ?? "";
-
-      const sdk = new W3SSdk(
-        {
-          appSettings: { appId },
-          loginConfigs: {
-            deviceToken: existingDeviceToken,
-            deviceEncryptionKey: existingDeviceEncKey,
-            google: {
-              clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "",
-              redirectUri: typeof window !== "undefined" ? window.location.origin : "",
-              selectAccountPrompt: true,
-            },
-          },
-        },
-        onLoginComplete,
-      );
+      // Init SDK + get deviceId
+      const sdk = new W3SSdk({ appSettings: { appId } });
+      const deviceId = await sdk.getDeviceId();
       ucwSdkRef.current = sdk;
 
-      // Get deviceId (creates iframe session)
-      const deviceId = await sdk.getDeviceId();
+      // Create device token via backend
+      const dtResp = await fetch("/api/paylabs/wallet/ucw?action=device-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId }),
+      });
+      if (!dtResp.ok) {
+        const err = await dtResp.json().catch(() => ({}));
+        throw new Error(`Device token failed: ${(err as Record<string, string>).error || dtResp.status}`);
+      }
+      const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
 
-      // Step 2: Create device token via backend
-      if (!existingDeviceToken) {
-        const dtResp = await fetch("/api/paylabs/wallet/ucw?action=device-token", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ deviceId }),
-        });
-        if (!dtResp.ok) {
-          const err = await dtResp.json().catch(() => ({}));
-          throw new Error(`Device token failed: ${(err as Record<string, string>).error || dtResp.status}`);
-        }
-        const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as {
-          deviceToken: string;
-          deviceEncryptionKey: string;
-        };
+      // Save device token to server session
+      await fetch("/api/paylabs/wallet/ucw?action=session-save-device", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, deviceToken, deviceEncryptionKey }),
+      });
 
-        // Session stored in memory only (no userToken yet — comes after OAuth)
-
-        // Re-init SDK with device token
-        sdk.updateConfigs({
+      // Re-init SDK with device token + Google config + login callback
+      sdk.updateConfigs(
+        {
           appSettings: { appId },
           loginConfigs: {
             deviceToken,
             deviceEncryptionKey,
             google: {
               clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "",
-              redirectUri: typeof window !== "undefined" ? window.location.origin : "",
+              redirectUri: window.location.origin,
               selectAccountPrompt: true,
             },
           },
-        });
-      }
+        },
+        async (error: unknown, result: unknown) => {
+          // This callback fires after OAuth redirect
+          if (error) {
+            setWalletState("not_connected");
+            setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown"}`);
+            return;
+          }
+          const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
+          // Save login to server session + finalize
+          const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userToken, encryptionKey }),
+          });
+          if (!saveResp.ok) {
+            setWalletState("not_connected");
+            setWalletError("Failed to save login");
+            return;
+          }
+          const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null };
 
-      // Step 3: Perform Google login (triggers OAuth redirect)
+          if (saveData.challengeId) {
+            await new Promise<void>((resolve, reject) => {
+              sdk.execute(saveData.challengeId!, (err: unknown) => {
+                if (err) reject(err instanceof Error ? err : new Error(String(err)));
+                else resolve();
+              });
+            });
+          }
+
+          if (saveData.walletAddress) {
+            setUcwWalletId(saveData.walletId);
+            setWalletInfo({ address: saveData.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
+            setWalletState("connected");
+            const balance = await fetchSessionBalance();
+            setUcwBalance(balance);
+            setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+          }
+        },
+      );
+
+      // Trigger Google OAuth redirect
       const { SocialLoginProvider } = await import("@circle-fin/w3s-pw-web-sdk/dist/src/types");
       sdk.performLogin(SocialLoginProvider.GOOGLE);
-      // After this, the page will redirect to Google OAuth
-      // On return, the login callback fires and we restore from cookie
     } catch (e: unknown) {
       setWalletState("not_connected");
       setWalletError(e instanceof Error ? e.message : "Connection failed.");
     }
   }, [planned]);
 
-  // ── After UCW login completes: initialize user + get wallet ──
-  const finalizeUcwLogin = useCallback(async (session: UcwSession) => {
-    try {
-      // Initialize user (creates wallet if new)
-      const initResp = await fetch("/api/paylabs/wallet/ucw?action=initialize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userToken: session.userToken }),
-      });
-      if (!initResp.ok) {
-        const err = await initResp.json().catch(() => ({}));
-        throw new Error(`Initialize failed: ${(err as Record<string, string>).error || initResp.status}`);
-      }
-      const initData = (await initResp.json()) as { challengeId: string | null; alreadyExists: boolean };
-
-      // If new user, execute wallet creation challenge
-      if (initData.challengeId && ucwSdkRef.current) {
-        const sdk = ucwSdkRef.current as { execute: (id: string, cb: (err: unknown, res: unknown) => void) => void };
-        await new Promise<void>((resolve, reject) => {
-          sdk.execute(initData.challengeId!, (err: unknown) => {
-            if (err) reject(err instanceof Error ? err : new Error(String(err)));
-            else resolve();
-          });
-        });
-      }
-
-      // List wallets to get walletId + address
-      const listResp = await fetch("/api/paylabs/wallet/ucw?action=list-wallets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userToken: session.userToken }),
-      });
-      if (!listResp.ok) throw new Error("Failed to list wallets");
-      const { wallets } = (await listResp.json()) as {
-        wallets: Array<{ id: string; address: string; blockchain: string }>;
-      };
-      if (!wallets || wallets.length === 0) throw new Error("No wallets found after initialization");
-
-      const wallet = wallets[0];
-      const fullSession: UcwSession = { ...session, walletId: wallet.id, walletAddress: wallet.address };
-      setUcwSession(fullSession);
-      setWalletInfo({
-        address: wallet.address,
-        walletType: "circle_user_controlled",
-        network: "Arc Testnet",
-      });
-      setWalletState("connected");
-
-      // Fetch balance
-      const balance = await fetchUcwBalance(wallet.id, session.userToken, wallet.address);
-      setUcwBalance(balance);
-      if (parseFloat(balance.gateway) < parseFloat(planned)) {
-        setWalletState("needs_gateway_deposit");
-      } else {
-        setWalletState("ready_to_approve");
-      }
-    } catch (e: unknown) {
-      setWalletState("not_connected");
-      setWalletError(e instanceof Error ? e.message : "Wallet initialization failed.");
-    }
-  }, [planned]);
+// finalizeUcwLogin removed — server-side session handles finalization.
 
 // OAuth redirect detection removed — session is memory-only.
   // After OAuth redirect, user must click "Continue with Google" again.
@@ -549,12 +541,14 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
       if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
 
-      // Get deviceId first
+      // Create server session
+      await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST" });
+
       const sdk = new W3SSdk({ appSettings: { appId } });
       const deviceId = await sdk.getDeviceId();
       ucwSdkRef.current = sdk;
 
-      // Create email device token via backend
+      // Create email device token
       const dtResp = await fetch("/api/paylabs/wallet/ucw?action=email-device-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -564,41 +558,56 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         const err = await dtResp.json().catch(() => ({}));
         throw new Error(`Email device token failed: ${(err as Record<string, string>).error || dtResp.status}`);
       }
-      const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as {
-        deviceToken: string;
-        deviceEncryptionKey: string;
-      };
+      const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
 
-      // Session stored in memory only
+      // Save device token to server session
+      await fetch("/api/paylabs/wallet/ucw?action=session-save-device", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, deviceToken, deviceEncryptionKey }),
+      });
 
-      // Update SDK with email device token — SDK will show OTP input
+      // Update SDK with email device token + login callback
       sdk.updateConfigs(
-        {
-          appSettings: { appId },
-          loginConfigs: { deviceToken, deviceEncryptionKey },
-        },
-        (error: unknown, result: unknown) => {
+        { appSettings: { appId }, loginConfigs: { deviceToken, deviceEncryptionKey } },
+        async (error: unknown, result: unknown) => {
           if (error) {
             setWalletState("not_connected");
-            setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+            setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown"}`);
             return;
           }
-          const { userToken: ut, encryptionKey: ek } = result as { userToken: string; encryptionKey: string };
-          setUcwSession((prev) => {
-            const updated = prev ? { ...prev, userToken: ut, encryptionKey: ek } : null;
-            if (updated) finalizeUcwLogin(updated);
-            return updated;
+          const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
+          const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userToken, encryptionKey }),
           });
+          const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null };
+          if (saveData.challengeId) {
+            await new Promise<void>((resolve, reject) => {
+              sdk.execute(saveData.challengeId!, (err: unknown) => {
+                if (err) reject(err instanceof Error ? err : new Error(String(err)));
+                else resolve();
+              });
+            });
+          }
+          if (saveData.walletAddress) {
+            setUcwWalletId(saveData.walletId);
+            setWalletInfo({ address: saveData.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
+            setWalletState("connected");
+            const balance = await fetchSessionBalance();
+            setUcwBalance(balance);
+            setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+          }
         },
       );
 
-      // Trigger OTP verification UI
       sdk.verifyOtp();
     } catch (e: unknown) {
       setWalletState("not_connected");
       setWalletError(e instanceof Error ? e.message : "Email login failed.");
     }
-  }, []);
+  }, [planned]);
 
   // ── Connect via PIN ──
   const connectPin = useCallback(async () => {
@@ -608,6 +617,9 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
       const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
       if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
+
+      // Create server session
+      await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST" });
 
       const sdk = new W3SSdk({ appSettings: { appId } });
       const deviceId = await sdk.getDeviceId();
@@ -625,52 +637,33 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       }
       const { userToken, encryptionKey } = (await utResp.json()) as { userToken: string; encryptionKey: string };
 
-      // Session stored in memory only
-      setUcwSession({ deviceId, deviceToken: "", deviceEncryptionKey: "", userToken, encryptionKey: encryptionKey ?? "", walletId: "", walletAddress: "" });
-
       sdk.setAuthentication({ userToken, encryptionKey: encryptionKey ?? "" });
 
-      // Initialize user — creates challenge for wallet + PIN setup
-      const initResp = await fetch("/api/paylabs/wallet/ucw?action=initialize", {
+      // Save login to server session + finalize
+      const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userToken }),
+        body: JSON.stringify({ userToken, encryptionKey }),
       });
-      if (!initResp.ok) throw new Error("Initialize failed");
-      const initData = (await initResp.json()) as { challengeId: string | null; alreadyExists: boolean };
+      if (!saveResp.ok) throw new Error("Failed to save login session");
+      const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null };
 
-      if (initData.challengeId) {
-        // New user — execute PIN setup challenge
+      if (saveData.challengeId) {
         await new Promise<void>((resolve, reject) => {
-          sdk.execute(initData.challengeId!, (err: unknown) => {
+          sdk.execute(saveData.challengeId!, (err: unknown) => {
             if (err) reject(err instanceof Error ? err : new Error(String(err)));
             else resolve();
           });
         });
       }
 
-      // List wallets
-      const listResp = await fetch("/api/paylabs/wallet/ucw?action=list-wallets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userToken }),
-      });
-      if (!listResp.ok) throw new Error("Failed to list wallets");
-      const { wallets } = (await listResp.json()) as { wallets: Array<{ id: string; address: string }> };
-      if (!wallets || wallets.length === 0) throw new Error("No wallets found");
-
-      const wallet = wallets[0];
-      const fullSession: UcwSession = { deviceId, deviceToken: "", deviceEncryptionKey: "", userToken, encryptionKey: encryptionKey ?? "", walletId: wallet.id, walletAddress: wallet.address };
-      setUcwSession(fullSession);
-      setWalletInfo({ address: wallet.address, walletType: "circle_user_controlled", network: "Arc Testnet" });
-      setWalletState("connected");
-
-      const balance = await fetchUcwBalance(wallet.id, userToken, wallet.address);
-      setUcwBalance(balance);
-      if (parseFloat(balance.gateway) < parseFloat(planned)) {
-        setWalletState("needs_gateway_deposit");
-      } else {
-        setWalletState("ready_to_approve");
+      if (saveData.walletAddress) {
+        setUcwWalletId(saveData.walletId);
+        setWalletInfo({ address: saveData.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
+        setWalletState("connected");
+        const balance = await fetchSessionBalance();
+        setUcwBalance(balance);
+        setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
       }
     } catch (e: unknown) {
       setWalletState("not_connected");
@@ -680,21 +673,16 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
   // ── Gateway deposit (UCW contract execution) ──
   const depositGateway = useCallback(async () => {
-    if (!ucwSession) return;
     setWalletState("approving");
     setWalletError(null);
     try {
-      const amountUsdc = parseFloat(planned) * 2; // deposit 2x planned cost as buffer
+      const amountUsdc = parseFloat(planned) * 2;
       const amountAtomic = Math.round(amountUsdc * 1_000_000).toString();
 
       const resp = await fetch("/api/paylabs/wallet/ucw?action=approve-deposit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userToken: ucwSession.userToken,
-          walletId: ucwSession.walletId,
-          amountAtomic,
-        }),
+        body: JSON.stringify({ amountAtomic }),
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
@@ -708,7 +696,6 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       const sdk = ucwSdkRef.current as { execute: (id: string, cb: (err: unknown, res: unknown) => void) => void };
       if (!sdk) throw new Error("UCW SDK not initialized");
 
-      // Execute approve challenge
       await new Promise<void>((resolve, reject) => {
         sdk.execute(approve.challengeId, (err: unknown) => {
           if (err) reject(err instanceof Error ? err : new Error(String(err)));
@@ -716,7 +703,6 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         });
       });
 
-      // Execute deposit challenge
       await new Promise<void>((resolve, reject) => {
         sdk.execute(deposit.challengeId, (err: unknown) => {
           if (err) reject(err instanceof Error ? err : new Error(String(err)));
@@ -724,26 +710,18 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         });
       });
 
-      // Wait for Gateway balance to update (~15s)
       setWalletError("Waiting for Gateway balance to update…");
       await new Promise((r) => setTimeout(r, 15000));
 
-      // Refresh balance
-      const balance = await fetchUcwBalance(ucwSession.walletId, ucwSession.userToken, ucwSession.walletAddress);
+      const balance = await fetchSessionBalance();
       setUcwBalance(balance);
-
-      if (parseFloat(balance.gateway) >= parseFloat(planned)) {
-        setWalletState("ready_to_approve");
-        setWalletError(null);
-      } else {
-        setWalletState("needs_gateway_deposit");
-        setWalletError("Gateway balance still insufficient. Try again.");
-      }
+      setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+      if (parseFloat(balance.gateway) >= parseFloat(planned)) setWalletError(null);
     } catch (e: unknown) {
       setWalletState("needs_gateway_deposit");
       setWalletError(e instanceof Error ? e.message : "Deposit failed.");
     }
-  }, [ucwSession, planned]);
+  }, [planned]);
 
   // ── Submit chat ──
   const submitChat = useCallback(async () => {
@@ -774,7 +752,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       route_tier: "auto",
       budget_usdc: Number(budget),
       customer_wallet_type: walletInfo.walletType,
-      ...(ucwSession ? { customer_auth_method: "social" as const } : {}),
+      customer_auth_method: "social",
     };
 
     try {
@@ -806,12 +784,10 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         setWalletState("approving");
         let paymentSignature: string;
         try {
-          if (walletInfo.walletType === "circle_user_controlled" && ucwSession && ucwSdkRef.current) {
+          if (walletInfo.walletType === "circle_user_controlled" && ucwSdkRef.current) {
             paymentSignature = await signWithUcw({
               challenge,
               walletAddress: walletInfo.address,
-              walletId: ucwSession.walletId,
-              userToken: ucwSession.userToken,
               ucwSdk: ucwSdkRef.current as { execute: (id: string, cb: (err: unknown, res: unknown) => void) => void },
             });
           } else {
@@ -864,7 +840,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       setError(e instanceof Error ? e.message : "Network error.");
       setStatus("error");
     }
-  }, [prompt, budget, walletInfo, ucwSession, ucwBalance, planned]);
+  }, [prompt, budget, walletInfo, ucwWalletId, ucwBalance, planned]);
 
   const resetChat = useCallback(() => {
     setPrompt("");
@@ -875,7 +851,8 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
   // ── Disconnect wallet ──
   const disconnectWallet = useCallback(() => {
-    setUcwSession(null);
+    fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST" }).catch(() => {});
+    setUcwWalletId(null);
     setWalletInfo(null);
     setWalletState("not_connected");
     setUcwBalance(null);
