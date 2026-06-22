@@ -18,16 +18,26 @@ export type WalletInfo = {
   network: string;
 };
 
+export type UcwBalance = {
+  usdc: string;
+  gateway: string;
+};
+
 type Props = {
   open: boolean;
   onClose: () => void;
   walletState: WalletState;
   walletInfo: WalletInfo | null;
+  ucwBalance: UcwBalance | null;
   budget: string;
   plannedCost: string;
   error: string | null;
+  onConnectGoogle: () => void;
   onConnectEoa: () => void;
+  onDepositGateway: () => void;
   onApprove: () => void;
+  /** Show the hidden EOA fallback button (dev mode only) */
+  showEoaFallback?: boolean;
 };
 
 const STATE_LABELS: Record<WalletState, string> = {
@@ -63,14 +73,16 @@ export default function WalletConnectModal({
   onClose,
   walletState,
   walletInfo,
+  ucwBalance,
   budget,
   plannedCost,
   error,
+  onConnectGoogle,
   onConnectEoa,
+  onDepositGateway,
   onApprove,
+  showEoaFallback = false,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<"social" | "email" | "pin">("social");
-
   const handleBackdrop = useCallback(
     (e: React.MouseEvent) => {
       if (e.target === e.currentTarget) onClose();
@@ -79,6 +91,11 @@ export default function WalletConnectModal({
   );
 
   if (!open) return null;
+
+  const isUcw = walletInfo?.walletType === "circle_user_controlled";
+  const gatewayBalance = parseFloat(ucwBalance?.gateway ?? "0");
+  const planned = parseFloat(plannedCost);
+  const canAfford = gatewayBalance >= planned;
 
   return (
     <div className="pl-modal-backdrop" onClick={handleBackdrop}>
@@ -93,54 +110,41 @@ export default function WalletConnectModal({
         <div className="pl-wallet-grid">
           {/* Left: auth methods */}
           <div>
-            <div className="pl-tabs">
-              <button
-                className={activeTab === "social" ? "active" : ""}
-                onClick={() => setActiveTab("social")}
-              >
-                Social
-              </button>
-              <button
-                className={activeTab === "email" ? "active" : ""}
-                onClick={() => setActiveTab("email")}
-              >
-                Email
-              </button>
-              <button
-                className={activeTab === "pin" ? "active" : ""}
-                onClick={() => setActiveTab("pin")}
-              >
-                PIN
-              </button>
-            </div>
+            {!walletInfo ? (
+              <>
+                <div className="pl-login-buttons">
+                  <button
+                    className="pl-social-btn pl-google"
+                    onClick={onConnectGoogle}
+                    disabled={walletState === "connecting"}
+                  >
+                    {walletState === "connecting" ? "Connecting…" : "Continue with Google"}
+                  </button>
+                </div>
 
-            <div className="pl-login-buttons">
-              <button disabled title="Coming soon — Circle UCW not yet wired">
-                Continue with Google
-              </button>
-              <button disabled title="Coming soon — Circle UCW not yet wired">
-                Continue with Apple
-              </button>
-              <button disabled title="Coming soon — Circle UCW not yet wired">
-                Continue with Email
-              </button>
-            </div>
-
-            <div className="pl-divider">
-              <span>or</span>
-            </div>
-
-            <button
-              className="pl-eoa-btn"
-              onClick={onConnectEoa}
-              disabled={walletState !== "not_connected"}
-            >
-              {walletState === "connecting" ? "Connecting…" : "Connect browser wallet"}
-            </button>
-
-            <div className="pl-coming-soon">
-              Social / Email / PIN — coming soon with Circle User-Controlled Wallet
-            </div>
+                {showEoaFallback && (
+                  <>
+                    <div className="pl-divider">
+                      <span>or</span>
+                    </div>
+                    <button
+                      className="pl-eoa-btn"
+                      onClick={onConnectEoa}
+                      disabled={walletState !== "not_connected"}
+                    >
+                      {walletState === "connecting" ? "Connecting…" : "Connect browser wallet"}
+                    </button>
+                  </>
+                )}
+              </>
+            ) : (
+              <div className="pl-connected-info">
+                <div className="pl-auth-badge">
+                  {isUcw ? "🔐 Circle UCW" : "🦊 Browser Wallet"}
+                </div>
+                <div className="pl-address-lg data-mono">{shortAddr(walletInfo.address)}</div>
+              </div>
+            )}
           </div>
 
           {/* Right: wallet summary */}
@@ -153,19 +157,31 @@ export default function WalletConnectModal({
               <span className="pl-status-label">{STATE_LABELS[walletState]}</span>
             </div>
 
-            {walletInfo ? (
+            {walletInfo && (
               <>
-                <h3>Your wallet</h3>
-                <div className="pl-address data-mono">{shortAddr(walletInfo.address)}</div>
                 <dl>
                   <div>
                     <dt>Wallet type</dt>
-                    <dd>{walletInfo.walletType === "external_eoa" ? "External EOA" : "Circle UCW"}</dd>
+                    <dd>{isUcw ? "Circle UCW" : "External EOA"}</dd>
                   </div>
                   <div>
                     <dt>Network</dt>
                     <dd>{walletInfo.network}</dd>
                   </div>
+                  {ucwBalance && (
+                    <>
+                      <div>
+                        <dt>USDC balance</dt>
+                        <dd>{ucwBalance.usdc} USDC</dd>
+                      </div>
+                      <div>
+                        <dt>Gateway balance</dt>
+                        <dd className={canAfford ? "" : "pl-insufficient"}>
+                          {ucwBalance.gateway} USDC
+                        </dd>
+                      </div>
+                    </>
+                  )}
                   <div>
                     <dt>Budget</dt>
                     <dd>{budget} USDC</dd>
@@ -175,8 +191,20 @@ export default function WalletConnectModal({
                     <dd>{plannedCost} USDC</dd>
                   </div>
                 </dl>
+
+                {/* Deposit CTA when Gateway balance < planned cost */}
+                {walletState === "needs_gateway_deposit" && !canAfford && (
+                  <div className="pl-deposit-cta">
+                    <p>Gateway balance insufficient. Deposit USDC to continue.</p>
+                    <button className="pl-deposit-btn" onClick={onDepositGateway}>
+                      Deposit to Gateway
+                    </button>
+                  </div>
+                )}
               </>
-            ) : (
+            )}
+
+            {!walletInfo && (
               <div className="pl-wallet-empty">
                 <p>No wallet connected</p>
                 <dl>
