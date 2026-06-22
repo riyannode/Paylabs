@@ -309,7 +309,14 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
     const restoreAfterRedirect = async () => {
       try {
         const resp = await fetch("/api/paylabs/wallet/ucw?action=session-restore", { method: "POST" });
-        if (!resp.ok) return; // no session
+        if (!resp.ok) {
+          // 401 = no session cookie or expired → normal first-visit state, not an error
+          if (resp.status === 401) return;
+          setWalletState("not_connected");
+          const err = await resp.json().catch(() => ({}));
+          setWalletError(`Session restore failed: ${(err as Record<string, string>).error || resp.status}`);
+          return;
+        }
         const data = (await resp.json()) as { hasDeviceToken: boolean; hasUserToken: boolean; walletId: string | null; walletAddress: string | null };
 
         // If we already have a wallet from a previous session, just restore UI
