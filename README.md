@@ -1,6 +1,6 @@
 # PayLabs
 
-PayLabs is an AI search built with langgraph and autonomous x402 payment runtime for Arc.
+PayLabs is an autonomous x402 AI search built with langgraph runtime on Arc/Circle.
 
 Users ask a question, set a USDC budget, connect a Circle User-Controlled Wallet, approve one x402 entry payment, and receive an AI answer with source context, payment graph visibility, and a receipt.
 
