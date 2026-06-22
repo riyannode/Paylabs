@@ -34,6 +34,8 @@ const paymentRouterNode = createServiceNode(
   {
     paymentLayer: "macro_to_child",
     paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback",
+    required: true,
+    skipIfNotSelected: false,
   }
 );
 

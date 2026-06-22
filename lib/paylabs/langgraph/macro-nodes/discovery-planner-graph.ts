@@ -29,7 +29,8 @@ const intentPlannerNode = createServiceNode(
     goal: state.userGoal,
     budgetUsdc: state.userBudgetUsdc,
     routeTier: state.routeTier,
-  })
+  }),
+  { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: true, skipIfNotSelected: false }
 );
 
 // ─── Node: Query Builder ────────────────────────────────────
@@ -42,7 +43,8 @@ const queryBuilderNode = createServiceNode(
     normalized_goal: (state as DiscoveryPlannerStateType).normalizedGoal || state.userGoal,
     topics: (state as DiscoveryPlannerStateType).constraints || [],
     routeTier: state.routeTier,
-  })
+  }),
+  { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: true, skipIfNotSelected: false }
 );
 
 // ─── Node: Signal Scout ─────────────────────────────────────
@@ -54,7 +56,8 @@ const signalScoutNode = createServiceNode(
     expanded_queries: (state as DiscoveryPlannerStateType).expandedQueries || [],
     entity_terms: (state as DiscoveryPlannerStateType).entityTerms || [],
     routeTier: state.routeTier,
-  })
+  }),
+  { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: true, skipIfNotSelected: false }
 );
 
 // ─── Node: Process Intent Result ────────────────────────────
