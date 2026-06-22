@@ -187,9 +187,9 @@ export default function WalletConnectModal({
               </button>
             )}
 
-            {isConnected && !gatewayReady && (
+            {isConnected && (
               <button className="pl-primary-v3" onClick={onDepositGateway}>
-                Deposit to Gateway
+                {gatewayReady ? "Deposit more" : "Deposit to Gateway"}
               </button>
             )}
 
