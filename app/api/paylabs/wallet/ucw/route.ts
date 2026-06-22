@@ -136,7 +136,9 @@ export async function POST(req: NextRequest) {
         const { data } = body as { data: Record<string, unknown> };
         if (!data) return NextResponse.json({ error: "data required" }, { status: 400 });
         const result = await createSignTypedDataChallenge(sess.userToken, sess.walletId, data);
-        return NextResponse.json(result);
+        const respSign = NextResponse.json(result);
+        respSign.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
+        return respSign;
       }
 
       case "approve-deposit": {
@@ -148,10 +150,12 @@ export async function POST(req: NextRequest) {
         if (!amountAtomic) return NextResponse.json({ error: "amountAtomic required" }, { status: 400 });
         const approve = await createApproveChallenge(sess.userToken, sess.walletId, amountAtomic);
         const deposit = await createDepositChallenge(sess.userToken, sess.walletId, amountAtomic);
-        return NextResponse.json({
+        const respDeposit = NextResponse.json({
           approve: { challengeId: approve.challengeId },
           deposit: { challengeId: deposit.challengeId },
         });
+        respDeposit.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
+        return respDeposit;
       }
 
       // -------------------------------------------------------------------
@@ -221,13 +225,15 @@ export async function POST(req: NextRequest) {
           const updatedW = await updateSession(sid, { walletId, walletAddress });
           if (!updatedW) return NextResponse.json({ error: "Session save wallet failed" }, { status: 500 });
         }
-        return NextResponse.json({
+        const respLogin = NextResponse.json({
           ok: true,
           walletId,
           walletAddress,
           needsChallenge: !!initResult.challengeId,
           challengeId: initResult.challengeId,
         });
+        respLogin.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
+        return respLogin;
       }
 
       case "session-finalize-wallet": {
@@ -260,7 +266,9 @@ export async function POST(req: NextRequest) {
         ]);
         const usdc = balances.find((b) => b.token === "USDC")?.amount ?? "0";
 
-        return NextResponse.json({ ok: true, walletId, walletAddress, usdc, gateway: gw.balance });
+        const respFinalize = NextResponse.json({ ok: true, walletId, walletAddress, usdc, gateway: gw.balance });
+        respFinalize.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
+        return respFinalize;
       }
 
       case "session-save-wallet": {
