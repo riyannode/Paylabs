@@ -9,14 +9,14 @@
  *
  * Default if missing: easy
  *
- * The 15-agent LangGraph uses internal tiers (normal/advanced/premium).
- * The 7-agent nanopayment lane uses external tiers (easy/normal/advanced).
+ * The delegated runtime uses external tiers (easy/normal/advanced).
+ * The legacy 15-agent LangGraph used internal tiers (normal/advanced/premium).
  * This module bridges the two without renaming the whole codebase.
  */
 
 import type { RouteTier } from "@/lib/ai/route-config";
 
-/** External tier names used in nanopayment API surface */
+/** External tier names used in delegated runtime API surface */
 export type ExternalRouteTier = "easy" | "normal" | "advanced";
 
 /** Internal tier names used by 15-agent LangGraph */
