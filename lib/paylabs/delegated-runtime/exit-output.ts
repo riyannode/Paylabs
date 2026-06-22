@@ -2,6 +2,7 @@ import type {
   OrchestratorOutput,
   PaymentGraphEdge,
   TieredRunSummaries,
+  SourceContext,
 } from "@/lib/paylabs/delegated-runtime/types";
 
 export type ExitOutput = {
@@ -19,6 +20,12 @@ export type ExitOutput = {
   actual_settled_usdc: number;
   remaining_budget_usdc: number | null;
   receipt_ready: boolean;
+
+  /** Source context — rich metadata for AI consumption (PR #26) */
+  sources_used?: SourceContext["sources_used"];
+  source_selection_summary?: string;
+  source_confidence?: number;
+  source_count?: number;
 };
 
 function sumPaid(edges: PaymentGraphEdge[]): number {
@@ -57,5 +64,11 @@ export function buildExitOutput(result: OrchestratorOutput): ExitOutput {
       result.budgetSnapshot?.remainingBudgetUsdc ??
       null,
     receipt_ready: result.status === "completed" && paidEdges.length > 0,
+
+    // Source context (PR #26)
+    sources_used: result.sourceContext?.sources_used,
+    source_selection_summary: result.sourceContext?.source_selection_summary,
+    source_confidence: result.sourceContext?.source_confidence,
+    source_count: result.sourceContext?.source_count,
   };
 }
