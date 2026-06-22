@@ -34,7 +34,8 @@ import type { ExternalRouteTier } from "@/lib/paylabs/route-tier";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 import type { OrchestratorOutput, PaymentGraphEdge, TieredRunSummaries } from "@/lib/paylabs/delegated-runtime/types";
 import { TIER_PHASE_MAP } from "@/lib/paylabs/delegated-runtime/state";
-import { BRAIN_TREASURY_FEE_USDC, getMacroNodeAllocationUsdc } from "@/lib/paylabs/delegated-runtime/node-registry";
+import { getMacroNodeAllocationUsdc } from "@/lib/paylabs/delegated-runtime/node-registry";
+import { FIXED_FEES_USDC } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import type { MacroNodePhase } from "@/lib/paylabs/delegated-runtime/types";
 import {
   quoteDelegatedRun,
@@ -167,7 +168,7 @@ async function runX402Orchestration(params: {
     edgeId: randomUUID(),
     buyer: "run_budget_controller",
     seller: "brain",
-    amountUsdc: BRAIN_TREASURY_FEE_USDC,
+    amountUsdc: FIXED_FEES_USDC.brainTreasury,
     status: "paid",
     nodeType: "brain",
     paymentRef: null,
@@ -413,8 +414,8 @@ function buildX402Output(
       userBudgetUsdc,
       userBudgetUsedUsdc,
       remainingBudgetUsdc: Math.max(0, userBudgetUsdc - userBudgetUsedUsdc),
-      treasuryFeeUsdc: BRAIN_TREASURY_FEE_USDC,
-      macroAllocationUsdc: userBudgetUsedUsdc - BRAIN_TREASURY_FEE_USDC,
+      treasuryFeeUsdc: FIXED_FEES_USDC.brainTreasury,
+      macroAllocationUsdc: userBudgetUsedUsdc - FIXED_FEES_USDC.brainTreasury,
       childPaymentVolumeUsdc,
       grossPaymentVolumeUsdc: userBudgetUsedUsdc + childPaymentVolumeUsdc,
     },

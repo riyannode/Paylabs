@@ -2,7 +2,7 @@
 //
 // Returns safe progress fields for a discovery run.
 // No raw signed context. No raw x-payment. No secrets. No Gateway internals.
-// Visibility from canonical paylabs_service_payment_events (not legacy nanopayments).
+// Visibility from canonical paylabs_service_payment_events (Circle x402-batching paid edges).
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";

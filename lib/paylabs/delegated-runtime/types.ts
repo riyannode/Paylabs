@@ -98,6 +98,7 @@ export interface ExecutionPlan {
   servicesByMacroNode: Record<MacroNodePhase, ServiceName[]>;
   plannedCostUsdc: number;
   plannedCostBreakdown: {
+    brain_treasury_usdc: number;
     macro_node_fees_usdc: number;
     service_edge_fees_usdc: number;
     registry_check_fees_usdc: number;
@@ -224,6 +225,7 @@ export interface BrainPlanningOutput {
   planned_cost_usdc: number;
   /** Per-category cost breakdown */
   planned_cost_breakdown: {
+    brain_treasury_usdc: number;
     macro_node_fees_usdc: number;
     service_edge_fees_usdc: number;
     registry_check_fees_usdc: number;
