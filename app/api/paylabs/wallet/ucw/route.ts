@@ -17,6 +17,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   createDeviceToken,
+  createEmailDeviceToken,
+  createUserToken,
   initializeUser,
   listWallets,
   getWalletTokenBalance,
@@ -106,6 +108,22 @@ export async function POST(req: NextRequest) {
           approve: { challengeId: approve.challengeId },
           deposit: { challengeId: deposit.challengeId },
         });
+      }
+
+      // -------------------------------------------------------------------
+      case "email-device-token": {
+        const { deviceId, email } = body as { deviceId: string; email: string };
+        if (!deviceId || !email) return NextResponse.json({ error: "deviceId and email required" }, { status: 400 });
+        const result = await createEmailDeviceToken(deviceId, email);
+        return NextResponse.json(result);
+      }
+
+      // -------------------------------------------------------------------
+      case "user-token": {
+        const { userId } = body as { userId: string };
+        if (!userId) return NextResponse.json({ error: "userId required" }, { status: 400 });
+        const result = await createUserToken(userId);
+        return NextResponse.json(result);
       }
 
       // -------------------------------------------------------------------
