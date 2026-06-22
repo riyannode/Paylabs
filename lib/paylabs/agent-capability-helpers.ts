@@ -223,7 +223,7 @@ export async function verifyPaymentHeader(
     asset: "0x3600000000000000000000000000000000000000",
     amount: amountAtomic,
     payTo: sellerAddress.toLowerCase(),
-    maxTimeoutSeconds: 604900,
+    maxTimeoutSeconds: 604800,
     extra: {
       name: "GatewayWalletBatched",
       version: "1",
