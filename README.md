@@ -419,7 +419,7 @@ Next.js 15
 React 19
 TypeScript
 Supabase
-LangChain / LangGraph
+LangChain / LangGraph agent runtime
 Circle User-Controlled Wallets
 Circle Developer-Controlled Wallets
 Circle Web SDK
