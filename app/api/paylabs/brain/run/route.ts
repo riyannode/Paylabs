@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const x402Enabled = !!process.env.PAYLABS_BRAIN_X402_ENABLED;
+  const x402Enabled = process.env.PAYLABS_BRAIN_X402_ENABLED === "true";
 
   if (!x402Enabled) {
     return NextResponse.json({
@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
     asset: "0x3600000000000000000000000000000000000000",
     amount: amountAtomic,
     payTo: sellerAddress,
-    maxTimeoutSeconds: 604900,
+    maxTimeoutSeconds: 604800,
     extra: {
       name: "GatewayWalletBatched",
       version: "1",

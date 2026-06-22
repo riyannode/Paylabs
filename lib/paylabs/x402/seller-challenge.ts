@@ -94,8 +94,11 @@ const USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
 /** Arc Testnet network identifier for x402 */
 const ARC_NETWORK = "eip155:5042002";
 
+/** x402 protocol version */
+export const X402_VERSION = 2;
+
 /** Default timeout for payment authorization (7 days) */
-const DEFAULT_MAX_TIMEOUT = 604900;
+const DEFAULT_MAX_TIMEOUT = 604800;
 
 // ─── Build 402 Challenge ──────────────────────────────────────
 
@@ -134,7 +137,7 @@ export function buildX402Challenge(
   const requirements = buildPaymentRequirements(sellerAddress, amountAtomic);
 
   return {
-    x402Version: 2,
+    x402Version: X402_VERSION,
     accepts: [requirements],
     ...(resourceUrl
       ? {
@@ -299,7 +302,7 @@ export async function verifyAndSettlePayment(
         amountAtomic: requirements.amount,
         payTo: requirements.payTo,
         network: requirements.network,
-        x402Version: 2,
+        x402Version: X402_VERSION,
         txHash,
         explorerUrl,
       },
