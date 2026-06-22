@@ -588,29 +588,8 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
     restoreAfterRedirect();
   }, [planned]);
 
-  // ── Auto-logout: destroy session when user leaves/closes browser ──
-  useEffect(() => {
-    const destroyOnLeave = () => {
-      // Only destroy if we have an active wallet session
-      if (walletInfo?.address) {
-        navigator.sendBeacon?.("/api/paylabs/wallet/ucw?action=session-destroy");
-      }
-    };
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        destroyOnLeave();
-      }
-    };
-
-    window.addEventListener("beforeunload", destroyOnLeave);
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
-    return () => {
-      window.removeEventListener("beforeunload", destroyOnLeave);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [walletInfo?.address]);
+  // ── Session lifecycle: cookie TTL refreshed by session-restore + session-balance ──
+  // No auto-destroy needed — session has 30 min TTL, refreshed on every API call.
 
   // ── Connect via Google (UCW social login) ──
   const connectGoogle = useCallback(async () => {
@@ -875,10 +854,11 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
   }, [planned, walletState]);
 
   // ── Gateway deposit (UCW contract execution) ──
-  const depositGateway = useCallback(async (amountUsdc: number) => {
-    setWalletState("depositing");
+  const depositGateway = useCallback(async () => {
+    setWalletState("approving");
     setWalletError(null);
     try {
+      const amountUsdc = parseFloat(planned) * 2;
       const amountAtomic = Math.round(amountUsdc * 1_000_000).toString();
 
       const resp = await fetch("/api/paylabs/wallet/ucw?action=approve-deposit", {
@@ -921,33 +901,17 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         sdk.execute(deposit.challengeId, (err: unknown) => err ? reject(execErr(err)) : resolve());
       });
 
-      // Poll for Gateway balance to update (up to 30s)
-      for (let i = 0; i < 6; i++) {
-        await new Promise((r) => setTimeout(r, 5000));
-        const balance = await fetchSessionBalance();
-        setUcwBalance(balance);
-        if (parseFloat(balance.gateway) >= parseFloat(planned)) {
-          setWalletState("ready_to_approve");
-          setWalletError(null);
-          return;
-        }
-      }
+      setWalletError("Waiting for Gateway balance to update…");
+      await new Promise((r) => setTimeout(r, 15000));
 
-      // Still not reflected — show balance anyway, user can refresh
-      const finalBalance = await fetchSessionBalance();
-      setUcwBalance(finalBalance);
-      setWalletState(parseFloat(finalBalance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+      const balance = await fetchSessionBalance();
+      setUcwBalance(balance);
+      setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+      if (parseFloat(balance.gateway) >= parseFloat(planned)) setWalletError(null);
     } catch (e: unknown) {
       setWalletState("needs_gateway_deposit");
       setWalletError(e instanceof Error ? e.message : "Deposit failed.");
     }
-  }, [planned]);
-
-  // ── Refresh balance ──
-  const refreshBalance = useCallback(async () => {
-    const balance = await fetchSessionBalance();
-    setUcwBalance(balance);
-    setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
   }, [planned]);
 
   // ── Submit chat ──
@@ -1229,7 +1193,6 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         onConnectPin={connectPin}
         onConnectEoa={connectEoa}
         onDepositGateway={depositGateway}
-        onRefreshBalance={refreshBalance}
         onApprove={() => { setWalletOpen(false); submitChat(); }}
         showEoaFallback={showEoaFallback}
         debugLog={ucwDebug ? debugLog : undefined}
