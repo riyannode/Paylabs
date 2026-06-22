@@ -40,7 +40,7 @@ export function validateAndLockExecutionPlan(
   maxRegistryChecks: number,
   maxSourceAccesses: number,
 ): ExecutionPlan {
-  const routeTier = (tier as keyof typeof TIER_PHASE_MAP) || "easy";
+  const routeTier = tier === "easy" || tier === "normal" || tier === "advanced" ? tier : "easy";
 
   // Delegate to quote-engine (single source of truth for pricing)
   const quote = quoteDelegatedRun({
