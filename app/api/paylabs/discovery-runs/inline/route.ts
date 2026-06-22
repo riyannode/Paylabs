@@ -563,6 +563,34 @@ async function runX402Path(
       throw new Error("config_error: missing PAYLABS_NODE_DISCOVERY_PLANNER_BUYER_WALLET_ID");
     }
 
+    // ── Tier-specific env preflight: fail fast before orchestration ──
+    const tierRequiredEnv: string[] = [
+      "PAYLABS_BRAIN_SELLER_WALLET_ADDRESS",
+      "PAYLABS_BRAIN_BUYER_WALLET_ID",
+      "PAYLABS_NODE_DISCOVERY_PLANNER_SELLER_WALLET_ADDRESS",
+      "PAYLABS_NODE_DISCOVERY_PLANNER_BUYER_WALLET_ID",
+    ];
+
+    if (routeTier === "normal" || routeTier === "advanced") {
+      tierRequiredEnv.push(
+        "PAYLABS_NODE_PAYMENT_DECISION_SELLER_WALLET_ADDRESS",
+        "PAYLABS_NODE_PAYMENT_DECISION_BUYER_WALLET_ID",
+      );
+    }
+
+    if (routeTier === "advanced") {
+      tierRequiredEnv.push(
+        "PAYLABS_NODE_SETTLEMENT_MEMORY_SELLER_WALLET_ADDRESS",
+        "PAYLABS_NODE_SETTLEMENT_MEMORY_BUYER_WALLET_ID",
+        "PAYLABS_SERVICE_PAYMENT_ROUTER_SELLER_WALLET_ADDRESS",
+      );
+    }
+
+    const missingTierEnv = tierRequiredEnv.filter((key) => !process.env[key]);
+    if (missingTierEnv.length > 0) {
+      throw new Error(`config_error: missing tier x402 envs: ${missingTierEnv.join(", ")}`);
+    }
+
     const result = await runX402Orchestration({
       discoveryRunId,
       userGoal: goal,
@@ -621,6 +649,10 @@ async function runX402Path(
       })
       .eq("id", discoveryRunId);
 
+    // ── Build exit output ──
+    const { buildExitOutput } = await import("@/lib/paylabs/delegated-runtime/exit-output");
+    const exitOutput = buildExitOutput(result);
+
     // ── Write canonical x402 visibility (events + receipt) ──
     let visibilityError: string | null = null;
     try {
@@ -678,6 +710,8 @@ async function runX402Path(
       safe_progress_summaries: result.safeProgressSummaries,
       budget_snapshot: result.budgetSnapshot,
       tiered_summaries: result.tieredSummaries,
+      exit_output: exitOutput,
+      receipt_ready: exitOutput.receipt_ready && !visibilityError,
       settled: fullySettled,
       mode: fullySettled ? "x402" : "x402_failed",
       error: result.error,
