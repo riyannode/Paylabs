@@ -50,7 +50,7 @@ async function safeCount(
   try {
     let q: any = supabaseAdmin()
       .from(table)
-      .select("id", { count: "exact", head: true });
+      .select("*", { count: "exact", head: true });
     if (filter) q = filter(q);
     const { count, error } = await q;
     if (error) return 0;
