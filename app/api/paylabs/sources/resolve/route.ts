@@ -34,7 +34,8 @@ export async function POST(req: NextRequest) {
   const intentType = body.intent_type ? String(body.intent_type) : undefined;
   const trustStatus = body.trust_status ? String(body.trust_status) : undefined;
   const claimStatus = body.claim_status ? String(body.claim_status) : undefined;
-  const limit = body.limit ? Math.min(Number(body.limit), 50) : 10;
+  // Clamp: min 1, max 50
+  const limit = Math.min(Math.max(Number(body.limit) || 10, 1), 50);
 
   const result = await resolveSourcesByQuery(query, {
     intentType,

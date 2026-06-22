@@ -301,8 +301,37 @@ async function runX402Orchestration(params: {
 
   safeProgressSummaries.push("x402 orchestration completed: all phases settled");
 
+  // ── Resolve source context from discovery_planner ranked candidates (PR #26) ──
+  let sourceContext: import("@/lib/paylabs/sources/types").SourceContext | undefined;
+  const discoveryMacroResult = macroNodeResults["discovery_planner"];
+  if (discoveryMacroResult) {
+    const dData = (discoveryMacroResult.data as Record<string, unknown>) || discoveryMacroResult;
+    const rankedCandidates = ((dData.rankedCandidates as Array<{ feed_item_id: string; rank: number; relevance_score: number }>)
+      || (dData.ranked_candidates as Array<{ feed_item_id: string; rank: number; relevance_score: number }>)
+      || []);
+    if (rankedCandidates.length > 0) {
+      try {
+        const { resolveSources } = await import("@/lib/paylabs/sources/source-resolver");
+        const normalizedGoal = brainData
+          ? String((brainData as Record<string, unknown>).normalized_goal || "")
+          : "";
+        const resolverResult = await resolveSources({
+          rankedCandidates,
+          normalizedGoal,
+        });
+        if (resolverResult.ok) {
+          sourceContext = resolverResult.sourceContext;
+        }
+      } catch (e: unknown) {
+        console.error("[paylabs_source_context] x402 resolve failed", {
+          error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200),
+        });
+      }
+    }
+  }
+
   return buildX402Output(discoveryRunId, routeTier, userBudgetUsdc, "completed",
-    safeProgressSummaries, paymentGraph, brainData || null, macroNodeResults, null);
+    safeProgressSummaries, paymentGraph, brainData || null, macroNodeResults, null, sourceContext);
 }
 
 function buildX402Output(
@@ -315,6 +344,7 @@ function buildX402Output(
   brainData: Record<string, unknown> | null,
   macroNodeResults: Record<string, Record<string, unknown>> | null,
   error: string | null,
+  sourceContext?: import("@/lib/paylabs/sources/types").SourceContext,
 ): OrchestratorOutput {
   const macroNodes = TIER_PHASE_MAP[routeTier] || TIER_PHASE_MAP.easy;
 
@@ -426,6 +456,7 @@ function buildX402Output(
     brainPlanning: brainData as OrchestratorOutput["brainPlanning"],
     paymentGraph,
     tieredSummaries,
+    sourceContext,
     error,
   };
 }
@@ -867,15 +898,24 @@ async function runX402Path(
     const exitOutput = buildExitOutput(result);
 
     // ── Build source context (PR #26) ──
+    // x402 path: sourceContext already resolved from macroNodeResults in runX402Orchestration
+    // Non-x402 path: build from OrchestratorOutput serviceEvaluations
     let sourceContextError: string | null = null;
     try {
-      const { buildSourceContextFromResult } = await import("@/lib/paylabs/sources/source-context");
-      const sourceCtx = await buildSourceContextFromResult(result);
-      if (sourceCtx) {
-        exitOutput.sources_used = sourceCtx.sources_used;
-        exitOutput.source_selection_summary = sourceCtx.source_selection_summary;
-        exitOutput.source_confidence = sourceCtx.source_confidence;
-        exitOutput.source_count = sourceCtx.source_count;
+      if (result.sourceContext) {
+        exitOutput.sources_used = result.sourceContext.sources_used;
+        exitOutput.source_selection_summary = result.sourceContext.source_selection_summary;
+        exitOutput.source_confidence = result.sourceContext.source_confidence;
+        exitOutput.source_count = result.sourceContext.source_count;
+      } else {
+        const { buildSourceContextFromResult } = await import("@/lib/paylabs/sources/source-context");
+        const sourceCtx = await buildSourceContextFromResult(result);
+        if (sourceCtx) {
+          exitOutput.sources_used = sourceCtx.sources_used;
+          exitOutput.source_selection_summary = sourceCtx.source_selection_summary;
+          exitOutput.source_confidence = sourceCtx.source_confidence;
+          exitOutput.source_count = sourceCtx.source_count;
+        }
       }
     } catch (e: unknown) {
       sourceContextError = e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200);
