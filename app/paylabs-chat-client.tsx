@@ -50,6 +50,9 @@ function short(value?: string | null, chars = 6): string {
   return `${value.slice(0, chars)}…${value.slice(-chars)}`;
 }
 
+// TODO(#27): plannedCost should come from backend quote/402 response, not frontend constants.
+// TIER_COSTS is a fallback estimate for run gating only. After Brain auto-selects tier,
+// the inline route should return { plannedCostUsdc, routeTier } which the frontend uses.
 const TIER_COSTS: Record<string, string> = {
   easy: "0.000007",
   normal: "0.000013",
@@ -312,7 +315,7 @@ async function fetchUcwBalance(walletId: string, userToken: string, walletAddres
 export default function PayLabsChatClient({ analytics }: Props) {
   // Chat state
   const [prompt, setPrompt] = useState("");
-  const [tier, setTier] = useState<"easy" | "normal" | "advanced">("easy");
+
   const [budget, setBudget] = useState("0.02");
   const [status, setStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -329,7 +332,9 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [ucwSession, setUcwSession] = useState<UcwSession | null>(null);
   const ucwSdkRef = useRef<unknown>(null); // W3SSdk instance
 
-  const planned = useMemo(() => TIER_COSTS[tier] || "0.000007", [tier]);
+  // TODO(#27): Replace with backend quote once inline route returns plannedCostUsdc.
+// For now, this is a frontend estimate used only for run gating (balance < cost → block).
+const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
 // Session is memory-only — no restoration on mount.
 
@@ -859,7 +864,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
       setError(e instanceof Error ? e.message : "Network error.");
       setStatus("error");
     }
-  }, [prompt, tier, budget, walletInfo, ucwSession, ucwBalance, planned]);
+  }, [prompt, budget, walletInfo, ucwSession, ucwBalance, planned]);
 
   const resetChat = useCallback(() => {
     setPrompt("");
@@ -949,7 +954,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
               {status === "running" && (
                 <div className="pl-run-card">
-                  <div><span>Tier</span><b>{tier}</b></div>
+                  <div><span>Plan</span><b>Auto</b></div>
                   <div><span>Budget</span><b>{budget} USDC</b></div>
                   <div><span>Planned</span><b>{planned} USDC</b></div>
                   <div className="pl-run-status">Processing…</div>
