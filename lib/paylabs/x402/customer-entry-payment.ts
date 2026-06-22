@@ -57,8 +57,10 @@ export interface CustomerEntryPaymentData {
 
 // ─── Constants ────────────────────────────────────────────────
 
-/** Env var for the platform/Brain entry payment seller wallet address */
+/** Env var for the platform/Brain entry payment seller wallet address.
+ *  Falls back to PAYLABS_BRAIN_SELLER_WALLET_ADDRESS if not set. */
 const ENTRY_SELLER_ENV = "PAYLABS_ENTRY_PAYMENT_SELLER_WALLET_ADDRESS";
+const BRAIN_SELLER_ENV = "PAYLABS_BRAIN_SELLER_WALLET_ADDRESS";
 
 // ─── Build Customer Entry Challenge ───────────────────────────
 
@@ -151,11 +153,11 @@ export function buildCustomerEntryPaymentData(
 // ─── Helpers ──────────────────────────────────────────────────
 
 function resolveEntrySellerAddress(): string {
-  const addr = process.env[ENTRY_SELLER_ENV];
+  // Prefer dedicated entry wallet, fallback to Brain seller wallet
+  const addr = process.env[ENTRY_SELLER_ENV] || process.env[BRAIN_SELLER_ENV];
   if (!addr || !/^0x[a-fA-F0-9]{40}$/.test(addr)) {
     throw new Error(
-      `config_error: ${ENTRY_SELLER_ENV} must be a valid EVM address. ` +
-      `Set it to the Brain/platform entry payment seller wallet address.`
+      `config_error: ${ENTRY_SELLER_ENV} or ${BRAIN_SELLER_ENV} must be a valid EVM address.`
     );
   }
   return addr;
