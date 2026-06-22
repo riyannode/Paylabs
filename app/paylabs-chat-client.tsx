@@ -638,11 +638,26 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       const deviceId = await sdk.getDeviceId();
       ucwSdkRef.current = sdk;
 
-      // Create user token via backend (userId = deviceId for PIN auth)
+      // Step 1: Create user in Circle (required before getUserToken)
+      const userId = deviceId; // use deviceId as userId for PIN auth
+      const createResp = await fetch("/api/paylabs/wallet/ucw?action=create-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId }),
+      });
+      if (!createResp.ok) {
+        const err = await createResp.json().catch(() => ({}));
+        // 155106 = user already exists, continue
+        if ((err as Record<string, number>).code !== 155106) {
+          throw new Error(`Create user failed: ${(err as Record<string, string>).error || createResp.status}`);
+        }
+      }
+
+      // Step 2: Get user token (60-min session)
       const utResp = await fetch("/api/paylabs/wallet/ucw?action=user-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: deviceId }),
+        body: JSON.stringify({ userId }),
       });
       if (!utResp.ok) {
         const err = await utResp.json().catch(() => ({}));
@@ -650,9 +665,10 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       }
       const { userToken, encryptionKey } = (await utResp.json()) as { userToken: string; encryptionKey: string };
 
+      // Step 3: Set auth BEFORE execute (Circle PIN requirement)
       sdk.setAuthentication({ userToken, encryptionKey: encryptionKey ?? "" });
 
-      // Save login to server session + finalize
+      // Save login to server session + finalize (init user + list wallets)
       const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

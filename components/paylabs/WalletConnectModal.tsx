@@ -69,7 +69,6 @@ export default function WalletConnectModal({
   onConnectEoa,
 }: Props) {
   const [tab, setTab] = useState<"login" | "gateway">("login");
-  const [email, setEmail] = useState("");
 
   const isConnected = !!walletInfo?.address;
   const gatewayBalance = asNumber(ucwBalance?.gateway);
@@ -117,32 +116,28 @@ export default function WalletConnectModal({
                 onClick={onConnectGoogle}
                 disabled={walletState === "connecting"}
               >
-                <span className="pl-login-icon-v3 google">G</span>
+                <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
                 <b>Social</b>
               </button>
 
-              <div className="pl-login-option-v3 pl-email-option-v3">
-                <span className="pl-login-icon-v3">✉</span>
-                <input
-                  value={email}
-                  type="email"
-                  placeholder="Email"
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-                <button
-                  onClick={() => onConnectEmail(email)}
-                  disabled={!email || walletState === "connecting"}
-                >
-                  Go
-                </button>
-              </div>
+              <button
+                className="pl-login-option-v3"
+                onClick={() => {
+                  const next = window.prompt("Enter email for OTP");
+                  if (next) onConnectEmail(next);
+                }}
+                disabled={walletState === "connecting"}
+              >
+                <span className="pl-login-icon-v3"><MailIcon /></span>
+                <b>Email</b>
+              </button>
 
               <button
                 className="pl-login-option-v3"
                 onClick={onConnectPin}
                 disabled={walletState === "connecting"}
               >
-                <span className="pl-login-icon-v3">▣</span>
+                <span className="pl-login-icon-v3"><LockIcon /></span>
                 <b>PIN</b>
               </button>
 
@@ -154,7 +149,6 @@ export default function WalletConnectModal({
             </div>
 
             <WalletRunSummary
-              statusLabel={statusLabel}
               walletInfo={walletInfo}
               ucwBalance={ucwBalance}
               budget={budget}
@@ -178,7 +172,6 @@ export default function WalletConnectModal({
         {tab === "gateway" && (
           <div className="pl-wallet-content-v3">
             <WalletRunSummary
-              statusLabel={statusLabel}
               walletInfo={walletInfo}
               ucwBalance={ucwBalance}
               budget={budget}
@@ -213,14 +206,12 @@ export default function WalletConnectModal({
 }
 
 function WalletRunSummary({
-  statusLabel,
   walletInfo,
   ucwBalance,
   budget,
   plannedCost,
   gatewayReady,
 }: {
-  statusLabel: string;
   walletInfo: WalletInfo | null;
   ucwBalance: UcwBalance | null;
   budget: string;
@@ -231,34 +222,28 @@ function WalletRunSummary({
 
   return (
     <div className="pl-summary-card-v3">
-      <div className={`pl-status-chip-v3 ${isConnected ? "ok" : "idle"}`}>
-        <span />
-        {statusLabel}
-      </div>
-
       <InfoRow
-        icon="▣"
+        icon={<WalletIcon />}
         label="Wallet address"
         value={shortAddr(walletInfo?.address)}
         copyValue={walletInfo?.address}
       />
 
       <InfoRow
-        icon="$"
+        icon={<CoinsIcon />}
         label="Wallet balance"
         value={`${ucwBalance?.usdc ?? "0.00"} USDC`}
       />
 
       <InfoRow
-        icon="⌁"
+        icon={<GatewayIcon />}
         label="Gateway balance"
         value={`${ucwBalance?.gateway ?? "0.00"} USDC`}
         danger={isConnected && !gatewayReady}
       />
 
-      <InfoRow icon="◔" label="Max budget" value={`${budget} USDC`} />
-
-      <InfoRow icon="↗" label="This run cost" value={`${plannedCost} USDC`} />
+      <InfoRow icon={<PieIcon />} label="Budget" value={`${budget} USDC`} />
+      <InfoRow icon={<TrendIcon />} label="Planned cost" value={`${plannedCost} USDC`} />
     </div>
   );
 }
@@ -270,7 +255,7 @@ function InfoRow({
   copyValue,
   danger,
 }: {
-  icon: string;
+  icon: React.ReactNode;
   label: string;
   value: string;
   copyValue?: string | null;
@@ -289,10 +274,73 @@ function InfoRow({
             onClick={() => navigator.clipboard?.writeText(copyValue)}
             aria-label="Copy wallet address"
           >
-            ⧉
+            <CopyIcon />
           </button>
         )}
       </b>
     </div>
   );
+}
+
+// ── SVG Icon Components ──
+
+function Svg({ children }: { children: React.ReactNode }) {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
+function GoogleIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.4-.4-3.5Z" />
+      <path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 16.2 4 9.5 8.5 6.3 14.7Z" />
+      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-7.9l-6.5 5C9.4 39.5 16.1 44 24 44Z" />
+      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.4-2.3 4.3-4.1 5.6l6.2 5.2C36.9 39.3 44 34 44 24c0-1.3-.1-2.4-.4-3.5Z" />
+    </svg>
+  );
+}
+
+function MailIcon() {
+  return <Svg><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></Svg>;
+}
+
+function LockIcon() {
+  return <Svg><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></Svg>;
+}
+
+function WalletIcon() {
+  return <Svg><path d="M20 7H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1Z" /><path d="M16 12h5v5h-5a2.5 2.5 0 0 1 0-5Z" /></Svg>;
+}
+
+function CoinsIcon() {
+  return <Svg><circle cx="12" cy="12" r="9" /><path d="M12 7v10" /><path d="M15 9.5A3 3 0 0 0 12 8a3 3 0 0 0 0 6 3 3 0 0 1 0 6 3 3 0 0 1-3-1.5" /></Svg>;
+}
+
+function GatewayIcon() {
+  return <Svg><path d="M4 17a8 8 0 0 1 16 0" /><path d="M8 17a4 4 0 0 1 8 0" /><path d="M4 21h16" /><path d="M12 17v4" /></Svg>;
+}
+
+function PieIcon() {
+  return <Svg><path d="M21 12A9 9 0 1 1 12 3v9Z" /><path d="M12 3a9 9 0 0 1 9 9h-9Z" /></Svg>;
+}
+
+function TrendIcon() {
+  return <Svg><path d="m4 16 5-5 4 4 7-8" /><path d="M15 7h5v5" /></Svg>;
+}
+
+function CopyIcon() {
+  return <Svg><rect x="9" y="9" width="11" height="11" rx="2" /><rect x="4" y="4" width="11" height="11" rx="2" /></Svg>;
 }
