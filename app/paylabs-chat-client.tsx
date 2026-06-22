@@ -366,7 +366,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
         <section className="pl-hero">
           <h1>Ask PayLabs</h1>
-          <p>Routes, receipts, and x402 payments.</p>
+          <p>Source Discovery, receipts, and x402 payments.</p>
 
           <div className="pl-search">
             <textarea
