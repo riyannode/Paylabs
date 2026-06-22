@@ -607,6 +607,150 @@ export default function PayLabsChatClient({ analytics }: Props) {
     }
   }, []);
 
+  // ── Connect via Email OTP ──
+  const connectEmail = useCallback(async (email: string) => {
+    setWalletState("connecting");
+    setWalletError(null);
+    try {
+      const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
+      const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
+      if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
+
+      // Get deviceId first
+      const sdk = new W3SSdk({ appSettings: { appId } });
+      const deviceId = await sdk.getDeviceId();
+      ucwSdkRef.current = sdk;
+
+      // Create email device token via backend
+      const dtResp = await fetch("/api/paylabs/wallet/ucw?action=email-device-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, email }),
+      });
+      if (!dtResp.ok) {
+        const err = await dtResp.json().catch(() => ({}));
+        throw new Error(`Email device token failed: ${(err as Record<string, string>).error || dtResp.status}`);
+      }
+      const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as {
+        deviceToken: string;
+        deviceEncryptionKey: string;
+      };
+
+      // Save partial session
+      writeUcwCookie({ deviceId, deviceToken, deviceEncryptionKey, userToken: "", encryptionKey: "", walletId: "", walletAddress: "" });
+
+      // Update SDK with email device token — SDK will show OTP input
+      sdk.updateConfigs(
+        {
+          appSettings: { appId },
+          loginConfigs: { deviceToken, deviceEncryptionKey },
+        },
+        (error: unknown, result: unknown) => {
+          if (error) {
+            setWalletState("not_connected");
+            setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+            return;
+          }
+          const { userToken: ut, encryptionKey: ek } = result as { userToken: string; encryptionKey: string };
+          const existing = readUcwCookie();
+          if (existing) {
+            const updated = { ...existing, userToken: ut, encryptionKey: ek };
+            writeUcwCookie(updated);
+            setUcwSession(updated);
+            // Finalize login (create wallet, fetch balance)
+            finalizeUcwLogin(updated);
+          }
+        },
+      );
+
+      // Trigger OTP verification UI
+      sdk.verifyOtp();
+    } catch (e: unknown) {
+      setWalletState("not_connected");
+      setWalletError(e instanceof Error ? e.message : "Email login failed.");
+    }
+  }, []);
+
+  // ── Connect via PIN ──
+  const connectPin = useCallback(async () => {
+    setWalletState("connecting");
+    setWalletError(null);
+    try {
+      const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
+      const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
+      if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
+
+      const sdk = new W3SSdk({ appSettings: { appId } });
+      const deviceId = await sdk.getDeviceId();
+      ucwSdkRef.current = sdk;
+
+      // Create user token via backend (userId = deviceId for PIN auth)
+      const utResp = await fetch("/api/paylabs/wallet/ucw?action=user-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: deviceId }),
+      });
+      if (!utResp.ok) {
+        const err = await utResp.json().catch(() => ({}));
+        throw new Error(`User token failed: ${(err as Record<string, string>).error || utResp.status}`);
+      }
+      const { userToken, encryptionKey } = (await utResp.json()) as { userToken: string; encryptionKey: string };
+
+      // Save session
+      writeUcwCookie({ deviceId, deviceToken: "", deviceEncryptionKey: "", userToken, encryptionKey: encryptionKey ?? "", walletId: "", walletAddress: "" });
+      setUcwSession({ deviceId, deviceToken: "", deviceEncryptionKey: "", userToken, encryptionKey: encryptionKey ?? "", walletId: "", walletAddress: "" });
+
+      sdk.setAuthentication({ userToken, encryptionKey: encryptionKey ?? "" });
+
+      // Initialize user — creates challenge for wallet + PIN setup
+      const initResp = await fetch("/api/paylabs/wallet/ucw?action=initialize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userToken }),
+      });
+      if (!initResp.ok) throw new Error("Initialize failed");
+      const initData = (await initResp.json()) as { challengeId: string | null; alreadyExists: boolean };
+
+      if (initData.challengeId) {
+        // New user — execute PIN setup challenge
+        await new Promise<void>((resolve, reject) => {
+          sdk.execute(initData.challengeId!, (err: unknown) => {
+            if (err) reject(err instanceof Error ? err : new Error(String(err)));
+            else resolve();
+          });
+        });
+      }
+
+      // List wallets
+      const listResp = await fetch("/api/paylabs/wallet/ucw?action=list-wallets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userToken }),
+      });
+      if (!listResp.ok) throw new Error("Failed to list wallets");
+      const { wallets } = (await listResp.json()) as { wallets: Array<{ id: string; address: string }> };
+      if (!wallets || wallets.length === 0) throw new Error("No wallets found");
+
+      const wallet = wallets[0];
+      const fullSession: UcwSession = { deviceId, deviceToken: "", deviceEncryptionKey: "", userToken, encryptionKey: encryptionKey ?? "", walletId: wallet.id, walletAddress: wallet.address };
+      writeUcwCookie(fullSession);
+      setUcwSession(fullSession);
+      setWalletInfo({ address: wallet.address, walletType: "circle_user_controlled", network: "Arc Testnet" });
+      setWalletState("connected");
+
+      const balance = await fetchUcwBalance(wallet.id, userToken, wallet.address);
+      setUcwBalance(balance);
+      if (parseFloat(balance.gateway) < parseFloat(planned)) {
+        setWalletState("needs_gateway_deposit");
+      } else {
+        setWalletState("ready_to_approve");
+      }
+    } catch (e: unknown) {
+      setWalletState("not_connected");
+      setWalletError(e instanceof Error ? e.message : "PIN login failed.");
+    }
+  }, [planned]);
+
   // ── Gateway deposit (UCW contract execution) ──
   const depositGateway = useCallback(async () => {
     if (!ucwSession) return;
@@ -916,6 +1060,8 @@ export default function PayLabsChatClient({ analytics }: Props) {
         plannedCost={planned}
         error={walletError}
         onConnectGoogle={connectGoogle}
+        onConnectEmail={connectEmail}
+        onConnectPin={connectPin}
         onConnectEoa={connectEoa}
         onDepositGateway={depositGateway}
         onApprove={() => { setWalletOpen(false); submitChat(); }}

@@ -47,6 +47,31 @@ export async function createDeviceToken(deviceId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Email device token (Email OTP prerequisite)
+// ---------------------------------------------------------------------------
+
+export async function createEmailDeviceToken(deviceId: string, email: string) {
+  const client = getClient();
+  const resp = await client.createDeviceTokenForEmailLogin({ deviceId, email });
+  return {
+    deviceToken: resp.data?.deviceToken,
+    deviceEncryptionKey: resp.data?.deviceEncryptionKey,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// User token (PIN auth — creates a 60-min session token)
+// ---------------------------------------------------------------------------
+
+export async function createUserToken(userId: string) {
+  const client = getClient();
+  const resp = await client.createUserToken({ userId });
+  return {
+    userToken: resp.data?.userToken,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // User initialization / wallet creation
 // ---------------------------------------------------------------------------
 

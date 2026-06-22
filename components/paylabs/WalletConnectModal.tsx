@@ -33,6 +33,8 @@ type Props = {
   plannedCost: string;
   error: string | null;
   onConnectGoogle: () => void;
+  onConnectEmail: (email: string) => void;
+  onConnectPin: () => void;
   onConnectEoa: () => void;
   onDepositGateway: () => void;
   onApprove: () => void;
@@ -78,11 +80,15 @@ export default function WalletConnectModal({
   plannedCost,
   error,
   onConnectGoogle,
+  onConnectEmail,
+  onConnectPin,
   onConnectEoa,
   onDepositGateway,
   onApprove,
   showEoaFallback = false,
 }: Props) {
+  const [activeTab, setActiveTab] = useState<"social" | "email" | "pin">("social");
+
   const handleBackdrop = useCallback(
     (e: React.MouseEvent) => {
       if (e.target === e.currentTarget) onClose();
@@ -112,26 +118,37 @@ export default function WalletConnectModal({
           <div>
             {!walletInfo ? (
               <>
-                <div className="pl-login-buttons">
-                  <button
-                    className="pl-social-btn pl-google"
-                    onClick={onConnectGoogle}
-                    disabled={walletState === "connecting"}
-                  >
-                    {walletState === "connecting" ? "Connecting…" : "Continue with Google"}
-                  </button>
+                <div className="pl-tabs">
+                  <button className={activeTab === "social" ? "active" : ""} onClick={() => setActiveTab("social")}>Social</button>
+                  <button className={activeTab === "email" ? "active" : ""} onClick={() => setActiveTab("email")}>Email</button>
+                  <button className={activeTab === "pin" ? "active" : ""} onClick={() => setActiveTab("pin")}>PIN</button>
                 </div>
+
+                {activeTab === "social" && (
+                  <div className="pl-login-buttons">
+                    <button className="pl-social-btn pl-google" onClick={onConnectGoogle} disabled={walletState === "connecting"}>
+                      {walletState === "connecting" ? "Connecting…" : "Continue with Google"}
+                    </button>
+                  </div>
+                )}
+
+                {activeTab === "email" && (
+                  <EmailOtpForm onSubmit={onConnectEmail} loading={walletState === "connecting"} />
+                )}
+
+                {activeTab === "pin" && (
+                  <div className="pl-login-buttons">
+                    <button className="pl-social-btn pl-pin" onClick={onConnectPin} disabled={walletState === "connecting"}>
+                      {walletState === "connecting" ? "Connecting…" : "Connect with PIN"}
+                    </button>
+                    <p className="pl-hint">Set a PIN and security questions via Circle</p>
+                  </div>
+                )}
 
                 {showEoaFallback && (
                   <>
-                    <div className="pl-divider">
-                      <span>or</span>
-                    </div>
-                    <button
-                      className="pl-eoa-btn"
-                      onClick={onConnectEoa}
-                      disabled={walletState !== "not_connected"}
-                    >
+                    <div className="pl-divider"><span>or</span></div>
+                    <button className="pl-eoa-btn" onClick={onConnectEoa} disabled={walletState !== "not_connected"}>
                       {walletState === "connecting" ? "Connecting…" : "Connect browser wallet"}
                     </button>
                   </>
@@ -246,6 +263,28 @@ export default function WalletConnectModal({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function EmailOtpForm({ onSubmit, loading }: { onSubmit: (email: string) => void; loading: boolean }) {
+  const [email, setEmail] = useState("");
+  return (
+    <div className="pl-email-form">
+      <input
+        type="email"
+        placeholder="you@email.com"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        className="pl-email-input"
+      />
+      <button
+        className="pl-social-btn pl-email"
+        onClick={() => email && onSubmit(email)}
+        disabled={loading || !email}
+      >
+        {loading ? "Sending…" : "Continue with Email"}
+      </button>
     </div>
   );
 }
