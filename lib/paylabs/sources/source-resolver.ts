@@ -1,0 +1,319 @@
+/**
+ * Source Resolver
+ *
+ * Takes ranked candidates from signal_scout and enriches them with
+ * full metadata from paylabs_feed_items. Deterministic — no LLM.
+ *
+ * Safe fields only — NEVER selects source_payload (raw RSS item).
+ * Uses whitelist select to guarantee no raw data leaks.
+ */
+
+import { supabaseAdmin } from "@/lib/supabase/server";
+import type {
+  SourceItem,
+  SourceContext,
+  SourceResolverInput,
+  SourceResolverOutput,
+} from "./types";
+
+// ─── Whitelist: safe columns only ─────────────────────────
+// NEVER include source_payload, normalized_sha256, content_sha256,
+// creator_wallet, price_per_citation_usdc, price_per_unlock_usdc
+const SAFE_FEED_ITEM_COLUMNS =
+  "id, canonical_url, title, summary, author_name, publisher, published_at, domain, trust_status, claim_status, tags, rsshub_route_id";
+
+// ─── Enrich ranked candidates into SourceItems ────────────
+
+async function enrichRankedCandidates(
+  rankedCandidates: SourceResolverInput["rankedCandidates"],
+  maxSources: number
+): Promise<SourceItem[]> {
+  if (rankedCandidates.length === 0) return [];
+
+  const feedItemIds = rankedCandidates.slice(0, maxSources).map((c) => c.feed_item_id);
+
+  const { data: items, error } = await supabaseAdmin()
+    .from("paylabs_feed_items")
+    .select(SAFE_FEED_ITEM_COLUMNS)
+    .in("id", feedItemIds)
+    .eq("is_active", true);
+
+  if (error || !items) return [];
+
+  // Build lookup by id
+  const itemMap = new Map(items.map((item) => [item.id, item]));
+
+  // Preserve signal_scout ranking order, enrich with metadata
+  const enriched: SourceItem[] = [];
+  for (const candidate of rankedCandidates.slice(0, maxSources)) {
+    const item = itemMap.get(candidate.feed_item_id);
+    if (!item) continue;
+
+    // Extract domain from canonical_url if not set in DB
+    let domain = item.domain as string | null;
+    if (!domain && item.canonical_url) {
+      try {
+        domain = new URL(item.canonical_url).hostname;
+      } catch {
+        domain = null;
+      }
+    }
+
+    // Get route_path from join (if available)
+    let routePath: string | null = null;
+    if (item.rsshub_route_id) {
+      const { data: route } = await supabaseAdmin()
+        .from("paylabs_rsshub_routes")
+        .select("route_path")
+        .eq("id", item.rsshub_route_id)
+        .single();
+      routePath = (route?.route_path as string) ?? null;
+    }
+
+    enriched.push({
+      feed_item_id: String(item.id),
+      title: String(item.title || "(untitled)"),
+      url: String(item.canonical_url || ""),
+      domain,
+      summary: String(item.summary || "").slice(0, 500),
+      author: String(item.author_name || item.publisher || ""),
+      published_at: (item.published_at as string) ?? null,
+      route_path: routePath,
+      trust_status: String(item.trust_status || "unverified"),
+      claim_status: String(item.claim_status || "unclaimed"),
+      rank: candidate.rank,
+      relevance_score: candidate.relevance_score,
+    });
+  }
+
+  return enriched;
+}
+
+// ─── Compute aggregate confidence ─────────────────────────
+
+function computeSourceConfidence(sources: SourceItem[]): number {
+  if (sources.length === 0) return 0;
+
+  let totalScore = 0;
+  for (const src of sources) {
+    let itemScore = src.relevance_score;
+
+    // Trust status bonus
+    if (src.trust_status === "verified") itemScore += 0.1;
+    else if (src.trust_status === "suspicious") itemScore -= 0.2;
+
+    // Claim status bonus
+    if (src.claim_status === "claimed") itemScore += 0.05;
+
+    totalScore += Math.max(0, Math.min(1, itemScore));
+  }
+
+  return Math.round((totalScore / sources.length) * 100) / 100;
+}
+
+// ─── Build selection summary ──────────────────────────────
+
+function buildSelectionSummary(
+  sources: SourceItem[],
+  normalizedGoal: string,
+  intentType?: string
+): string {
+  if (sources.length === 0) return "No sources found.";
+
+  const domains = [...new Set(sources.map((s) => s.domain).filter(Boolean))];
+  const verified = sources.filter((s) => s.trust_status === "verified").length;
+  const claimed = sources.filter((s) => s.claim_status === "claimed").length;
+
+  const parts = [
+    `${sources.length} sources ranked by relevance`,
+    intentType ? `for ${intentType}` : "",
+    domains.length > 0 ? `across ${domains.length} domain(s)` : "",
+    verified > 0 ? `${verified} verified` : "",
+    claimed > 0 ? `${claimed} claimed` : "",
+  ].filter(Boolean);
+
+  return parts.join(", ") + ".";
+}
+
+// ─── Public API ───────────────────────────────────────────
+
+/**
+ * Resolve ranked candidates into enriched source context.
+ * Called by the orchestrator after signal_scout completes.
+ */
+export async function resolveSources(
+  input: SourceResolverInput
+): Promise<SourceResolverOutput> {
+  const maxSources = input.maxSources ?? 10;
+
+  try {
+    const sources = await enrichRankedCandidates(input.rankedCandidates, maxSources);
+    const sourceConfidence = computeSourceConfidence(sources);
+    const sourceSelectionSummary = buildSelectionSummary(
+      sources,
+      input.normalizedGoal,
+      input.intentType
+    );
+
+    return {
+      ok: true,
+      sourceContext: {
+        sources_used: sources,
+        source_selection_summary: sourceSelectionSummary,
+        source_confidence: sourceConfidence,
+        source_count: sources.length,
+      },
+      error: null,
+    };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      sourceContext: {
+        sources_used: [],
+        source_selection_summary: `Source resolution failed: ${msg}`,
+        source_confidence: 0,
+        source_count: 0,
+      },
+      error: msg,
+    };
+  }
+}
+
+/**
+ * Standalone source resolution: query-based search without orchestrator.
+ * Used by /api/paylabs/sources/resolve endpoint.
+ */
+export async function resolveSourcesByQuery(
+  query: string,
+  options?: {
+    intentType?: string;
+    trustStatus?: string;
+    claimStatus?: string;
+    limit?: number;
+  }
+): Promise<SourceResolverOutput> {
+  const limit = options?.limit ?? 10;
+
+  try {
+    // Build Supabase query — safe columns only
+    let dbQuery = supabaseAdmin()
+      .from("paylabs_feed_items")
+      .select(SAFE_FEED_ITEM_COLUMNS)
+      .eq("is_active", true);
+
+    // Optional filters
+    if (options?.trustStatus) {
+      dbQuery = dbQuery.eq("trust_status", options.trustStatus);
+    }
+    if (options?.claimStatus) {
+      dbQuery = dbQuery.eq("claim_status", options.claimStatus);
+    }
+
+    // Text search: title + summary + author
+    const terms = query.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+    if (terms.length > 0) {
+      // Use ilike on title for broad match
+      const titleFilters = terms.map((t) => `title.ilike.%${t}%`).join(",");
+      dbQuery = dbQuery.or(titleFilters);
+    }
+
+    dbQuery = dbQuery
+      .order("published_at", { ascending: false })
+      .limit(limit * 2); // fetch extra for scoring
+
+    const { data: items, error } = await dbQuery;
+    if (error || !items) {
+      return {
+        ok: false,
+        sourceContext: {
+          sources_used: [],
+          source_selection_summary: `Query failed: ${error?.message || "no data"}`,
+          source_confidence: 0,
+          source_count: 0,
+        },
+        error: error?.message || "no data",
+      };
+    }
+
+    // Score items by keyword relevance (same logic as signal_scout deterministic)
+    const scored = items.map((item) => {
+      let score = 0;
+      const title = String(item.title || "").toLowerCase();
+      const summary = String(item.summary || "").toLowerCase();
+
+      for (const term of terms) {
+        if (title.includes(term)) score += 3;
+        if (summary.includes(term)) score += 1;
+      }
+
+      // Recency bonus
+      const publishedAt = item.published_at
+        ? new Date(item.published_at as string).getTime()
+        : 0;
+      if (publishedAt > 0) {
+        const ageHours = (Date.now() - publishedAt) / (1000 * 60 * 60);
+        if (ageHours < 24) score += 3;
+        else if (ageHours < 72) score += 2;
+        else if (ageHours < 168) score += 1;
+      }
+
+      return { item, score };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const maxScore = Math.max(scored[0]?.score || 1, 1);
+
+    const sources: SourceItem[] = scored.slice(0, limit).map((entry, i) => {
+      let domain: string | null = entry.item.domain as string | null;
+      if (!domain && entry.item.canonical_url) {
+        try {
+          domain = new URL(entry.item.canonical_url as string).hostname;
+        } catch {
+          domain = null;
+        }
+      }
+
+      return {
+        feed_item_id: String(entry.item.id),
+        title: String(entry.item.title || "(untitled)"),
+        url: String(entry.item.canonical_url || ""),
+        domain,
+        summary: String(entry.item.summary || "").slice(0, 500),
+        author: String(entry.item.author_name || entry.item.publisher || ""),
+        published_at: (entry.item.published_at as string) ?? null,
+        route_path: null,
+        trust_status: String(entry.item.trust_status || "unverified"),
+        claim_status: String(entry.item.claim_status || "unclaimed"),
+        rank: i + 1,
+        relevance_score: Math.min(entry.score / maxScore, 1),
+      };
+    });
+
+    const sourceConfidence = computeSourceConfidence(sources);
+    const sourceSelectionSummary = buildSelectionSummary(sources, query, options?.intentType);
+
+    return {
+      ok: true,
+      sourceContext: {
+        sources_used: sources,
+        source_selection_summary: sourceSelectionSummary,
+        source_confidence: sourceConfidence,
+        source_count: sources.length,
+      },
+      error: null,
+    };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      sourceContext: {
+        sources_used: [],
+        source_selection_summary: `Source resolution failed: ${msg}`,
+        source_confidence: 0,
+        source_count: 0,
+      },
+      error: msg,
+    };
+  }
+}

@@ -866,6 +866,22 @@ async function runX402Path(
     const { buildExitOutput } = await import("@/lib/paylabs/delegated-runtime/exit-output");
     const exitOutput = buildExitOutput(result);
 
+    // ── Build source context (PR #26) ──
+    let sourceContextError: string | null = null;
+    try {
+      const { buildSourceContextFromResult } = await import("@/lib/paylabs/sources/source-context");
+      const sourceCtx = await buildSourceContextFromResult(result);
+      if (sourceCtx) {
+        exitOutput.sources_used = sourceCtx.sources_used;
+        exitOutput.source_selection_summary = sourceCtx.source_selection_summary;
+        exitOutput.source_confidence = sourceCtx.source_confidence;
+        exitOutput.source_count = sourceCtx.source_count;
+      }
+    } catch (e: unknown) {
+      sourceContextError = e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200);
+      console.error("[paylabs_source_context] build failed", { discoveryRunId, error: sourceContextError });
+    }
+
     // ── Write canonical x402 visibility (events + receipt) ──
     let visibilityError: string | null = null;
     try {
@@ -924,6 +940,13 @@ async function runX402Path(
       budget_snapshot: result.budgetSnapshot,
       tiered_summaries: result.tieredSummaries,
       exit_output: exitOutput,
+      source_context: exitOutput.sources_used ? {
+        sources_used: exitOutput.sources_used,
+        source_selection_summary: exitOutput.source_selection_summary,
+        source_confidence: exitOutput.source_confidence,
+        source_count: exitOutput.source_count,
+      } : null,
+      source_context_error: sourceContextError,
       quote: {
         routeTier: quote.routeTier,
         expectedPaymentEdges: quote.expectedPaymentEdges,
