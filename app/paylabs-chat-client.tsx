@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import SidebarPanel from "@/components/paylabs/SidebarPanel";
 import WalletConnectModal from "@/components/paylabs/WalletConnectModal";
-import type { WalletState, WalletInfo } from "@/components/paylabs/WalletConnectModal";
+import type { WalletState, WalletInfo, UcwBalance } from "@/components/paylabs/WalletConnectModal";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -31,6 +31,17 @@ type SafeRunResult = {
   safeSummary: string;
 };
 
+/** Persisted UCW session (survives OAuth redirect via cookie) */
+type UcwSession = {
+  deviceId: string;
+  deviceToken: string;
+  deviceEncryptionKey: string;
+  userToken: string;
+  encryptionKey: string;
+  walletId: string;
+  walletAddress: string;
+};
+
 // ─── Helpers ────────────────────────────────────────────────
 
 function short(value?: string | null, chars = 6): string {
@@ -44,6 +55,29 @@ const TIER_COSTS: Record<string, string> = {
   normal: "0.000013",
   advanced: "0.000015",
 };
+
+const UCW_COOKIE = "ucw_session";
+
+function readUcwCookie(): UcwSession | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.split("; ").find((c) => c.startsWith(`${UCW_COOKIE}=`));
+  if (!match) return null;
+  try {
+    return JSON.parse(decodeURIComponent(match.split("=").slice(1).join("=")));
+  } catch {
+    return null;
+  }
+}
+
+function writeUcwCookie(session: UcwSession) {
+  // 24h expiry, same-site strict
+  const maxAge = 86400;
+  document.cookie = `${UCW_COOKIE}=${encodeURIComponent(JSON.stringify(session))}; max-age=${maxAge}; path=/; samesite=strict`;
+}
+
+function clearUcwCookie() {
+  document.cookie = `${UCW_COOKIE}=; max-age=0; path=/`;
+}
 
 function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
   const paymentGraph =
@@ -77,11 +111,10 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
   };
 }
 
-// ─── x402 Client Signing (EOA) ─────────────────────────────
+// ─── x402 Client Signing ────────────────────────────────────
 
 const ARC_CHAIN_ID = 5042002;
 const GATEWAY_VERIFIED_CONTRACT = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
-const USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
 
 function randomNonce(): `0x${string}` {
   const arr = new Uint8Array(32);
@@ -89,11 +122,8 @@ function randomNonce(): `0x${string}` {
   return `0x${Array.from(arr).map((b) => b.toString(16).padStart(2, "0")).join("")}` as `0x${string}`;
 }
 
-async function signWithEoa(params: {
-  challenge: Record<string, unknown>;
-  walletAddress: string;
-}): Promise<string> {
-  const { challenge, walletAddress } = params;
+/** Build EIP-712 params for x402 TransferWithAuthorization */
+function buildEip712Params(challenge: Record<string, unknown>, walletAddress: string) {
   const accepts = challenge.accepts as Array<Record<string, unknown>>;
   const requirement = accepts[0];
   const extra = requirement.extra as Record<string, string>;
@@ -104,7 +134,6 @@ async function signWithEoa(params: {
   const now = Math.floor(Date.now() / 1000);
   const nonce = randomNonce();
 
-  // EIP-712 domain
   const domain = {
     name: extra.name || "GatewayWalletBatched",
     version: extra.version || "1",
@@ -112,7 +141,6 @@ async function signWithEoa(params: {
     verifyingContract: (extra.verifyingContract || GATEWAY_VERIFIED_CONTRACT) as `0x${string}`,
   };
 
-  // EIP-712 types
   const types = {
     TransferWithAuthorization: [
       { name: "from", type: "address" },
@@ -127,54 +155,32 @@ async function signWithEoa(params: {
   const message = {
     from: walletAddress as `0x${string}`,
     to: payTo as `0x${string}`,
-    value: BigInt(amountAtomic),
-    validAfter: BigInt(0),
-    validBefore: BigInt(now + maxTimeout),
+    value: amountAtomic,
+    validAfter: "0",
+    validBefore: String(now + maxTimeout),
     nonce,
   };
 
-  // Use window.ethereum (injected provider)
-  const eth = (window as unknown as Record<string, unknown>).ethereum as
-    | { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }
-    | undefined;
-  if (!eth) throw new Error("No browser wallet found. Install MetaMask or similar.");
+  return { domain, types, message, requirement, x402Version: (challenge.x402Version as number) || 2 };
+}
 
-  // Request accounts
-  const accounts = (await eth.request({ method: "eth_accounts" })) as string[];
-  if (!accounts || accounts.length === 0) {
-    throw new Error("Wallet is locked. Please unlock and try again.");
-  }
-
-  // Sign typed data v4
-  const signature = await (eth as { request: (args: { method: string; params: unknown[] }) => Promise<string> }).request({
-    method: "eth_signTypedData_v4",
-    params: [
-      walletAddress,
-      JSON.stringify({
-        types: { EIP712Domain: [
-          { name: "name", type: "string" },
-          { name: "version", type: "string" },
-          { name: "chainId", type: "uint256" },
-          { name: "verifyingContract", type: "address" },
-        ], ...types },
-        domain,
-        primaryType: "TransferWithAuthorization",
-        message,
-      }),
-    ],
-  });
-
-  // Build payment payload per x402-batching spec
-  const x402Version = (challenge.x402Version as number) || 2;
+/** Build x402 payment payload from EIP-712 signature */
+function buildPaymentPayload(
+  challenge: Record<string, unknown>,
+  requirement: Record<string, unknown>,
+  message: { from: string; to: string; value: string; validAfter: string; validBefore: string; nonce: string },
+  signature: string,
+  x402Version: number,
+): string {
   const paymentPayload = {
     x402Version,
     payload: {
       authorization: {
         from: message.from,
         to: message.to,
-        value: message.value.toString(),
-        validAfter: message.validAfter.toString(),
-        validBefore: message.validBefore.toString(),
+        value: message.value,
+        validAfter: message.validAfter,
+        validBefore: message.validBefore,
         nonce: message.nonce,
       },
       signature,
@@ -182,9 +188,142 @@ async function signWithEoa(params: {
     resource: challenge.resource || null,
     accepted: requirement,
   };
-
-  // Base64 encode
   return btoa(JSON.stringify(paymentPayload));
+}
+
+/** Sign with external EOA (window.ethereum) — hidden dev fallback */
+async function signWithEoa(params: {
+  challenge: Record<string, unknown>;
+  walletAddress: string;
+}): Promise<string> {
+  const { challenge, walletAddress } = params;
+  const { domain, types, message, requirement, x402Version } = buildEip712Params(challenge, walletAddress);
+
+  const eth = (window as unknown as Record<string, unknown>).ethereum as
+    | { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }
+    | undefined;
+  if (!eth) throw new Error("No browser wallet found.");
+
+  const signature = await (eth as { request: (args: { method: string; params: unknown[] }) => Promise<string> }).request({
+    method: "eth_signTypedData_v4",
+    params: [
+      walletAddress,
+      JSON.stringify({
+        types: {
+          EIP712Domain: [
+            { name: "name", type: "string" },
+            { name: "version", type: "string" },
+            { name: "chainId", type: "uint256" },
+            { name: "verifyingContract", type: "address" },
+          ],
+          ...types,
+        },
+        domain,
+        primaryType: "TransferWithAuthorization",
+        message: {
+          ...message,
+          value: BigInt(message.value),
+          validAfter: BigInt(message.validAfter),
+          validBefore: BigInt(message.validBefore),
+        },
+      }),
+    ],
+  });
+
+  return buildPaymentPayload(challenge, requirement, message, signature, x402Version);
+}
+
+/** Sign with Circle UCW via challenge-response */
+async function signWithUcw(params: {
+  challenge: Record<string, unknown>;
+  walletAddress: string;
+  walletId: string;
+  userToken: string;
+  ucwSdk: { execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void };
+}): Promise<string> {
+  const { challenge, walletAddress, walletId, userToken, ucwSdk } = params;
+  const { domain, types, message, requirement, x402Version } = buildEip712Params(challenge, walletAddress);
+
+  // Step 1: Backend creates signTypedData challenge
+  // UCW API expects EIP-712 data with EIP712Domain in types
+  const signData = {
+    domain,
+    types: {
+      EIP712Domain: [
+        { name: "name", type: "string" },
+        { name: "version", type: "string" },
+        { name: "chainId", type: "uint256" },
+        { name: "verifyingContract", type: "address" },
+      ],
+      ...types,
+    },
+    primaryType: "TransferWithAuthorization",
+    message: {
+      ...message,
+      value: message.value.toString(),
+      validAfter: message.validAfter.toString(),
+      validBefore: message.validBefore.toString(),
+    },
+  };
+
+  const signResp = await fetch("/api/paylabs/wallet/ucw?action=sign-challenge", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userToken, walletId, data: signData }),
+  });
+  if (!signResp.ok) {
+    const err = await signResp.json().catch(() => ({}));
+    throw new Error(`Sign challenge failed: ${(err as Record<string, string>).error || signResp.status}`);
+  }
+  const { challengeId } = (await signResp.json()) as { challengeId: string };
+  if (!challengeId) throw new Error("No challengeId returned from sign-challenge");
+
+  // Step 2: Execute challenge via UCW SDK (user approves via Circle hosted UI)
+  const signature: string = await new Promise((resolve, reject) => {
+    ucwSdk.execute(challengeId, (error: unknown, result: unknown) => {
+      if (error) reject(error instanceof Error ? error : new Error(String(error)));
+      else {
+        const sig = (result as Record<string, string>)?.signature;
+        if (!sig) reject(new Error("No signature returned from UCW challenge"));
+        else resolve(sig);
+      }
+    });
+  });
+
+  return buildPaymentPayload(challenge, requirement, message, signature, x402Version);
+}
+
+// ─── UCW Balance Fetcher ────────────────────────────────────
+
+async function fetchUcwBalance(walletId: string, userToken: string, walletAddress: string): Promise<UcwBalance> {
+  const [usdcResp, gwResp] = await Promise.all([
+    fetch("/api/paylabs/wallet/ucw?action=balance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ walletId, userToken }),
+    }),
+    fetch("/api/paylabs/wallet/ucw?action=gateway-balance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address: walletAddress }),
+    }),
+  ]);
+
+  let usdc = "0";
+  let gateway = "0";
+
+  if (usdcResp.ok) {
+    const data = (await usdcResp.json()) as { balances: Array<{ amount: string; token: string }> };
+    const usdcBalance = data.balances?.find((b) => b.token === "USDC");
+    usdc = usdcBalance?.amount ?? "0";
+  }
+
+  if (gwResp.ok) {
+    const data = (await gwResp.json()) as { balance: string };
+    gateway = data.balance ?? "0";
+  }
+
+  return { usdc, gateway };
 }
 
 // ─── Main Component ─────────────────────────────────────────
@@ -203,10 +342,245 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [walletState, setWalletState] = useState<WalletState>("not_connected");
   const [walletInfo, setWalletInfo] = useState<WalletInfo | null>(null);
   const [walletError, setWalletError] = useState<string | null>(null);
+  const [ucwBalance, setUcwBalance] = useState<UcwBalance | null>(null);
+
+  // UCW session (persisted in cookie across OAuth redirect)
+  const [ucwSession, setUcwSession] = useState<UcwSession | null>(null);
+  const ucwSdkRef = useRef<unknown>(null); // W3SSdk instance
 
   const planned = useMemo(() => TIER_COSTS[tier] || "0.000007", [tier]);
 
-  // ── Connect EOA wallet ──
+  // ── Restore UCW session on mount ──
+  useEffect(() => {
+    const saved = readUcwCookie();
+    if (saved) {
+      setUcwSession(saved);
+      setWalletInfo({
+        address: saved.walletAddress,
+        walletType: "circle_user_controlled",
+        network: "Arc Testnet",
+      });
+      setWalletState("connected");
+      // Fetch balance
+      fetchUcwBalance(saved.walletId, saved.userToken, saved.walletAddress)
+        .then(setUcwBalance)
+        .catch(() => {});
+    }
+  }, []);
+
+  // ── Connect via Google (UCW social login) ──
+  const connectGoogle = useCallback(async () => {
+    setWalletState("connecting");
+    setWalletError(null);
+
+    try {
+      // Dynamic import — browser-only SDK
+      const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
+      const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
+      if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
+
+      // Check if we have a saved session (returning from OAuth redirect)
+      const saved = readUcwCookie();
+      if (saved?.userToken && saved?.walletId) {
+        // Restore session
+        setUcwSession(saved);
+        setWalletInfo({
+          address: saved.walletAddress,
+          walletType: "circle_user_controlled",
+          network: "Arc Testnet",
+        });
+        setWalletState("connected");
+        // Fetch balance
+        const balance = await fetchUcwBalance(saved.walletId, saved.userToken, saved.walletAddress);
+        setUcwBalance(balance);
+        // Check if Gateway balance is sufficient
+        if (parseFloat(balance.gateway) < parseFloat(planned)) {
+          setWalletState("needs_gateway_deposit");
+        } else {
+          setWalletState("ready_to_approve");
+        }
+        return;
+      }
+
+      // Step 1: Initialize SDK and get deviceId
+      const onLoginComplete = (error: unknown, result: unknown) => {
+        if (error) {
+          setWalletState("not_connected");
+          setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+          return;
+        }
+        const { userToken: ut, encryptionKey: ek } = result as { userToken: string; encryptionKey: string };
+        // Store in cookie for persistence across redirect
+        const existing = readUcwCookie();
+        if (existing) {
+          const updated = { ...existing, userToken: ut, encryptionKey: ek };
+          writeUcwCookie(updated);
+          setUcwSession(updated);
+        }
+      };
+
+      const existingDeviceToken = saved?.deviceToken ?? "";
+      const existingDeviceEncKey = saved?.deviceEncryptionKey ?? "";
+
+      const sdk = new W3SSdk(
+        {
+          appSettings: { appId },
+          loginConfigs: {
+            deviceToken: existingDeviceToken,
+            deviceEncryptionKey: existingDeviceEncKey,
+            google: {
+              clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "",
+              redirectUri: typeof window !== "undefined" ? window.location.origin : "",
+              selectAccountPrompt: true,
+            },
+          },
+        },
+        onLoginComplete,
+      );
+      ucwSdkRef.current = sdk;
+
+      // Get deviceId (creates iframe session)
+      const deviceId = await sdk.getDeviceId();
+
+      // Step 2: Create device token via backend
+      if (!existingDeviceToken) {
+        const dtResp = await fetch("/api/paylabs/wallet/ucw?action=device-token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deviceId }),
+        });
+        if (!dtResp.ok) {
+          const err = await dtResp.json().catch(() => ({}));
+          throw new Error(`Device token failed: ${(err as Record<string, string>).error || dtResp.status}`);
+        }
+        const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as {
+          deviceToken: string;
+          deviceEncryptionKey: string;
+        };
+
+        // Save partial session (no userToken yet — that comes after OAuth)
+        writeUcwCookie({ deviceId, deviceToken, deviceEncryptionKey, userToken: "", encryptionKey: "", walletId: "", walletAddress: "" });
+
+        // Re-init SDK with device token
+        sdk.updateConfigs({
+          appSettings: { appId },
+          loginConfigs: {
+            deviceToken,
+            deviceEncryptionKey,
+            google: {
+              clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "",
+              redirectUri: typeof window !== "undefined" ? window.location.origin : "",
+              selectAccountPrompt: true,
+            },
+          },
+        });
+      }
+
+      // Step 3: Perform Google login (triggers OAuth redirect)
+      const { SocialLoginProvider } = await import("@circle-fin/w3s-pw-web-sdk/dist/src/types");
+      sdk.performLogin(SocialLoginProvider.GOOGLE);
+      // After this, the page will redirect to Google OAuth
+      // On return, the login callback fires and we restore from cookie
+    } catch (e: unknown) {
+      setWalletState("not_connected");
+      setWalletError(e instanceof Error ? e.message : "Connection failed.");
+    }
+  }, [planned]);
+
+  // ── After UCW login completes: initialize user + get wallet ──
+  const finalizeUcwLogin = useCallback(async (session: UcwSession) => {
+    try {
+      // Initialize user (creates wallet if new)
+      const initResp = await fetch("/api/paylabs/wallet/ucw?action=initialize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userToken: session.userToken }),
+      });
+      if (!initResp.ok) {
+        const err = await initResp.json().catch(() => ({}));
+        throw new Error(`Initialize failed: ${(err as Record<string, string>).error || initResp.status}`);
+      }
+      const initData = (await initResp.json()) as { challengeId: string | null; alreadyExists: boolean };
+
+      // If new user, execute wallet creation challenge
+      if (initData.challengeId && ucwSdkRef.current) {
+        const sdk = ucwSdkRef.current as { execute: (id: string, cb: (err: unknown, res: unknown) => void) => void };
+        await new Promise<void>((resolve, reject) => {
+          sdk.execute(initData.challengeId!, (err: unknown) => {
+            if (err) reject(err instanceof Error ? err : new Error(String(err)));
+            else resolve();
+          });
+        });
+      }
+
+      // List wallets to get walletId + address
+      const listResp = await fetch("/api/paylabs/wallet/ucw?action=list-wallets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userToken: session.userToken }),
+      });
+      if (!listResp.ok) throw new Error("Failed to list wallets");
+      const { wallets } = (await listResp.json()) as {
+        wallets: Array<{ id: string; address: string; blockchain: string }>;
+      };
+      if (!wallets || wallets.length === 0) throw new Error("No wallets found after initialization");
+
+      const wallet = wallets[0];
+      const fullSession: UcwSession = { ...session, walletId: wallet.id, walletAddress: wallet.address };
+      writeUcwCookie(fullSession);
+      setUcwSession(fullSession);
+      setWalletInfo({
+        address: wallet.address,
+        walletType: "circle_user_controlled",
+        network: "Arc Testnet",
+      });
+      setWalletState("connected");
+
+      // Fetch balance
+      const balance = await fetchUcwBalance(wallet.id, session.userToken, wallet.address);
+      setUcwBalance(balance);
+      if (parseFloat(balance.gateway) < parseFloat(planned)) {
+        setWalletState("needs_gateway_deposit");
+      } else {
+        setWalletState("ready_to_approve");
+      }
+    } catch (e: unknown) {
+      setWalletState("not_connected");
+      setWalletError(e instanceof Error ? e.message : "Wallet initialization failed.");
+    }
+  }, [planned]);
+
+  // ── Check for UCW login completion on mount (after OAuth redirect) ──
+  useEffect(() => {
+    const saved = readUcwCookie();
+    if (saved?.userToken && !saved?.walletId) {
+      // We have userToken but no wallet — need to finalize login
+      setUcwSession(saved);
+      setWalletState("connecting");
+      // Initialize SDK for challenge execution
+      const initSdk = async () => {
+        const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
+        const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
+        if (!appId) return;
+        const sdk = new W3SSdk({
+          appSettings: { appId },
+          loginConfigs: {
+            deviceToken: saved.deviceToken,
+            deviceEncryptionKey: saved.deviceEncryptionKey,
+          },
+        });
+        await sdk.getDeviceId();
+        ucwSdkRef.current = sdk;
+        await finalizeUcwLogin(saved);
+      };
+      initSdk().catch((e) => {
+        setWalletState("not_connected");
+        setWalletError(e instanceof Error ? e.message : "Login restore failed.");
+      });
+    }
+  }, [finalizeUcwLogin]);
+
+  // ── Connect EOA wallet (hidden fallback) ──
   const connectEoa = useCallback(async () => {
     setWalletState("connecting");
     setWalletError(null);
@@ -225,11 +599,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
         setWalletError("Wallet connection rejected.");
         return;
       }
-      setWalletInfo({
-        address: accounts[0],
-        walletType: "external_eoa",
-        network: "Arc Testnet",
-      });
+      setWalletInfo({ address: accounts[0], walletType: "external_eoa", network: "Arc Testnet" });
       setWalletState("ready_to_approve");
     } catch (e: unknown) {
       setWalletState("not_connected");
@@ -237,13 +607,90 @@ export default function PayLabsChatClient({ analytics }: Props) {
     }
   }, []);
 
+  // ── Gateway deposit (UCW contract execution) ──
+  const depositGateway = useCallback(async () => {
+    if (!ucwSession) return;
+    setWalletState("approving");
+    setWalletError(null);
+    try {
+      const amountUsdc = parseFloat(planned) * 2; // deposit 2x planned cost as buffer
+      const amountAtomic = Math.round(amountUsdc * 1_000_000).toString();
+
+      const resp = await fetch("/api/paylabs/wallet/ucw?action=approve-deposit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userToken: ucwSession.userToken,
+          walletId: ucwSession.walletId,
+          amountAtomic,
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(`Deposit challenge failed: ${(err as Record<string, string>).error || resp.status}`);
+      }
+      const { approve, deposit } = (await resp.json()) as {
+        approve: { challengeId: string };
+        deposit: { challengeId: string };
+      };
+
+      const sdk = ucwSdkRef.current as { execute: (id: string, cb: (err: unknown, res: unknown) => void) => void };
+      if (!sdk) throw new Error("UCW SDK not initialized");
+
+      // Execute approve challenge
+      await new Promise<void>((resolve, reject) => {
+        sdk.execute(approve.challengeId, (err: unknown) => {
+          if (err) reject(err instanceof Error ? err : new Error(String(err)));
+          else resolve();
+        });
+      });
+
+      // Execute deposit challenge
+      await new Promise<void>((resolve, reject) => {
+        sdk.execute(deposit.challengeId, (err: unknown) => {
+          if (err) reject(err instanceof Error ? err : new Error(String(err)));
+          else resolve();
+        });
+      });
+
+      // Wait for Gateway balance to update (~15s)
+      setWalletError("Waiting for Gateway balance to update…");
+      await new Promise((r) => setTimeout(r, 15000));
+
+      // Refresh balance
+      const balance = await fetchUcwBalance(ucwSession.walletId, ucwSession.userToken, ucwSession.walletAddress);
+      setUcwBalance(balance);
+
+      if (parseFloat(balance.gateway) >= parseFloat(planned)) {
+        setWalletState("ready_to_approve");
+        setWalletError(null);
+      } else {
+        setWalletState("needs_gateway_deposit");
+        setWalletError("Gateway balance still insufficient. Try again.");
+      }
+    } catch (e: unknown) {
+      setWalletState("needs_gateway_deposit");
+      setWalletError(e instanceof Error ? e.message : "Deposit failed.");
+    }
+  }, [ucwSession, planned]);
+
   // ── Submit chat ──
   const submitChat = useCallback(async () => {
     if (!prompt.trim()) return;
 
+    // Run gating: must have wallet
     if (!walletInfo?.address) {
       setWalletOpen(true);
       return;
+    }
+
+    // Run gating: UCW must have sufficient Gateway balance
+    if (walletInfo.walletType === "circle_user_controlled" && ucwBalance) {
+      if (parseFloat(ucwBalance.gateway) < parseFloat(planned)) {
+        setWalletState("needs_gateway_deposit");
+        setWalletOpen(true);
+        return;
+      }
     }
 
     setStatus("running");
@@ -256,6 +703,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
       route_tier: tier,
       budget_usdc: Number(budget),
       customer_wallet_type: walletInfo.walletType,
+      ...(ucwSession ? { customer_auth_method: "social" as const } : {}),
     };
 
     try {
@@ -274,7 +722,6 @@ export default function PayLabsChatClient({ analytics }: Props) {
           return;
         }
 
-        // Decode challenge
         let challenge: Record<string, unknown>;
         try {
           challenge = JSON.parse(atob(paymentRequired));
@@ -284,14 +731,22 @@ export default function PayLabsChatClient({ analytics }: Props) {
           return;
         }
 
-        // Sign with wallet
+        // Sign with appropriate wallet type
         setWalletState("approving");
         let paymentSignature: string;
         try {
-          paymentSignature = await signWithEoa({
-            challenge,
-            walletAddress: walletInfo.address,
-          });
+          if (walletInfo.walletType === "circle_user_controlled" && ucwSession && ucwSdkRef.current) {
+            paymentSignature = await signWithUcw({
+              challenge,
+              walletAddress: walletInfo.address,
+              walletId: ucwSession.walletId,
+              userToken: ucwSession.userToken,
+              ucwSdk: ucwSdkRef.current as { execute: (id: string, cb: (err: unknown, res: unknown) => void) => void },
+            });
+          } else {
+            // EOA fallback
+            paymentSignature = await signWithEoa({ challenge, walletAddress: walletInfo.address });
+          }
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : "Signing failed.";
           setError(msg);
@@ -338,7 +793,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
       setError(e instanceof Error ? e.message : "Network error.");
       setStatus("error");
     }
-  }, [prompt, tier, budget, walletInfo]);
+  }, [prompt, tier, budget, walletInfo, ucwSession, ucwBalance, planned]);
 
   const resetChat = useCallback(() => {
     setPrompt("");
@@ -347,19 +802,27 @@ export default function PayLabsChatClient({ analytics }: Props) {
     setStatus("idle");
   }, []);
 
+  // ── Disconnect wallet ──
+  const disconnectWallet = useCallback(() => {
+    clearUcwCookie();
+    setUcwSession(null);
+    setWalletInfo(null);
+    setWalletState("not_connected");
+    setUcwBalance(null);
+    setWalletError(null);
+  }, []);
+
+  // Dev mode: show EOA fallback if ?eoa=1 in URL
+  const showEoaFallback = typeof window !== "undefined" && window.location.search.includes("eoa=1");
+
   return (
     <div className="pl-app">
-      <SidebarPanel
-        analytics={analytics}
-      />
+      <SidebarPanel analytics={analytics} />
 
       <main className="pl-main">
         <div className="pl-topbar">
           <div />
-          <button
-            className="pl-wallet-btn"
-            onClick={() => setWalletOpen(true)}
-          >
+          <button className="pl-wallet-btn" onClick={() => setWalletOpen(true)}>
             {walletInfo ? short(walletInfo.address) : "Connect wallet"}
           </button>
         </div>
@@ -392,13 +855,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
               </select>
               <div className="pl-budget">
                 <span>Budget</span>
-                <input
-                  value={budget}
-                  onChange={(e) => setBudget(e.target.value)}
-                  type="number"
-                  step="0.001"
-                  min="0"
-                />
+                <input value={budget} onChange={(e) => setBudget(e.target.value)} type="number" step="0.001" min="0" />
                 <small>USDC</small>
               </div>
               <button
@@ -412,63 +869,36 @@ export default function PayLabsChatClient({ analytics }: Props) {
           </div>
 
           <div className="pl-chips">
-            <button onClick={() => setPrompt("Find the cheapest route under my budget")}>
-              Cheapest route
-            </button>
-            <button onClick={() => setPrompt("Show my recent receipts")}>
-              Recent receipts
-            </button>
-            <button onClick={() => setPrompt("Explain my last payment")}>
-              Explain payment
-            </button>
-            <button onClick={() => setPrompt("Open global explorer")}>
-              Global explorer
-            </button>
+            <button onClick={() => setPrompt("Find the cheapest route under my budget")}>Cheapest route</button>
+            <button onClick={() => setPrompt("Show my recent receipts")}>Recent receipts</button>
+            <button onClick={() => setPrompt("Explain my last payment")}>Explain payment</button>
+            <button onClick={() => setPrompt("Open global explorer")}>Global explorer</button>
           </div>
         </section>
 
         {/* Conversation area */}
         {(result || error || status === "running") && (
           <section className="pl-conversation">
-            {/* User bubble */}
-            {prompt && (
-              <div className="pl-user-bubble">{prompt}</div>
-            )}
+            {prompt && <div className="pl-user-bubble">{prompt}</div>}
 
-            {/* Response card */}
             <div className="pl-answer-card">
               <div className="pl-answer-head">
                 <b>PayLabs</b>
                 <span>
-                  {status === "running"
-                    ? "Running…"
-                    : status === "error"
-                    ? "Error"
-                    : "Done"}
+                  {status === "running" ? "Running…" : status === "error" ? "Error" : "Done"}
                 </span>
               </div>
 
               {status === "running" && (
                 <div className="pl-run-card">
-                  <div>
-                    <span>Tier</span>
-                    <b>{tier}</b>
-                  </div>
-                  <div>
-                    <span>Budget</span>
-                    <b>{budget} USDC</b>
-                  </div>
-                  <div>
-                    <span>Planned</span>
-                    <b>{planned} USDC</b>
-                  </div>
+                  <div><span>Tier</span><b>{tier}</b></div>
+                  <div><span>Budget</span><b>{budget} USDC</b></div>
+                  <div><span>Planned</span><b>{planned} USDC</b></div>
                   <div className="pl-run-status">Processing…</div>
                 </div>
               )}
 
-              {error && (
-                <div className="pl-error-msg">{error}</div>
-              )}
+              {error && <div className="pl-error-msg">{error}</div>}
 
               {result && <ResultCard result={result} onReset={resetChat} />}
             </div>
@@ -481,14 +911,15 @@ export default function PayLabsChatClient({ analytics }: Props) {
         onClose={() => setWalletOpen(false)}
         walletState={walletState}
         walletInfo={walletInfo}
+        ucwBalance={ucwBalance}
         budget={budget}
         plannedCost={planned}
         error={walletError}
+        onConnectGoogle={connectGoogle}
         onConnectEoa={connectEoa}
-        onApprove={() => {
-          setWalletOpen(false);
-          submitChat();
-        }}
+        onDepositGateway={depositGateway}
+        onApprove={() => { setWalletOpen(false); submitChat(); }}
+        showEoaFallback={showEoaFallback}
       />
     </div>
   );
