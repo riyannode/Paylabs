@@ -1,0 +1,164 @@
+/**
+ * Customer Entry Payment — x402 Gate
+ *
+ * Customer (Circle User-Controlled Wallet) signs ONE x402 payment
+ * to Brain/platform entry endpoint BEFORE internal delegated runtime.
+ *
+ * Flow:
+ *   1. Backend computes quote → returns x402 challenge (HTTP 402)
+ *   2. Customer wallet signs x402 challenge (frontend SDK)
+ *   3. Customer retries with PAYMENT-SIGNATURE header
+ *   4. Backend verifies + settles via BatchFacilitatorClient
+ *   5. Only after settlement → run internal delegated runtime
+ *
+ * Internal edges remain unchanged (platform DCW wallets).
+ * Customer signs only ONCE for the entry payment.
+ */
+
+import {
+  buildX402Challenge,
+  encodeChallengeHeader,
+  verifyAndSettlePayment,
+  X402_VERSION,
+} from "./seller-challenge.js";
+import type { X402ChallengeRequirements } from "./seller-challenge.js";
+
+// ─── Types ────────────────────────────────────────────────────
+
+export interface CustomerEntryPaymentResult {
+  ok: boolean;
+  settled: boolean;
+  /** Safe payment metadata (no raw signatures, no EIP-712 data) */
+  paymentMeta?: {
+    amountAtomic: string;
+    payTo: string;
+    network: string;
+    x402Version: number;
+    txHash: string | null;
+    explorerUrl: string | null;
+  };
+  payer?: string;
+  error?: string;
+}
+
+export interface CustomerEntryPaymentData {
+  customer_wallet_address: string;
+  customer_wallet_type: "circle_user_controlled";
+  customer_auth_method?: "social" | "email" | "pin";
+  entry_payment_status: "pending" | "paid" | "failed";
+  entry_payment_amount_usdc: number;
+  entry_payment_settlement_id?: string | null;
+  entry_payment_tx_hash?: string | null;
+  entry_payment_explorer_url?: string | null;
+  selected_tier: string;
+  quote_planned_cost_usdc: number;
+  quote_expected_payment_edges: number;
+}
+
+// ─── Constants ────────────────────────────────────────────────
+
+/** Env var for the platform/Brain entry payment seller wallet address */
+const ENTRY_SELLER_ENV = "PAYLABS_ENTRY_PAYMENT_SELLER_WALLET_ADDRESS";
+
+// ─── Build Customer Entry Challenge ───────────────────────────
+
+/**
+ * Build the x402 challenge for customer entry payment.
+ * Returns the challenge object + base64-encoded PAYMENT-REQUIRED header value.
+ *
+ * @param plannedCostUsdc - The quoted cost from quoteDelegatedRun()
+ * @param resourceUrl - Optional resource URL for the challenge
+ */
+export function buildCustomerEntryChallenge(
+  plannedCostUsdc: number,
+  resourceUrl?: string
+): { challenge: ReturnType<typeof buildX402Challenge>; headerValue: string } {
+  const sellerAddress = resolveEntrySellerAddress();
+  // Convert USDC to atomic units (6 decimals)
+  const amountAtomic = Math.round(plannedCostUsdc * 1_000_000).toString();
+
+  const challenge = buildX402Challenge(sellerAddress, amountAtomic, resourceUrl);
+  const headerValue = encodeChallengeHeader(challenge);
+
+  return { challenge, headerValue };
+}
+
+// ─── Verify + Settle Customer Entry Payment ───────────────────
+
+/**
+ * Verify and settle the customer's x402 entry payment.
+ * Uses the same BatchFacilitatorClient as internal edges.
+ *
+ * @param paymentSignatureBase64 - Base64-encoded payment payload from PAYMENT-SIGNATURE header
+ * @param plannedCostUsdc - Expected cost (for amount validation)
+ */
+export async function verifyAndSettleCustomerEntry(
+  paymentSignatureBase64: string,
+  plannedCostUsdc: number
+): Promise<CustomerEntryPaymentResult> {
+  const sellerAddress = resolveEntrySellerAddress();
+  const amountAtomic = Math.round(plannedCostUsdc * 1_000_000).toString();
+
+  const requirements: X402ChallengeRequirements = {
+    scheme: "exact",
+    network: "eip155:5042002", // Arc Testnet
+    asset: "0x3600000000000000000000000000000000000000", // USDC
+    amount: amountAtomic,
+    payTo: sellerAddress.toLowerCase(),
+    maxTimeoutSeconds: 604800,
+    extra: {
+      name: "GatewayWalletBatched",
+      version: "1",
+      verifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+    },
+  };
+
+  const result = await verifyAndSettlePayment(paymentSignatureBase64, requirements);
+
+  return {
+    ok: result.ok,
+    settled: result.settled,
+    paymentMeta: result.paymentMeta,
+    payer: result.payer,
+    error: result.error,
+  };
+}
+
+// ─── Build Entry Payment Data for DB Storage ──────────────────
+
+/**
+ * Build the safe entry payment data for Supabase storage.
+ * NEVER stores raw signatures, EIP-712 data, or secrets.
+ */
+export function buildCustomerEntryPaymentData(
+  customerWalletAddress: string,
+  quote: { routeTier: string; plannedCostUsdc: number; expectedPaymentEdges: number },
+  result: CustomerEntryPaymentResult
+): CustomerEntryPaymentData {
+  return {
+    customer_wallet_address: customerWalletAddress.toLowerCase(),
+    customer_wallet_type: "circle_user_controlled",
+    entry_payment_status: result.settled ? "paid" : "failed",
+    entry_payment_amount_usdc: quote.plannedCostUsdc,
+    entry_payment_tx_hash: result.paymentMeta?.txHash ?? null,
+    entry_payment_explorer_url: result.paymentMeta?.explorerUrl ?? null,
+    selected_tier: quote.routeTier,
+    quote_planned_cost_usdc: quote.plannedCostUsdc,
+    quote_expected_payment_edges: quote.expectedPaymentEdges,
+  };
+}
+
+// ─── Helpers ──────────────────────────────────────────────────
+
+function resolveEntrySellerAddress(): string {
+  const addr = process.env[ENTRY_SELLER_ENV];
+  if (!addr || !/^0x[a-fA-F0-9]{40}$/.test(addr)) {
+    throw new Error(
+      `config_error: ${ENTRY_SELLER_ENV} must be a valid EVM address. ` +
+      `Set it to the Brain/platform entry payment seller wallet address.`
+    );
+  }
+  return addr;
+}
+
+export { ENTRY_SELLER_ENV, X402_VERSION };

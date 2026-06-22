@@ -513,12 +513,13 @@ export async function POST(req: NextRequest) {
 
   // ── x402 orchestration: Brain + macro-node endpoints ────
   // Fail closed: x402 must be enabled for production
-  return runX402Path(discoveryRunId, goal, userWallet, budgetUsdc, routeTier);
+  return runX402Path(req, discoveryRunId, goal, userWallet, budgetUsdc, routeTier);
 }
 
 // ─── x402 Path ──────────────────────────────────────────────
 
 async function runX402Path(
+  req: NextRequest,
   discoveryRunId: string,
   goal: string,
   userWallet: string,
@@ -546,6 +547,7 @@ async function runX402Path(
       "PAYLABS_APP_URL",
       "PAYLABS_BRAIN_SELLER_WALLET_ADDRESS",
       "PAYLABS_NODE_DISCOVERY_PLANNER_SELLER_WALLET_ADDRESS",
+      "PAYLABS_ENTRY_PAYMENT_SELLER_WALLET_ADDRESS",
     ];
     const missingEnvs = requiredEnvs.filter((k) => !process.env[k]);
     if (missingEnvs.length > 0) {
@@ -636,6 +638,136 @@ async function runX402Path(
       );
     }
 
+    // ── Customer Entry Payment Gate ──────────────────────────
+    // Customer (Circle User-Controlled Wallet) must sign ONE x402 entry
+    // payment before internal delegated runtime starts.
+    //
+    // Flow:
+    //   1st request (no payment) → 402 + PAYMENT-REQUIRED challenge
+    //   2nd request (with payment) → verify + settle → proceed
+    //
+    // Internal edges remain unchanged (platform DCW wallets).
+
+    const {
+      buildCustomerEntryChallenge,
+      verifyAndSettleCustomerEntry,
+      buildCustomerEntryPaymentData,
+    } = await import("@/lib/paylabs/x402/customer-entry-payment");
+
+    const customerPaymentSignature = req.headers.get("payment-signature")
+      || req.headers.get("x-payment");
+
+    if (!customerPaymentSignature) {
+      // Return HTTP 402 with x402 challenge for customer entry payment
+      const { headerValue } = buildCustomerEntryChallenge(
+        quote.plannedCostUsdc,
+        `${await resolveAppUrl()}/api/paylabs/discovery-runs/inline`,
+      );
+
+      // Store pending entry payment status
+      await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .update({
+          agent_trace: {
+            entry_payment: {
+              status: "awaiting_payment",
+              amount_usdc: quote.plannedCostUsdc,
+              tier: routeTier,
+            },
+          },
+        })
+        .eq("id", discoveryRunId);
+
+      return new NextResponse(
+        JSON.stringify({
+          ok: false,
+          error: "payment_required",
+          message: `Customer entry payment of ${quote.plannedCostUsdc} USDC required for ${routeTier} tier`,
+          quote: {
+            routeTier: quote.routeTier,
+            plannedCostUsdc: quote.plannedCostUsdc,
+            expectedPaymentEdges: quote.expectedPaymentEdges,
+          },
+        }),
+        {
+          status: 402,
+          headers: {
+            "Content-Type": "application/json",
+            "PAYMENT-REQUIRED": headerValue,
+            "x-payment-required": headerValue,
+          },
+        }
+      );
+    }
+
+    // ── Verify + settle customer entry payment ─────────────
+    const entryResult = await verifyAndSettleCustomerEntry(
+      customerPaymentSignature,
+      quote.plannedCostUsdc,
+    );
+
+    if (!entryResult.ok || !entryResult.settled) {
+      const entryErrorMsg = entryResult.error || "Entry payment verification failed";
+
+      await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .update({
+          status: "failed",
+          completed_at: new Date().toISOString(),
+          error_summary: `entry_payment_failed: ${entryErrorMsg}`.slice(0, 500),
+        })
+        .eq("id", discoveryRunId);
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Entry payment failed: ${entryErrorMsg}`,
+          entry_payment: {
+            status: "failed",
+            amount_usdc: quote.plannedCostUsdc,
+          },
+        },
+        { status: 402 }
+      );
+    }
+
+    // ── Entry payment settled — store safe metadata ─────────
+    const entryPaymentData = buildCustomerEntryPaymentData(
+      userWallet,
+      {
+        routeTier: routeTier as DelegatedRouteTier,
+        plannedCostUsdc: quote.plannedCostUsdc,
+        expectedPaymentEdges: quote.expectedPaymentEdges,
+      },
+      entryResult,
+    );
+
+    // Update DB with entry payment metadata (no raw signatures stored)
+    await supabaseAdmin()
+      .from("paylabs_discovery_runs")
+      .update({
+        customer_wallet_type: entryPaymentData.customer_wallet_type,
+        customer_auth_method: entryPaymentData.customer_auth_method ?? null,
+        entry_payment_status: entryPaymentData.entry_payment_status,
+        entry_payment_amount_usdc: entryPaymentData.entry_payment_amount_usdc,
+        entry_payment_tx_hash: entryPaymentData.entry_payment_tx_hash,
+        entry_payment_explorer_url: entryPaymentData.entry_payment_explorer_url,
+        agent_trace: {
+          entry_payment: {
+            status: entryPaymentData.entry_payment_status,
+            amount_usdc: entryPaymentData.entry_payment_amount_usdc,
+            tx_hash: entryPaymentData.entry_payment_tx_hash,
+            explorer_url: entryPaymentData.entry_payment_explorer_url,
+            customer_wallet_type: entryPaymentData.customer_wallet_type,
+            tier: entryPaymentData.selected_tier,
+            planned_cost_usdc: entryPaymentData.quote_planned_cost_usdc,
+            expected_payment_edges: entryPaymentData.quote_expected_payment_edges,
+          },
+        },
+      })
+      .eq("id", discoveryRunId);
+
+    // ── Run internal delegated runtime (entry payment verified) ──
     const result = await runX402Orchestration({
       discoveryRunId,
       userGoal: goal,
@@ -772,6 +904,14 @@ async function runX402Path(
       receipt_ready: exitOutput.receipt_ready && !visibilityError,
       settled: fullySettled,
       mode: fullySettled ? "x402" : "x402_failed",
+      entry_payment: {
+        status: "paid",
+        amount_usdc: quote.plannedCostUsdc,
+        tx_hash: entryResult.paymentMeta?.txHash ?? null,
+        explorer_url: entryResult.paymentMeta?.explorerUrl ?? null,
+        customer_wallet: userWallet,
+        customer_wallet_type: "circle_user_controlled",
+      },
       error: result.error,
       visibility_error: visibilityError,
     });
