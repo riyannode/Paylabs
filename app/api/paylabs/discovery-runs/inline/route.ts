@@ -28,8 +28,6 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import {
   isDelegatedRuntimeEnabled,
   isDelegatedInlineExecutionEnabled,
-  getX402EnabledServices,
-  getPaymentFlags,
 } from "@/lib/paylabs/feature-flags";
 import { isValidExternalTier, DEFAULT_EXTERNAL_TIER } from "@/lib/paylabs/route-tier";
 import type { ExternalRouteTier } from "@/lib/paylabs/route-tier";
@@ -507,16 +505,9 @@ export async function POST(req: NextRequest) {
 
   const discoveryRunId = runRow.id as string;
 
-  // ── x402 enabled: HTTP chain through Brain + macro-node endpoints ──
-  const x402Brain = process.env.PAYLABS_BRAIN_X402_ENABLED === "true";
-  const x402Nodes = process.env.PAYLABS_NODE_X402_ENABLED === "true";
-
-  if (x402Brain || x402Nodes) {
-    return runX402Path(discoveryRunId, goal, userWallet, budgetUsdc, routeTier);
-  }
-
-  // ── Non-x402: run orchestrator directly (in-process) ──────
-  return runInProcessPath(discoveryRunId, goal, userWallet, budgetUsdc, routeTier);
+  // ── x402 orchestration: Brain + macro-node endpoints ────
+  // Fail closed: x402 must be enabled for production
+  return runX402Path(discoveryRunId, goal, userWallet, budgetUsdc, routeTier);
 }
 
 // ─── x402 Path ──────────────────────────────────────────────
@@ -530,9 +521,8 @@ async function runX402Path(
 ): Promise<NextResponse> {
   try {
     // Initialize DCW signer for x402 payment signing
-    const { setDcwSigner, getDcwSigner } = await import("@/lib/paylabs/paid-agent-node");
+    const { setDcwSigner, getDcwSigner, createDcwSigner } = await import("@/lib/paylabs/x402/dcw-signer-adapter");
     if (!getDcwSigner()) {
-      const { createDcwSigner } = await import("@/lib/paylabs/x402/dcw-signer-adapter");
       setDcwSigner(createDcwSigner());
     }
     const dcwSigner = getDcwSigner();
@@ -573,6 +563,34 @@ async function runX402Path(
       throw new Error("config_error: missing PAYLABS_NODE_DISCOVERY_PLANNER_BUYER_WALLET_ID");
     }
 
+    // ── Tier-specific env preflight: fail fast before orchestration ──
+    const tierRequiredEnv: string[] = [
+      "PAYLABS_BRAIN_SELLER_WALLET_ADDRESS",
+      "PAYLABS_BRAIN_BUYER_WALLET_ID",
+      "PAYLABS_NODE_DISCOVERY_PLANNER_SELLER_WALLET_ADDRESS",
+      "PAYLABS_NODE_DISCOVERY_PLANNER_BUYER_WALLET_ID",
+    ];
+
+    if (routeTier === "normal" || routeTier === "advanced") {
+      tierRequiredEnv.push(
+        "PAYLABS_NODE_PAYMENT_DECISION_SELLER_WALLET_ADDRESS",
+        "PAYLABS_NODE_PAYMENT_DECISION_BUYER_WALLET_ID",
+      );
+    }
+
+    if (routeTier === "advanced") {
+      tierRequiredEnv.push(
+        "PAYLABS_NODE_SETTLEMENT_MEMORY_SELLER_WALLET_ADDRESS",
+        "PAYLABS_NODE_SETTLEMENT_MEMORY_BUYER_WALLET_ID",
+        "PAYLABS_SERVICE_PAYMENT_ROUTER_SELLER_WALLET_ADDRESS",
+      );
+    }
+
+    const missingTierEnv = tierRequiredEnv.filter((key) => !process.env[key]);
+    if (missingTierEnv.length > 0) {
+      throw new Error(`config_error: missing tier x402 envs: ${missingTierEnv.join(", ")}`);
+    }
+
     const result = await runX402Orchestration({
       discoveryRunId,
       userGoal: goal,
@@ -584,7 +602,7 @@ async function runX402Path(
 
     const completedAt = new Date().toISOString();
     const newStatus = result.status === "completed"
-      ? result.paymentPlan.length > 0 ? "paid_path_available" : "discovery_only"
+      ? result.paymentGraph.some((e) => e.status === "paid") ? "paid_path_available" : "discovery_only"
       : "failed";
 
     // Compute settled from actual paymentGraph — never assume settled on partial failure
@@ -631,6 +649,28 @@ async function runX402Path(
       })
       .eq("id", discoveryRunId);
 
+    // ── Build exit output ──
+    const { buildExitOutput } = await import("@/lib/paylabs/delegated-runtime/exit-output");
+    const exitOutput = buildExitOutput(result);
+
+    // ── Write canonical x402 visibility (events + receipt) ──
+    let visibilityError: string | null = null;
+    try {
+      const { writePayLabsVisibility } = await import("@/lib/paylabs/visibility/writer");
+      await writePayLabsVisibility({
+        discoveryRunId,
+        userWallet,
+        routeTier: routeTier as DelegatedRouteTier,
+        result,
+      });
+    } catch (e) {
+      visibilityError = e instanceof Error ? e.message.slice(0, 300) : String(e).slice(0, 300);
+      console.error("[paylabs_visibility] write failed", {
+        discoveryRunId,
+        error: visibilityError,
+      });
+    }
+
     return NextResponse.json({
       ok: result.status === "completed",
       discovery_run_id: discoveryRunId,
@@ -670,9 +710,12 @@ async function runX402Path(
       safe_progress_summaries: result.safeProgressSummaries,
       budget_snapshot: result.budgetSnapshot,
       tiered_summaries: result.tieredSummaries,
+      exit_output: exitOutput,
+      receipt_ready: exitOutput.receipt_ready && !visibilityError,
       settled: fullySettled,
       mode: fullySettled ? "x402" : "x402_failed",
       error: result.error,
+      visibility_error: visibilityError,
     });
   } catch (e: unknown) {
     const rawMsg = e instanceof Error ? e.message : String(e);
@@ -698,148 +741,4 @@ async function runX402Path(
   }
 }
 
-// ─── Non-x402 Path ──────────────────────────────────────────
 
-async function runInProcessPath(
-  discoveryRunId: string,
-  goal: string,
-  userWallet: string,
-  budgetUsdc: number,
-  routeTier: ExternalRouteTier,
-): Promise<NextResponse> {
-  try {
-    // ── Inject DCW signer if x402 service edges are enabled ──
-    const paymentFlags = getPaymentFlags();
-    const x402Services = getX402EnabledServices();
-    const needsDcwSigner =
-      paymentFlags.agentNanopaymentsEnabled && x402Services.length > 0;
-
-    if (needsDcwSigner) {
-      const { setDcwSigner, getDcwSigner } = await import(
-        "@/lib/paylabs/paid-agent-node"
-      );
-      if (!getDcwSigner()) {
-        const { createDcwSigner } = await import(
-          "@/lib/paylabs/x402/dcw-signer-adapter"
-        );
-        setDcwSigner(createDcwSigner());
-      }
-    }
-
-    const { executeDelegatedDiscoveryRun } = await import(
-      "@/lib/paylabs/delegated-runtime/orchestrator"
-    );
-
-    // Map external tier to delegated tier (same values: easy/normal/advanced)
-    const delegatedTier = routeTier as DelegatedRouteTier;
-
-    const result = await executeDelegatedDiscoveryRun({
-      discoveryRunId,
-      userGoal: goal,
-      userWallet,
-      userBudgetUsdc: budgetUsdc,
-      routeTier: delegatedTier,
-    });
-
-    // ── Update discovery_run with result ───────────────────
-    const completedAt = new Date().toISOString();
-    const newStatus = result.status === "completed"
-      ? result.paymentPlan.length > 0 ? "paid_path_available" : "discovery_only"
-      : "failed";
-
-    // Determine if any service was x402-settled
-    const anySettled = result.serviceEvaluations?.some((e) => e.settled) ?? false;
-    const overallMode = anySettled ? "x402" : "audit_only";
-
-    await supabaseAdmin()
-      .from("paylabs_discovery_runs")
-      .update({
-        status: newStatus,
-        completed_at: completedAt,
-        candidate_count: result.serviceEvaluations?.length || 0,
-        error_summary: result.error ? result.error.slice(0, 500) : null,
-        agent_trace: {
-          execution_origin: "vercel_inline",
-          execution_mode: "inline_delegated",
-          worker_used: false,
-          phases_completed: result.phasesCompleted,
-          brain_planning: result.brainPlanning
-            ? {
-                safe_summary: result.brainPlanning.safe_brain_summary,
-                selected_macro_nodes: result.brainPlanning.selected_macro_nodes,
-                selected_services: result.brainPlanning.selected_services,
-                planned_cost_usdc: result.brainPlanning.planned_cost_usdc,
-              }
-            : null,
-          service_evaluations: result.serviceEvaluations.map((e) => ({
-            service: e.serviceName,
-            status: e.status,
-            summary: e.safeSummary,
-            settled: e.settled,
-            mode: e.mode,
-          })),
-          budget_snapshot: {
-            settled_service_fees_usdc: result.budgetSnapshot.settledServiceFeesUsdc,
-            estimated_service_fees_usdc: result.budgetSnapshot.estimatedServiceFeesUsdc,
-          },
-        },
-      })
-      .eq("id", discoveryRunId);
-
-    // ── Return full result ──────────────────────────────────
-    return NextResponse.json({
-      ok: result.status === "completed",
-      discovery_run_id: discoveryRunId,
-      status: result.status,
-      route_tier: result.routeTier,
-      execution_origin: "vercel_inline",
-      execution_mode: "inline_delegated",
-      worker_used: false,
-      phases_completed: result.phasesCompleted,
-      brain_planning: result.brainPlanning
-        ? {
-            safe_summary: result.brainPlanning.safe_brain_summary,
-            discovery_strategy: result.brainPlanning.discovery_strategy,
-            query_variants: result.brainPlanning.suggested_query_variants,
-            // ── Deterministic quote planning ──
-            selected_macro_nodes: result.brainPlanning.selected_macro_nodes,
-            selected_services: result.brainPlanning.selected_services,
-            max_registry_checks: result.brainPlanning.max_registry_checks,
-            max_source_accesses: result.brainPlanning.max_source_accesses,
-            planned_cost_usdc: result.brainPlanning.planned_cost_usdc,
-            planned_cost_breakdown: result.brainPlanning.planned_cost_breakdown,
-          }
-        : null,
-      payment_plan: result.paymentPlan,
-      safe_progress_summaries: result.safeProgressSummaries,
-      budget_snapshot: result.budgetSnapshot,
-      tiered_summaries: result.tieredSummaries,
-      settled: anySettled,
-      mode: overallMode,
-      error: result.error,
-    });
-  } catch (e: unknown) {
-    // Sanitize: never expose raw stack traces, prompts, or internal details
-    const rawMsg = e instanceof Error ? e.message : String(e);
-    const safeMsg = rawMsg.length > 200 ? rawMsg.slice(0, 200) + "..." : rawMsg;
-
-    // Mark run as failed
-    await supabaseAdmin()
-      .from("paylabs_discovery_runs")
-      .update({
-        status: "failed",
-        completed_at: new Date().toISOString(),
-        error_summary: `Inline execution failed: ${safeMsg}`.slice(0, 500),
-      })
-      .eq("id", discoveryRunId);
-
-    return NextResponse.json(
-      {
-        ok: false,
-        discovery_run_id: discoveryRunId,
-        error: `Inline execution failed: ${safeMsg}`,
-      },
-      { status: 500 }
-    );
-  }
-}
