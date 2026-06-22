@@ -397,14 +397,16 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [walletCopied, setWalletCopied] = useState(false);
   const ucwSdkRef = useRef<unknown>(null); // W3SSdk instance
 
-  // Debug log — visible on-page for troubleshooting
+  // Debug log — gated behind env var, stripped from production
+  const ucwDebug = process.env.NEXT_PUBLIC_PAYLABS_UCW_DEBUG === "1";
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const dbg = useCallback((msg: string) => {
+    if (!ucwDebug) return;
     const ts = new Date().toISOString().slice(11, 23);
     const entry = `[${ts}] ${msg}`;
     console.log("[UCW]", entry);
     setDebugLog((prev) => [...prev.slice(-20), entry]);
-  }, []);
+  }, [ucwDebug]);
 
   // TODO(#27): Replace with backend quote once inline route returns plannedCostUsdc.
 // For now, this is a frontend estimate used only for run gating (balance < cost → block).
@@ -425,7 +427,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           return;
         }
         const data = (await resp.json()) as { hasDeviceToken: boolean; hasUserToken: boolean; walletId: string | null; walletAddress: string | null };
-        dbg(`session-restore: dt=${data.hasDeviceToken} ut=${data.hasUserToken} wid=${data.walletId} waddr=${data.walletAddress}`);
+        dbg(`session-restore: deviceToken=${data.hasDeviceToken} userToken=${data.hasUserToken} walletId=${data.walletId ? "present" : "null"} walletAddress=${data.walletAddress ? "present" : "null"}`);
 
         // If we already have a wallet from a previous session, just restore UI
         if (data.walletId && data.walletAddress && data.hasUserToken) {
@@ -444,7 +446,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         // If no hash, this is a stale session — destroy it and start fresh.
         if (data.hasDeviceToken && !data.hasUserToken) {
           const hasOAuthHash = window.location.hash.includes("access_token") || window.location.hash.includes("id_token");
-          dbg(`OAuth hash check: ${hasOAuthHash ? "YES" : "NO"} (${window.location.hash.slice(0, 50)}...)`);
+          dbg(`OAuth hash check: ${hasOAuthHash ? "present" : "absent"}`);
           if (!hasOAuthHash) {
             // Stale session — device token saved but OAuth never completed
             dbg("Stale session (deviceToken but no OAuth hash) — destroying");
@@ -468,7 +470,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
 
           const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-          dbg(`Restoring SDK dt=${deviceToken?.slice(0,8)}... gcid=${googleClientId?.slice(0,12)}... hash=${window.location.hash ? "YES" : "NO"}`);
+          dbg(`Restoring SDK deviceToken=${deviceToken ? "present" : "absent"} googleClientId=${googleClientId ? "present" : "absent"} oauthHash=${window.location.hash ? "present" : "absent"}`);
 
           let callbackFired = false;
           // Per Circle docs: pass loginConfigs + callback in CONSTRUCTOR.
@@ -499,7 +501,9 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
                 return;
               }
               const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
-              dbg("Got userToken, saving to session...");
+              // Clear OAuth hash from URL to avoid re-processing on next visit
+              if (window.location.hash) window.history.replaceState(null, "", window.location.pathname + window.location.search);
+              dbg("Login token obtained, saving to session...");
               // Save to server session + finalize (init user, list wallets)
               const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
                 method: "POST",
@@ -1161,7 +1165,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         onDepositGateway={depositGateway}
         onApprove={() => { setWalletOpen(false); submitChat(); }}
         showEoaFallback={showEoaFallback}
-        debugLog={debugLog}
+        debugLog={ucwDebug ? debugLog : undefined}
       />
     </div>
   );
