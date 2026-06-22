@@ -9,9 +9,9 @@ export const metadata: Metadata = {
 
 const NAV_LINKS = [
   { href: "/sources", label: "Sources" },
-  { href: "/tutor", label: "Tutor" },
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/receipts", label: "Payments" },
+  { href: "/receipts", label: "Receipts" },
+  { href: "/creator", label: "Creator" },
 ];
 
 export default function RootLayout({
