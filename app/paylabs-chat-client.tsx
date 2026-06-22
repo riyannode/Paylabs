@@ -297,6 +297,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
   // UCW state — wallet info in memory, tokens server-side
   const [ucwWalletId, setUcwWalletId] = useState<string | null>(null);
+  const [walletCopied, setWalletCopied] = useState(false);
   const ucwSdkRef = useRef<unknown>(null); // W3SSdk instance
 
   // TODO(#27): Replace with backend quote once inline route returns plannedCostUsdc.
@@ -331,13 +332,31 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
           // Get device token from server session
           const dtResp = await fetch("/api/paylabs/wallet/ucw?action=session-get-device", { method: "POST" });
-          if (!dtResp.ok) return;
+          if (!dtResp.ok) {
+            const err = await dtResp.json().catch(() => ({}));
+            setWalletState("not_connected");
+            setWalletError(`Session restore failed: ${(err as Record<string, string>).error || dtResp.status}`);
+            return;
+          }
           const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
 
+          const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
           const sdk = new W3SSdk(
             {
               appSettings: { appId },
-              loginConfigs: { deviceToken, deviceEncryptionKey },
+              loginConfigs: {
+                deviceToken,
+                deviceEncryptionKey,
+                ...(googleClientId
+                  ? {
+                      google: {
+                        clientId: googleClientId,
+                        redirectUri: window.location.origin,
+                        selectAccountPrompt: true,
+                      },
+                    }
+                  : {}),
+              },
             },
             async (error: unknown, result: unknown) => {
               if (error) {
@@ -391,8 +410,9 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           await sdk.getDeviceId();
           // SDK detects OAuth redirect → fires onLoginComplete automatically
         }
-      } catch {
-        // Silent — no session to restore
+      } catch (e: unknown) {
+        setWalletState("not_connected");
+        setWalletError(`Restore failed: ${e instanceof Error ? e.message : "Unknown error"}`);
       }
     };
     restoreAfterRedirect();
@@ -409,7 +429,11 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
 
       // Create server-side session (sets httpOnly cookie)
-      await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST" });
+      const sessionResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST" });
+      if (!sessionResp.ok) {
+        const err = await sessionResp.json().catch(() => ({}));
+        throw new Error(`Session create failed: ${(err as Record<string, string>).error || sessionResp.status}`);
+      }
 
       // Init SDK + get deviceId
       const sdk = new W3SSdk({ appSettings: { appId } });
@@ -429,11 +453,15 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
 
       // Save device token to server session
-      await fetch("/api/paylabs/wallet/ucw?action=session-save-device", {
+      const saveDeviceResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-device", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId, deviceToken, deviceEncryptionKey }),
       });
+      if (!saveDeviceResp.ok) {
+        const err = await saveDeviceResp.json().catch(() => ({}));
+        throw new Error(`Session save device failed: ${(err as Record<string, string>).error || saveDeviceResp.status}`);
+      }
 
       // Re-init SDK with device token + Google config + login callback
       sdk.updateConfigs(
@@ -898,6 +926,18 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
   // Dev mode: show EOA fallback if ?eoa=1 in URL
   const showEoaFallback = typeof window !== "undefined" && window.location.search.includes("eoa=1");
 
+  const copyWalletAddress = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (!walletInfo?.address) return;
+    try {
+      await navigator.clipboard?.writeText(walletInfo.address);
+      setWalletCopied(true);
+      window.setTimeout(() => setWalletCopied(false), 1200);
+    } catch {
+      setWalletError("Could not copy wallet address.");
+    }
+  }, [walletInfo?.address]);
+
   return (
     <div className="pl-app">
       <SidebarPanel analytics={analytics} />
@@ -905,8 +945,37 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       <main className="pl-main">
         <div className="pl-topbar">
           <div />
-          <button className="pl-wallet-btn" onClick={() => setWalletOpen(true)}>
-            {walletInfo ? short(walletInfo.address) : "Connect wallet"}
+
+          <button
+            type="button"
+            className={`pl-wallet-pill ${walletInfo?.address ? "connected" : ""}`}
+            onClick={() => setWalletOpen(true)}
+            title={walletInfo?.address || "Connect wallet"}
+          >
+            {walletInfo?.address ? (
+              <>
+                <span className="pl-wallet-dot" />
+                <span className="pl-wallet-pill-address">{short(walletInfo.address)}</span>
+                <span className="pl-wallet-pill-network">Arc</span>
+                <span className="pl-wallet-pill-balance">
+                  {ucwBalance?.usdc ?? "0.00"} USDC
+                </span>
+                <button
+                  type="button"
+                  className="pl-wallet-copy-btn"
+                  onClick={copyWalletAddress}
+                  aria-label="Copy wallet address"
+                  title="Copy wallet address"
+                >
+                  {walletCopied ? "✓" : "⧉"}
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="pl-wallet-dot idle" />
+                <span>Connect wallet</span>
+              </>
+            )}
           </button>
         </div>
 
