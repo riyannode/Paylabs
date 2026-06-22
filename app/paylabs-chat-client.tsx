@@ -56,28 +56,9 @@ const TIER_COSTS: Record<string, string> = {
   advanced: "0.000015",
 };
 
-const UCW_COOKIE = "ucw_session";
-
-function readUcwCookie(): UcwSession | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.split("; ").find((c) => c.startsWith(`${UCW_COOKIE}=`));
-  if (!match) return null;
-  try {
-    return JSON.parse(decodeURIComponent(match.split("=").slice(1).join("=")));
-  } catch {
-    return null;
-  }
-}
-
-function writeUcwCookie(session: UcwSession) {
-  // 24h expiry, same-site strict
-  const maxAge = 86400;
-  document.cookie = `${UCW_COOKIE}=${encodeURIComponent(JSON.stringify(session))}; max-age=${maxAge}; path=/; samesite=strict`;
-}
-
-function clearUcwCookie() {
-  document.cookie = `${UCW_COOKIE}=; max-age=0; path=/`;
-}
+// UCW session is memory-only — no cookies, no localStorage.
+// Sensitive tokens (userToken, encryptionKey, deviceToken) never persist
+// across page reloads. User must re-authenticate on each session.
 
 function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
   const paymentGraph =
@@ -350,23 +331,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
   const planned = useMemo(() => TIER_COSTS[tier] || "0.000007", [tier]);
 
-  // ── Restore UCW session on mount ──
-  useEffect(() => {
-    const saved = readUcwCookie();
-    if (saved) {
-      setUcwSession(saved);
-      setWalletInfo({
-        address: saved.walletAddress,
-        walletType: "circle_user_controlled",
-        network: "Arc Testnet",
-      });
-      setWalletState("connected");
-      // Fetch balance
-      fetchUcwBalance(saved.walletId, saved.userToken, saved.walletAddress)
-        .then(setUcwBalance)
-        .catch(() => {});
-    }
-  }, []);
+// Session is memory-only — no restoration on mount.
 
   // ── Connect via Google (UCW social login) ──
   const connectGoogle = useCallback(async () => {
@@ -379,19 +344,17 @@ export default function PayLabsChatClient({ analytics }: Props) {
       const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
       if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
 
-      // Check if we have a saved session (returning from OAuth redirect)
-      const saved = readUcwCookie();
-      if (saved?.userToken && saved?.walletId) {
-        // Restore session
-        setUcwSession(saved);
+      // Check if we have a saved session in memory
+      if (ucwSession?.userToken && ucwSession?.walletId) {
+        // Restore from memory
         setWalletInfo({
-          address: saved.walletAddress,
+          address: ucwSession.walletAddress,
           walletType: "circle_user_controlled",
           network: "Arc Testnet",
         });
         setWalletState("connected");
         // Fetch balance
-        const balance = await fetchUcwBalance(saved.walletId, saved.userToken, saved.walletAddress);
+        const balance = await fetchUcwBalance(ucwSession.walletId, ucwSession.userToken, ucwSession.walletAddress);
         setUcwBalance(balance);
         // Check if Gateway balance is sufficient
         if (parseFloat(balance.gateway) < parseFloat(planned)) {
@@ -410,17 +373,11 @@ export default function PayLabsChatClient({ analytics }: Props) {
           return;
         }
         const { userToken: ut, encryptionKey: ek } = result as { userToken: string; encryptionKey: string };
-        // Store in cookie for persistence across redirect
-        const existing = readUcwCookie();
-        if (existing) {
-          const updated = { ...existing, userToken: ut, encryptionKey: ek };
-          writeUcwCookie(updated);
-          setUcwSession(updated);
-        }
+        setUcwSession((prev) => prev ? { ...prev, userToken: ut, encryptionKey: ek } : null);
       };
 
-      const existingDeviceToken = saved?.deviceToken ?? "";
-      const existingDeviceEncKey = saved?.deviceEncryptionKey ?? "";
+      const existingDeviceToken = ucwSession?.deviceToken ?? "";
+      const existingDeviceEncKey = ucwSession?.deviceEncryptionKey ?? "";
 
       const sdk = new W3SSdk(
         {
@@ -458,8 +415,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
           deviceEncryptionKey: string;
         };
 
-        // Save partial session (no userToken yet — that comes after OAuth)
-        writeUcwCookie({ deviceId, deviceToken, deviceEncryptionKey, userToken: "", encryptionKey: "", walletId: "", walletAddress: "" });
+        // Session stored in memory only (no userToken yet — comes after OAuth)
 
         // Re-init SDK with device token
         sdk.updateConfigs({
@@ -527,7 +483,6 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
       const wallet = wallets[0];
       const fullSession: UcwSession = { ...session, walletId: wallet.id, walletAddress: wallet.address };
-      writeUcwCookie(fullSession);
       setUcwSession(fullSession);
       setWalletInfo({
         address: wallet.address,
@@ -550,35 +505,8 @@ export default function PayLabsChatClient({ analytics }: Props) {
     }
   }, [planned]);
 
-  // ── Check for UCW login completion on mount (after OAuth redirect) ──
-  useEffect(() => {
-    const saved = readUcwCookie();
-    if (saved?.userToken && !saved?.walletId) {
-      // We have userToken but no wallet — need to finalize login
-      setUcwSession(saved);
-      setWalletState("connecting");
-      // Initialize SDK for challenge execution
-      const initSdk = async () => {
-        const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
-        const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
-        if (!appId) return;
-        const sdk = new W3SSdk({
-          appSettings: { appId },
-          loginConfigs: {
-            deviceToken: saved.deviceToken,
-            deviceEncryptionKey: saved.deviceEncryptionKey,
-          },
-        });
-        await sdk.getDeviceId();
-        ucwSdkRef.current = sdk;
-        await finalizeUcwLogin(saved);
-      };
-      initSdk().catch((e) => {
-        setWalletState("not_connected");
-        setWalletError(e instanceof Error ? e.message : "Login restore failed.");
-      });
-    }
-  }, [finalizeUcwLogin]);
+// OAuth redirect detection removed — session is memory-only.
+  // After OAuth redirect, user must click "Continue with Google" again.
 
   // ── Connect EOA wallet (hidden fallback) ──
   const connectEoa = useCallback(async () => {
@@ -636,8 +564,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
         deviceEncryptionKey: string;
       };
 
-      // Save partial session
-      writeUcwCookie({ deviceId, deviceToken, deviceEncryptionKey, userToken: "", encryptionKey: "", walletId: "", walletAddress: "" });
+      // Session stored in memory only
 
       // Update SDK with email device token — SDK will show OTP input
       sdk.updateConfigs(
@@ -652,14 +579,11 @@ export default function PayLabsChatClient({ analytics }: Props) {
             return;
           }
           const { userToken: ut, encryptionKey: ek } = result as { userToken: string; encryptionKey: string };
-          const existing = readUcwCookie();
-          if (existing) {
-            const updated = { ...existing, userToken: ut, encryptionKey: ek };
-            writeUcwCookie(updated);
-            setUcwSession(updated);
-            // Finalize login (create wallet, fetch balance)
-            finalizeUcwLogin(updated);
-          }
+          setUcwSession((prev) => {
+            const updated = prev ? { ...prev, userToken: ut, encryptionKey: ek } : null;
+            if (updated) finalizeUcwLogin(updated);
+            return updated;
+          });
         },
       );
 
@@ -696,8 +620,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
       }
       const { userToken, encryptionKey } = (await utResp.json()) as { userToken: string; encryptionKey: string };
 
-      // Save session
-      writeUcwCookie({ deviceId, deviceToken: "", deviceEncryptionKey: "", userToken, encryptionKey: encryptionKey ?? "", walletId: "", walletAddress: "" });
+      // Session stored in memory only
       setUcwSession({ deviceId, deviceToken: "", deviceEncryptionKey: "", userToken, encryptionKey: encryptionKey ?? "", walletId: "", walletAddress: "" });
 
       sdk.setAuthentication({ userToken, encryptionKey: encryptionKey ?? "" });
@@ -733,7 +656,6 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
       const wallet = wallets[0];
       const fullSession: UcwSession = { deviceId, deviceToken: "", deviceEncryptionKey: "", userToken, encryptionKey: encryptionKey ?? "", walletId: wallet.id, walletAddress: wallet.address };
-      writeUcwCookie(fullSession);
       setUcwSession(fullSession);
       setWalletInfo({ address: wallet.address, walletType: "circle_user_controlled", network: "Arc Testnet" });
       setWalletState("connected");
@@ -948,7 +870,6 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
   // ── Disconnect wallet ──
   const disconnectWallet = useCallback(() => {
-    clearUcwCookie();
     setUcwSession(null);
     setWalletInfo(null);
     setWalletState("not_connected");
