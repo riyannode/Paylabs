@@ -1,6 +1,6 @@
 # PayLabs
 
-PayLabs is an AI search and autonomous x402 payment runtime for Arc.
+PayLabs is an AI search built with langgraph and autonomous x402 payment runtime for Arc.
 
 Users ask a question, set a USDC budget, connect a Circle User-Controlled Wallet, approve one x402 entry payment, and receive an AI answer with source context, payment graph visibility, and a receipt.
 
@@ -30,40 +30,6 @@ User Wallet   = signs entry payment
 Agent Wallets = pay macro nodes and child services
 Gateway       = settles x402 payments
 Receipts      = prove what happened
-```
-
-## How PayLabs Works
-
-```txt
-USER
-  |
-  | prompt + max budget
-  v
-PAYLABS UI
-  |
-  | Circle UCW wallet signs entry payment
-  v
-x402 ENTRY GATE
-  |
-  | verify payer == user wallet
-  | settle entry payment
-  v
-QUOTE ENGINE
-  |
-  | deterministic planned max cost
-  | fail closed if planned cost > user budget
-  v
-BRAIN
-  |
-  | plans strategy
-  | selects macro nodes
-  | selects child services
-  v
-AGENT RUNTIME
-  |
-  | executes paid service graph
-  v
-SOURCE CONTEXT + RECEIPT
 ```
 
 The Brain plans the run, but it does not decide prices, wallets, payment refs, tx hashes, settlement mode, or budget bypasses.
@@ -130,9 +96,33 @@ Every selected child service can be paid x402 with macro node.
 Every paid edge is written to the payment graph, service payment events, and receipts.
 ```
 
-## Brain Runtime
+## ## Brain Runtime
 
-The Brain is the planning layer.
+The Brain is the planning layer and the LangGraph runtime entry point for PayLabs.
+
+PayLabs uses a single Brain orchestrator. The Brain Planner Graph creates the run plan, then selected macro-node graphs execute the workflow.
+
+```txt
+Brain Planner Graph
+        |
+        | selects strategy, macro nodes, services, and safe summaries
+        v
+Discovery Planner Graph
+        |
+        | runs source discovery services
+        v
+Payment Decision Graph
+        |
+        | runs value, trust, and payment decision services
+        v
+Settlement Memory Graph
+        |
+        | runs payment routing and settlement memory services
+        v
+Payment Graph + Source Context + Receipt
+```
+
+The Brain controls planning. The quote engine controls pricing. Circle wallets sign. Gateway settles. Receipts prove what happened.
 
 The Brain can decide:
 
@@ -157,6 +147,7 @@ The Brain cannot decide:
 * budget bypasses
 * raw payment metadata
 * raw chain-of-thought
+
 
 ## Deterministic Quote Engine
 
