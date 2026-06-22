@@ -122,7 +122,7 @@ export async function POST(req: NextRequest) {
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`[UCW API] action=${action} error:`, message);
+    console.error("[UCW API] action=%s error: %s", action, message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
