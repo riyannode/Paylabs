@@ -221,7 +221,7 @@ async function signWithUcw(params: {
   challenge: Record<string, unknown>;
   walletAddress: string;
   ucwSdk: { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void };
-  auth?: { userToken: string; encryptionKey: string } | null;
+  auth?: { userToken: string; encryptionKey?: string } | null;
 }): Promise<string> {
   const { challenge, walletAddress, ucwSdk, auth } = params;
   const { domain, types, message, requirement, x402Version } = buildEip712Params(challenge, walletAddress);
@@ -271,7 +271,10 @@ async function signWithUcw(params: {
 
   // Backend reads walletId/userToken from httpOnly session
   await ucwSdk.getDeviceId();
-  if (auth) ucwSdk.setAuthentication({ userToken: auth.userToken, encryptionKey: auth.encryptionKey });
+  if (auth?.encryptionKey) {
+    const ek: string = auth.encryptionKey;
+    ucwSdk.setAuthentication({ userToken: auth.userToken, encryptionKey: ek });
+  }
 
   const signData = {
     domain,
@@ -350,7 +353,7 @@ async function finalizeWalletAfterLogin(
   sdk: { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void },
   cbs: FinalizeCallbacks,
   planned: string,
-  auth?: { userToken: string; encryptionKey: string },
+  auth?: { userToken: string; encryptionKey?: string },
 ): Promise<boolean> {
   if (saveData.error) {
     cbs.setWalletState("not_connected");
@@ -366,8 +369,9 @@ async function finalizeWalletAfterLogin(
       await sdk.getDeviceId();
       // Per Circle docs: setAuthentication() must be called before execute()
       // to authenticate the challenge with userToken + encryptionKey.
-      if (auth) {
-        sdk.setAuthentication({ userToken: auth.userToken, encryptionKey: auth.encryptionKey });
+      if (auth?.encryptionKey) {
+        const ek: string = auth.encryptionKey;
+        sdk.setAuthentication({ userToken: auth.userToken, encryptionKey: ek });
       }
       await new Promise<void>((resolve, reject) => {
         sdk.execute(saveData.challengeId!, (err: unknown, result: unknown) => {
@@ -454,7 +458,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [ucwWalletId, setUcwWalletId] = useState<string | null>(null);
   const [walletCopied, setWalletCopied] = useState(false);
   const ucwSdkRef = useRef<unknown>(null); // W3SSdk instance
-  const ucwAuthRef = useRef<{ userToken: string; encryptionKey: string } | null>(null);
+  const ucwAuthRef = useRef<{ userToken: string; encryptionKey?: string } | null>(null);
 
   // Debug log — gated behind env var, stripped from production
   const ucwDebug = process.env.NEXT_PUBLIC_PAYLABS_UCW_DEBUG === "1";
@@ -881,9 +885,15 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         throw new Error(`User token failed: ${(err as Record<string, string>).error || utResp.status}`);
       }
       const { userToken, encryptionKey } = (await utResp.json()) as { userToken: string; encryptionKey: string };
+      // Store auth for later use by signWithUcw (encryptionKey may be absent for PIN auth)
+      ucwAuthRef.current = encryptionKey ? { userToken, encryptionKey } : { userToken };
 
-      // Step 3: Set auth BEFORE execute (Circle PIN requirement)
-      sdk.setAuthentication({ userToken, encryptionKey: encryptionKey ?? "" });
+      // Step 3: Set auth BEFORE execute
+      // For PIN auth, encryptionKey may not be available (createUserToken doesn't return it).
+      // Only call setAuthentication when encryptionKey is present.
+      if (encryptionKey) {
+        sdk.setAuthentication({ userToken, encryptionKey });
+      }
 
       // Save login to server session + finalize (init user + list wallets)
       const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
@@ -896,7 +906,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null; error?: string };
 
       const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
-      await finalizeWalletAfterLogin(saveData, sdk, cbs, planned, { userToken, encryptionKey: encryptionKey ?? "" });
+      await finalizeWalletAfterLogin(saveData, sdk, cbs, planned, encryptionKey ? { userToken, encryptionKey } : undefined);
     } catch (e: unknown) {
       setWalletState("not_connected");
       setWalletError(e instanceof Error ? e.message : "PIN login failed.");
@@ -937,7 +947,10 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       // Per Circle docs: must call getDeviceId + setAuthentication before execute
       await sdk.getDeviceId();
       const auth = ucwAuthRef.current;
-      if (auth) sdk.setAuthentication({ userToken: auth.userToken, encryptionKey: auth.encryptionKey });
+      if (auth?.encryptionKey) {
+        const ek: string = auth.encryptionKey;
+        sdk.setAuthentication({ userToken: auth.userToken, encryptionKey: ek });
+      }
 
       const execErr = (err: unknown) => {
         const msg = err instanceof Error ? err.message : (err as Record<string, string>)?.message || JSON.stringify(err);
