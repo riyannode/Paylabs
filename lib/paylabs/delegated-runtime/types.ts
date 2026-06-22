@@ -10,6 +10,8 @@
 
 import type { ServiceName } from "../agent-services/types";
 export type { ServiceName };
+import type { SourceContext } from "../sources/types";
+export type { SourceContext };
 
 // ─── Route Tiers ──────────────────────────────────────────────
 export type DelegatedRouteTier = "easy" | "normal" | "advanced";
@@ -256,5 +258,7 @@ export interface OrchestratorOutput {
   brainPlanning: BrainPlanningOutput | null;
   paymentGraph: PaymentGraphEdge[];
   tieredSummaries?: TieredRunSummaries;
+  /** Rich source context from signal_scout resolution (post PR #26) */
+  sourceContext?: SourceContext;
   error: string | null;
 }
