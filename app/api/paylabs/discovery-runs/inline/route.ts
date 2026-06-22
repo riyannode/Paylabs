@@ -602,7 +602,7 @@ async function runX402Path(
 
     const completedAt = new Date().toISOString();
     const newStatus = result.status === "completed"
-      ? result.paymentPlan.length > 0 ? "paid_path_available" : "discovery_only"
+      ? result.paymentGraph.some((e) => e.status === "paid") ? "paid_path_available" : "discovery_only"
       : "failed";
 
     // Compute settled from actual paymentGraph — never assume settled on partial failure
