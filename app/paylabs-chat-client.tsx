@@ -267,6 +267,90 @@ async function signWithUcw(params: {
   return buildPaymentPayload(challenge, requirement, message, signature, x402Version);
 }
 
+// ─── UCW Post-Login Finalizer ───────────────────────────────
+
+type SaveLoginData = {
+  walletId: string | null;
+  walletAddress: string | null;
+  challengeId: string | null;
+  error?: string;
+};
+
+type FinalizeCallbacks = {
+  setWalletState: (s: WalletState) => void;
+  setWalletError: (e: string | null) => void;
+  setUcwWalletId: (id: string | null) => void;
+  setWalletInfo: (info: WalletInfo | null) => void;
+  setUcwBalance: (b: UcwBalance | null) => void;
+};
+
+/** Shared post-login flow: execute challenge → finalize → validate → update UI.
+ *  Returns true if wallet is ready, false if any step fails (error already set).
+ */
+async function finalizeWalletAfterLogin(
+  saveData: SaveLoginData,
+  sdk: { execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void },
+  cbs: FinalizeCallbacks,
+  planned: string,
+): Promise<boolean> {
+  if (saveData.error) {
+    cbs.setWalletState("not_connected");
+    cbs.setWalletError(`Login failed: ${saveData.error}`);
+    return false;
+  }
+
+  // Execute wallet creation challenge if needed
+  if (saveData.challengeId) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        sdk.execute(saveData.challengeId!, (err: unknown) => {
+          if (err) reject(err instanceof Error ? err : new Error(String(err)));
+          else resolve();
+        });
+      });
+      const finalizeResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST" });
+      const finalized = (await finalizeResp.json().catch(() => ({}))) as {
+        walletId?: string;
+        walletAddress?: string;
+        error?: string;
+      };
+      if (!finalizeResp.ok) {
+        cbs.setWalletState("not_connected");
+        cbs.setWalletError(`Wallet finalize failed: ${finalized.error || finalizeResp.status}`);
+        return false;
+      }
+      saveData.walletId = finalized.walletId ?? null;
+      saveData.walletAddress = finalized.walletAddress ?? null;
+    } catch (e: unknown) {
+      cbs.setWalletState("not_connected");
+      cbs.setWalletError(`Wallet challenge failed: ${e instanceof Error ? e.message : "Unknown error"}`);
+      return false;
+    }
+  }
+
+  // Fail closed: must have wallet address
+  if (!saveData.walletAddress || !saveData.walletId) {
+    cbs.setWalletState("not_connected");
+    cbs.setWalletError(
+      "Login succeeded, but Circle returned no wallet address. Check session-save-login/list-wallets/session-finalize-wallet logs.",
+    );
+    return false;
+  }
+
+  // Success — update UI
+  cbs.setUcwWalletId(saveData.walletId);
+  cbs.setWalletInfo({
+    address: saveData.walletAddress,
+    walletType: "circle_user_controlled",
+    network: "Arc Testnet",
+  });
+  cbs.setWalletState("connected");
+  const balance = await fetchSessionBalance();
+  cbs.setUcwBalance(balance);
+  cbs.setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+  return true;
+}
+
 // ─── UCW Balance Fetcher ────────────────────────────────────
 
 /** Fetch balance via server-side session (tokens stay server-side) */
@@ -392,35 +476,11 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
                 setWalletError("Failed to save login session");
                 return;
               }
-              const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null };
+              const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null; error?: string };
               console.log("[UCW] session-save-login result:", saveData);
 
-              // If new user needs PIN challenge
-              if (saveData.challengeId) {
-                await new Promise<void>((resolve, reject) => {
-                  sdk.execute(saveData.challengeId!, (err: unknown) => {
-                    if (err) reject(err instanceof Error ? err : new Error(String(err)));
-                    else resolve();
-                  });
-                });
-                // Finalize: re-list wallets after challenge, store in session
-                const finalizeResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST" });
-                if (finalizeResp.ok) {
-                  const finalized = (await finalizeResp.json()) as { walletId: string; walletAddress: string; usdc: string; gateway: string };
-                  saveData.walletId = finalized.walletId;
-                  saveData.walletAddress = finalized.walletAddress;
-                }
-              }
-
-              // Update UI
-              if (saveData.walletAddress) {
-                setUcwWalletId(saveData.walletId);
-                setWalletInfo({ address: saveData.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
-                setWalletState("connected");
-                const balance = await fetchSessionBalance();
-                setUcwBalance(balance);
-                setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
-              }
+              const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
+              await finalizeWalletAfterLogin(saveData, sdk, cbs, planned);
             },
           );
           ucwSdkRef.current = sdk;
@@ -547,32 +607,10 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
             setWalletError("Failed to save login");
             return;
           }
-          const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null };
+          const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null; error?: string };
 
-          if (saveData.challengeId) {
-            await new Promise<void>((resolve, reject) => {
-              sdk.execute(saveData.challengeId!, (err: unknown) => {
-                if (err) reject(err instanceof Error ? err : new Error(String(err)));
-                else resolve();
-              });
-            });
-            // Finalize: re-list wallets after challenge
-            const finalizeResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST" });
-            if (finalizeResp.ok) {
-              const finalized = (await finalizeResp.json()) as { walletId: string; walletAddress: string };
-              saveData.walletId = finalized.walletId;
-              saveData.walletAddress = finalized.walletAddress;
-            }
-          }
-
-          if (saveData.walletAddress) {
-            setUcwWalletId(saveData.walletId);
-            setWalletInfo({ address: saveData.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
-            setWalletState("connected");
-            const balance = await fetchSessionBalance();
-            setUcwBalance(balance);
-            setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
-          }
+          const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
+          await finalizeWalletAfterLogin(saveData, sdk, cbs, planned);
         },
       );
 
@@ -668,30 +706,9 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ userToken, encryptionKey }),
           });
-          const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null };
-          if (saveData.challengeId) {
-            await new Promise<void>((resolve, reject) => {
-              sdk.execute(saveData.challengeId!, (err: unknown) => {
-                if (err) reject(err instanceof Error ? err : new Error(String(err)));
-                else resolve();
-              });
-            });
-            // Finalize: re-list wallets after challenge
-            const finalizeResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST" });
-            if (finalizeResp.ok) {
-              const finalized = (await finalizeResp.json()) as { walletId: string; walletAddress: string };
-              saveData.walletId = finalized.walletId;
-              saveData.walletAddress = finalized.walletAddress;
-            }
-          }
-          if (saveData.walletAddress) {
-            setUcwWalletId(saveData.walletId);
-            setWalletInfo({ address: saveData.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
-            setWalletState("connected");
-            const balance = await fetchSessionBalance();
-            setUcwBalance(balance);
-            setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
-          }
+          const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null; error?: string };
+          const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
+          await finalizeWalletAfterLogin(saveData, sdk, cbs, planned);
         },
       );
 
@@ -755,32 +772,10 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         body: JSON.stringify({ userToken, encryptionKey }),
       });
       if (!saveResp.ok) throw new Error("Failed to save login session");
-      const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null };
+      const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null; error?: string };
 
-      if (saveData.challengeId) {
-        await new Promise<void>((resolve, reject) => {
-          sdk.execute(saveData.challengeId!, (err: unknown) => {
-            if (err) reject(err instanceof Error ? err : new Error(String(err)));
-            else resolve();
-          });
-        });
-        // Finalize: re-list wallets after challenge
-        const finalizeResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST" });
-        if (finalizeResp.ok) {
-          const finalized = (await finalizeResp.json()) as { walletId: string; walletAddress: string };
-          saveData.walletId = finalized.walletId;
-          saveData.walletAddress = finalized.walletAddress;
-        }
-      }
-
-      if (saveData.walletAddress) {
-        setUcwWalletId(saveData.walletId);
-        setWalletInfo({ address: saveData.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
-        setWalletState("connected");
-        const balance = await fetchSessionBalance();
-        setUcwBalance(balance);
-        setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
-      }
+      const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
+      await finalizeWalletAfterLogin(saveData, sdk, cbs, planned);
     } catch (e: unknown) {
       setWalletState("not_connected");
       setWalletError(e instanceof Error ? e.message : "PIN login failed.");
