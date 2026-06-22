@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useMemo, useState } from "react";
 
 export type WalletState =
   | "not_connected"
@@ -35,39 +35,20 @@ type Props = {
   onConnectGoogle: () => void;
   onConnectEmail: (email: string) => void;
   onConnectPin: () => void;
-  onConnectEoa: () => void;
   onDepositGateway: () => void;
   onApprove: () => void;
-  /** Show the hidden EOA fallback button (dev mode only) */
   showEoaFallback?: boolean;
+  onConnectEoa?: () => void;
 };
 
-const STATE_LABELS: Record<WalletState, string> = {
-  not_connected: "Not connected",
-  connecting: "Connecting…",
-  connected: "Connected",
-  needs_gateway_deposit: "Needs gateway deposit",
-  ready_to_approve: "Ready to approve",
-  approving: "Approving…",
-  paid: "Paid",
-  failed: "Failed",
-};
-
-const STATE_COLORS: Record<WalletState, string> = {
-  not_connected: "var(--muted)",
-  connecting: "var(--warning)",
-  connected: "var(--success)",
-  needs_gateway_deposit: "var(--warning)",
-  ready_to_approve: "var(--info)",
-  approving: "var(--warning)",
-  paid: "var(--success)",
-  failed: "var(--danger)",
-};
-
-function shortAddr(addr?: string): string {
+function shortAddr(addr?: string | null) {
   if (!addr) return "—";
-  if (addr.length < 12) return addr;
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+}
+
+function asNumber(value?: string | null) {
+  const n = Number(value ?? "0");
+  return Number.isFinite(n) ? n : 0;
 }
 
 export default function WalletConnectModal({
@@ -82,209 +63,236 @@ export default function WalletConnectModal({
   onConnectGoogle,
   onConnectEmail,
   onConnectPin,
-  onConnectEoa,
   onDepositGateway,
   onApprove,
   showEoaFallback = false,
+  onConnectEoa,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<"social" | "email" | "pin">("social");
+  const [tab, setTab] = useState<"login" | "gateway">("login");
+  const [email, setEmail] = useState("");
 
-  const handleBackdrop = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
+  const isConnected = !!walletInfo?.address;
+  const gatewayBalance = asNumber(ucwBalance?.gateway);
+  const currentRunCost = asNumber(plannedCost);
+  const gatewayReady = isConnected && gatewayBalance >= currentRunCost;
+
+  const statusLabel = useMemo(() => {
+    if (!isConnected) return "Not connected";
+    if (walletState === "needs_gateway_deposit") return "Deposit needed";
+    if (walletState === "approving") return "Approving";
+    if (walletState === "paid") return "Paid";
+    if (gatewayReady) return "Ready";
+    return "Connected";
+  }, [isConnected, walletState, gatewayReady]);
 
   if (!open) return null;
 
-  const isUcw = walletInfo?.walletType === "circle_user_controlled";
-  const gatewayBalance = parseFloat(ucwBalance?.gateway ?? "0");
-  const planned = parseFloat(plannedCost);
-  const canAfford = gatewayBalance >= planned;
-
   return (
-    <div className="pl-modal-backdrop" onClick={handleBackdrop}>
-      <div className="pl-wallet-modal">
-        <button className="pl-close" onClick={onClose} aria-label="Close">×</button>
+    <div className="pl-wallet-overlay-v3">
+      <div className="pl-wallet-modal-v3">
+        <button className="pl-wallet-x-v3" onClick={onClose} aria-label="Close">
+          ×
+        </button>
 
-        <div className="pl-modal-header">
-          <h2>Connect your wallet</h2>
-          <p>Secure. User-controlled.</p>
+        <div className="pl-wallet-tabs-v3">
+          <button
+            className={tab === "login" ? "active" : ""}
+            onClick={() => setTab("login")}
+          >
+            Login
+          </button>
+          <button
+            className={tab === "gateway" ? "active" : ""}
+            onClick={() => setTab("gateway")}
+          >
+            Gateway
+          </button>
         </div>
 
-        <div className="pl-wallet-grid">
-          {/* Left: auth methods */}
-          <div>
-            {!walletInfo ? (
-              <>
-                <div className="pl-tabs">
-                  <button className={activeTab === "social" ? "active" : ""} onClick={() => setActiveTab("social")}>Social</button>
-                  <button className={activeTab === "email" ? "active" : ""} onClick={() => setActiveTab("email")}>Email</button>
-                  <button className={activeTab === "pin" ? "active" : ""} onClick={() => setActiveTab("pin")}>PIN</button>
-                </div>
+        {tab === "login" && (
+          <div className="pl-wallet-content-v3">
+            <div className="pl-login-stack-v3">
+              <button
+                className="pl-login-option-v3"
+                onClick={onConnectGoogle}
+                disabled={walletState === "connecting"}
+              >
+                <span className="pl-login-icon-v3 google">G</span>
+                <b>Social</b>
+              </button>
 
-                {activeTab === "social" && (
-                  <div className="pl-login-buttons">
-                    <button className="pl-social-btn pl-google" onClick={onConnectGoogle} disabled={walletState === "connecting"}>
-                      {walletState === "connecting" ? "Connecting…" : "Continue with Google"}
-                    </button>
-                  </div>
-                )}
-
-                {activeTab === "email" && (
-                  <EmailOtpForm onSubmit={onConnectEmail} loading={walletState === "connecting"} />
-                )}
-
-                {activeTab === "pin" && (
-                  <div className="pl-login-buttons">
-                    <button className="pl-social-btn pl-pin" onClick={onConnectPin} disabled={walletState === "connecting"}>
-                      {walletState === "connecting" ? "Connecting…" : "Connect with PIN"}
-                    </button>
-                    <p className="pl-hint">Set a PIN and security questions via Circle</p>
-                  </div>
-                )}
-
-                {showEoaFallback && (
-                  <>
-                    <div className="pl-divider"><span>or</span></div>
-                    <button className="pl-eoa-btn" onClick={onConnectEoa} disabled={walletState !== "not_connected"}>
-                      {walletState === "connecting" ? "Connecting…" : "Connect browser wallet"}
-                    </button>
-                  </>
-                )}
-              </>
-            ) : (
-              <div className="pl-connected-info">
-                <div className="pl-auth-badge">
-                  {isUcw ? "🔐 Circle UCW" : "🦊 Browser Wallet"}
-                </div>
-                <div className="pl-address-lg data-mono">{shortAddr(walletInfo.address)}</div>
+              <div className="pl-login-option-v3 pl-email-option-v3">
+                <span className="pl-login-icon-v3">✉</span>
+                <input
+                  value={email}
+                  type="email"
+                  placeholder="Email"
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+                <button
+                  onClick={() => onConnectEmail(email)}
+                  disabled={!email || walletState === "connecting"}
+                >
+                  Go
+                </button>
               </div>
-            )}
-          </div>
 
-          {/* Right: wallet summary */}
-          <div className="pl-wallet-summary">
-            <div className="pl-status-row">
-              <span
-                className="pl-status-dot"
-                style={{ background: STATE_COLORS[walletState] }}
-              />
-              <span className="pl-status-label">{STATE_LABELS[walletState]}</span>
+              <button
+                className="pl-login-option-v3"
+                onClick={onConnectPin}
+                disabled={walletState === "connecting"}
+              >
+                <span className="pl-login-icon-v3">▣</span>
+                <b>PIN</b>
+              </button>
+
+              {showEoaFallback && onConnectEoa && (
+                <button className="pl-eoa-fallback-v3" onClick={onConnectEoa}>
+                  Browser wallet
+                </button>
+              )}
             </div>
 
-            {walletInfo && (
-              <>
-                <dl>
-                  <div>
-                    <dt>Wallet type</dt>
-                    <dd>{isUcw ? "Circle UCW" : "External EOA"}</dd>
-                  </div>
-                  <div>
-                    <dt>Network</dt>
-                    <dd>{walletInfo.network}</dd>
-                  </div>
-                  {ucwBalance && (
-                    <>
-                      <div>
-                        <dt>USDC balance</dt>
-                        <dd>{ucwBalance.usdc} USDC</dd>
-                      </div>
-                      <div>
-                        <dt>Gateway balance</dt>
-                        <dd className={canAfford ? "" : "pl-insufficient"}>
-                          {ucwBalance.gateway} USDC
-                        </dd>
-                      </div>
-                    </>
-                  )}
-                  <div>
-                    <dt>Budget</dt>
-                    <dd>{budget} USDC</dd>
-                  </div>
-                  <div>
-                    <dt>Planned cost</dt>
-                    <dd>{plannedCost} USDC</dd>
-                  </div>
-                </dl>
+            <WalletRunSummary
+              statusLabel={statusLabel}
+              walletInfo={walletInfo}
+              ucwBalance={ucwBalance}
+              budget={budget}
+              plannedCost={plannedCost}
+              gatewayReady={gatewayReady}
+            />
 
-                {/* Deposit CTA when Gateway balance < planned cost */}
-                {walletState === "needs_gateway_deposit" && !canAfford && (
-                  <div className="pl-deposit-cta">
-                    <p>Gateway balance insufficient. Deposit USDC to continue.</p>
-                    <button className="pl-deposit-btn" onClick={onDepositGateway}>
-                      Deposit to Gateway
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
+            <button
+              className="pl-primary-v3"
+              onClick={() => {
+                if (!isConnected) return;
+                setTab("gateway");
+              }}
+              disabled={!isConnected}
+            >
+              Continue
+            </button>
+          </div>
+        )}
 
-            {!walletInfo && (
-              <div className="pl-wallet-empty">
-                <p>No wallet connected</p>
-                <dl>
-                  <div>
-                    <dt>Network</dt>
-                    <dd>Arc Testnet</dd>
-                  </div>
-                  <div>
-                    <dt>Budget</dt>
-                    <dd>{budget} USDC</dd>
-                  </div>
-                  <div>
-                    <dt>Planned cost</dt>
-                    <dd>{plannedCost} USDC</dd>
-                  </div>
-                </dl>
-              </div>
-            )}
+        {tab === "gateway" && (
+          <div className="pl-wallet-content-v3">
+            <WalletRunSummary
+              statusLabel={statusLabel}
+              walletInfo={walletInfo}
+              ucwBalance={ucwBalance}
+              budget={budget}
+              plannedCost={plannedCost}
+              gatewayReady={gatewayReady}
+            />
 
-            {error && (
-              <div className="pl-wallet-error">{error}</div>
-            )}
-
-            {walletState === "ready_to_approve" && (
-              <button className="pl-approve" onClick={onApprove}>
-                Approve entry payment
+            {!isConnected && (
+              <button className="pl-primary-v3" onClick={() => setTab("login")}>
+                Login first
               </button>
             )}
 
-            {walletState === "approving" && (
-              <button className="pl-approve" disabled>
-                Approving…
+            {isConnected && !gatewayReady && (
+              <button className="pl-primary-v3" onClick={onDepositGateway}>
+                Deposit to Gateway
               </button>
             )}
 
-            {walletState === "paid" && (
-              <div className="pl-paid-badge">Entry payment approved</div>
+            {isConnected && gatewayReady && (
+              <button className="pl-primary-v3" onClick={onApprove}>
+                Run with x402
+              </button>
             )}
           </div>
-        </div>
+        )}
+
+        {error && <div className="pl-wallet-error-v3">{error}</div>}
       </div>
     </div>
   );
 }
 
-function EmailOtpForm({ onSubmit, loading }: { onSubmit: (email: string) => void; loading: boolean }) {
-  const [email, setEmail] = useState("");
+function WalletRunSummary({
+  statusLabel,
+  walletInfo,
+  ucwBalance,
+  budget,
+  plannedCost,
+  gatewayReady,
+}: {
+  statusLabel: string;
+  walletInfo: WalletInfo | null;
+  ucwBalance: UcwBalance | null;
+  budget: string;
+  plannedCost: string;
+  gatewayReady: boolean;
+}) {
+  const isConnected = !!walletInfo?.address;
+
   return (
-    <div className="pl-email-form">
-      <input
-        type="email"
-        placeholder="you@email.com"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        className="pl-email-input"
+    <div className="pl-summary-card-v3">
+      <div className={`pl-status-chip-v3 ${isConnected ? "ok" : "idle"}`}>
+        <span />
+        {statusLabel}
+      </div>
+
+      <InfoRow
+        icon="▣"
+        label="Wallet address"
+        value={shortAddr(walletInfo?.address)}
+        copyValue={walletInfo?.address}
       />
-      <button
-        className="pl-social-btn pl-email"
-        onClick={() => email && onSubmit(email)}
-        disabled={loading || !email}
-      >
-        {loading ? "Sending…" : "Continue with Email"}
-      </button>
+
+      <InfoRow
+        icon="$"
+        label="Wallet balance"
+        value={`${ucwBalance?.usdc ?? "0.00"} USDC`}
+      />
+
+      <InfoRow
+        icon="⌁"
+        label="Gateway balance"
+        value={`${ucwBalance?.gateway ?? "0.00"} USDC`}
+        danger={isConnected && !gatewayReady}
+      />
+
+      <InfoRow icon="◔" label="Max budget" value={`${budget} USDC`} />
+
+      <InfoRow icon="↗" label="This run cost" value={`${plannedCost} USDC`} />
+    </div>
+  );
+}
+
+function InfoRow({
+  icon,
+  label,
+  value,
+  copyValue,
+  danger,
+}: {
+  icon: string;
+  label: string;
+  value: string;
+  copyValue?: string | null;
+  danger?: boolean;
+}) {
+  return (
+    <div className="pl-info-row-v3">
+      <span className="pl-row-icon-v3">{icon}</span>
+      <span className="pl-row-label-v3">{label}</span>
+      <b className={danger ? "danger" : ""}>
+        {value}
+        {copyValue && (
+          <button
+            type="button"
+            className="pl-copy-v3"
+            onClick={() => navigator.clipboard?.writeText(copyValue)}
+            aria-label="Copy wallet address"
+          >
+            ⧉
+          </button>
+        )}
+      </b>
     </div>
   );
 }
