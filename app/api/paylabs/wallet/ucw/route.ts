@@ -178,12 +178,15 @@ export async function POST(req: NextRequest) {
         if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
         const session = await getSession(sid);
         if (!session) return NextResponse.json({ error: "Session expired" }, { status: 401 });
-        return NextResponse.json({
+        // Refresh cookie TTL on every restore — keeps session alive while user is active
+        const resp = NextResponse.json({
           hasDeviceToken: !!session.deviceToken,
           hasUserToken: !!session.userToken,
           walletId: session.walletId || null,
           walletAddress: session.walletAddress || null,
         });
+        resp.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
+        return resp;
       }
 
       case "session-get-device": {
@@ -278,7 +281,10 @@ export async function POST(req: NextRequest) {
           session.walletAddress ? getGatewayBalance(session.walletAddress) : Promise.resolve({ balance: "0", domain: 26 }),
         ]);
         const usdc = balances.find((b) => b.token === "USDC")?.amount ?? "0";
-        return NextResponse.json({ usdc, gateway: gw.balance, walletAddress: session.walletAddress });
+        // Refresh cookie TTL
+        const resp = NextResponse.json({ usdc, gateway: gw.balance, walletAddress: session.walletAddress });
+        resp.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
+        return resp;
       }
 
       case "session-destroy": {
