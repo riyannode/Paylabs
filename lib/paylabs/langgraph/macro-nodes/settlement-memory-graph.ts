@@ -30,6 +30,8 @@ const paymentRouterNode = createServiceNode(
   "settlement_memory",
   (state) => ({
     approved_items: state.approvedItems || [],
+    discovery_run_id: state.discoveryRunId,
+    routeTier: state.routeTier,
   }),
   {
     paymentLayer: "macro_to_child",
