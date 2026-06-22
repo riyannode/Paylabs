@@ -39,6 +39,7 @@ type Props = {
   onApprove: () => void;
   showEoaFallback?: boolean;
   onConnectEoa?: () => void;
+  debugLog?: string[];
 };
 
 function shortAddr(addr?: string | null) {
@@ -67,6 +68,7 @@ export default function WalletConnectModal({
   onApprove,
   showEoaFallback = false,
   onConnectEoa,
+  debugLog,
 }: Props) {
   const [tab, setTab] = useState<"login" | "gateway">("login");
 
@@ -200,6 +202,12 @@ export default function WalletConnectModal({
         )}
 
         {error && <div className="pl-wallet-error-v3">{error}</div>}
+        {debugLog && debugLog.length > 0 && (
+          <details className="pl-wallet-error-v3" style={{ marginTop: 8, fontSize: 11, fontFamily: "monospace", whiteSpace: "pre-wrap", maxHeight: 200, overflow: "auto" }}>
+            <summary>Debug Log ({debugLog.length})</summary>
+            {debugLog.map((l, i) => <div key={i}>{l}</div>)}
+          </details>
+        )}
       </div>
     </div>
   );
