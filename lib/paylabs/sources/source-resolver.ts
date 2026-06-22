@@ -210,12 +210,17 @@ export async function resolveSourcesByQuery(
       dbQuery = dbQuery.eq("claim_status", options.claimStatus);
     }
 
-    // Text search: title + summary + author
+    // Text search: title OR summary OR author_name
     const terms = query.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
     if (terms.length > 0) {
-      // Use ilike on title for broad match
-      const titleFilters = terms.map((t) => `title.ilike.%${t}%`).join(",");
-      dbQuery = dbQuery.or(titleFilters);
+      // Build OR filters across title, summary, author_name
+      const orParts: string[] = [];
+      for (const t of terms) {
+        orParts.push(`title.ilike.%${t}%`);
+        orParts.push(`summary.ilike.%${t}%`);
+        orParts.push(`author_name.ilike.%${t}%`);
+      }
+      dbQuery = dbQuery.or(orParts.join(","));
     }
 
     dbQuery = dbQuery
