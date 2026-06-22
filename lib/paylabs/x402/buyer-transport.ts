@@ -23,6 +23,7 @@
 
 import { createRequire } from "node:module";
 import { getAddress, type Address, type Hex } from "viem";
+import { X402_VERSION } from "./seller-challenge";
 
 // CJS interop — @circle-fin/x402-batching has CJS entry
 const _require = createRequire(import.meta.url);
@@ -302,14 +303,14 @@ export async function callPaidSeller(
   let paymentPayload: { x402Version: number; payload: unknown };
   try {
     paymentPayload = await scheme.createPaymentPayload(
-      challenge.x402Version || 2,
+      challenge.x402Version || X402_VERSION,
       {
         scheme: gatewayReq.scheme,
         network: gatewayReq.network,
         asset: gatewayReq.asset,
         amount: gatewayReq.amount,
         payTo: gatewayReq.payTo,
-        maxTimeoutSeconds: gatewayReq.maxTimeoutSeconds || 604900,
+        maxTimeoutSeconds: gatewayReq.maxTimeoutSeconds || 604800,
         extra: gatewayReq.extra,
       }
     );

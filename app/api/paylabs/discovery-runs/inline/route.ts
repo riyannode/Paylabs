@@ -490,8 +490,8 @@ export async function POST(req: NextRequest) {
   const discoveryRunId = runRow.id as string;
 
   // ── x402 enabled: HTTP chain through Brain + macro-node endpoints ──
-  const x402Brain = !!process.env.PAYLABS_BRAIN_X402_ENABLED;
-  const x402Nodes = !!process.env.PAYLABS_NODE_X402_ENABLED;
+  const x402Brain = process.env.PAYLABS_BRAIN_X402_ENABLED === "true";
+  const x402Nodes = process.env.PAYLABS_NODE_X402_ENABLED === "true";
 
   if (x402Brain || x402Nodes) {
     return runX402Path(discoveryRunId, goal, userWallet, budgetUsdc, routeTier);
