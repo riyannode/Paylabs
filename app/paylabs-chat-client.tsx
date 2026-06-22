@@ -348,6 +348,9 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
 
           const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+          console.log("[UCW] Restoring SDK — deviceToken present, socialLoginProvider:", localStorage.getItem("socialLoginProvider"), "hash:", window.location.hash ? "present" : "empty");
+
+          let callbackFired = false;
           const sdk = new W3SSdk(
             {
               appSettings: { appId },
@@ -366,12 +369,15 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
               },
             },
             async (error: unknown, result: unknown) => {
+              callbackFired = true;
+              console.log("[UCW] Login callback fired", error ? "ERROR" : "SUCCESS");
               if (error) {
                 setWalletState("not_connected");
                 setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown"}`);
                 return;
               }
               const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
+              console.log("[UCW] Got userToken, saving to session...");
               // Save to server session + finalize (init user, list wallets)
               const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
                 method: "POST",
@@ -384,6 +390,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
                 return;
               }
               const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null };
+              console.log("[UCW] session-save-login result:", saveData);
 
               // If new user needs PIN challenge
               if (saveData.challengeId) {
@@ -415,7 +422,17 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           );
           ucwSdkRef.current = sdk;
           await sdk.getDeviceId();
-          // SDK detects OAuth redirect → fires onLoginComplete automatically
+
+          // Timeout: if callback didn't fire in 10s, the OAuth detection failed
+          setTimeout(() => {
+            if (!callbackFired) {
+              console.warn("[UCW] Login callback did not fire after 10s — OAuth detection likely failed");
+              setWalletState("not_connected");
+              setWalletError("Login timed out. Please try again.");
+              // Clear stale session so next attempt starts fresh
+              fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST" }).catch(() => {});
+            }
+          }, 10000);
         }
       } catch (e: unknown) {
         setWalletState("not_connected");
@@ -424,6 +441,30 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
     };
     restoreAfterRedirect();
   }, [planned]);
+
+  // ── Auto-logout: destroy session when user leaves/closes browser ──
+  useEffect(() => {
+    const destroyOnLeave = () => {
+      // Only destroy if we have an active wallet session
+      if (walletInfo?.address) {
+        navigator.sendBeacon?.("/api/paylabs/wallet/ucw?action=session-destroy");
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        destroyOnLeave();
+      }
+    };
+
+    window.addEventListener("beforeunload", destroyOnLeave);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      window.removeEventListener("beforeunload", destroyOnLeave);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [walletInfo?.address]);
 
   // ── Connect via Google (UCW social login) ──
   const connectGoogle = useCallback(async () => {
