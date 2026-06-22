@@ -15,6 +15,15 @@ import type {
   BrainPlanningOutput,
 } from "./types";
 import type { ServiceName } from "../agent-services/types";
+import {
+  TIER_PHASE_MAP,
+  TIER_SERVICE_PRESETS,
+  SERVICE_MACRO_MAP,
+  FIXED_FEES_USDC,
+} from "./quote-engine";
+
+// ─── Re-exports for backward compatibility ───────────────────
+export { TIER_PHASE_MAP };
 
 // ─── Macro-Node Phase Order ──────────────────────────────────
 export const MACRO_PHASES: MacroNodePhase[] = [
@@ -22,47 +31,6 @@ export const MACRO_PHASES: MacroNodePhase[] = [
   "payment_decision",
   "settlement_memory",
 ];
-
-// ─── Tier → Phase Mapping ────────────────────────────────────
-export const TIER_PHASE_MAP: Record<string, MacroNodePhase[]> = {
-  easy: ["discovery_planner"],
-  normal: ["discovery_planner", "payment_decision"],
-  advanced: ["discovery_planner", "payment_decision", "settlement_memory"],
-};
-
-// ─── Service-to-Macro-Node Mapping ───────────────────────────
-const SERVICE_MACRO_MAP: Record<string, MacroNodePhase> = {
-  intent_planner: "discovery_planner",
-  query_builder: "discovery_planner",
-  signal_scout: "discovery_planner",
-  intent_matcher: "payment_decision",
-  source_verifier: "payment_decision",
-  value_allocator: "payment_decision",
-  trust_verifier: "payment_decision",
-  payment_decider: "payment_decision",
-  payment_router: "settlement_memory",
-};
-
-// ─── Tier Service Presets (canonical bundles) ────────────────
-const TIER_SERVICE_PRESETS: Record<string, ServiceName[]> = {
-  easy: ["intent_planner", "query_builder", "signal_scout"],
-  normal: [
-    "intent_planner", "query_builder", "signal_scout",
-    "intent_matcher", "source_verifier", "value_allocator",
-    "trust_verifier", "payment_decider",
-  ],
-  advanced: [
-    "intent_planner", "query_builder", "signal_scout",
-    "intent_matcher", "source_verifier", "value_allocator",
-    "trust_verifier", "payment_decider",
-    "payment_router",
-  ],
-};
-
-const MACRO_NODE_FEE_USDC = 0.000001;
-const SERVICE_EDGE_FEE_USDC = 0.000001;
-const REGISTRY_CHECK_FEE_USDC = 0.000001;
-const SOURCE_ACCESS_FEE_USDC = 0.000001;
 
 // ─── Execution Plan Validator ─────────────────────────────────
 
@@ -73,9 +41,9 @@ export function validateAndLockExecutionPlan(
   maxRegistryChecks: number,
   maxSourceAccesses: number,
 ): ExecutionPlan {
-  const allowedPhases = TIER_PHASE_MAP[tier] || TIER_PHASE_MAP.easy;
+  const allowedPhases = TIER_PHASE_MAP[tier as keyof typeof TIER_PHASE_MAP] || TIER_PHASE_MAP.easy;
   const validMacroNodes = selectedMacroNodes.filter((n) => allowedPhases.includes(n));
-  const presetServices = TIER_SERVICE_PRESETS[tier] || TIER_SERVICE_PRESETS.easy;
+  const presetServices = TIER_SERVICE_PRESETS[tier as keyof typeof TIER_SERVICE_PRESETS] || TIER_SERVICE_PRESETS.easy;
 
   const servicesByMacroNode: Record<MacroNodePhase, ServiceName[]> = {
     discovery_planner: [],
@@ -89,10 +57,10 @@ export function validateAndLockExecutionPlan(
     }
   }
 
-  const macro_node_fees_usdc = validMacroNodes.length * MACRO_NODE_FEE_USDC;
-  const service_edge_fees_usdc = presetServices.length * SERVICE_EDGE_FEE_USDC;
-  const registry_check_fees_usdc = maxRegistryChecks * REGISTRY_CHECK_FEE_USDC;
-  const source_access_fees_usdc = maxSourceAccesses * SOURCE_ACCESS_FEE_USDC;
+  const macro_node_fees_usdc = validMacroNodes.length * FIXED_FEES_USDC.macroNode;
+  const service_edge_fees_usdc = presetServices.length * FIXED_FEES_USDC.serviceEdge;
+  const registry_check_fees_usdc = maxRegistryChecks * FIXED_FEES_USDC.registryCheck;
+  const source_access_fees_usdc = maxSourceAccesses * FIXED_FEES_USDC.sourceAccess;
   const plannedCostUsdc =
     macro_node_fees_usdc + service_edge_fees_usdc +
     registry_check_fees_usdc + source_access_fees_usdc;
