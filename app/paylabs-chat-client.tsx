@@ -858,7 +858,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
   // ── Gateway deposit (UCW contract execution) ──
   const depositGateway = useCallback(async (amountUsdc: number) => {
-    setWalletState("approving");
+    setWalletState("depositing");
     setWalletError(null);
     try {
       const amountAtomic = Math.round(amountUsdc * 1_000_000).toString();
@@ -903,18 +903,27 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         sdk.execute(deposit.challengeId, (err: unknown) => err ? reject(execErr(err)) : resolve());
       });
 
-      setWalletError("Waiting for Gateway balance to update…");
-      await new Promise((r) => setTimeout(r, 15000));
+      // Poll for Gateway balance to update (up to 30s)
+      for (let i = 0; i < 6; i++) {
+        await new Promise((r) => setTimeout(r, 5000));
+        const balance = await fetchSessionBalance();
+        setUcwBalance(balance);
+        if (parseFloat(balance.gateway) >= parseFloat(planned)) {
+          setWalletState("ready_to_approve");
+          setWalletError(null);
+          return;
+        }
+      }
 
-      const balance = await fetchSessionBalance();
-      setUcwBalance(balance);
-      setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
-      if (parseFloat(balance.gateway) >= parseFloat(planned)) setWalletError(null);
+      // Still not reflected — show balance anyway, user can refresh
+      const finalBalance = await fetchSessionBalance();
+      setUcwBalance(finalBalance);
+      setWalletState(parseFloat(finalBalance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
     } catch (e: unknown) {
       setWalletState("needs_gateway_deposit");
       setWalletError(e instanceof Error ? e.message : "Deposit failed.");
     }
-  }, []);
+  }, [planned]);
 
   // ── Refresh balance ──
   const refreshBalance = useCallback(async () => {
