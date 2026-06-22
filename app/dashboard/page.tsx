@@ -1,6 +1,33 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { short, shortUrl, usdc } from "@/lib/utils";
-import { getRecentNanopayments, getRecentBatchSettlements } from "@/lib/paylabs/nanopayment-service";
+
+async function getRecentX402Payments(limit = 50) {
+  const { data } = await supabaseAdmin()
+    .from("paylabs_service_payment_events")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return data || [];
+}
+
+async function getRecentReceipts(limit = 25) {
+  const { data } = await supabaseAdmin()
+    .from("paylabs_receipts")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return data || [];
+}
+
+async function getLastTx() {
+  const { data } = await supabaseAdmin()
+    .from("paylabs_service_payment_events")
+    .select("*")
+    .not("tx_hash", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  return data?.[0] || null;
+}
 
 export const dynamic = "force-dynamic";
 
@@ -74,10 +101,12 @@ export default async function DashboardPage() {
     feedItemRows,
     sourcePaymentRows,
     discoveryRunRows,
-    nanopaymentRows,
-    batchSettlementRows,
-    nanopaymentCount,
-    batchSettlementCount,
+    x402PaymentRows,
+    receiptRows,
+    servicePaymentCount,
+    receiptCount,
+    lastTxRow,
+    totalSettledUsdc,
   ] = await Promise.all([
     safeCount("paylabs_rsshub_routes", (q: any) => q.eq("is_active", true)),
     safeCount("paylabs_feed_items", (q: any) => q.eq("is_active", true)),
@@ -121,11 +150,17 @@ export default async function DashboardPage() {
         .order("created_at", { ascending: false })
         .limit(25)
     ),
-    // Nanopayments
-    getRecentNanopayments(50),
-    getRecentBatchSettlements(25),
-    safeCount("paylabs_agent_nanopayments"),
-    safeCount("paylabs_agent_batch_settlements"),
+    // x402 Service Payments
+    getRecentX402Payments(50),
+    // Receipts
+    getRecentReceipts(25),
+    // Counts
+    safeCount("paylabs_service_payment_events"),
+    safeCount("paylabs_receipts"),
+    // Last TX
+    getLastTx(),
+    // Total settled USDC
+    safeSum("paylabs_receipts", "actual_settled_usdc"),
   ]);
 
   // ─── User stats (unique wallets) ───
@@ -135,14 +170,12 @@ export default async function DashboardPage() {
     recentUsers24h,
     topUsers,
   ] = await Promise.all([
-    // Count distinct user_wallets across all discovery runs
     safeQuery<{ user_wallet: string }>(() =>
       supabaseAdmin()
         .from("paylabs_discovery_runs")
         .select("user_wallet")
         .limit(10000)
     ).then((rows) => new Set(rows.map((r) => r.user_wallet?.toLowerCase()).filter(Boolean)).size),
-    // Unique users in last 7 days
     safeQuery<{ user_wallet: string }>(() =>
       supabaseAdmin()
         .from("paylabs_discovery_runs")
@@ -150,7 +183,6 @@ export default async function DashboardPage() {
         .gte("created_at", new Date(Date.now() - 7 * 86400000).toISOString())
         .limit(10000)
     ).then((rows) => new Set(rows.map((r) => r.user_wallet?.toLowerCase()).filter(Boolean)).size),
-    // Unique users in last 24h
     safeQuery<{ user_wallet: string }>(() =>
       supabaseAdmin()
         .from("paylabs_discovery_runs")
@@ -158,7 +190,6 @@ export default async function DashboardPage() {
         .gte("created_at", new Date(Date.now() - 86400000).toISOString())
         .limit(10000)
     ).then((rows) => new Set(rows.map((r) => r.user_wallet?.toLowerCase()).filter(Boolean)).size),
-    // Top users by run count
     safeQuery<{ user_wallet: string; route_tier: string; status: string; created_at: string }>(() =>
       supabaseAdmin()
         .from("paylabs_discovery_runs")
@@ -205,8 +236,10 @@ export default async function DashboardPage() {
           { label: "Feed Items", value: feedItems },
           { label: "Source Payments", value: sourcePayments },
           { label: "Source Payouts", value: usdc(totalSourcePaymentUsdc) },
-          { label: "Agent Nanopayments", value: nanopaymentCount },
-          { label: "Batch Settlements", value: batchSettlementCount },
+          { label: "x402 Service Payments", value: servicePaymentCount },
+          { label: "Receipts", value: receiptCount },
+          { label: "Settled USDC", value: usdc(totalSettledUsdc) },
+          { label: "Last TX", value: lastTxRow?.tx_hash ? short(lastTxRow.tx_hash) : "tx unavailable" },
         ].map((kpi) => (
           <div className="card" key={kpi.label}>
             <div className="muted" style={{ fontSize: 13 }}>
@@ -481,6 +514,8 @@ export default async function DashboardPage() {
                         className={`badge ${
                           r.status === "paid_path_available"
                             ? "badge-success"
+                            : r.status === "completed"
+                            ? "badge-success"
                             : r.status === "discovery_only"
                             ? "badge-warning"
                             : "badge-danger"
@@ -500,15 +535,15 @@ export default async function DashboardPage() {
         )}
       </section>
 
-      {/* ─── Agent Nanopayments Table ──────────────────────── */}
+      {/* ─── x402 Service Payments Table ───────────────────── */}
       <section className="card">
-        <h2 className="section-title">Agent Nanopayments</h2>
+        <h2 className="section-title">x402 Service Payments</h2>
         <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
-          Each paid agent capability call costs exactly 0.000001 USDC. 7 agents per discovery run.
+          Official Circle x402 delegated-runtime service payment edges. Each edge represents a paid service call in the payment graph.
         </p>
-        {nanopaymentRows.length === 0 ? (
+        {x402PaymentRows.length === 0 ? (
           <div className="muted" style={{ textAlign: "center", padding: 24 }}>
-            No agent nanopayments yet.
+            No x402 service payments yet.
           </div>
         ) : (
           <div style={{ overflowX: "auto" }}>
@@ -517,68 +552,74 @@ export default async function DashboardPage() {
                 <tr>
                   <th>Time</th>
                   <th>Run ID</th>
-                  <th>Agent Name</th>
-                  <th>Payer</th>
-                  <th>Payee</th>
-                  <th>Route Tier</th>
+                  <th>Buyer</th>
+                  <th>Seller</th>
+                  <th>Node Type</th>
                   <th>Amount</th>
                   <th>Status</th>
+                  <th>Mode</th>
                   <th>TX Hash</th>
                   <th>Explorer</th>
+                  <th>Error</th>
                 </tr>
               </thead>
               <tbody>
-                {nanopaymentRows.map((r: any) => {
-                  const txHash = r.x402_settlement_ref && /^0x[a-fA-F0-9]{64}$/.test(r.x402_settlement_ref)
-                    ? r.x402_settlement_ref : null;
-                  const explorerUrl = txHash ? `https://arc-testnet.blockscout.com/tx/${txHash}` : null;
-                  return (
-                    <tr key={r.id}>
-                      <td className="muted">{timeAgo(r.created_at)}</td>
-                      <td className="data-mono">{short(r.discovery_run_id)}</td>
-                      <td style={{ fontWeight: 600 }}>{r.agent_name}</td>
-                      <td className="data-mono">{short(r.payer_agent)}</td>
-                      <td className="data-mono">{short(r.payee_agent)}</td>
-                      <td>{r.route_tier}</td>
-                      <td className="data-mono">{usdc(r.price_usdc)}</td>
-                      <td>
-                        <span className={`badge ${
-                          r.status === "paid" || r.status === "completed"
-                            ? "badge-success"
-                            : r.status === "failed"
-                            ? "badge-danger"
-                            : "badge-warning"
-                        }`}>
-                          {r.status}
-                        </span>
-                      </td>
-                      <td className="data-mono" style={{ fontSize: 10 }}>
-                        {txHash ? short(txHash) : "—"}
-                      </td>
-                      <td>
-                        {explorerUrl ? (
-                          <a href={explorerUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent, #6366f1)", fontSize: 11, textDecoration: "none" }}>
-                            View ↗
-                          </a>
-                        ) : (
-                          <span className="muted" style={{ fontSize: 11 }}>—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {x402PaymentRows.map((r: any) => (
+                  <tr key={r.event_id}>
+                    <td className="muted">{timeAgo(r.created_at)}</td>
+                    <td className="data-mono">{short(r.discovery_run_id)}</td>
+                    <td className="data-mono" style={{ fontSize: 11 }}>{r.buyer}</td>
+                    <td className="data-mono" style={{ fontSize: 11 }}>{r.seller}</td>
+                    <td>
+                      <span className={`badge ${
+                        r.node_type === "brain" ? "badge-success" :
+                        r.node_type === "macro_node" ? "badge-warning" : ""
+                      }`} style={{ fontSize: 10 }}>
+                        {r.node_type}
+                      </span>
+                    </td>
+                    <td className="data-mono">{usdc(r.amount_usdc)}</td>
+                    <td>
+                      <span className={`badge ${
+                        r.status === "paid" ? "badge-success" :
+                        r.status === "failed" ? "badge-danger" : "badge-warning"
+                      }`}>
+                        {r.status}
+                      </span>
+                    </td>
+                    <td style={{ fontSize: 11 }}>{r.mode}</td>
+                    <td className="data-mono" style={{ fontSize: 10 }}>
+                      {r.tx_hash ? short(r.tx_hash) : "—"}
+                    </td>
+                    <td>
+                      {r.explorer_url ? (
+                        <a href={r.explorer_url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent, #6366f1)", fontSize: 11, textDecoration: "none" }}>
+                          View ↗
+                        </a>
+                      ) : (
+                        <span className="muted" style={{ fontSize: 11 }}>—</span>
+                      )}
+                    </td>
+                    <td className="muted" style={{ fontSize: 10, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {r.error || "—"}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         )}
       </section>
 
-      {/* ─── Batch Settlements Table ───────────────────────── */}
+      {/* ─── Receipts Table ─────────────────────────────────── */}
       <section className="card">
-        <h2 className="section-title">Agent Batch Settlements</h2>
-        {batchSettlementRows.length === 0 ? (
+        <h2 className="section-title">Receipts</h2>
+        <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
+          Per-run receipts from official Circle x402 delegated-runtime payments. Settled amount equals sum of paid payment graph edges.
+        </p>
+        {receiptRows.length === 0 ? (
           <div className="muted" style={{ textAlign: "center", padding: 24 }}>
-            No batch settlements yet.
+            No receipts yet.
           </div>
         ) : (
           <div style={{ overflowX: "auto" }}>
@@ -587,56 +628,33 @@ export default async function DashboardPage() {
                 <tr>
                   <th>Time</th>
                   <th>Run ID</th>
-                  <th>Route Tier</th>
-                  <th>Agent Count</th>
-                  <th>Agent Total</th>
-                  <th>Treasury Fee</th>
-                  <th>Gateway Buffer</th>
-                  <th>Status</th>
-                  <th>Batch ID</th>
-                  <th>Explorer</th>
+                  <th>Tier</th>
+                  <th>Planned</th>
+                  <th>Settled</th>
+                  <th>Remaining</th>
+                  <th>Payments</th>
+                  <th>Last TX</th>
+                  <th>Summary</th>
                 </tr>
               </thead>
               <tbody>
-                {batchSettlementRows.map((r: any) => {
-                  const txHash = r.x402_batch_ref && /^0x[a-fA-F0-9]{64}$/.test(r.x402_batch_ref)
-                    ? r.x402_batch_ref : null;
-                  const explorerUrl = txHash ? `https://arc-testnet.blockscout.com/tx/${txHash}` : null;
-                  return (
-                    <tr key={r.id}>
-                      <td className="muted">{timeAgo(r.created_at)}</td>
-                      <td className="data-mono">{short(r.discovery_run_id)}</td>
-                      <td>{r.route_tier}</td>
-                      <td className="data-mono">{r.agent_count}</td>
-                      <td className="data-mono">{usdc(r.agent_total_usdc)}</td>
-                      <td className="data-mono">{usdc(r.treasury_fee_usdc)}</td>
-                      <td className="data-mono">{usdc(r.gateway_buffer_usdc)}</td>
-                      <td>
-                        <span className={`badge ${
-                          r.status === "paid"
-                            ? "badge-success"
-                            : r.status === "failed"
-                            ? "badge-danger"
-                            : "badge-warning"
-                        }`}>
-                          {r.status}
-                        </span>
-                      </td>
-                      <td className="data-mono" style={{ fontSize: 11 }}>
-                        {r.circle_batch_id ? short(r.circle_batch_id) : "—"}
-                      </td>
-                      <td>
-                        {explorerUrl ? (
-                          <a href={explorerUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent, #6366f1)", fontSize: 11, textDecoration: "none" }}>
-                            View ↗
-                          </a>
-                        ) : (
-                          <span className="muted" style={{ fontSize: 11 }}>—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {receiptRows.map((r: any) => (
+                  <tr key={r.receipt_id}>
+                    <td className="muted">{timeAgo(r.created_at)}</td>
+                    <td className="data-mono">{short(r.discovery_run_id)}</td>
+                    <td>{r.selected_tier}</td>
+                    <td className="data-mono">{r.planned_cost_usdc != null ? usdc(r.planned_cost_usdc) : "—"}</td>
+                    <td className="data-mono" style={{ fontWeight: 600 }}>{usdc(r.actual_settled_usdc)}</td>
+                    <td className="data-mono">{r.remaining_budget_usdc != null ? usdc(r.remaining_budget_usdc) : "—"}</td>
+                    <td className="data-mono">{r.payment_count}</td>
+                    <td className="data-mono" style={{ fontSize: 10 }}>
+                      {r.last_tx_hash ? short(r.last_tx_hash) : "tx unavailable"}
+                    </td>
+                    <td className="muted" style={{ fontSize: 11, maxWidth: 250, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {r.safe_receipt_summary || "—"}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
