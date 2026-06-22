@@ -234,9 +234,15 @@ export async function POST(req: NextRequest) {
         const session = await getSession(sid);
         if (!session?.userToken) return NextResponse.json({ error: "No userToken in session" }, { status: 400 });
 
-        const wallets = await listWallets(session.userToken);
+        // Poll for wallet — Circle indexes async after challenge completes
+        let wallets: Awaited<ReturnType<typeof listWallets>> = [];
+        for (let attempt = 0; attempt < 5; attempt++) {
+          wallets = await listWallets(session.userToken);
+          if (wallets.length > 0) break;
+          if (attempt < 4) await new Promise((r) => setTimeout(r, 2000));
+        }
         if (wallets.length === 0) {
-          return NextResponse.json({ ok: false, error: "No wallets found after challenge" }, { status: 404 });
+          return NextResponse.json({ ok: false, error: "No wallets found after challenge (polled 5x)" }, { status: 404 });
         }
 
         const walletId = wallets[0].id;
