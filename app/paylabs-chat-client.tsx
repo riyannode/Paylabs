@@ -209,6 +209,13 @@ async function signWithEoa(params: {
   return buildPaymentPayload(challenge, requirement, message, signature, x402Version);
 }
 
+/** Safe debug log — gated behind NEXT_PUBLIC_PAYLABS_UCW_DEBUG=1 */
+function signDbg(msg: string) {
+  if (typeof window !== "undefined" && process.env.NEXT_PUBLIC_PAYLABS_UCW_DEBUG === "1") {
+    console.log("[UCW-sign]", msg);
+  }
+}
+
 /** Sign with Circle UCW via challenge-response */
 async function signWithUcw(params: {
   challenge: Record<string, unknown>;
@@ -219,18 +226,47 @@ async function signWithUcw(params: {
   const { challenge, walletAddress, ucwSdk, auth } = params;
   const { domain, types, message, requirement, x402Version } = buildEip712Params(challenge, walletAddress);
 
-  // Ensure session exists — re-create if cookie expired
-  const checkResp = await fetch("/api/paylabs/wallet/ucw?action=session-restore", { method: "POST" });
-  if (checkResp.status === 401 && auth) {
+  // Preflight: ensure session exists with wallet data before sign-challenge
+  signDbg("preflight: checking session-restore...");
+  const checkResp = await fetch("/api/paylabs/wallet/ucw?action=session-restore", { method: "POST", credentials: "include" });
+  signDbg(`session-restore: status=${checkResp.status}`);
+  if (checkResp.ok) {
+    const sess = (await checkResp.json()) as { hasUserToken: boolean; walletId: string | null; walletAddress: string | null };
+    if (!sess.hasUserToken || !sess.walletId || !sess.walletAddress) {
+      // Session exists but incomplete — try repair
+      if (auth) {
+        const createResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
+        if (!createResp.ok) throw new Error("Session expired. Reconnect wallet.");
+        const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userToken: auth.userToken, encryptionKey: auth.encryptionKey }),
+        });
+        if (!saveResp.ok) throw new Error("Session expired. Reconnect wallet.");
+        const repaired = (await saveResp.json()) as { walletAddress?: string | null };
+        if (repaired.walletAddress && repaired.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+          throw new Error("Session expired. Reconnect wallet.");
+        }
+      } else {
+        throw new Error("Session expired. Reconnect wallet.");
+      }
+    }
+  } else if (checkResp.status === 401 && auth) {
     // Session expired — recreate and re-save auth
-    const createResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST" });
-    if (!createResp.ok) throw new Error("Failed to re-create session");
+    const createResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
+    if (!createResp.ok) throw new Error("Session expired. Reconnect wallet.");
     const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
-      method: "POST",
+      method: "POST", credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ userToken: auth.userToken, encryptionKey: auth.encryptionKey }),
     });
-    if (!saveResp.ok) throw new Error("Failed to restore session auth");
+    if (!saveResp.ok) throw new Error("Session expired. Reconnect wallet.");
+    const repaired = (await saveResp.json()) as { walletAddress?: string | null };
+    if (repaired.walletAddress && repaired.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+      throw new Error("Session expired. Reconnect wallet.");
+    }
+  } else {
+    throw new Error("Session expired. Reconnect wallet.");
   }
 
   // Backend reads walletId/userToken from httpOnly session
@@ -258,17 +294,21 @@ async function signWithUcw(params: {
   };
 
   // sign-challenge reads userToken/walletId from httpOnly session
+  signDbg("signChallenge: started");
   const signResp = await fetch("/api/paylabs/wallet/ucw?action=sign-challenge", {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ data: signData }),
   });
+  signDbg(`signChallenge: status=${signResp.status}`);
   if (!signResp.ok) {
     const err = await signResp.json().catch(() => ({}));
     throw new Error(`Sign challenge failed: ${(err as Record<string, string>).error || signResp.status}`);
   }
   const { challengeId } = (await signResp.json()) as { challengeId: string };
   if (!challengeId) throw new Error("No challengeId returned from sign-challenge");
+  signDbg("signChallenge: ok, executing challenge via UCW SDK...");
 
   // Step 2: Execute challenge via UCW SDK (user approves via Circle hosted UI)
   const signature: string = await new Promise((resolve, reject) => {
@@ -339,7 +379,7 @@ async function finalizeWalletAfterLogin(
           }
         });
       });
-      const finalizeResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST" });
+      const finalizeResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST", credentials: "include" });
       const finalized = (await finalizeResp.json().catch(() => ({}))) as {
         walletId?: string;
         walletAddress?: string;
@@ -386,7 +426,7 @@ async function finalizeWalletAfterLogin(
 
 /** Fetch balance via server-side session (tokens stay server-side) */
 async function fetchSessionBalance(): Promise<UcwBalance> {
-  const resp = await fetch("/api/paylabs/wallet/ucw?action=session-balance", { method: "POST" });
+  const resp = await fetch("/api/paylabs/wallet/ucw?action=session-balance", { method: "POST", credentials: "include" });
   if (!resp.ok) return { usdc: "0", gateway: "0" };
   const data = (await resp.json()) as { usdc: string; gateway: string };
   return { usdc: data.usdc ?? "0", gateway: data.gateway ?? "0" };
@@ -436,7 +476,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
     const restoreAfterRedirect = async () => {
       dbg("restoreAfterRedirect: start");
       try {
-        const resp = await fetch("/api/paylabs/wallet/ucw?action=session-restore", { method: "POST" });
+        const resp = await fetch("/api/paylabs/wallet/ucw?action=session-restore", { method: "POST", credentials: "include" });
         if (!resp.ok) {
           // 401 = no session cookie or expired → normal first-visit state, not an error
           if (resp.status === 401) return;
@@ -464,7 +504,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         if (data.hasUserToken && (!data.walletId || !data.walletAddress)) {
           dbg("User token exists but no wallet — attempting finalize");
           // Call session-finalize-wallet to check if wallet exists now
-          const finResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST" });
+          const finResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST", credentials: "include" });
           if (finResp.ok) {
             const fin = (await finResp.json()) as { walletId: string; walletAddress: string; usdc: string; gateway: string };
             setUcwWalletId(fin.walletId);
@@ -475,7 +515,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           }
           // If finalize fails (no wallets yet), destroy stale session and start fresh
           dbg("Finalize failed — destroying session for fresh start");
-          fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST" }).catch(() => {});
+          fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST", credentials: "include" }).catch(() => {});
           setWalletState("not_connected");
           return;
         }
@@ -489,7 +529,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           if (!hasOAuthHash) {
             // Stale session — device token saved but OAuth never completed
             dbg("Stale session (deviceToken but no OAuth hash) — destroying");
-            fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST" }).catch(() => {});
+            fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST", credentials: "include" }).catch(() => {});
             setWalletState("not_connected");
             return;
           }
@@ -499,7 +539,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           if (!appId) return;
 
           // Get device token from server session
-          const dtResp = await fetch("/api/paylabs/wallet/ucw?action=session-get-device", { method: "POST" });
+          const dtResp = await fetch("/api/paylabs/wallet/ucw?action=session-get-device", { method: "POST", credentials: "include" });
           if (!dtResp.ok) {
             const err = await dtResp.json().catch(() => ({}));
             setWalletState("not_connected");
@@ -547,6 +587,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
               // Save to server session + finalize (init user, list wallets)
               const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
                 method: "POST",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ userToken, encryptionKey }),
               });
@@ -576,7 +617,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
               setWalletState("not_connected");
               setWalletError("Login timed out. Please try again.");
               // Clear stale session so next attempt starts fresh
-              fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST" }).catch(() => {});
+              fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST", credentials: "include" }).catch(() => {});
             }
           }, 10000);
         }
@@ -605,7 +646,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
 
       // Create server-side session (sets httpOnly cookie)
-      const sessionResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST" });
+      const sessionResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
       if (!sessionResp.ok) {
         const err = await sessionResp.json().catch(() => ({}));
         dbg("session-create: FAIL " + sessionResp.status);
@@ -620,6 +661,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       // Create device token via backend
       const dtResp = await fetch("/api/paylabs/wallet/ucw?action=device-token", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId }),
       });
@@ -633,6 +675,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       // Save device token to server session
       const saveDeviceResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-device", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId, deviceToken, deviceEncryptionKey }),
       });
@@ -668,6 +711,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           // Save login to server session + finalize
           const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
             method: "POST",
+            credentials: "include",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ userToken, encryptionKey }),
           });
@@ -736,7 +780,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
 
       // Create server session
-      await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST" });
+      await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
 
       const sdk = new W3SSdk({ appSettings: { appId } });
       const deviceId = await sdk.getDeviceId();
@@ -745,6 +789,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       // Create email device token
       const dtResp = await fetch("/api/paylabs/wallet/ucw?action=email-device-token", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId, email }),
       });
@@ -757,6 +802,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       // Save device token to server session
       await fetch("/api/paylabs/wallet/ucw?action=session-save-device", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId, deviceToken, deviceEncryptionKey }),
       });
@@ -773,6 +819,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
           const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
             method: "POST",
+            credentials: "include",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ userToken, encryptionKey }),
           });
@@ -800,7 +847,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
 
       // Create server session
-      await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST" });
+      await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
 
       const sdk = new W3SSdk({ appSettings: { appId } });
       const deviceId = await sdk.getDeviceId();
@@ -810,6 +857,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       const userId = deviceId; // use deviceId as userId for PIN auth
       const createResp = await fetch("/api/paylabs/wallet/ucw?action=create-user", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId }),
       });
@@ -824,6 +872,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       // Step 2: Get user token (60-min session)
       const utResp = await fetch("/api/paylabs/wallet/ucw?action=user-token", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId }),
       });
@@ -839,6 +888,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       // Save login to server session + finalize (init user + list wallets)
       const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userToken, encryptionKey }),
       });
@@ -863,6 +913,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
       const resp = await fetch("/api/paylabs/wallet/ucw?action=approve-deposit", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ amountAtomic }),
       });
@@ -1043,7 +1094,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
   // ── Disconnect wallet ──
   const disconnectWallet = useCallback(() => {
-    fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST" }).catch(() => {});
+    fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST", credentials: "include" }).catch(() => {});
     setUcwWalletId(null);
     setWalletInfo(null);
     setWalletState("not_connected");
