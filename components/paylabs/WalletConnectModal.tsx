@@ -35,7 +35,8 @@ type Props = {
   onConnectGoogle: () => void;
   onConnectEmail: (email: string) => void;
   onConnectPin: () => void;
-  onDepositGateway: () => void;
+  onDepositGateway: (amountUsdc: number) => void;
+  onRefreshBalance?: () => void;
   onApprove: () => void;
   showEoaFallback?: boolean;
   onConnectEoa?: () => void;
@@ -65,12 +66,14 @@ export default function WalletConnectModal({
   onConnectEmail,
   onConnectPin,
   onDepositGateway,
+  onRefreshBalance,
   onApprove,
   showEoaFallback = false,
   onConnectEoa,
   debugLog,
 }: Props) {
   const [tab, setTab] = useState<"login" | "gateway">("login");
+  const [depositAmount, setDepositAmount] = useState("0.02");
 
   const isConnected = !!walletInfo?.address;
   const gatewayBalance = asNumber(ucwBalance?.gateway);
@@ -188,9 +191,35 @@ export default function WalletConnectModal({
             )}
 
             {isConnected && !gatewayReady && (
-              <button className="pl-primary-v3" onClick={onDepositGateway}>
-                Deposit to Gateway
-              </button>
+              <>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                  <label style={{ fontSize: 13, color: "#666" }}>Deposit amount (USDC)</label>
+                  <input
+                    type="number"
+                    min="0.001"
+                    step="0.001"
+                    value={depositAmount}
+                    onChange={(e) => setDepositAmount(e.target.value)}
+                    style={{ flex: 1, padding: "6px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 14 }}
+                  />
+                </div>
+                <button
+                  className="pl-primary-v3"
+                  onClick={() => onDepositGateway(parseFloat(depositAmount) || 0.02)}
+                  disabled={parseFloat(depositAmount) <= 0}
+                >
+                  Deposit {depositAmount} USDC to Gateway
+                </button>
+                {onRefreshBalance && (
+                  <button
+                    className="pl-eoa-fallback-v3"
+                    onClick={onRefreshBalance}
+                    style={{ marginTop: 6 }}
+                  >
+                    Refresh balance
+                  </button>
+                )}
+              </>
             )}
 
             {isConnected && gatewayReady && (

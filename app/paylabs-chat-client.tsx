@@ -834,11 +834,10 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
   }, [planned, walletState]);
 
   // ── Gateway deposit (UCW contract execution) ──
-  const depositGateway = useCallback(async () => {
+  const depositGateway = useCallback(async (amountUsdc: number) => {
     setWalletState("approving");
     setWalletError(null);
     try {
-      const amountUsdc = parseFloat(planned) * 2;
       const amountAtomic = Math.round(amountUsdc * 1_000_000).toString();
 
       const resp = await fetch("/api/paylabs/wallet/ucw?action=approve-deposit", {
@@ -848,7 +847,12 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
-        throw new Error(`Deposit challenge failed: ${(err as Record<string, string>).error || resp.status}`);
+        const errMsg = (err as Record<string, string>).error || String(resp.status);
+        if (resp.status === 401) {
+          setWalletState("not_connected");
+          throw new Error("Session expired — please reconnect your wallet");
+        }
+        throw new Error(`Deposit challenge failed: ${errMsg}`);
       }
       const { approve, deposit } = (await resp.json()) as {
         approve: { challengeId: string };
@@ -883,6 +887,13 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       setWalletState("needs_gateway_deposit");
       setWalletError(e instanceof Error ? e.message : "Deposit failed.");
     }
+  }, []);
+
+  // ── Refresh balance ──
+  const refreshBalance = useCallback(async () => {
+    const balance = await fetchSessionBalance();
+    setUcwBalance(balance);
+    setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
   }, [planned]);
 
   // ── Submit chat ──
@@ -1163,6 +1174,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         onConnectPin={connectPin}
         onConnectEoa={connectEoa}
         onDepositGateway={depositGateway}
+        onRefreshBalance={refreshBalance}
         onApprove={() => { setWalletOpen(false); submitChat(); }}
         showEoaFallback={showEoaFallback}
         debugLog={ucwDebug ? debugLog : undefined}
