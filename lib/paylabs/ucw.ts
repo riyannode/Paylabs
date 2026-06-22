@@ -2,6 +2,8 @@
  * Circle User-Controlled Wallet (UCW) — Backend API wrappers.
  *
  * SECURITY: CIRCLE_API_KEY stays server-side. Never expose to client.
+ * SECURITY: UCW session tokens (userToken, encryptionKey, deviceToken) are
+ *           held in frontend memory only — never in cookies or localStorage.
  */
 
 import { initiateUserControlledWalletsClient } from "@circle-fin/user-controlled-wallets";
@@ -27,14 +29,15 @@ function getClient() {
 // Constants
 // ---------------------------------------------------------------------------
 
-const ARC_TESTNET_BLOCKCHAIN = "MATIC-AMOY" as Blockchain;
+/** Arc Testnet — Circle UCW native blockchain identifier */
+const ARC_TESTNET_BLOCKCHAIN = "ARC-TESTNET" as Blockchain;
 const USDC_ARC_TESTNET = "0x3600000000000000000000000000000000000000";
 const GATEWAY_WALLET_ARC_TESTNET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
 const GATEWAY_REST_BASE = "https://gateway-api-testnet.circle.com/v1";
 const ARC_TESTNET_DOMAIN = 26;
 
 // ---------------------------------------------------------------------------
-// Device Token (social login prerequisite)
+// Device Token (Google social login prerequisite)
 // ---------------------------------------------------------------------------
 
 export async function createDeviceToken(deviceId: string) {
@@ -125,6 +128,10 @@ export async function getWalletTokenBalance(walletId: string, userToken: string)
 
 // ---------------------------------------------------------------------------
 // signTypedData challenge (for x402 EIP-712 signing)
+//
+// Circle UCW API requires `data` as a JSON STRING containing the full
+// EIP-712 structure: { domain, types (WITH EIP712Domain), primaryType, message }.
+// All uint256 values must be decimal strings, not hex.
 // ---------------------------------------------------------------------------
 
 export async function createSignTypedDataChallenge(
@@ -133,10 +140,26 @@ export async function createSignTypedDataChallenge(
   data: Record<string, unknown>,
 ) {
   const client = getClient();
+  // Ensure EIP712Domain is present in types — Circle API requires it
+  const types = data.types as Record<string, unknown> | undefined;
+  if (types && !types.EIP712Domain) {
+    (data.types as Record<string, unknown>).EIP712Domain = [
+      { name: "name", type: "string" },
+      { name: "version", type: "string" },
+      { name: "chainId", type: "uint256" },
+      { name: "verifyingContract", type: "address" },
+    ];
+  }
+
+  // Circle UCW API expects `data` as a JSON string
+  const dataString = JSON.stringify(data, (_key, value) =>
+    typeof value === "bigint" ? value.toString() : value,
+  );
+
   const resp = await client.signTypedData({
     userToken,
     walletId,
-    data: data as unknown as string,
+    data: dataString,
   });
   return { challengeId: resp.data?.challengeId };
 }
