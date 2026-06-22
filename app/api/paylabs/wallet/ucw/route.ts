@@ -33,6 +33,7 @@ import {
 import {
   createDeviceToken,
   createEmailDeviceToken,
+  createUser,
   createUserToken,
   initializeUser,
   listWallets,
@@ -70,6 +71,13 @@ export async function POST(req: NextRequest) {
         const { deviceId } = body as { deviceId: string };
         if (!deviceId) return NextResponse.json({ error: "deviceId required" }, { status: 400 });
         const result = await createDeviceToken(deviceId);
+        return NextResponse.json(result);
+      }
+
+      case "create-user": {
+        const { userId } = body as { userId: string };
+        if (!userId) return NextResponse.json({ error: "userId required" }, { status: 400 });
+        const result = await createUser(userId);
         return NextResponse.json(result);
       }
 

@@ -128,6 +128,20 @@ export async function createEmailDeviceToken(deviceId: string, email: string) {
 }
 
 // ---------------------------------------------------------------------------
+// User creation (PIN auth prerequisite)
+// ---------------------------------------------------------------------------
+
+export async function createUser(userId: string) {
+  const client = getClient();
+  const resp = await client.createUser({ userId });
+  return {
+    id: resp.data?.id,
+    status: resp.data?.status,
+    pinStatus: resp.data?.pinStatus,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // User token (PIN auth — creates a 60-min session token)
 // ---------------------------------------------------------------------------
 
