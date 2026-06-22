@@ -367,13 +367,12 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
                     else resolve();
                   });
                 });
-                // Save wallet after challenge
-                if (saveData.walletId && saveData.walletAddress) {
-                  await fetch("/api/paylabs/wallet/ucw?action=session-save-wallet", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ walletId: saveData.walletId, walletAddress: saveData.walletAddress }),
-                  });
+                // Finalize: re-list wallets after challenge, store in session
+                const finalizeResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST" });
+                if (finalizeResp.ok) {
+                  const finalized = (await finalizeResp.json()) as { walletId: string; walletAddress: string; usdc: string; gateway: string };
+                  saveData.walletId = finalized.walletId;
+                  saveData.walletAddress = finalized.walletAddress;
                 }
               }
 
@@ -478,6 +477,13 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
                 else resolve();
               });
             });
+            // Finalize: re-list wallets after challenge
+            const finalizeResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST" });
+            if (finalizeResp.ok) {
+              const finalized = (await finalizeResp.json()) as { walletId: string; walletAddress: string };
+              saveData.walletId = finalized.walletId;
+              saveData.walletAddress = finalized.walletAddress;
+            }
           }
 
           if (saveData.walletAddress) {
@@ -590,6 +596,13 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
                 else resolve();
               });
             });
+            // Finalize: re-list wallets after challenge
+            const finalizeResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST" });
+            if (finalizeResp.ok) {
+              const finalized = (await finalizeResp.json()) as { walletId: string; walletAddress: string };
+              saveData.walletId = finalized.walletId;
+              saveData.walletAddress = finalized.walletAddress;
+            }
           }
           if (saveData.walletAddress) {
             setUcwWalletId(saveData.walletId);
@@ -655,6 +668,13 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
             else resolve();
           });
         });
+        // Finalize: re-list wallets after challenge
+        const finalizeResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST" });
+        if (finalizeResp.ok) {
+          const finalized = (await finalizeResp.json()) as { walletId: string; walletAddress: string };
+          saveData.walletId = finalized.walletId;
+          saveData.walletAddress = finalized.walletAddress;
+        }
       }
 
       if (saveData.walletAddress) {
