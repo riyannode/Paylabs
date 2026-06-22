@@ -442,32 +442,31 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
 
           const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-          console.log("[UCW] Restoring SDK — deviceToken present, socialLoginProvider:", localStorage.getItem("socialLoginProvider"), "hash:", window.location.hash ? "present" : "empty");
+          console.log("[UCW] Restoring SDK", { deviceToken: deviceToken?.slice(0, 8) + "...", googleClientId: googleClientId?.slice(0, 12) + "...", hash: window.location.hash ? "present" : "empty" });
 
           let callbackFired = false;
-          // W3SSdk is a singleton — constructor returns existing instance.
-          // MUST use updateConfigs to set callback on the existing instance.
-          const sdk = new W3SSdk({ appSettings: { appId } });
-          sdk.updateConfigs(
-            {
-              appSettings: { appId },
-              loginConfigs: {
-                deviceToken,
-                deviceEncryptionKey,
-                ...(googleClientId
-                  ? {
-                      google: {
-                        clientId: googleClientId,
-                        redirectUri: window.location.origin,
-                        selectAccountPrompt: true,
-                      },
-                    }
-                  : {}),
-              },
+          // Per Circle docs: pass loginConfigs + callback in CONSTRUCTOR.
+          // setupInstance() → execSocialLoginStatusCheck() runs inside constructor
+          // and needs loginConfigs (deviceToken) to verify the OAuth token via iframe.
+          const fullConfig = {
+            appSettings: { appId },
+            loginConfigs: {
+              deviceToken,
+              deviceEncryptionKey,
+              ...(googleClientId
+                ? {
+                    google: {
+                      clientId: googleClientId,
+                      redirectUri: window.location.origin,
+                      selectAccountPrompt: true,
+                    },
+                  }
+                : {}),
             },
-            async (error: unknown, result: unknown) => {
+          };
+          const sdk = new W3SSdk(fullConfig, async (error: unknown, result: unknown) => {
               callbackFired = true;
-              console.log("[UCW] Login callback fired", error ? "ERROR" : "SUCCESS");
+              console.log("[UCW] Login callback fired", error ? "ERROR" : "SUCCESS", error || "");
               if (error) {
                 setWalletState("not_connected");
                 setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown"}`);
@@ -491,8 +490,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
               const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
               await finalizeWalletAfterLogin(saveData, sdk, cbs, planned);
-            },
-          );
+            });
           ucwSdkRef.current = sdk;
           await sdk.getDeviceId();
 
