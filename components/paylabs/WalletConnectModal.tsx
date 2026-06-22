@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 export type WalletState =
   | "not_connected"
@@ -79,12 +79,7 @@ export default function WalletConnectModal({
   const gatewayReady = isConnected && gatewayBalance >= currentRunCost;
   const isDepositing = walletState === "depositing" || walletState === "approving";
 
-  // Auto-switch to gateway tab when wallet connects
   const [tab, setTab] = useState<"login" | "gateway">("login");
-  useEffect(() => {
-    if (isConnected && tab === "login") setTab("gateway");
-  }, [isConnected]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const [depositAmount, setDepositAmount] = useState("0.02");
 
   if (!open) return null;
@@ -113,52 +108,73 @@ export default function WalletConnectModal({
           </button>
         </div>
 
-        {/* ── LOGIN TAB (only when not connected) ── */}
-        {tab === "login" && !isConnected && (
+        {/* ── LOGIN TAB ── */}
+        {tab === "login" && (
           <div className="pl-wallet-content-v3">
-            <div className="pl-login-stack-v3">
-              <button
-                className="pl-login-option-v3"
-                onClick={onConnectGoogle}
-                disabled={walletState === "connecting"}
-              >
-                <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
-                <b>Social</b>
-              </button>
-
-              <button
-                className="pl-login-option-v3"
-                onClick={() => {
-                  const next = window.prompt("Enter email for OTP");
-                  if (next) onConnectEmail(next);
-                }}
-                disabled={walletState === "connecting"}
-              >
-                <span className="pl-login-icon-v3"><MailIcon /></span>
-                <b>Email</b>
-              </button>
-
-              <button
-                className="pl-login-option-v3"
-                onClick={onConnectPin}
-                disabled={walletState === "connecting"}
-              >
-                <span className="pl-login-icon-v3"><LockIcon /></span>
-                <b>PIN</b>
-              </button>
-
-              {showEoaFallback && onConnectEoa && (
-                <button className="pl-eoa-fallback-v3" onClick={onConnectEoa}>
-                  Browser wallet
+            {!isConnected && (
+              <div className="pl-login-stack-v3">
+                <button
+                  className="pl-login-option-v3"
+                  onClick={onConnectGoogle}
+                  disabled={walletState === "connecting"}
+                >
+                  <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
+                  <b>Social</b>
                 </button>
-              )}
-            </div>
+
+                <button
+                  className="pl-login-option-v3"
+                  onClick={() => {
+                    const next = window.prompt("Enter email for OTP");
+                    if (next) onConnectEmail(next);
+                  }}
+                  disabled={walletState === "connecting"}
+                >
+                  <span className="pl-login-icon-v3"><MailIcon /></span>
+                  <b>Email</b>
+                </button>
+
+                <button
+                  className="pl-login-option-v3"
+                  onClick={onConnectPin}
+                  disabled={walletState === "connecting"}
+                >
+                  <span className="pl-login-icon-v3"><LockIcon /></span>
+                  <b>PIN</b>
+                </button>
+
+                {showEoaFallback && onConnectEoa && (
+                  <button className="pl-eoa-fallback-v3" onClick={onConnectEoa}>
+                    Browser wallet
+                  </button>
+                )}
+              </div>
+            )}
 
             {walletState === "connecting" && (
               <div style={{ textAlign: "center", padding: "12px 0", color: "#888", fontSize: 13 }}>
                 Connecting… (you&apos;ll be redirected to Google)
               </div>
             )}
+
+            <WalletRunSummary
+              walletInfo={walletInfo}
+              ucwBalance={ucwBalance}
+              budget={budget}
+              plannedCost={plannedCost}
+              gatewayReady={gatewayReady}
+            />
+
+            <button
+              className="pl-primary-v3"
+              onClick={() => {
+                if (!isConnected) return;
+                setTab("gateway");
+              }}
+              disabled={!isConnected}
+            >
+              Continue
+            </button>
           </div>
         )}
 
