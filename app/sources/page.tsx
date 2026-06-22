@@ -30,6 +30,7 @@ export default async function SourcesPage() {
   return (
     <div style={{ display: "grid", gap: 24 }}>
       <div>
+        <a href="/" style={{ fontSize: 13, color: "var(--muted)", fontWeight: 500 }}>← Chat</a>
         <h1 className="page-title">Sources</h1>
         <p className="muted" style={{ marginTop: 8 }}>
           RSSHub feed items — source-backed content catalog.
