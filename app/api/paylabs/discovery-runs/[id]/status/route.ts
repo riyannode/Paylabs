@@ -2,6 +2,7 @@
 //
 // Returns safe progress fields for a discovery run.
 // No raw signed context. No raw x-payment. No secrets. No Gateway internals.
+// Visibility from canonical paylabs_service_payment_events (not legacy nanopayments).
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
@@ -27,29 +28,41 @@ export async function GET(
     return NextResponse.json({ error: "Discovery run not found" }, { status: 404 });
   }
 
-  // ── Load nanopayment row summary ─────────────────────────────
-  const { data: nanoRows } = await supabaseAdmin()
-    .from("paylabs_agent_nanopayments")
-    .select("agent_name, status, receipt_id")
+  // ── Load service payment events ─────────────────────────────
+  const { data: paymentEvents } = await supabaseAdmin()
+    .from("paylabs_service_payment_events")
+    .select("seller, status, mode, amount_usdc, tx_hash")
     .eq("discovery_run_id", id)
     .order("created_at", { ascending: true });
 
-  const rows = (nanoRows || []) as Array<{ agent_name: string; status: string; receipt_id: string }>;
+  const events = (paymentEvents || []) as Array<{
+    seller: string;
+    status: string;
+    mode: string;
+    amount_usdc: number;
+    tx_hash: string | null;
+  }>;
 
-  // Aggregate agent statuses
-  const completedAgents = rows.filter((r) => r.status === "completed").map((r) => r.agent_name);
-  const failedAgents = rows.filter((r) => r.status === "failed" || r.status === "config_error").map((r) => r.agent_name);
-  const runningAgents = rows.filter((r) => r.status === "running").map((r) => r.agent_name);
-  const totalPaidAgents = rows.filter((r) => r.status === "completed" || r.status === "running").length;
+  const paidServices = events.filter((e) => e.status === "paid").map((e) => e.seller);
+  const failedServices = events.filter((e) => e.status === "failed").map((e) => e.seller);
+  const totalPaid = paidServices.length;
+  const totalSettledUsdc = events
+    .filter((e) => e.status === "paid")
+    .reduce((sum, e) => sum + Number(e.amount_usdc || 0), 0);
+
+  // ── Load receipt ────────────────────────────────────────────
+  const { data: receipt } = await supabaseAdmin()
+    .from("paylabs_receipts")
+    .select("actual_settled_usdc, payment_count, last_tx_hash, safe_receipt_summary")
+    .eq("discovery_run_id", id)
+    .maybeSingle();
 
   // Source path info from agent_trace
   const agentTrace = (run.agent_trace as Record<string, unknown>) || {};
   const sourcePathId = agentTrace.source_path_id as string | undefined;
 
-  // Source path status (if source path was created)
   let sourcePathStatus: string | null = null;
   let selectedSourcesCount = 0;
-  let verifiedSourcesCount = 0;
 
   if (sourcePathId) {
     const { data: pathRow } = await supabaseAdmin()
@@ -66,37 +79,35 @@ export async function GET(
       .eq("source_path_id", sourcePathId);
 
     selectedSourcesCount = (pathItems || []).length;
-
-    const { data: verifiedItems } = await supabaseAdmin()
-      .from("paylabs_source_path_items")
-      .select("id")
-      .eq("source_path_id", sourcePathId)
-      .eq("status", "proposed");
-
-    verifiedSourcesCount = (verifiedItems || []).length;
   }
 
   return NextResponse.json({
     discovery_run_id: run.id,
     status: run.status,
     current_agent: run.current_agent || null,
-    completed_agents: completedAgents,
-    failed_agents: failedAgents,
-    running_agents: runningAgents,
-    total_paid_agents: totalPaidAgents,
+    paid_services: paidServices,
+    failed_services: failedServices,
+    total_paid_services: totalPaid,
+    total_settled_usdc: totalSettledUsdc,
     source_path_status: sourcePathStatus,
     selected_sources_count: selectedSourcesCount,
-    verified_sources_count: verifiedSourcesCount,
     error_summary: run.error_summary || null,
     queued_at: run.queued_at,
     started_at: run.started_at,
     completed_at: run.completed_at,
-    nanopayment_summary: {
-      total: rows.length,
-      completed: completedAgents.length,
-      failed: failedAgents.length,
-      running: runningAgents.length,
-      planned: rows.filter((r) => r.status === "planned").length,
+    receipt: receipt
+      ? {
+          actual_settled_usdc: receipt.actual_settled_usdc,
+          payment_count: receipt.payment_count,
+          last_tx_hash: receipt.last_tx_hash,
+          safe_summary: receipt.safe_receipt_summary,
+        }
+      : null,
+    payment_summary: {
+      total: events.length,
+      paid: paidServices.length,
+      failed: failedServices.length,
+      skipped: events.filter((e) => e.status === "skipped").length,
     },
   });
 }

@@ -621,6 +621,24 @@ async function runX402Path(
       })
       .eq("id", discoveryRunId);
 
+    // ── Write canonical x402 visibility (events + receipt) ──
+    let visibilityError: string | null = null;
+    try {
+      const { writePayLabsVisibility } = await import("@/lib/paylabs/visibility/writer");
+      await writePayLabsVisibility({
+        discoveryRunId,
+        userWallet,
+        routeTier: routeTier as DelegatedRouteTier,
+        result,
+      });
+    } catch (e) {
+      visibilityError = e instanceof Error ? e.message.slice(0, 300) : String(e).slice(0, 300);
+      console.error("[paylabs_visibility] write failed", {
+        discoveryRunId,
+        error: visibilityError,
+      });
+    }
+
     return NextResponse.json({
       ok: result.status === "completed",
       discovery_run_id: discoveryRunId,
@@ -663,6 +681,7 @@ async function runX402Path(
       settled: fullySettled,
       mode: fullySettled ? "x402" : "x402_failed",
       error: result.error,
+      visibility_error: visibilityError,
     });
   } catch (e: unknown) {
     const rawMsg = e instanceof Error ? e.message : String(e);
