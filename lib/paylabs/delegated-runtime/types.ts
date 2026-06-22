@@ -112,13 +112,17 @@ export interface PaymentGraphEdge {
   buyer: string;
   seller: string;
   amountUsdc: number;
-  status: "planned" | "paid" | "skipped";
+  status: "planned" | "paid" | "failed" | "skipped";
   nodeType: "brain" | "macro_node" | "service";
   paymentRef: string | null;
   /** Real txHash from Gateway settle (if available) */
   txHash?: string | null;
   /** Block explorer URL (if txHash available) */
   explorerUrl?: string | null;
+  /** Error message for failed edges */
+  error?: string | null;
+  /** Execution mode (audit_only or x402) */
+  mode?: string;
 }
 
 // ─── Orchestrator Run State ──────────────────────────────────

@@ -84,17 +84,57 @@ function runDeterministicValueAllocator(
 export const valueAllocatorHandler: ServiceHandler = async (
   input: ServiceHandlerInput
 ): Promise<ServiceHandlerOutput> => {
-  const { source_url, source_title, quality_score, remaining_budget_usdc, routeTier } =
+  const remainingBudgetUsdc = (input.payload as { remaining_budget_usdc?: number }).remaining_budget_usdc ?? 0;
+  const routeTier = (input.payload as { routeTier?: DelegatedRouteTier }).routeTier;
+
+  // ── Batch mode: payload.candidates is an array ──
+  const candidates = (input.payload as {
+    candidates?: Array<{ feed_item_id: string; source_url: string; source_title: string; quality_score: number }>
+  }).candidates;
+
+  if (Array.isArray(candidates)) {
+    const results: Array<{
+      feed_item_id: string;
+      roi_score: number;
+      estimated_value: number;
+      max_allowed_price: number;
+      worth_label: "high" | "medium" | "low" | "skip";
+      safe_value_summary: string;
+    }> = [];
+
+    for (const c of candidates) {
+      const det = runDeterministicValueAllocator(c.quality_score ?? 0, remainingBudgetUsdc);
+      results.push({
+        feed_item_id: c.feed_item_id,
+        roi_score: det.roi_score,
+        estimated_value: det.estimated_value,
+        max_allowed_price: det.max_allowed_price,
+        worth_label: det.worth_label,
+        safe_value_summary: det.safe_summary,
+      });
+    }
+
+    const summary = `Value Allocator batch: ${results.length} candidates, ${results.filter(r => r.worth_label !== "skip").length} worth evaluating.`;
+    return {
+      ok: true,
+      serviceName: "value_allocator",
+      data: { results },
+      safeSummary: summary,
+      settled: false,
+      error: null,
+    };
+  }
+
+  // ── Single-item mode (backward compatible) ──
+  const { source_url, source_title, quality_score } =
     input.payload as {
       source_url: string;
       source_title: string;
       quality_score: number;
-      remaining_budget_usdc: number;
-      routeTier?: DelegatedRouteTier;
     };
 
   // ── Deterministic budget math (always runs, source of truth) ──
-  const det = runDeterministicValueAllocator(quality_score, remaining_budget_usdc);
+  const det = runDeterministicValueAllocator(quality_score, remainingBudgetUsdc);
 
   // ── Deterministic mode: no LLM ──
   if (shouldRunServiceAsDeterministic("value_allocator")) {
@@ -122,7 +162,7 @@ export const valueAllocatorHandler: ServiceHandler = async (
     agentName: "value_allocator",
     routeTier: toInternalRouteTier(routeTier || "easy"),
     systemPrompt: SYSTEM_PROMPT,
-    userPrompt: `Source URL: ${source_url}\nTitle: ${source_title}\nQuality score: ${quality_score}\nRemaining budget: ${remaining_budget_usdc} USDC\nMax allowed price (computed): ${det.max_allowed_price} USDC\n\nEvaluate ROI and worth. Return structured JSON only.`,
+    userPrompt: `Source URL: ${source_url}\nTitle: ${source_title}\nQuality score: ${quality_score}\nRemaining budget: ${remainingBudgetUsdc} USDC\nMax allowed price (computed): ${det.max_allowed_price} USDC\n\nEvaluate ROI and worth. Return structured JSON only.`,
     schema: ValueAllocatorSchema,
   });
 

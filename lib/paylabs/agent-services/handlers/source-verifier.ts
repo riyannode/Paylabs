@@ -138,11 +138,39 @@ function runDeterministicSourceVerifier(
 export const sourceVerifierHandler: ServiceHandler = async (
   input: ServiceHandlerInput
 ): Promise<ServiceHandlerOutput> => {
-  const { feed_item_id, source_url, source_title, routeTier } = input.payload as {
+  const routeTier = (input.payload as { routeTier?: DelegatedRouteTier }).routeTier;
+
+  // ── Batch mode: payload.candidates is an array ──
+  const candidates = (input.payload as { candidates?: Array<{ feed_item_id: string; source_url: string; source_title: string }> }).candidates;
+  if (Array.isArray(candidates)) {
+    const results: Array<{ feed_item_id: string; quality_score: number; credibility_score: number; red_flags: string[]; confidence: number; safe_quality_summary: string }> = [];
+    for (const c of candidates) {
+      const det = runDeterministicSourceVerifier(c.source_url || "", c.source_title || "", c.feed_item_id);
+      results.push({
+        feed_item_id: c.feed_item_id,
+        quality_score: det.quality_score,
+        credibility_score: det.credibility_score,
+        red_flags: det.red_flags,
+        confidence: det.confidence,
+        safe_quality_summary: `Quality: ${det.quality_score}, credibility: ${det.credibility_score}, flags: ${det.red_flags.length}. Deterministic.`,
+      });
+    }
+    const summary = `Source Verifier batch: ${results.length} candidates processed, ${results.filter(r => r.quality_score >= 0.5).length} above threshold.`;
+    return {
+      ok: true,
+      serviceName: "source_verifier",
+      data: { results },
+      safeSummary: summary,
+      settled: false,
+      error: null,
+    };
+  }
+
+  // ── Single-item mode (backward compatible) ──
+  const { feed_item_id, source_url, source_title } = input.payload as {
     feed_item_id: string;
     source_url: string;
     source_title: string;
-    routeTier?: DelegatedRouteTier;
   };
 
   // Deterministic mode (default)
