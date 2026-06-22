@@ -34,21 +34,6 @@ export {
   computeSplit,
 } from "./types.js";
 
-// ─── Agent Context (HMAC signing) ──────────────────────────────
-export type {
-  AgentContextPayload,
-  CreateAgentContextInput,
-  VerifyResult,
-} from "./agent-context.js";
-
-export {
-  createAgentContext,
-  verifyAgentContext,
-  serializeAgentContext,
-  parseAgentContext,
-  getReceiptUrl,
-} from "./agent-context.js";
-
 // ─── Buyer Transport (x402 DCW buyer flow) ─────────────────────
 export type {
   DcwSigner,
