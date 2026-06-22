@@ -168,7 +168,8 @@ export async function POST(req: NextRequest) {
         const sid = req.cookies.get("ucw_sid")?.value;
         if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
         const { deviceId: did, deviceToken: dt, deviceEncryptionKey: dek } = body as { deviceId: string; deviceToken: string; deviceEncryptionKey: string };
-        await updateSession(sid, { deviceId: did, deviceToken: dt, deviceEncryptionKey: dek });
+        const updated = await updateSession(sid, { deviceId: did, deviceToken: dt, deviceEncryptionKey: dek });
+        if (!updated) return NextResponse.json({ error: "Session save device failed" }, { status: 500 });
         return NextResponse.json({ ok: true });
       }
 
@@ -197,7 +198,8 @@ export async function POST(req: NextRequest) {
         const sid = req.cookies.get("ucw_sid")?.value;
         if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
         const { userToken: ut, encryptionKey: ek } = body as { userToken: string; encryptionKey: string };
-        await updateSession(sid, { userToken: ut, encryptionKey: ek });
+        const updatedLogin = await updateSession(sid, { userToken: ut, encryptionKey: ek });
+        if (!updatedLogin) return NextResponse.json({ error: "Session save login failed" }, { status: 500 });
         // Finalize: initialize user + list wallets
         const initResult = await initializeUser(ut);
         let walletId: string | null = null;
@@ -208,7 +210,8 @@ export async function POST(req: NextRequest) {
           if (wallets.length > 0) {
             walletId = wallets[0].id;
             walletAddress = wallets[0].address;
-            await updateSession(sid, { walletId, walletAddress });
+            const updatedW = await updateSession(sid, { walletId, walletAddress });
+            if (!updatedW) console.error("[UCW] Failed to save walletId/walletAddress to session");
           }
         }
         return NextResponse.json({
@@ -234,7 +237,8 @@ export async function POST(req: NextRequest) {
 
         const walletId = wallets[0].id;
         const walletAddress = wallets[0].address;
-        await updateSession(sid, { walletId, walletAddress });
+        const updatedWallet = await updateSession(sid, { walletId, walletAddress });
+        if (!updatedWallet) return NextResponse.json({ error: "Session save wallet failed" }, { status: 500 });
 
         // Fetch balances
         const [balances, gw] = await Promise.all([
