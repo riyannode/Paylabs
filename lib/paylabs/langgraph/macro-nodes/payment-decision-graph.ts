@@ -45,7 +45,8 @@ const intentMatcherNode = createServiceNode(
       })),
       routeTier: s.routeTier,
     };
-  }
+  },
+  { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: true, skipIfNotSelected: false }
 );
 
 // ─── Node: Prepare Candidates ───────────────────────────────
@@ -95,7 +96,8 @@ const sourceVerifierNode = createServiceNode(
       })),
       routeTier: s.routeTier,
     };
-  }
+  },
+  { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: true, skipIfNotSelected: false }
 );
 
 // ─── Node: Process Source Verifier Result ───────────────────
@@ -134,7 +136,8 @@ const valueAllocatorNode = createServiceNode(
       remaining_budget_usdc: s.budgetSnapshot?.remainingUsdc ?? s.userBudgetUsdc,
       routeTier: s.routeTier,
     };
-  }
+  },
+  { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: true, skipIfNotSelected: false }
 );
 
 // ─── Node: Process Value Allocator Result ───────────────────
@@ -181,7 +184,8 @@ const trustVerifierNode = createServiceNode(
       })),
       routeTier: s.routeTier,
     };
-  }
+  },
+  { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: true, skipIfNotSelected: false }
 );
 
 // ─── Node: Process Trust Verifier Result ────────────────────
@@ -233,7 +237,8 @@ const paymentDeciderNode = createServiceNode(
       spent_usdc: s.budgetSnapshot?.spentUsdc ?? 0,
       routeTier: s.routeTier,
     };
-  }
+  },
+  { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: true, skipIfNotSelected: false }
 );
 
 // ─── Node: Process Payment Decider Result ───────────────────

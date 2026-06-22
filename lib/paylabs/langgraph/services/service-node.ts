@@ -44,6 +44,10 @@ export function createServiceNode(
   options?: {
     paymentLayer?: "macro_to_child";
     paymentSchemeOverride?: "circle_gateway_wallet_batched" | "circle_gateway_wallet_batched_grouped_child" | "circle_gateway_wallet_batched_per_child_fallback";
+    /** If true, fail closed when x402 is not enabled for this service (default: true for macro_to_child). */
+    required?: boolean;
+    /** If true, skip service when not in selectedServices list (default: false for macro graph children). */
+    skipIfNotSelected?: boolean;
   }
 ): (state: Record<string, unknown>) => Promise<Record<string, unknown>> {
   return async (state: Record<string, unknown>) => {
@@ -53,8 +57,9 @@ export function createServiceNode(
     const selectedServices = state.selectedServices as string[] | undefined;
 
     // Check if this service is in the selected services list
-    const selected = selectedServices;
-    if (selected && selected.length > 0 && !selected.includes(serviceName)) {
+    // Only skip when skipIfNotSelected === true (default: false for macro graph children)
+    const shouldApplySelectionGuard = options?.skipIfNotSelected === true;
+    if (shouldApplySelectionGuard && selectedServices && selectedServices.length > 0 && !selectedServices.includes(serviceName)) {
       const summary = `${macroNode} → ${serviceName}: skipped (not in execution plan)`;
       return {
         progressSummaries: [summary],
@@ -83,6 +88,59 @@ export function createServiceNode(
 
     const payload = payloadFn(state);
     const timestamp = new Date().toISOString();
+
+    // Safe diagnostic for x402 child validation (no secrets)
+    const isRequired = options?.required !== false && options?.paymentLayer === "macro_to_child";
+    const skipIfNotSel = options?.skipIfNotSelected === true;
+    const x402EnabledForService = ((): boolean => {
+      try {
+        // Dynamic import to avoid circular deps — feature-flags is safe to call
+        const rawEnv = (process.env.PAYLABS_X402_ENABLED_SERVICE_NAMES || "").trim();
+        if (!rawEnv) return false;
+        const enabled = rawEnv.split(",").map((s: string) => s.trim().toLowerCase());
+        return enabled.includes(serviceName.toLowerCase());
+      } catch { return false; }
+    })();
+    console.log(`[x402-child-required] ${JSON.stringify({
+      discoveryRunId,
+      macroNode,
+      serviceName,
+      paymentLayer: options?.paymentLayer ?? null,
+      paymentMode: options?.paymentSchemeOverride ?? null,
+      required: isRequired,
+      skipIfNotSelected: skipIfNotSel,
+      x402Enabled: x402EnabledForService,
+      hasParentWalletId: !!parentWalletId,
+    })}`);
+
+    // Fail closed: required macro_to_child service must have x402 enabled
+    // Do NOT silently downgrade to audit_only
+    if (isRequired && !x402EnabledForService) {
+      const summary = `${macroNode} → ${serviceName}: FAILED (required x402 child not enabled)`;
+      return {
+        progressSummaries: [summary],
+        _serviceResult: {
+          serviceEvaluations: [{
+            serviceName,
+            macroNode: macroNode as ServiceEvaluation["macroNode"],
+            input: {},
+            output: null,
+            safeSummary: summary,
+            status: "failed",
+            costUsdc: 0,
+            startedAt: null,
+            completedAt: null,
+            error: "required x402 child not enabled in PAYLABS_X402_ENABLED_SERVICE_NAMES",
+            settled: false,
+            mode: "x402",
+          }],
+          paymentEdges: [],
+          progressSummaries: [summary],
+          budgetDelta: { serviceName, costUsdc: 0, settled: false },
+          handlerData: null,
+        },
+      };
+    }
 
     const result = await callDelegatedService({
       discoveryRunId,
