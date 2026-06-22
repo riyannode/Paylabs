@@ -289,9 +289,10 @@ type FinalizeCallbacks = {
  */
 async function finalizeWalletAfterLogin(
   saveData: SaveLoginData,
-  sdk: { execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void },
+  sdk: { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void },
   cbs: FinalizeCallbacks,
   planned: string,
+  auth?: { userToken: string; encryptionKey: string },
 ): Promise<boolean> {
   if (saveData.error) {
     cbs.setWalletState("not_connected");
@@ -302,10 +303,22 @@ async function finalizeWalletAfterLogin(
   // Execute wallet creation challenge if needed
   if (saveData.challengeId) {
     try {
+      // Per Circle docs: getDeviceId() must be called before execute()
+      // to establish the iframe session with Circle's service.
+      await sdk.getDeviceId();
+      // Per Circle docs: setAuthentication() must be called before execute()
+      // to authenticate the challenge with userToken + encryptionKey.
+      if (auth) {
+        sdk.setAuthentication({ userToken: auth.userToken, encryptionKey: auth.encryptionKey });
+      }
       await new Promise<void>((resolve, reject) => {
-        sdk.execute(saveData.challengeId!, (err: unknown) => {
-          if (err) reject(err instanceof Error ? err : new Error(String(err)));
-          else resolve();
+        sdk.execute(saveData.challengeId!, (err: unknown, result: unknown) => {
+          if (err) {
+            const msg = err instanceof Error ? err.message : (err as Record<string, string>)?.message || JSON.stringify(err);
+            reject(new Error(msg));
+          } else {
+            resolve();
+          }
         });
       });
       const finalizeResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST" });
@@ -502,7 +515,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
               dbg(`session-save-login: wid=${saveData.walletId} addr=${saveData.walletAddress} challenge=${saveData.challengeId} err=${saveData.error}`);
 
               const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
-              await finalizeWalletAfterLogin(saveData, sdk, cbs, planned);
+              await finalizeWalletAfterLogin(saveData, sdk, cbs, planned, { userToken, encryptionKey });
             });
           ucwSdkRef.current = sdk;
           // NOTE: do NOT call sdk.getDeviceId() here!
@@ -642,7 +655,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null; error?: string };
 
           const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
-          await finalizeWalletAfterLogin(saveData, sdk, cbs, planned);
+          await finalizeWalletAfterLogin(saveData, sdk, cbs, planned, { userToken, encryptionKey });
         },
       );
 
@@ -741,7 +754,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           });
           const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null; error?: string };
           const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
-          await finalizeWalletAfterLogin(saveData, sdk, cbs, planned);
+          await finalizeWalletAfterLogin(saveData, sdk, cbs, planned, { userToken, encryptionKey });
         },
       );
 
@@ -809,7 +822,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null; error?: string };
 
       const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
-      await finalizeWalletAfterLogin(saveData, sdk, cbs, planned);
+      await finalizeWalletAfterLogin(saveData, sdk, cbs, planned, { userToken, encryptionKey: encryptionKey ?? "" });
     } catch (e: unknown) {
       setWalletState("not_connected");
       setWalletError(e instanceof Error ? e.message : "PIN login failed.");
