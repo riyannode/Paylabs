@@ -9,6 +9,7 @@
  */
 
 import type { ServiceName } from "../agent-services/types";
+export type { ServiceName };
 
 // ─── Route Tiers ──────────────────────────────────────────────
 export type DelegatedRouteTier = "easy" | "normal" | "advanced";
@@ -43,6 +44,24 @@ export interface BudgetSnapshot {
   spentUsdc: number;
   remainingUsdc: number;
   serviceSpend: Record<ServiceName, number>;
+  /** Fees actually settled via x402 (real spend) */
+  settledServiceFeesUsdc: number;
+  /** Fees estimated/committed but not settled (audit-only) */
+  estimatedServiceFeesUsdc: number;
+  /** User budget total */
+  userBudgetUsdc?: number;
+  /** User budget used (controller→brain + brain→macro allocations) */
+  userBudgetUsedUsdc?: number;
+  /** Remaining user budget (not child payments) */
+  remainingBudgetUsdc?: number;
+  /** Treasury fee (controller→brain) */
+  treasuryFeeUsdc?: number;
+  /** Total macro allocation (brain→macro nodes) */
+  macroAllocationUsdc?: number;
+  /** Child payment volume (macro→child, internal to macro allocation) */
+  childPaymentVolumeUsdc?: number;
+  /** Gross payment volume (userBudgetUsed + childPaymentVolume) */
+  grossPaymentVolumeUsdc?: number;
 }
 
 // ─── Service Evaluation ──────────────────────────────────────
@@ -57,6 +76,53 @@ export interface ServiceEvaluation {
   startedAt: string | null;
   completedAt: string | null;
   error: string | null;
+  /** Whether payment was settled via x402 (true) or audit-only (false) */
+  settled: boolean;
+  /** Execution mode for this evaluation */
+  mode: "audit_only" | "x402";
+  /** Safe payment metadata (only present when settled=true). Never stores raw signatures. */
+  paymentMeta?: {
+    amountAtomic: string;
+    payTo: string;
+    network: string;
+    x402Version: number;
+    txHash?: string | null;
+    explorerUrl?: string | null;
+  };
+}
+
+// ─── Frozen Execution Plan ────────────────────────────────────
+export interface ExecutionPlan {
+  selectedMacroNodes: MacroNodePhase[];
+  selectedServices: ServiceName[];
+  servicesByMacroNode: Record<MacroNodePhase, ServiceName[]>;
+  plannedCostUsdc: number;
+  plannedCostBreakdown: {
+    macro_node_fees_usdc: number;
+    service_edge_fees_usdc: number;
+    registry_check_fees_usdc: number;
+    source_access_fees_usdc: number;
+  };
+  locked: boolean;
+}
+
+// ─── Payment Graph Edge ───────────────────────────────────────
+export interface PaymentGraphEdge {
+  edgeId: string;
+  buyer: string;
+  seller: string;
+  amountUsdc: number;
+  status: "planned" | "paid" | "failed" | "skipped";
+  nodeType: "brain" | "macro_node" | "service";
+  paymentRef: string | null;
+  /** Real txHash from Gateway settle (if available) */
+  txHash?: string | null;
+  /** Block explorer URL (if txHash available) */
+  explorerUrl?: string | null;
+  /** Error message for failed edges */
+  error?: string | null;
+  /** Execution mode (audit_only or x402) */
+  mode?: string;
 }
 
 // ─── Orchestrator Run State ──────────────────────────────────
@@ -76,6 +142,8 @@ export interface OrchestratorRunState {
   safeProgressSummaries: string[];
   delegatedRuntimeEnabled: boolean;
   brainPlanning: BrainPlanningOutput | null;
+  executionPlan: ExecutionPlan | null;
+  paymentGraph: PaymentGraphEdge[];
   error: string | null;
   startedAt: string;
   completedAt: string | null;
@@ -108,12 +176,31 @@ export interface PaymentPlanItem {
 // ─── Payment Edge ────────────────────────────────────────────
 export interface PaymentEdge {
   edgeId: string;
-  buyerServiceName: ServiceName;
+  /** Buyer can be a macro-node (discovery_planner, payment_decision, settlement_memory) or a service */
+  buyerServiceName: ServiceName | MacroNodePhase;
   sellerServiceName: ServiceName;
   amountUsdc: number;
   status: "planned" | "executed" | "failed" | "skipped";
   paymentRef: string | null;
   settlementRef: string | null;
+  /** Payment layer: controller_to_brain, brain_to_macro, macro_to_child */
+  layer?: "controller_to_brain" | "brain_to_macro" | "macro_to_child";
+  /** Accounting role: user_budget_spend or macro_internal_child_spend */
+  accountingRole?: "user_budget_spend" | "macro_internal_child_spend";
+  /** Source of funds: user_budget or macro_allocation */
+  sourceOfFunds?: "user_budget" | "macro_allocation";
+  /** Circle x402 payment mode used */
+  paymentMode?: "circle_gateway_wallet_batched" | "circle_gateway_wallet_batched_grouped_child" | "circle_gateway_wallet_batched_per_child_fallback";
+  /** Base macro-node fee (excludes child budget) */
+  nodeFeeUsdc?: number;
+  /** Child budget portion of allocation */
+  childBudgetUsdc?: number;
+  /** Total allocation (nodeFee + childBudget) */
+  allocationUsdc?: number;
+  /** Real txHash from Gateway settle (null if not available) */
+  txHash?: string | null;
+  /** Block explorer URL (null if txHash not available) */
+  explorerUrl?: string | null;
 }
 
 // ─── LLM Brain Planning Output ─────────────────────────────
@@ -124,6 +211,32 @@ export interface BrainPlanningOutput {
   suggested_query_variants: string[];
   service_execution_plan: string[];
   safe_brain_summary: string;
+  // ── Deterministic quote planning fields ──
+  /** Macro-nodes Brain selected for this run */
+  selected_macro_nodes: MacroNodePhase[];
+  /** Specific services Brain selected under those macro-nodes */
+  selected_services: ServiceName[];
+  /** Max registry/source checks Brain recommends */
+  max_registry_checks: number;
+  /** Max source accesses Brain recommends */
+  max_source_accesses: number;
+  /** Deterministic planned cost (computed from registry, NOT LLM) */
+  planned_cost_usdc: number;
+  /** Per-category cost breakdown */
+  planned_cost_breakdown: {
+    macro_node_fees_usdc: number;
+    service_edge_fees_usdc: number;
+    registry_check_fees_usdc: number;
+    source_access_fees_usdc: number;
+  };
+}
+
+// ─── Tiered Run Summaries ─────────────────────────────────
+export interface TieredRunSummaries {
+  easy_summary?: string;
+  normal_summary?: string;
+  advanced_summary?: string;
+  final_summary: string;
 }
 
 // ─── Orchestrator Output ─────────────────────────────────────
@@ -139,5 +252,7 @@ export interface OrchestratorOutput {
   paymentEdges: PaymentEdge[];
   serviceEvaluations: ServiceEvaluation[];
   brainPlanning: BrainPlanningOutput | null;
+  paymentGraph: PaymentGraphEdge[];
+  tieredSummaries?: TieredRunSummaries;
   error: string | null;
 }

@@ -117,7 +117,7 @@ export default async function DashboardPage() {
     safeQuery(() =>
       supabaseAdmin()
         .from("paylabs_discovery_runs")
-        .select("id, user_wallet, goal, route_tier, status, candidate_count, eligible_source_count, unclaimed_source_count, created_at")
+        .select("id, user_wallet, goal, route_tier, status, candidate_count, eligible_source_count, unclaimed_source_count, created_at, agent_trace")
         .order("created_at", { ascending: false })
         .limit(25)
     ),
@@ -126,6 +126,63 @@ export default async function DashboardPage() {
     getRecentBatchSettlements(25),
     safeCount("paylabs_agent_nanopayments"),
     safeCount("paylabs_agent_batch_settlements"),
+  ]);
+
+  // ─── User stats (unique wallets) ───
+  const [
+    totalUsers,
+    recentUsers7d,
+    recentUsers24h,
+    topUsers,
+  ] = await Promise.all([
+    // Count distinct user_wallets across all discovery runs
+    safeQuery<{ user_wallet: string }>(() =>
+      supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .select("user_wallet")
+        .limit(10000)
+    ).then((rows) => new Set(rows.map((r) => r.user_wallet?.toLowerCase()).filter(Boolean)).size),
+    // Unique users in last 7 days
+    safeQuery<{ user_wallet: string }>(() =>
+      supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .select("user_wallet")
+        .gte("created_at", new Date(Date.now() - 7 * 86400000).toISOString())
+        .limit(10000)
+    ).then((rows) => new Set(rows.map((r) => r.user_wallet?.toLowerCase()).filter(Boolean)).size),
+    // Unique users in last 24h
+    safeQuery<{ user_wallet: string }>(() =>
+      supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .select("user_wallet")
+        .gte("created_at", new Date(Date.now() - 86400000).toISOString())
+        .limit(10000)
+    ).then((rows) => new Set(rows.map((r) => r.user_wallet?.toLowerCase()).filter(Boolean)).size),
+    // Top users by run count
+    safeQuery<{ user_wallet: string; route_tier: string; status: string; created_at: string }>(() =>
+      supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .select("user_wallet, route_tier, status, created_at")
+        .order("created_at", { ascending: false })
+        .limit(5000)
+    ).then((rows) => {
+      const byUser = new Map<string, { wallet: string; runs: number; lastActive: string; lastTier: string }>();
+      for (const r of rows) {
+        const w = r.user_wallet?.toLowerCase();
+        if (!w) continue;
+        const existing = byUser.get(w);
+        if (existing) {
+          existing.runs++;
+          if (r.created_at > existing.lastActive) {
+            existing.lastActive = r.created_at;
+            existing.lastTier = r.route_tier;
+          }
+        } else {
+          byUser.set(w, { wallet: r.user_wallet, runs: 1, lastActive: r.created_at, lastTier: r.route_tier });
+        }
+      }
+      return [...byUser.values()].sort((a, b) => b.runs - a.runs).slice(0, 15);
+    }),
   ]);
 
   return (
@@ -137,14 +194,17 @@ export default async function DashboardPage() {
         </p>
       </div>
 
-      {/* ─── RSSHub KPI Cards ──────────────────────────────── */}
+      {/* ─── KPI Cards ──────────────────────────────────────── */}
       <div className="grid-4">
         {[
+          { label: "Unique Users", value: totalUsers },
+          { label: "Users (24h)", value: recentUsers24h },
+          { label: "Users (7d)", value: recentUsers7d },
+          { label: "Discovery Runs", value: discoveryRuns },
           { label: "RSSHub Routes", value: rsshubRoutes },
           { label: "Feed Items", value: feedItems },
           { label: "Source Payments", value: sourcePayments },
           { label: "Source Payouts", value: usdc(totalSourcePaymentUsdc) },
-          { label: "Discovery Runs", value: discoveryRuns },
           { label: "Agent Nanopayments", value: nanopaymentCount },
           { label: "Batch Settlements", value: batchSettlementCount },
         ].map((kpi) => (
@@ -158,6 +218,58 @@ export default async function DashboardPage() {
           </div>
         ))}
       </div>
+
+      {/* ─── User Analytics ──────────────────────────────────── */}
+      <section className="card">
+        <h2 className="section-title">User Analytics</h2>
+        <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
+          Unique wallets that submitted discovery runs. Top users ranked by total runs.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 16 }}>
+          <div className="card" style={{ padding: 12 }}>
+            <div className="muted" style={{ fontSize: 12 }}>Total Unique Users</div>
+            <div className="kpi" style={{ marginTop: 4 }}>{totalUsers}</div>
+          </div>
+          <div className="card" style={{ padding: 12 }}>
+            <div className="muted" style={{ fontSize: 12 }}>Active (24h)</div>
+            <div className="kpi" style={{ marginTop: 4 }}>{recentUsers24h}</div>
+          </div>
+          <div className="card" style={{ padding: 12 }}>
+            <div className="muted" style={{ fontSize: 12 }}>Active (7d)</div>
+            <div className="kpi" style={{ marginTop: 4 }}>{recentUsers7d}</div>
+          </div>
+        </div>
+        {topUsers.length === 0 ? (
+          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
+            No users yet.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Wallet</th>
+                  <th>Total Runs</th>
+                  <th>Last Tier</th>
+                  <th>Last Active</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topUsers.map((u: any, i: number) => (
+                  <tr key={u.wallet}>
+                    <td className="muted">{i + 1}</td>
+                    <td className="data-mono">{short(u.wallet)}</td>
+                    <td className="data-mono" style={{ fontWeight: 600 }}>{u.runs}</td>
+                    <td>{u.lastTier}</td>
+                    <td className="muted">{timeAgo(u.lastActive)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {/* ─── RSSHub Routes Table ───────────────────────────── */}
       <section className="card">
@@ -409,55 +521,52 @@ export default async function DashboardPage() {
                   <th>Payer</th>
                   <th>Payee</th>
                   <th>Route Tier</th>
-                  <th>Settlement</th>
                   <th>Amount</th>
                   <th>Status</th>
-                  <th>Receipt</th>
-                  <th>Payment Ref</th>
-                  <th>Settlement Ref</th>
+                  <th>TX Hash</th>
+                  <th>Explorer</th>
                 </tr>
               </thead>
               <tbody>
-                {nanopaymentRows.map((r: any) => (
-                  <tr key={r.id}>
-                    <td className="muted">{timeAgo(r.created_at)}</td>
-                    <td className="data-mono">{short(r.discovery_run_id)}</td>
-                    <td style={{ fontWeight: 600 }}>{r.agent_name}</td>
-                    <td className="data-mono">{short(r.payer_agent)}</td>
-                    <td className="data-mono">{short(r.payee_agent)}</td>
-                    <td>{r.route_tier}</td>
-                    <td>
-                      <span className={`badge ${r.settlement_mode === "nano" ? "badge-success" : "badge-warning"}`}>
-                        {r.settlement_mode}
-                      </span>
-                    </td>
-                    <td className="data-mono">{usdc(r.price_usdc)}</td>
-                    <td>
-                      <span className={`badge ${
-                        r.status === "paid" || r.status === "completed"
-                          ? "badge-success"
-                          : r.status === "failed"
-                          ? "badge-danger"
-                          : "badge-warning"
-                      }`}>
-                        {r.status}
-                      </span>
-                    </td>
-                    <td>
-                      {r.receipt_url ? (
-                        <a href={r.receipt_url} className="data-mono" style={{ fontSize: 11, color: "var(--accent, #6366f1)" }}>
-                          {short(r.receipt_id)}
-                        </a>
-                      ) : "—"}
-                    </td>
-                    <td className="data-mono" style={{ fontSize: 11 }}>
-                      {r.x402_payment_ref ? short(r.x402_payment_ref) : "—"}
-                    </td>
-                    <td className="data-mono" style={{ fontSize: 11 }}>
-                      {r.x402_settlement_ref ? short(r.x402_settlement_ref) : "—"}
-                    </td>
-                  </tr>
-                ))}
+                {nanopaymentRows.map((r: any) => {
+                  const txHash = r.x402_settlement_ref && /^0x[a-fA-F0-9]{64}$/.test(r.x402_settlement_ref)
+                    ? r.x402_settlement_ref : null;
+                  const explorerUrl = txHash ? `https://arc-testnet.blockscout.com/tx/${txHash}` : null;
+                  return (
+                    <tr key={r.id}>
+                      <td className="muted">{timeAgo(r.created_at)}</td>
+                      <td className="data-mono">{short(r.discovery_run_id)}</td>
+                      <td style={{ fontWeight: 600 }}>{r.agent_name}</td>
+                      <td className="data-mono">{short(r.payer_agent)}</td>
+                      <td className="data-mono">{short(r.payee_agent)}</td>
+                      <td>{r.route_tier}</td>
+                      <td className="data-mono">{usdc(r.price_usdc)}</td>
+                      <td>
+                        <span className={`badge ${
+                          r.status === "paid" || r.status === "completed"
+                            ? "badge-success"
+                            : r.status === "failed"
+                            ? "badge-danger"
+                            : "badge-warning"
+                        }`}>
+                          {r.status}
+                        </span>
+                      </td>
+                      <td className="data-mono" style={{ fontSize: 10 }}>
+                        {txHash ? short(txHash) : "—"}
+                      </td>
+                      <td>
+                        {explorerUrl ? (
+                          <a href={explorerUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent, #6366f1)", fontSize: 11, textDecoration: "none" }}>
+                            View ↗
+                          </a>
+                        ) : (
+                          <span className="muted" style={{ fontSize: 11 }}>—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -485,37 +594,124 @@ export default async function DashboardPage() {
                   <th>Gateway Buffer</th>
                   <th>Status</th>
                   <th>Batch ID</th>
+                  <th>Explorer</th>
                 </tr>
               </thead>
               <tbody>
-                {batchSettlementRows.map((r: any) => (
-                  <tr key={r.id}>
-                    <td className="muted">{timeAgo(r.created_at)}</td>
-                    <td className="data-mono">{short(r.discovery_run_id)}</td>
-                    <td>{r.route_tier}</td>
-                    <td className="data-mono">{r.agent_count}</td>
-                    <td className="data-mono">{usdc(r.agent_total_usdc)}</td>
-                    <td className="data-mono">{usdc(r.treasury_fee_usdc)}</td>
-                    <td className="data-mono">{usdc(r.gateway_buffer_usdc)}</td>
-                    <td>
-                      <span className={`badge ${
-                        r.status === "paid"
-                          ? "badge-success"
-                          : r.status === "failed"
-                          ? "badge-danger"
-                          : "badge-warning"
-                      }`}>
-                        {r.status}
-                      </span>
-                    </td>
-                    <td className="data-mono" style={{ fontSize: 11 }}>
-                      {r.circle_batch_id ? short(r.circle_batch_id) : "—"}
-                    </td>
-                  </tr>
-                ))}
+                {batchSettlementRows.map((r: any) => {
+                  const txHash = r.x402_batch_ref && /^0x[a-fA-F0-9]{64}$/.test(r.x402_batch_ref)
+                    ? r.x402_batch_ref : null;
+                  const explorerUrl = txHash ? `https://arc-testnet.blockscout.com/tx/${txHash}` : null;
+                  return (
+                    <tr key={r.id}>
+                      <td className="muted">{timeAgo(r.created_at)}</td>
+                      <td className="data-mono">{short(r.discovery_run_id)}</td>
+                      <td>{r.route_tier}</td>
+                      <td className="data-mono">{r.agent_count}</td>
+                      <td className="data-mono">{usdc(r.agent_total_usdc)}</td>
+                      <td className="data-mono">{usdc(r.treasury_fee_usdc)}</td>
+                      <td className="data-mono">{usdc(r.gateway_buffer_usdc)}</td>
+                      <td>
+                        <span className={`badge ${
+                          r.status === "paid"
+                            ? "badge-success"
+                            : r.status === "failed"
+                            ? "badge-danger"
+                            : "badge-warning"
+                        }`}>
+                          {r.status}
+                        </span>
+                      </td>
+                      <td className="data-mono" style={{ fontSize: 11 }}>
+                        {r.circle_batch_id ? short(r.circle_batch_id) : "—"}
+                      </td>
+                      <td>
+                        {explorerUrl ? (
+                          <a href={explorerUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent, #6366f1)", fontSize: 11, textDecoration: "none" }}>
+                            View ↗
+                          </a>
+                        ) : (
+                          <span className="muted" style={{ fontSize: 11 }}>—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+        )}
+      </section>
+
+      {/* ─── Payment Graph (x402 edges with explorer links) ── */}
+      <section className="card">
+        <h2 className="section-title">Payment Graph (x402 Edges)</h2>
+        <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
+          x402 payment edges from recent discovery runs. Click explorer links to verify on-chain.
+        </p>
+        {discoveryRunRows.filter((r: any) => r.agent_trace?.payment_graph?.length > 0).length === 0 ? (
+          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
+            No payment graph data yet. Run an x402-enabled discovery run first.
+          </div>
+        ) : (
+          discoveryRunRows
+            .filter((r: any) => r.agent_trace?.payment_graph?.length > 0)
+            .slice(0, 5)
+            .map((run: any) => (
+              <div key={run.id} style={{ marginBottom: 24 }}>
+                <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13 }}>
+                  Run <span className="data-mono">{short(run.id)}</span>
+                  <span className="muted" style={{ marginLeft: 8 }}>{run.route_tier}</span>
+                  <span className={`badge ${run.status === "paid_path_available" ? "badge-success" : "badge-warning"}`} style={{ marginLeft: 8 }}>
+                    {run.status}
+                  </span>
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Buyer</th>
+                        <th>Seller</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>TX Hash</th>
+                        <th>Explorer</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {run.agent_trace.payment_graph.map((edge: any, i: number) => (
+                        <tr key={i}>
+                          <td className="data-mono" style={{ fontSize: 11 }}>{edge.buyer}</td>
+                          <td className="data-mono" style={{ fontSize: 11 }}>{edge.seller}</td>
+                          <td>
+                            <span className={`badge ${edge.node_type === "brain" ? "badge-success" : edge.node_type === "macro_node" ? "badge-warning" : ""}`} style={{ fontSize: 10 }}>
+                              {edge.node_type}
+                            </span>
+                          </td>
+                          <td>
+                            <span className={`badge ${edge.status === "paid" ? "badge-success" : edge.status === "skipped" ? "badge-warning" : "badge-danger"}`}>
+                              {edge.status}
+                            </span>
+                          </td>
+                          <td className="data-mono" style={{ fontSize: 10 }}>
+                            {edge.tx_hash ? short(edge.tx_hash) : "—"}
+                          </td>
+                          <td>
+                            {edge.explorer_url ? (
+                              <a href={edge.explorer_url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent, #6366f1)", fontSize: 11, textDecoration: "none" }}>
+                                View on Explorer ↗
+                              </a>
+                            ) : (
+                              <span className="muted" style={{ fontSize: 11 }}>—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))
         )}
       </section>
     </div>

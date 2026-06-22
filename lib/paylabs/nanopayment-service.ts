@@ -9,6 +9,7 @@
  */
 
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { X402_VERSION } from "@/lib/paylabs/x402/seller-challenge";
 import {
   PAID_AGENTS,
   AGENT_NANOPRICE_USDC,
@@ -314,7 +315,7 @@ export async function updateNanopaymentWithSafeRefs(
   const metadata: Record<string, unknown> = {};
   if (safeRefs?.safePayment) {
     metadata.safe_payment = safeRefs.safePayment;
-    metadata.x402_version = 2;
+    metadata.x402_version = X402_VERSION;
   }
   if (safeRefs?.errorSummary) {
     metadata.error_summary = safeRefs.errorSummary.slice(0, 300);

@@ -14,6 +14,30 @@ import type { ServiceName, EdgeValidationResult } from "./types";
 
 // ─── Allowed Edges ───────────────────────────────────────────
 // Each edge: [buyer, seller]
+
+// ── Payment graph edges (Brain + macro-nodes as x402 buyers) ──
+const PAYMENT_GRAPH_EDGES: ReadonlyArray<readonly [string, string]> = [
+  // run_budget_controller → Brain
+  ["run_budget_controller", "brain"],
+  // Brain → macro-nodes
+  ["brain", "discovery_planner"],
+  ["brain", "payment_decision"],
+  ["brain", "settlement_memory"],
+  // discovery_planner → child services
+  ["discovery_planner", "intent_planner"],
+  ["discovery_planner", "query_builder"],
+  ["discovery_planner", "signal_scout"],
+  // payment_decision → child services
+  ["payment_decision", "intent_matcher"],
+  ["payment_decision", "source_verifier"],
+  ["payment_decision", "value_allocator"],
+  ["payment_decision", "trust_verifier"],
+  ["payment_decision", "payment_decider"],
+  // settlement_memory → child services
+  ["settlement_memory", "payment_router"],
+] as const;
+
+// ── Legacy direct edges (backward compat audit-only) ──
 const ALLOWED_EDGES: ReadonlyArray<readonly [string, ServiceName]> = [
   ["run_budget_controller", "intent_planner"],
   ["intent_planner", "query_builder"],
@@ -27,9 +51,10 @@ const ALLOWED_EDGES: ReadonlyArray<readonly [string, ServiceName]> = [
 ] as const;
 
 // ─── Edge Lookup Set ─────────────────────────────────────────
-const EDGE_SET = new Set(
-  ALLOWED_EDGES.map(([buyer, seller]) => `${buyer}→${seller}`)
-);
+const EDGE_SET = new Set([
+  ...ALLOWED_EDGES.map(([buyer, seller]) => `${buyer}→${seller}`),
+  ...PAYMENT_GRAPH_EDGES.map(([buyer, seller]) => `${buyer}→${seller}`),
+]);
 
 // ─── Public API ──────────────────────────────────────────────
 

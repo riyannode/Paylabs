@@ -73,6 +73,10 @@ export interface VerifyAndSettleResult {
     payTo: string;
     network: string;
     x402Version: number;
+    /** Transaction hash if available from facilitator settle */
+    txHash: string | null;
+    /** Block explorer URL if txHash is valid */
+    explorerUrl: string | null;
   };
   /** Payer address if verified */
   payer?: string;
@@ -90,8 +94,11 @@ const USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
 /** Arc Testnet network identifier for x402 */
 const ARC_NETWORK = "eip155:5042002";
 
+/** x402 protocol version */
+export const X402_VERSION = 2;
+
 /** Default timeout for payment authorization (7 days) */
-const DEFAULT_MAX_TIMEOUT = 604900;
+const DEFAULT_MAX_TIMEOUT = 604800;
 
 // ─── Build 402 Challenge ──────────────────────────────────────
 
@@ -130,7 +137,7 @@ export function buildX402Challenge(
   const requirements = buildPaymentRequirements(sellerAddress, amountAtomic);
 
   return {
-    x402Version: 2,
+    x402Version: X402_VERSION,
     accepts: [requirements],
     ...(resourceUrl
       ? {
@@ -149,6 +156,53 @@ export function buildX402Challenge(
  */
 export function encodeChallengeHeader(challenge: X402ChallengeResponse): string {
   return Buffer.from(JSON.stringify(challenge)).toString("base64");
+}
+
+// ─── TxHash Extraction Helpers ────────────────────────────────
+
+function isEvmTxHash(value: unknown): value is string {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
+}
+
+function extractTxHash(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+
+  const obj = value as Record<string, unknown>;
+  const transaction = obj.transaction;
+  const receipt = obj.receipt as Record<string, unknown> | undefined;
+  const settlement = obj.settlement as Record<string, unknown> | undefined;
+
+  const candidates = [
+    obj.txHash,
+    obj.transactionHash,
+    obj.hash,
+    // transaction may be a string (txHash) or an object with .hash
+    typeof transaction === "string" ? transaction : (transaction as Record<string, unknown>)?.hash,
+    receipt?.transactionHash,
+    settlement?.txHash,
+    settlement?.transactionHash,
+    settlement?.hash,
+  ];
+
+  for (const candidate of candidates) {
+    if (isEvmTxHash(candidate)) return candidate;
+  }
+
+  return null;
+}
+
+function buildExplorerUrl(network: string, txHash: string | null): string | null {
+  if (!txHash) return null;
+
+  if (network === "eip155:5042002") {
+    const base =
+      process.env.PAYLABS_ARC_TESTNET_EXPLORER_TX_BASE ||
+      "https://arc-testnet.blockscout.com/tx";
+
+    return `${base.replace(/\/+$/, "")}/${txHash}`;
+  }
+
+  return null;
 }
 
 // ─── Verify + Settle ──────────────────────────────────────────
@@ -187,12 +241,22 @@ export async function verifyAndSettlePayment(
     };
   }
 
-  const facilitator = new FacilitatorClient();
+  const facilitator = new FacilitatorClient({
+    url: "https://gateway-api-testnet.circle.com",
+  });
 
   // ── Verify ─────────────────────────────────────────────────
   try {
     const verifyResult = await facilitator.verify(paymentPayload, requirements);
     if (!verifyResult?.isValid) {
+      console.error("[seller-challenge] verify FAILED:", {
+        isValid: verifyResult?.isValid,
+        invalidReason: verifyResult?.invalidReason,
+        payer: verifyResult?.payer,
+        amount: requirements.amount,
+        network: requirements.network,
+        payTo: requirements.payTo,
+      });
       return {
         ok: false,
         settled: false,
@@ -211,6 +275,25 @@ export async function verifyAndSettlePayment(
   // ── Settle ─────────────────────────────────────────────────
   try {
     const settleResult = await facilitator.settle(paymentPayload, requirements);
+    const settleData = settleResult as Record<string, unknown>;
+
+    // Extract txHash — check multiple possible locations in SDK response
+    const txHash = extractTxHash(settleResult);
+    const explorerUrl = buildExplorerUrl(requirements.network, txHash);
+
+    // Safe log — keys only, never raw payload or signature
+    const txVal = settleData.transaction;
+    console.log("[x402-settle-proof]", {
+      settled: true,
+      hasTxHash: !!txHash,
+      txHash,
+      explorerUrl,
+      settleResultKeys: Object.keys(settleData),
+      transactionType: typeof txVal,
+      transactionLength: typeof txVal === "string" ? txVal.length : null,
+      transactionPrefix: typeof txVal === "string" ? txVal.slice(0, 10) : null,
+      transactionIsHexString: isEvmTxHash(txVal),
+    });
 
     return {
       ok: true,
@@ -219,9 +302,11 @@ export async function verifyAndSettlePayment(
         amountAtomic: requirements.amount,
         payTo: requirements.payTo,
         network: requirements.network,
-        x402Version: 2,
+        x402Version: X402_VERSION,
+        txHash,
+        explorerUrl,
       },
-      payer: (settleResult as Record<string, unknown>)?.payer as string | undefined,
+      payer: settleData?.payer as string | undefined,
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
