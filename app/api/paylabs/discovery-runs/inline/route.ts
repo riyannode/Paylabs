@@ -28,8 +28,6 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import {
   isDelegatedRuntimeEnabled,
   isDelegatedInlineExecutionEnabled,
-  getX402EnabledServices,
-  getPaymentFlags,
 } from "@/lib/paylabs/feature-flags";
 import { isValidExternalTier, DEFAULT_EXTERNAL_TIER } from "@/lib/paylabs/route-tier";
 import type { ExternalRouteTier } from "@/lib/paylabs/route-tier";
@@ -507,16 +505,9 @@ export async function POST(req: NextRequest) {
 
   const discoveryRunId = runRow.id as string;
 
-  // ── x402 enabled: HTTP chain through Brain + macro-node endpoints ──
-  const x402Brain = process.env.PAYLABS_BRAIN_X402_ENABLED === "true";
-  const x402Nodes = process.env.PAYLABS_NODE_X402_ENABLED === "true";
-
-  if (x402Brain || x402Nodes) {
-    return runX402Path(discoveryRunId, goal, userWallet, budgetUsdc, routeTier);
-  }
-
-  // ── Non-x402: run orchestrator directly (in-process) ──────
-  return runInProcessPath(discoveryRunId, goal, userWallet, budgetUsdc, routeTier);
+  // ── x402 orchestration: Brain + macro-node endpoints ────
+  // Fail closed: x402 must be enabled for production
+  return runX402Path(discoveryRunId, goal, userWallet, budgetUsdc, routeTier);
 }
 
 // ─── x402 Path ──────────────────────────────────────────────
@@ -530,9 +521,8 @@ async function runX402Path(
 ): Promise<NextResponse> {
   try {
     // Initialize DCW signer for x402 payment signing
-    const { setDcwSigner, getDcwSigner } = await import("@/lib/paylabs/paid-agent-node");
+    const { setDcwSigner, getDcwSigner, createDcwSigner } = await import("@/lib/paylabs/x402/dcw-signer-adapter");
     if (!getDcwSigner()) {
-      const { createDcwSigner } = await import("@/lib/paylabs/x402/dcw-signer-adapter");
       setDcwSigner(createDcwSigner());
     }
     const dcwSigner = getDcwSigner();
@@ -698,148 +688,4 @@ async function runX402Path(
   }
 }
 
-// ─── Non-x402 Path ──────────────────────────────────────────
 
-async function runInProcessPath(
-  discoveryRunId: string,
-  goal: string,
-  userWallet: string,
-  budgetUsdc: number,
-  routeTier: ExternalRouteTier,
-): Promise<NextResponse> {
-  try {
-    // ── Inject DCW signer if x402 service edges are enabled ──
-    const paymentFlags = getPaymentFlags();
-    const x402Services = getX402EnabledServices();
-    const needsDcwSigner =
-      paymentFlags.agentNanopaymentsEnabled && x402Services.length > 0;
-
-    if (needsDcwSigner) {
-      const { setDcwSigner, getDcwSigner } = await import(
-        "@/lib/paylabs/paid-agent-node"
-      );
-      if (!getDcwSigner()) {
-        const { createDcwSigner } = await import(
-          "@/lib/paylabs/x402/dcw-signer-adapter"
-        );
-        setDcwSigner(createDcwSigner());
-      }
-    }
-
-    const { executeDelegatedDiscoveryRun } = await import(
-      "@/lib/paylabs/delegated-runtime/orchestrator"
-    );
-
-    // Map external tier to delegated tier (same values: easy/normal/advanced)
-    const delegatedTier = routeTier as DelegatedRouteTier;
-
-    const result = await executeDelegatedDiscoveryRun({
-      discoveryRunId,
-      userGoal: goal,
-      userWallet,
-      userBudgetUsdc: budgetUsdc,
-      routeTier: delegatedTier,
-    });
-
-    // ── Update discovery_run with result ───────────────────
-    const completedAt = new Date().toISOString();
-    const newStatus = result.status === "completed"
-      ? result.paymentPlan.length > 0 ? "paid_path_available" : "discovery_only"
-      : "failed";
-
-    // Determine if any service was x402-settled
-    const anySettled = result.serviceEvaluations?.some((e) => e.settled) ?? false;
-    const overallMode = anySettled ? "x402" : "audit_only";
-
-    await supabaseAdmin()
-      .from("paylabs_discovery_runs")
-      .update({
-        status: newStatus,
-        completed_at: completedAt,
-        candidate_count: result.serviceEvaluations?.length || 0,
-        error_summary: result.error ? result.error.slice(0, 500) : null,
-        agent_trace: {
-          execution_origin: "vercel_inline",
-          execution_mode: "inline_delegated",
-          worker_used: false,
-          phases_completed: result.phasesCompleted,
-          brain_planning: result.brainPlanning
-            ? {
-                safe_summary: result.brainPlanning.safe_brain_summary,
-                selected_macro_nodes: result.brainPlanning.selected_macro_nodes,
-                selected_services: result.brainPlanning.selected_services,
-                planned_cost_usdc: result.brainPlanning.planned_cost_usdc,
-              }
-            : null,
-          service_evaluations: result.serviceEvaluations.map((e) => ({
-            service: e.serviceName,
-            status: e.status,
-            summary: e.safeSummary,
-            settled: e.settled,
-            mode: e.mode,
-          })),
-          budget_snapshot: {
-            settled_service_fees_usdc: result.budgetSnapshot.settledServiceFeesUsdc,
-            estimated_service_fees_usdc: result.budgetSnapshot.estimatedServiceFeesUsdc,
-          },
-        },
-      })
-      .eq("id", discoveryRunId);
-
-    // ── Return full result ──────────────────────────────────
-    return NextResponse.json({
-      ok: result.status === "completed",
-      discovery_run_id: discoveryRunId,
-      status: result.status,
-      route_tier: result.routeTier,
-      execution_origin: "vercel_inline",
-      execution_mode: "inline_delegated",
-      worker_used: false,
-      phases_completed: result.phasesCompleted,
-      brain_planning: result.brainPlanning
-        ? {
-            safe_summary: result.brainPlanning.safe_brain_summary,
-            discovery_strategy: result.brainPlanning.discovery_strategy,
-            query_variants: result.brainPlanning.suggested_query_variants,
-            // ── Deterministic quote planning ──
-            selected_macro_nodes: result.brainPlanning.selected_macro_nodes,
-            selected_services: result.brainPlanning.selected_services,
-            max_registry_checks: result.brainPlanning.max_registry_checks,
-            max_source_accesses: result.brainPlanning.max_source_accesses,
-            planned_cost_usdc: result.brainPlanning.planned_cost_usdc,
-            planned_cost_breakdown: result.brainPlanning.planned_cost_breakdown,
-          }
-        : null,
-      payment_plan: result.paymentPlan,
-      safe_progress_summaries: result.safeProgressSummaries,
-      budget_snapshot: result.budgetSnapshot,
-      tiered_summaries: result.tieredSummaries,
-      settled: anySettled,
-      mode: overallMode,
-      error: result.error,
-    });
-  } catch (e: unknown) {
-    // Sanitize: never expose raw stack traces, prompts, or internal details
-    const rawMsg = e instanceof Error ? e.message : String(e);
-    const safeMsg = rawMsg.length > 200 ? rawMsg.slice(0, 200) + "..." : rawMsg;
-
-    // Mark run as failed
-    await supabaseAdmin()
-      .from("paylabs_discovery_runs")
-      .update({
-        status: "failed",
-        completed_at: new Date().toISOString(),
-        error_summary: `Inline execution failed: ${safeMsg}`.slice(0, 500),
-      })
-      .eq("id", discoveryRunId);
-
-    return NextResponse.json(
-      {
-        ok: false,
-        discovery_run_id: discoveryRunId,
-        error: `Inline execution failed: ${safeMsg}`,
-      },
-      { status: 500 }
-    );
-  }
-}

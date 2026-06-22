@@ -1,6 +1,23 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { short, shortUrl, usdc } from "@/lib/utils";
-import { getRecentNanopayments, getRecentBatchSettlements } from "@/lib/paylabs/nanopayment-service";
+
+async function getRecentNanopayments(limit = 50) {
+  const { data } = await supabaseAdmin()
+    .from("paylabs_agent_nanopayments")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return data || [];
+}
+
+async function getRecentBatchSettlements(limit = 25) {
+  const { data } = await supabaseAdmin()
+    .from("paylabs_agent_batch_settlements")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return data || [];
+}
 
 export const dynamic = "force-dynamic";
 
