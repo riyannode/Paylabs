@@ -34,8 +34,14 @@ import type { ExternalRouteTier } from "@/lib/paylabs/route-tier";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 import type { OrchestratorOutput, PaymentGraphEdge, TieredRunSummaries } from "@/lib/paylabs/delegated-runtime/types";
 import { TIER_PHASE_MAP } from "@/lib/paylabs/delegated-runtime/state";
-import { BRAIN_TREASURY_FEE_USDC, getMacroNodeAllocationUsdc } from "@/lib/paylabs/delegated-runtime/node-registry";
+import { getMacroNodeAllocationUsdc } from "@/lib/paylabs/delegated-runtime/node-registry";
+import { FIXED_FEES_USDC } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import type { MacroNodePhase } from "@/lib/paylabs/delegated-runtime/types";
+import {
+  quoteDelegatedRun,
+  assertBudgetOrThrow,
+} from "@/lib/paylabs/delegated-runtime/quote-engine";
+import type { DelegatedRunQuote } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import { randomUUID } from "node:crypto";
 
 // ─── x402 Orchestration via callPaidSeller ──────────────────
@@ -162,7 +168,7 @@ async function runX402Orchestration(params: {
     edgeId: randomUUID(),
     buyer: "run_budget_controller",
     seller: "brain",
-    amountUsdc: BRAIN_TREASURY_FEE_USDC,
+    amountUsdc: FIXED_FEES_USDC.brainTreasury,
     status: "paid",
     nodeType: "brain",
     paymentRef: null,
@@ -408,8 +414,8 @@ function buildX402Output(
       userBudgetUsdc,
       userBudgetUsedUsdc,
       remainingBudgetUsdc: Math.max(0, userBudgetUsdc - userBudgetUsedUsdc),
-      treasuryFeeUsdc: BRAIN_TREASURY_FEE_USDC,
-      macroAllocationUsdc: userBudgetUsedUsdc - BRAIN_TREASURY_FEE_USDC,
+      treasuryFeeUsdc: FIXED_FEES_USDC.brainTreasury,
+      macroAllocationUsdc: userBudgetUsedUsdc - FIXED_FEES_USDC.brainTreasury,
       childPaymentVolumeUsdc,
       grossPaymentVolumeUsdc: userBudgetUsedUsdc + childPaymentVolumeUsdc,
     },
@@ -507,12 +513,13 @@ export async function POST(req: NextRequest) {
 
   // ── x402 orchestration: Brain + macro-node endpoints ────
   // Fail closed: x402 must be enabled for production
-  return runX402Path(discoveryRunId, goal, userWallet, budgetUsdc, routeTier);
+  return runX402Path(req, discoveryRunId, goal, userWallet, budgetUsdc, routeTier);
 }
 
 // ─── x402 Path ──────────────────────────────────────────────
 
 async function runX402Path(
+  req: NextRequest,
   discoveryRunId: string,
   goal: string,
   userWallet: string,
@@ -591,6 +598,212 @@ async function runX402Path(
       throw new Error(`config_error: missing tier x402 envs: ${missingTierEnv.join(", ")}`);
     }
 
+    // ── Preflight quote: deterministic budget guardrail ──────
+    // Compute quote BEFORE any x402 payment. Fail closed if over budget.
+    const quote = quoteDelegatedRun({
+      routeTier: routeTier as DelegatedRouteTier,
+      userBudgetUsdc: budgetUsdc,
+      maxRegistryChecks: 0,
+      maxSourceAccesses: 0,
+    });
+
+    try {
+      assertBudgetOrThrow(quote);
+    } catch (budgetErr) {
+      const budgetMsg = budgetErr instanceof Error ? budgetErr.message : "budget_exceeded";
+      await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .update({
+          status: "failed",
+          completed_at: new Date().toISOString(),
+          error_summary: budgetMsg.slice(0, 500),
+        })
+        .eq("id", discoveryRunId);
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: budgetMsg,
+          quote: {
+            routeTier: quote.routeTier,
+            plannedCostUsdc: quote.plannedCostUsdc,
+            userBudgetUsdc: quote.userBudgetUsdc,
+            remainingPlannedBudgetUsdc: quote.remainingPlannedBudgetUsdc,
+            budgetStatus: quote.budgetStatus,
+            expectedPaymentEdges: quote.expectedPaymentEdges,
+          },
+        },
+        { status: 400 }
+      );
+    }
+
+    // ── Customer Entry Payment Gate ──────────────────────────
+    // Customer (Circle User-Controlled Wallet) must sign ONE x402 entry
+    // payment before internal delegated runtime starts.
+    //
+    // Flow:
+    //   1st request (no payment) → 402 + PAYMENT-REQUIRED challenge
+    //   2nd request (with payment) → verify + settle → proceed
+    //
+    // Internal edges remain unchanged (platform DCW wallets).
+
+    const {
+      buildCustomerEntryChallenge,
+      verifyAndSettleCustomerEntry,
+      buildCustomerEntryPaymentData,
+    } = await import("@/lib/paylabs/x402/customer-entry-payment");
+
+    const customerPaymentSignature = req.headers.get("payment-signature")
+      || req.headers.get("x-payment");
+
+    if (!customerPaymentSignature) {
+      // Return HTTP 402 with x402 challenge for customer entry payment
+      const { headerValue } = buildCustomerEntryChallenge(
+        quote.plannedCostUsdc,
+        `${await resolveAppUrl()}/api/paylabs/discovery-runs/inline?runId=${discoveryRunId}&tier=${routeTier}`,
+      );
+
+      // Store pending entry payment status
+      // Merge: preserve existing agent_trace, add entry_payment
+      const { data: existingTrace } = await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .select("agent_trace")
+        .eq("id", discoveryRunId)
+        .single();
+      await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .update({
+          entry_payment_status: "awaiting_payment",
+          agent_trace: {
+            ...((existingTrace?.agent_trace as Record<string, unknown>) || {}),
+            entry_payment: {
+              status: "awaiting_payment",
+              amount_usdc: quote.plannedCostUsdc,
+              tier: routeTier,
+            },
+          },
+        })
+        .eq("id", discoveryRunId);
+
+      return new NextResponse(
+        JSON.stringify({
+          ok: false,
+          error: "payment_required",
+          message: `Customer entry payment of ${quote.plannedCostUsdc} USDC required for ${routeTier} tier`,
+          quote: {
+            routeTier: quote.routeTier,
+            plannedCostUsdc: quote.plannedCostUsdc,
+            expectedPaymentEdges: quote.expectedPaymentEdges,
+          },
+        }),
+        {
+          status: 402,
+          headers: {
+            "Content-Type": "application/json",
+            "PAYMENT-REQUIRED": headerValue,
+            "x-payment-required": headerValue,
+          },
+        }
+      );
+    }
+
+    // ── Verify + settle customer entry payment ─────────────
+    const entryResult = await verifyAndSettleCustomerEntry(
+      customerPaymentSignature,
+      quote.plannedCostUsdc,
+    );
+
+    // Blocker 1: fail closed if payer != userWallet
+    if (entryResult.ok && entryResult.settled) {
+      const payer = entryResult.payer?.toLowerCase();
+      const claimedUserWallet = userWallet.toLowerCase();
+      if (!payer || payer !== claimedUserWallet) {
+        await supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .update({
+            status: "failed",
+            completed_at: new Date().toISOString(),
+            error_summary: `entry_payment_payer_mismatch: expected=${claimedUserWallet} got=${payer || "null"}`.slice(0, 500),
+            entry_payment_status: "payer_mismatch",
+          })
+          .eq("id", discoveryRunId);
+        return NextResponse.json(
+          { ok: false, error: "Entry payment payer does not match claimed user wallet" },
+          { status: 403 }
+        );
+      }
+    }
+
+    if (!entryResult.ok || !entryResult.settled) {
+      const entryErrorMsg = entryResult.error || "Entry payment verification failed";
+
+      await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .update({
+          status: "failed",
+          completed_at: new Date().toISOString(),
+          error_summary: `entry_payment_failed: ${entryErrorMsg}`.slice(0, 500),
+        })
+        .eq("id", discoveryRunId);
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Entry payment failed: ${entryErrorMsg}`,
+          entry_payment: {
+            status: "failed",
+            amount_usdc: quote.plannedCostUsdc,
+          },
+        },
+        { status: 402 }
+      );
+    }
+
+    // ── Entry payment settled — store safe metadata ─────────
+    const entryPaymentData = buildCustomerEntryPaymentData(
+      userWallet,
+      {
+        routeTier: routeTier as DelegatedRouteTier,
+        plannedCostUsdc: quote.plannedCostUsdc,
+        expectedPaymentEdges: quote.expectedPaymentEdges,
+      },
+      entryResult,
+    );
+
+    // Blocker 3: merge — preserve existing agent_trace, add entry_payment
+    const { data: traceBeforeSettle } = await supabaseAdmin()
+      .from("paylabs_discovery_runs")
+      .select("agent_trace")
+      .eq("id", discoveryRunId)
+      .single();
+
+    await supabaseAdmin()
+      .from("paylabs_discovery_runs")
+      .update({
+        customer_wallet_type: entryPaymentData.customer_wallet_type,
+        customer_auth_method: entryPaymentData.customer_auth_method ?? null,
+        entry_payment_status: entryPaymentData.entry_payment_status,
+        entry_payment_amount_usdc: entryPaymentData.entry_payment_amount_usdc,
+        entry_payment_tx_hash: entryPaymentData.entry_payment_tx_hash,
+        entry_payment_explorer_url: entryPaymentData.entry_payment_explorer_url,
+        agent_trace: {
+          ...((traceBeforeSettle?.agent_trace as Record<string, unknown>) || {}),
+          entry_payment: {
+            status: entryPaymentData.entry_payment_status,
+            amount_usdc: entryPaymentData.entry_payment_amount_usdc,
+            tx_hash: entryPaymentData.entry_payment_tx_hash,
+            explorer_url: entryPaymentData.entry_payment_explorer_url,
+            customer_wallet_type: entryPaymentData.customer_wallet_type,
+            tier: entryPaymentData.selected_tier,
+            planned_cost_usdc: entryPaymentData.quote_planned_cost_usdc,
+            expected_payment_edges: entryPaymentData.quote_expected_payment_edges,
+            payer: entryResult.payer ?? null,
+          },
+        },
+      })
+      .eq("id", discoveryRunId);
+
+    // ── Run internal delegated runtime (entry payment verified) ──
     const result = await runX402Orchestration({
       discoveryRunId,
       userGoal: goal,
@@ -711,9 +924,30 @@ async function runX402Path(
       budget_snapshot: result.budgetSnapshot,
       tiered_summaries: result.tieredSummaries,
       exit_output: exitOutput,
+      quote: {
+        routeTier: quote.routeTier,
+        expectedPaymentEdges: quote.expectedPaymentEdges,
+        plannedCostUsdc: quote.plannedCostUsdc,
+        userBudgetUsdc: quote.userBudgetUsdc,
+        remainingPlannedBudgetUsdc: quote.remainingPlannedBudgetUsdc,
+        budgetStatus: quote.budgetStatus,
+        macroNodeFeesUsdc: quote.macroNodeFeesUsdc,
+        serviceEdgeFeesUsdc: quote.serviceEdgeFeesUsdc,
+        registryCheckFeesUsdc: quote.registryCheckFeesUsdc,
+        sourceAccessFeesUsdc: quote.sourceAccessFeesUsdc,
+        locked: quote.locked,
+      },
       receipt_ready: exitOutput.receipt_ready && !visibilityError,
       settled: fullySettled,
       mode: fullySettled ? "x402" : "x402_failed",
+      entry_payment: {
+        status: "paid",
+        amount_usdc: quote.plannedCostUsdc,
+        tx_hash: entryResult.paymentMeta?.txHash ?? null,
+        explorer_url: entryResult.paymentMeta?.explorerUrl ?? null,
+        customer_wallet: userWallet,
+        customer_wallet_type: entryPaymentData.customer_wallet_type,
+      },
       error: result.error,
       visibility_error: visibilityError,
     });
