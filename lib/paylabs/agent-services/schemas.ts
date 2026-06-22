@@ -281,9 +281,9 @@ const INPUT_SCHEMA_MAP: Partial<Record<ServiceName, z.ZodType<unknown>>> = {
   query_builder: QueryBuilderInput,
   signal_scout: SignalScoutInput,
   intent_matcher: IntentMatcherInput,
-  source_verifier: SourceVerifierInput,
-  value_allocator: ValueAllocatorInput,
-  trust_verifier: TrustVerifierInput,
+  source_verifier: BatchSourceVerifierInput,
+  value_allocator: BatchValueAllocatorInput,
+  trust_verifier: BatchTrustVerifierInput,
   payment_decider: PaymentDeciderInput,
   payment_router: PaymentRouterInput,
 };
