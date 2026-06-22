@@ -11,7 +11,12 @@
  *   POST ?action=gateway-balance  — read Gateway deposited balance
  *
  * Security: userToken comes from frontend (set during social login auth).
- * CIRCLE_API_KEY stays server-side via lib/paylabs/ucw.ts.
+ * SECURITY: CIRCLE_API_KEY stays server-side via lib/paylabs/ucw.ts.
+ *
+ * TODO(#27-prod): userToken is received from request body. This is acceptable for
+ * the memory-only prototype but production must use httpOnly signed sessions or
+ * server-side session boundary. Sensitive routes (sign-challenge, approve-deposit)
+ * should validate session ownership before calling Circle API.
  */
 
 import { NextRequest, NextResponse } from "next/server";
