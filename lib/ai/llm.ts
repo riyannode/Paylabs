@@ -58,6 +58,16 @@ const AGENT_KEY_MAP: Record<string, string> = {
   payment_quote_agent: "PAYMENT_QUOTE",
   payment_executor: "PAYMENT_EXECUTOR",
   receipt_auditor: "RECEIPT_AUDITOR",
+  // ── Delegated runtime agent keys ──
+  brain_planner: "BRAIN_PLANNER",
+  intent_planner: "INTENT_PLANNER",
+  query_builder: "QUERY_BUILDER",
+  signal_scout: "SIGNAL_SCOUT",
+  intent_matcher: "INTENT_MATCHER",
+  source_verifier: "SOURCE_VERIFIER",
+  value_allocator: "VALUE_ALLOCATOR",
+  trust_verifier: "TRUST_VERIFIER",
+  // payment_decider and payment_router are NOT LLM agents
 };
 
 // ─── Per-config cache ──────────────────────────────────────────

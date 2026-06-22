@@ -22,7 +22,8 @@
  */
 
 import { createRequire } from "node:module";
-import type { Address, Hex } from "viem";
+import { getAddress, type Address, type Hex } from "viem";
+import { X402_VERSION } from "./seller-challenge";
 
 // CJS interop — @circle-fin/x402-batching has CJS entry
 const _require = createRequire(import.meta.url);
@@ -101,6 +102,10 @@ export interface X402BuyerCallResult {
     payTo: string;
     network: string;
     x402Version: number;
+    /** Transaction hash if seller returned it */
+    txHash?: string | null;
+    /** Block explorer URL if txHash available */
+    explorerUrl?: string | null;
   };
   /** Error message if failed */
   error?: string;
@@ -257,10 +262,24 @@ export async function callPaidSeller(
     return { ok: false, error: `Buyer wallet has invalid address: ${buyerAddress}` };
   }
 
+  // Checksum the address — DCW API may return lowercase, but
+  // BatchEvmScheme.signAuthorization() uses getAddress() which checksums.
+  // The signed message must use the same checksummed form.
+  let checksummedBuyerAddress: Address;
+  try {
+    checksummedBuyerAddress = getAddress(buyerAddress);
+  } catch {
+    return { ok: false, error: `Buyer wallet address is not a valid EVM address: ${buyerAddress}` };
+  }
+
   // ── Step 5: Create payment payload via BatchEvmScheme ────
 
   const signer: BatchEvmSignerLike = {
-    address: buyerAddress.toLowerCase() as Address,
+    // MUST be checksummed — BatchEvmScheme.signAuthorization() calls
+    // getAddress() on signer.address, producing a checksummed from-address
+    // in the EIP-712 message. If we pass lowercase, the signed message
+    // differs from what Gateway verifies.
+    address: checksummedBuyerAddress,
     signTypedData: async (params) => {
       const signature = await dcwSigner.signTypedData({
         walletId: buyerWalletId,
@@ -284,14 +303,14 @@ export async function callPaidSeller(
   let paymentPayload: { x402Version: number; payload: unknown };
   try {
     paymentPayload = await scheme.createPaymentPayload(
-      challenge.x402Version || 2,
+      challenge.x402Version || X402_VERSION,
       {
         scheme: gatewayReq.scheme,
         network: gatewayReq.network,
         asset: gatewayReq.asset,
         amount: gatewayReq.amount,
         payTo: gatewayReq.payTo,
-        maxTimeoutSeconds: gatewayReq.maxTimeoutSeconds || 604900,
+        maxTimeoutSeconds: gatewayReq.maxTimeoutSeconds || 604800,
         extra: gatewayReq.extra,
       }
     );
@@ -305,10 +324,27 @@ export async function callPaidSeller(
   }
 
   // ── Step 6: Encode payment signature (base64) ────────────
+  // Circle Gateway verify expects {x402Version, payload, resource, accepted}
+  // BatchEvmScheme only returns {x402Version, payload} — we must add resource + accepted
+  const fullPaymentPayload = {
+    ...paymentPayload,
+    resource: (challenge as unknown as Record<string, unknown>).resource,
+    accepted: gatewayReq,
+  };
 
   const paymentSignatureValue = Buffer.from(
-    JSON.stringify(paymentPayload)
+    JSON.stringify(fullPaymentPayload)
   ).toString("base64");
+
+  // Safe diagnostic: log payment payload shape (no raw signature)
+  console.log("[buyer-transport] payment payload shape:", {
+    x402Version: paymentPayload.x402Version,
+    hasPayload: !!paymentPayload.payload,
+    hasResource: !!(fullPaymentPayload as Record<string, unknown>).resource,
+    hasAccepted: !!(fullPaymentPayload as Record<string, unknown>).accepted,
+    sellerUrl,
+    buyerAddress: checksummedBuyerAddress,
+  });
 
   // ── Step 7: Retry with payment ───────────────────────────
 
@@ -358,11 +394,19 @@ export async function callPaidSeller(
     retryData = await retryResp.text().catch(() => null);
   }
 
+  const errorMsg = !retryResp.ok
+    ? `Seller returned HTTP ${retryResp.status} after payment` +
+      (retryData && typeof retryData === "object" && "error" in retryData
+        ? `: ${(retryData as Record<string, unknown>).error}`
+        : "")
+    : undefined;
+
   return {
     ok: retryResp.ok,
     status: retryResp.status,
     data: retryData,
-    paymentMetadata: extractPaymentMetadata(gatewayReq, paymentPayload),
+    error: errorMsg,
+    paymentMetadata: extractPaymentMetadata(gatewayReq, paymentPayload, retryData),
   };
 }
 
@@ -371,16 +415,26 @@ export async function callPaidSeller(
 /**
  * Extract safe payment metadata for audit trail.
  * Never stores raw signatures or authorization payloads.
+ * Preserves txHash and explorerUrl from seller response if returned.
  */
 function extractPaymentMetadata(
   requirements: PaymentRequirementsLike,
-  payload: { x402Version: number; payload: unknown }
+  payload: { x402Version: number; payload: unknown },
+  sellerResponse?: unknown
 ): X402BuyerCallResult["paymentMetadata"] {
+  // Extract txHash/explorerUrl from seller response if present
+  const sellerData = sellerResponse as Record<string, unknown> | null | undefined;
+  const sellerMeta = sellerData?.paymentMeta as Record<string, unknown> | undefined;
+  const txHash = sellerMeta?.txHash as string | null | undefined;
+  const explorerUrl = sellerMeta?.explorerUrl as string | null | undefined;
+
   return {
     amountAtomic: requirements.amount,
     payTo: requirements.payTo,
     network: requirements.network,
     x402Version: payload.x402Version,
+    txHash: txHash ?? null,
+    explorerUrl: explorerUrl ?? null,
   };
 }
 

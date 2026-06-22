@@ -1,6 +1,7 @@
 // POST /api/paylabs/payments/gateway-deposit
 import { NextRequest, NextResponse } from "next/server";
 import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 
 const _require = createRequire(import.meta.url);
 const { initiateDeveloperControlledWalletsClient } = _require("@circle-fin/developer-controlled-wallets");
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
       abiFunctionSignature: "approve(address,uint256)",
       abiParameters: [GATEWAY_WALLET, amountAtomic],
       fee: { type: "level", config: { feeLevel: "MEDIUM" } },
-      idempotencyKey: `gw-approve-${body.walletId}-${Date.now()}`,
+      idempotencyKey: randomUUID(),
     });
 
     const approveTx = approveResp.data;
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
       abiFunctionSignature: "deposit(address,uint256)",
       abiParameters: [USDC_ARC, amountAtomic],
       fee: { type: "level", config: { feeLevel: "MEDIUM" } },
-      idempotencyKey: `gw-deposit-${body.walletId}-${Date.now()}`,
+      idempotencyKey: randomUUID(),
     });
 
     const depositTx = depositResp.data;

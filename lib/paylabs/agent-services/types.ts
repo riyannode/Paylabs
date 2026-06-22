@@ -34,6 +34,10 @@ export interface ServiceConfig {
   allowedBuyers: string[];
   outputSchemaName: string;
   isActive: boolean;
+  /** Env var name for seller wallet address (payTo). Required for x402-enabled services. */
+  sellerWalletAddressEnv?: string;
+  /** Env var name for buyer DCW wallet ID. Required for x402-enabled services. */
+  buyerWalletIdEnv?: string;
 }
 
 // ─── Service Handler Input/Output ────────────────────────────
