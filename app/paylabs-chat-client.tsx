@@ -213,12 +213,30 @@ async function signWithEoa(params: {
 async function signWithUcw(params: {
   challenge: Record<string, unknown>;
   walletAddress: string;
-  ucwSdk: { execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void };
+  ucwSdk: { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void };
+  auth?: { userToken: string; encryptionKey: string } | null;
 }): Promise<string> {
-  const { challenge, walletAddress, ucwSdk } = params;
+  const { challenge, walletAddress, ucwSdk, auth } = params;
   const { domain, types, message, requirement, x402Version } = buildEip712Params(challenge, walletAddress);
 
-  // Backend reads walletId/userToken from httpOnly session cookie
+  // Ensure session exists — re-create if cookie expired
+  const checkResp = await fetch("/api/paylabs/wallet/ucw?action=session-restore", { method: "POST" });
+  if (checkResp.status === 401 && auth) {
+    // Session expired — recreate and re-save auth
+    const createResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST" });
+    if (!createResp.ok) throw new Error("Failed to re-create session");
+    const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userToken: auth.userToken, encryptionKey: auth.encryptionKey }),
+    });
+    if (!saveResp.ok) throw new Error("Failed to restore session auth");
+  }
+
+  // Backend reads walletId/userToken from httpOnly session
+  await ucwSdk.getDeviceId();
+  if (auth) ucwSdk.setAuthentication({ userToken: auth.userToken, encryptionKey: auth.encryptionKey });
+
   const signData = {
     domain,
     types: {
@@ -997,7 +1015,8 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
             paymentSignature = await signWithUcw({
               challenge,
               walletAddress: walletInfo.address,
-              ucwSdk: ucwSdkRef.current as { execute: (id: string, cb: (err: unknown, res: unknown) => void) => void },
+              ucwSdk: ucwSdkRef.current as { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (id: string, cb: (err: unknown, res: unknown) => void) => void },
+              auth: ucwAuthRef.current,
             });
           } else {
             // EOA fallback
