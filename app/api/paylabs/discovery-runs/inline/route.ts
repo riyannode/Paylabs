@@ -36,6 +36,11 @@ import type { OrchestratorOutput, PaymentGraphEdge, TieredRunSummaries } from "@
 import { TIER_PHASE_MAP } from "@/lib/paylabs/delegated-runtime/state";
 import { BRAIN_TREASURY_FEE_USDC, getMacroNodeAllocationUsdc } from "@/lib/paylabs/delegated-runtime/node-registry";
 import type { MacroNodePhase } from "@/lib/paylabs/delegated-runtime/types";
+import {
+  quoteDelegatedRun,
+  assertBudgetOrThrow,
+} from "@/lib/paylabs/delegated-runtime/quote-engine";
+import type { DelegatedRunQuote } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import { randomUUID } from "node:crypto";
 
 // ─── x402 Orchestration via callPaidSeller ──────────────────
@@ -591,6 +596,45 @@ async function runX402Path(
       throw new Error(`config_error: missing tier x402 envs: ${missingTierEnv.join(", ")}`);
     }
 
+    // ── Preflight quote: deterministic budget guardrail ──────
+    // Compute quote BEFORE any x402 payment. Fail closed if over budget.
+    const quote = quoteDelegatedRun({
+      routeTier: routeTier as DelegatedRouteTier,
+      userBudgetUsdc: budgetUsdc,
+      maxRegistryChecks: 0,
+      maxSourceAccesses: 0,
+    });
+
+    try {
+      assertBudgetOrThrow(quote);
+    } catch (budgetErr) {
+      const budgetMsg = budgetErr instanceof Error ? budgetErr.message : "budget_exceeded";
+      await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .update({
+          status: "failed",
+          completed_at: new Date().toISOString(),
+          error_summary: budgetMsg.slice(0, 500),
+        })
+        .eq("id", discoveryRunId);
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: budgetMsg,
+          quote: {
+            routeTier: quote.routeTier,
+            plannedCostUsdc: quote.plannedCostUsdc,
+            userBudgetUsdc: quote.userBudgetUsdc,
+            remainingPlannedBudgetUsdc: quote.remainingPlannedBudgetUsdc,
+            budgetStatus: quote.budgetStatus,
+            expectedPaymentEdges: quote.expectedPaymentEdges,
+          },
+        },
+        { status: 400 }
+      );
+    }
+
     const result = await runX402Orchestration({
       discoveryRunId,
       userGoal: goal,
@@ -711,6 +755,19 @@ async function runX402Path(
       budget_snapshot: result.budgetSnapshot,
       tiered_summaries: result.tieredSummaries,
       exit_output: exitOutput,
+      quote: {
+        routeTier: quote.routeTier,
+        expectedPaymentEdges: quote.expectedPaymentEdges,
+        plannedCostUsdc: quote.plannedCostUsdc,
+        userBudgetUsdc: quote.userBudgetUsdc,
+        remainingPlannedBudgetUsdc: quote.remainingPlannedBudgetUsdc,
+        budgetStatus: quote.budgetStatus,
+        macroNodeFeesUsdc: quote.macroNodeFeesUsdc,
+        serviceEdgeFeesUsdc: quote.serviceEdgeFeesUsdc,
+        registryCheckFeesUsdc: quote.registryCheckFeesUsdc,
+        sourceAccessFeesUsdc: quote.sourceAccessFeesUsdc,
+        locked: quote.locked,
+      },
       receipt_ready: exitOutput.receipt_ready && !visibilityError,
       settled: fullySettled,
       mode: fullySettled ? "x402" : "x402_failed",
