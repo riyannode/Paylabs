@@ -109,8 +109,23 @@ PayLabs uses x402 for both the user entry payment and internal agent/service pay
 | child service |  | child service |  | child service |
 | PAID          |  | PAID          |  | PAID          |
 +---------------+  +---------------+  +---------------+
+|                        |                         |
++------------------------+-------------------------+
+                         |
+                         v
+              +----------+----------+
+              | RSSHub source layer |
+              | safe source context |
+              +----------+----------+
+                         |
+                         v
+              +----------+----------+
+              | receipts + events   |
+              | planned vs settled  |
+              +---------------------+
 
-Every selected macro node can be paid with brain.
+
+Every selected macro node can be paid x402 with brain.
 Every selected child service can be paid x402 with macro node.
 Every paid edge is written to the payment graph, service payment events, and receipts.
 ```
