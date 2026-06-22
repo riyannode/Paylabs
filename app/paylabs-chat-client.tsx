@@ -505,7 +505,12 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
               await finalizeWalletAfterLogin(saveData, sdk, cbs, planned);
             });
           ucwSdkRef.current = sdk;
-          await sdk.getDeviceId();
+          // NOTE: do NOT call sdk.getDeviceId() here!
+          // The constructor's setupInstance() already calls execSocialLoginStatusCheck()
+          // which calls verifyTokenViaService() and appends the OAuth iframe.
+          // Calling getDeviceId() would MOVE the same iframe element to a different
+          // route, killing the OAuth verification. It also unsubscribes the message
+          // handler on timeout, preventing the onLoginComplete callback from ever firing.
 
           // Timeout: if callback didn't fire in 10s, the OAuth detection failed
           setTimeout(() => {
