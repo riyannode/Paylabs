@@ -177,8 +177,14 @@ export function createServiceNode(
         sellerServiceName: serviceName,
         amountUsdc: result.safeCallMeta.costUsdc,
         status: "executed",
-        paymentRef: null, // no real paymentId from GatewayWalletBatched
-        settlementRef: realTxHash || null, // real txHash if available
+        layer: options?.paymentLayer ?? "macro_to_child",
+        accountingRole: "macro_internal_child_spend",
+        sourceOfFunds: "macro_allocation",
+        paymentMode: options?.paymentSchemeOverride ?? "circle_gateway_wallet_batched_per_child_fallback",
+        paymentRef: null,
+        settlementRef: realTxHash || null,
+        txHash: realTxHash ?? null,
+        explorerUrl: result.paymentMeta?.explorerUrl as string | null ?? null,
       });
     }
 

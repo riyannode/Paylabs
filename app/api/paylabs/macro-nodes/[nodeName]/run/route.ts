@@ -195,6 +195,9 @@ async function executeMacroNode(
       for (const ev of graphResult.serviceEvaluations) {
         addServiceEvaluation(state, ev);
       }
+      for (const pe of graphResult.paymentEdges) {
+        state.paymentEdges.push(pe);
+      }
       result = { ok: graphResult.ok, rankedCandidates: graphResult.rankedCandidates, easySummary: graphResult.easySummary };
 
     } else if (nodeName === "payment_decision") {
@@ -214,6 +217,9 @@ async function executeMacroNode(
       for (const ev of graphResult.serviceEvaluations) {
         addServiceEvaluation(state, ev);
       }
+      for (const pe of graphResult.paymentEdges) {
+        state.paymentEdges.push(pe);
+      }
       result = { ok: graphResult.ok, approvedItems: graphResult.approvedItems, skippedItems: graphResult.skippedItems, normalSummary: graphResult.normalSummary };
 
     } else if (nodeName === "settlement_memory") {
@@ -232,6 +238,9 @@ async function executeMacroNode(
       });
       for (const ev of graphResult.serviceEvaluations) {
         addServiceEvaluation(state, ev);
+      }
+      for (const pe of graphResult.paymentEdges) {
+        state.paymentEdges.push(pe);
       }
       result = { ok: graphResult.ok, routedItems: graphResult.routedItems, failedItems: graphResult.failedItems, advancedSummary: graphResult.advancedSummary };
     }
@@ -260,6 +269,14 @@ async function executeMacroNode(
         seller: e.sellerServiceName,
         amountUsdc: e.amountUsdc,
         status: e.status,
+        layer: e.layer ?? null,
+        accountingRole: e.accountingRole ?? null,
+        sourceOfFunds: e.sourceOfFunds ?? null,
+        paymentMode: e.paymentMode ?? null,
+        paymentRef: e.paymentRef ?? null,
+        settlementRef: e.settlementRef ?? null,
+        txHash: e.txHash ?? null,
+        explorerUrl: e.explorerUrl ?? null,
       })),
     });
   } catch (e: unknown) {
