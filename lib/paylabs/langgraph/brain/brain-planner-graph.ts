@@ -147,6 +147,7 @@ Analyze this goal and produce a structured execution plan.`,
         max_source_accesses: data.max_source_accesses,
         planned_cost_usdc: 0,
         planned_cost_breakdown: {
+          brain_treasury_usdc: 0,
           macro_node_fees_usdc: 0,
           service_edge_fees_usdc: 0,
           registry_check_fees_usdc: 0,

@@ -10,17 +10,14 @@
 
 import type { MacroNodePhase } from "./types";
 import type { ServiceName } from "../agent-services/types";
+import { FIXED_FEES_USDC } from "./quote-engine";
 
 // ─── Constants ───────────────────────────────────────────────
 
-/** Controller/user → Brain treasury payment */
-export const BRAIN_TREASURY_FEE_USDC = 0.000003;
-
-/** Brain → macro-node base fee (excludes child budget) */
-export const MACRO_NODE_FEE_USDC = 0.000001;
-
-/** Each child service costs 0.000001 USDC */
-export const CHILD_SERVICE_FEE_USDC = 0.000001;
+/** Re-export from quote-engine (single source of truth) */
+export const BRAIN_TREASURY_FEE_USDC = FIXED_FEES_USDC.brainTreasury;
+export const MACRO_NODE_FEE_USDC = FIXED_FEES_USDC.macroNode;
+export const CHILD_SERVICE_FEE_USDC = FIXED_FEES_USDC.serviceEdge;
 
 // ─── Types ───────────────────────────────────────────────────
 

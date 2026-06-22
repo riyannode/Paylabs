@@ -17,9 +17,8 @@ import type {
 import type { ServiceName } from "../agent-services/types";
 import {
   TIER_PHASE_MAP,
-  TIER_SERVICE_PRESETS,
-  SERVICE_MACRO_MAP,
   FIXED_FEES_USDC,
+  quoteDelegatedRun,
 } from "./quote-engine";
 
 // ─── Re-exports for backward compatibility ───────────────────
@@ -41,40 +40,27 @@ export function validateAndLockExecutionPlan(
   maxRegistryChecks: number,
   maxSourceAccesses: number,
 ): ExecutionPlan {
-  const allowedPhases = TIER_PHASE_MAP[tier as keyof typeof TIER_PHASE_MAP] || TIER_PHASE_MAP.easy;
-  const validMacroNodes = selectedMacroNodes.filter((n) => allowedPhases.includes(n));
-  const presetServices = TIER_SERVICE_PRESETS[tier as keyof typeof TIER_SERVICE_PRESETS] || TIER_SERVICE_PRESETS.easy;
+  const routeTier = (tier as keyof typeof TIER_PHASE_MAP) || "easy";
 
-  const servicesByMacroNode: Record<MacroNodePhase, ServiceName[]> = {
-    discovery_planner: [],
-    payment_decision: [],
-    settlement_memory: [],
-  };
-  for (const svc of presetServices) {
-    const macroNode = SERVICE_MACRO_MAP[svc];
-    if (macroNode && validMacroNodes.includes(macroNode)) {
-      servicesByMacroNode[macroNode].push(svc);
-    }
-  }
-
-  const macro_node_fees_usdc = validMacroNodes.length * FIXED_FEES_USDC.macroNode;
-  const service_edge_fees_usdc = presetServices.length * FIXED_FEES_USDC.serviceEdge;
-  const registry_check_fees_usdc = maxRegistryChecks * FIXED_FEES_USDC.registryCheck;
-  const source_access_fees_usdc = maxSourceAccesses * FIXED_FEES_USDC.sourceAccess;
-  const plannedCostUsdc =
-    macro_node_fees_usdc + service_edge_fees_usdc +
-    registry_check_fees_usdc + source_access_fees_usdc;
+  // Delegate to quote-engine (single source of truth for pricing)
+  const quote = quoteDelegatedRun({
+    routeTier,
+    userBudgetUsdc: Infinity, // no budget check here — just cost computation
+    maxRegistryChecks,
+    maxSourceAccesses,
+  });
 
   return {
-    selectedMacroNodes: validMacroNodes,
-    selectedServices: presetServices,
-    servicesByMacroNode,
-    plannedCostUsdc,
+    selectedMacroNodes: quote.selectedMacroNodes,
+    selectedServices: quote.selectedServices,
+    servicesByMacroNode: quote.servicesByMacroNode,
+    plannedCostUsdc: quote.plannedCostUsdc,
     plannedCostBreakdown: {
-      macro_node_fees_usdc,
-      service_edge_fees_usdc,
-      registry_check_fees_usdc,
-      source_access_fees_usdc,
+      brain_treasury_usdc: FIXED_FEES_USDC.brainTreasury,
+      macro_node_fees_usdc: quote.macroNodeFeesUsdc,
+      service_edge_fees_usdc: quote.serviceEdgeFeesUsdc,
+      registry_check_fees_usdc: quote.registryCheckFeesUsdc,
+      source_access_fees_usdc: quote.sourceAccessFeesUsdc,
     },
     locked: true,
   };
