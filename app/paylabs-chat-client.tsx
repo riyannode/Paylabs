@@ -396,6 +396,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [ucwWalletId, setUcwWalletId] = useState<string | null>(null);
   const [walletCopied, setWalletCopied] = useState(false);
   const ucwSdkRef = useRef<unknown>(null); // W3SSdk instance
+  const ucwAuthRef = useRef<{ userToken: string; encryptionKey: string } | null>(null);
 
   // Debug log — gated behind env var, stripped from production
   const ucwDebug = process.env.NEXT_PUBLIC_PAYLABS_UCW_DEBUG === "1";
@@ -438,6 +439,26 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           const balance = await fetchSessionBalance();
           setUcwBalance(balance);
           setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+          return;
+        }
+
+        // If userToken exists but wallet was never finalized → re-run finalize
+        if (data.hasUserToken && (!data.walletId || !data.walletAddress)) {
+          dbg("User token exists but no wallet — attempting finalize");
+          // Call session-finalize-wallet to check if wallet exists now
+          const finResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST" });
+          if (finResp.ok) {
+            const fin = (await finResp.json()) as { walletId: string; walletAddress: string; usdc: string; gateway: string };
+            setUcwWalletId(fin.walletId);
+            setWalletInfo({ address: fin.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
+            setUcwBalance({ usdc: fin.usdc ?? "0", gateway: fin.gateway ?? "0" });
+            setWalletState(parseFloat(fin.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+            return;
+          }
+          // If finalize fails (no wallets yet), destroy stale session and start fresh
+          dbg("Finalize failed — destroying session for fresh start");
+          fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST" }).catch(() => {});
+          setWalletState("not_connected");
           return;
         }
 
@@ -501,6 +522,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
                 return;
               }
               const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
+              ucwAuthRef.current = { userToken, encryptionKey };
               // Clear OAuth hash from URL to avoid re-processing on next visit
               if (window.location.hash) window.history.replaceState(null, "", window.location.pathname + window.location.search);
               dbg("Login token obtained, saving to session...");
@@ -645,6 +667,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
             return;
           }
           const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
+          ucwAuthRef.current = { userToken, encryptionKey };
           // Save login to server session + finalize
           const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
             method: "POST",
@@ -859,21 +882,25 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         deposit: { challengeId: string };
       };
 
-      const sdk = ucwSdkRef.current as { execute: (id: string, cb: (err: unknown, res: unknown) => void) => void };
+      const sdk = ucwSdkRef.current as { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (id: string, cb: (err: unknown, res: unknown) => void) => void };
       if (!sdk) throw new Error("UCW SDK not initialized");
 
+      // Per Circle docs: must call getDeviceId + setAuthentication before execute
+      await sdk.getDeviceId();
+      const auth = ucwAuthRef.current;
+      if (auth) sdk.setAuthentication({ userToken: auth.userToken, encryptionKey: auth.encryptionKey });
+
+      const execErr = (err: unknown) => {
+        const msg = err instanceof Error ? err.message : (err as Record<string, string>)?.message || JSON.stringify(err);
+        return new Error(msg);
+      };
+
       await new Promise<void>((resolve, reject) => {
-        sdk.execute(approve.challengeId, (err: unknown) => {
-          if (err) reject(err instanceof Error ? err : new Error(String(err)));
-          else resolve();
-        });
+        sdk.execute(approve.challengeId, (err: unknown) => err ? reject(execErr(err)) : resolve());
       });
 
       await new Promise<void>((resolve, reject) => {
-        sdk.execute(deposit.challengeId, (err: unknown) => {
-          if (err) reject(err instanceof Error ? err : new Error(String(err)));
-          else resolve();
-        });
+        sdk.execute(deposit.challengeId, (err: unknown) => err ? reject(execErr(err)) : resolve());
       });
 
       setWalletError("Waiting for Gateway balance to update…");
