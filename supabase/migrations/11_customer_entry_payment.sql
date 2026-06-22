@@ -15,7 +15,8 @@ ALTER TABLE paylabs_discovery_runs
   ADD COLUMN IF NOT EXISTS entry_payment_status TEXT DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS entry_payment_amount_usdc NUMERIC DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS entry_payment_tx_hash TEXT DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS entry_payment_explorer_url TEXT DEFAULT NULL;
+  ADD COLUMN IF NOT EXISTS entry_payment_explorer_url TEXT DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS entry_payment_settlement_id TEXT DEFAULT NULL;
 
 -- Index for querying by entry payment status
 CREATE INDEX IF NOT EXISTS idx_discovery_runs_entry_payment_status
