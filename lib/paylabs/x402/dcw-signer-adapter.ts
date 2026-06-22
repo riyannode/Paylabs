@@ -19,6 +19,21 @@ import type { DcwSigner } from "@/lib/paylabs/x402/buyer-transport";
 // CJS interop — @circle-fin/developer-controlled-wallets is CJS
 const _require = createRequire(import.meta.url);
 
+// ─── DCW Signer Singleton ─────────────────────────────────────
+// Injected once at app startup via setDcwSigner().
+// All consumers (inline route, macro-node route, call-delegated-service)
+// import getDcwSigner from here instead of paid-agent-node.
+
+let _dcwSigner: DcwSigner | null = null;
+
+export function setDcwSigner(signer: DcwSigner): void {
+  _dcwSigner = signer;
+}
+
+export function getDcwSigner(): DcwSigner | null {
+  return _dcwSigner;
+}
+
 // ─── Lazy SDK import ──────────────────────────────────────────
 
 let _dcwClient: any = null;

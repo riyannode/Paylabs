@@ -30,7 +30,7 @@ import { getServiceConfig } from "./registry";
 import { SERVICE_HANDLERS } from "./handlers";
 import { getInputSchema } from "./schemas";
 import { isX402EnabledForService } from "../feature-flags";
-import { getDcwSigner } from "../paid-agent-node";
+import { getDcwSigner } from "../x402/dcw-signer-adapter";
 import { callPaidSeller } from "../x402/buyer-transport";
 import { verifySufficientBalance } from "../x402/gateway-balance";
 import type { ServiceName, ServiceHandlerInput, ServiceHandlerOutput } from "./types";
