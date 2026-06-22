@@ -384,6 +384,15 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [walletCopied, setWalletCopied] = useState(false);
   const ucwSdkRef = useRef<unknown>(null); // W3SSdk instance
 
+  // Debug log — visible on-page for troubleshooting
+  const [debugLog, setDebugLog] = useState<string[]>([]);
+  const dbg = useCallback((msg: string) => {
+    const ts = new Date().toISOString().slice(11, 23);
+    const entry = `[${ts}] ${msg}`;
+    console.log("[UCW]", entry);
+    setDebugLog((prev) => [...prev.slice(-20), entry]);
+  }, []);
+
   // TODO(#27): Replace with backend quote once inline route returns plannedCostUsdc.
 // For now, this is a frontend estimate used only for run gating (balance < cost → block).
 const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
@@ -391,6 +400,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
   // ── Post-redirect: restore SDK from server session ──
   useEffect(() => {
     const restoreAfterRedirect = async () => {
+      dbg("restoreAfterRedirect: start");
       try {
         const resp = await fetch("/api/paylabs/wallet/ucw?action=session-restore", { method: "POST" });
         if (!resp.ok) {
@@ -402,9 +412,11 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           return;
         }
         const data = (await resp.json()) as { hasDeviceToken: boolean; hasUserToken: boolean; walletId: string | null; walletAddress: string | null };
+        dbg(`session-restore: dt=${data.hasDeviceToken} ut=${data.hasUserToken} wid=${data.walletId} waddr=${data.walletAddress}`);
 
         // If we already have a wallet from a previous session, just restore UI
         if (data.walletId && data.walletAddress && data.hasUserToken) {
+          dbg("Wallet already in session — restoring UI");
           setUcwWalletId(data.walletId);
           setWalletInfo({ address: data.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
           setWalletState("connected");
@@ -419,9 +431,10 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         // If no hash, this is a stale session — destroy it and start fresh.
         if (data.hasDeviceToken && !data.hasUserToken) {
           const hasOAuthHash = window.location.hash.includes("access_token") || window.location.hash.includes("id_token");
+          dbg(`OAuth hash check: ${hasOAuthHash ? "YES" : "NO"} (${window.location.hash.slice(0, 50)}...)`);
           if (!hasOAuthHash) {
             // Stale session — device token saved but OAuth never completed
-            console.log("[UCW] Stale session (deviceToken but no OAuth hash) — destroying");
+            dbg("Stale session (deviceToken but no OAuth hash) — destroying");
             fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST" }).catch(() => {});
             setWalletState("not_connected");
             return;
@@ -442,7 +455,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
 
           const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-          console.log("[UCW] Restoring SDK", { deviceToken: deviceToken?.slice(0, 8) + "...", googleClientId: googleClientId?.slice(0, 12) + "...", hash: window.location.hash ? "present" : "empty" });
+          dbg(`Restoring SDK dt=${deviceToken?.slice(0,8)}... gcid=${googleClientId?.slice(0,12)}... hash=${window.location.hash ? "YES" : "NO"}`);
 
           let callbackFired = false;
           // Per Circle docs: pass loginConfigs + callback in CONSTRUCTOR.
@@ -466,14 +479,14 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           };
           const sdk = new W3SSdk(fullConfig, async (error: unknown, result: unknown) => {
               callbackFired = true;
-              console.log("[UCW] Login callback fired", error ? "ERROR" : "SUCCESS", error || "");
+              dbg(`Login callback: ${error ? "ERROR: " + (error instanceof Error ? error.message : String(error)) : "SUCCESS"}`);
               if (error) {
                 setWalletState("not_connected");
                 setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown"}`);
                 return;
               }
               const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
-              console.log("[UCW] Got userToken, saving to session...");
+              dbg("Got userToken, saving to session...");
               // Save to server session + finalize (init user, list wallets)
               const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
                 method: "POST",
@@ -486,7 +499,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
                 return;
               }
               const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null; error?: string };
-              console.log("[UCW] session-save-login result:", saveData);
+              dbg(`session-save-login: wid=${saveData.walletId} addr=${saveData.walletAddress} challenge=${saveData.challengeId} err=${saveData.error}`);
 
               const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
               await finalizeWalletAfterLogin(saveData, sdk, cbs, planned);
@@ -541,6 +554,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
   const connectGoogle = useCallback(async () => {
     // Guard: prevent re-entry if already connecting
     if (walletState === "connecting") return;
+    dbg("connectGoogle: start");
     setWalletState("connecting");
     setWalletError(null);
 
@@ -553,6 +567,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       const sessionResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST" });
       if (!sessionResp.ok) {
         const err = await sessionResp.json().catch(() => ({}));
+        dbg("session-create: FAIL " + sessionResp.status);
         throw new Error(`Session create failed: ${(err as Record<string, string>).error || sessionResp.status}`);
       }
 
@@ -569,6 +584,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       });
       if (!dtResp.ok) {
         const err = await dtResp.json().catch(() => ({}));
+        dbg("device-token: FAIL " + dtResp.status);
         throw new Error(`Device token failed: ${(err as Record<string, string>).error || dtResp.status}`);
       }
       const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
@@ -581,6 +597,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       });
       if (!saveDeviceResp.ok) {
         const err = await saveDeviceResp.json().catch(() => ({}));
+        dbg("session-save-device: FAIL " + saveDeviceResp.status);
         throw new Error(`Session save device failed: ${(err as Record<string, string>).error || saveDeviceResp.status}`);
       }
 
@@ -626,7 +643,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
       // Trigger Google OAuth redirect
       const { SocialLoginProvider } = await import("@circle-fin/w3s-pw-web-sdk/dist/src/types");
-      console.log("[UCW] performLogin — socialLoginProvider will be:", SocialLoginProvider.GOOGLE);
+      dbg("Calling performLogin(GOOGLE)...");
       sdk.performLogin(SocialLoginProvider.GOOGLE);
     } catch (e: unknown) {
       setWalletState("not_connected");
@@ -1126,6 +1143,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         onDepositGateway={depositGateway}
         onApprove={() => { setWalletOpen(false); submitChat(); }}
         showEoaFallback={showEoaFallback}
+        debugLog={debugLog}
       />
     </div>
   );
