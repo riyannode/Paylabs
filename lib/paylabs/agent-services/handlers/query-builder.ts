@@ -94,26 +94,67 @@ function runDeterministicQueryBuilder(
 export const queryBuilderHandler: ServiceHandler = async (
   input: ServiceHandlerInput
 ): Promise<ServiceHandlerOutput> => {
-  const { normalized_goal, topics, routeTier } = input.payload as {
+  const { normalized_goal, topics, routeTier, brain_query_variants, brain_discovery_strategy, brain_normalized_goal } = input.payload as {
     normalized_goal: string;
     topics: string[];
     routeTier?: DelegatedRouteTier;
+    brain_query_variants?: string[];
+    brain_discovery_strategy?: string;
+    brain_normalized_goal?: string;
   };
 
   // Deterministic mode (default)
   if (shouldRunServiceAsDeterministic("query_builder")) {
-    const det = runDeterministicQueryBuilder(normalized_goal || "", topics || []);
+    // Use brain_normalized_goal as base if present
+    const baseGoal = brain_normalized_goal || normalized_goal || "";
+    const det = runDeterministicQueryBuilder(baseGoal, topics || []);
+
+    // Merge Brain query variants first, deterministic second
+    const brainVariants = (brain_query_variants || []).map((q: string) => q.trim()).filter(Boolean);
+    const merged = [...brainVariants, ...det.expanded_queries];
+
+    // Dedupe case-insensitively, trim, cap to 7
+    const seen = new Set<string>();
+    const deduped: string[] = [];
+    for (const q of merged) {
+      const key = q.toLowerCase().trim();
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        deduped.push(q.trim());
+      }
+    }
+    const finalQueries = deduped.slice(0, 7);
+
+    // Derive negative_filters and source_preferences from constraints
+    const negativeFilters = [...(det.negative_filters || [])];
+    const sourcePreferences = [...(det.source_preferences || [])];
+    for (const c of topics || []) {
+      const cl = c.toLowerCase();
+      if (cl === "recency_priority" && !sourcePreferences.includes("recent")) {
+        sourcePreferences.push("recent");
+      }
+      if (cl === "trust_required" && !sourcePreferences.includes("credible")) {
+        sourcePreferences.push("credible", "official");
+      }
+      if (cl === "free_only" && !negativeFilters.includes("paywall")) {
+        negativeFilters.push("paywall", "premium");
+      }
+      if (cl === "quality_priority" && !sourcePreferences.includes("high_quality")) {
+        sourcePreferences.push("high_quality", "primary_source");
+      }
+    }
+
     return {
       ok: true,
       serviceName: "query_builder",
       data: {
-        expanded_queries: det.expanded_queries,
+        expanded_queries: finalQueries,
         entity_terms: det.entity_terms,
-        negative_filters: det.negative_filters,
-        source_preferences: det.source_preferences,
-        safe_query_summary: `Built ${det.expanded_queries.length} queries, ${det.entity_terms.length} entities, ${det.negative_filters.length} filters. Deterministic expansion.`,
+        negative_filters: negativeFilters,
+        source_preferences: sourcePreferences,
+        safe_query_summary: `Built ${finalQueries.length} queries${brainVariants.length > 0 ? ` (${brainVariants.length} from Brain)` : ""}, ${det.entity_terms.length} entities, ${negativeFilters.length} filters. Deterministic expansion.`,
       },
-      safeSummary: `Built ${det.expanded_queries.length} queries, ${det.entity_terms.length} entities, ${det.negative_filters.length} filters. Deterministic expansion.`,
+      safeSummary: `Built ${finalQueries.length} queries, ${det.entity_terms.length} entities, ${negativeFilters.length} filters. Deterministic expansion.`,
       settled: false,
       error: null,
     };

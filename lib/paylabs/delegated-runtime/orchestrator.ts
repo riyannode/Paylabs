@@ -108,6 +108,10 @@ export async function executeDelegatedDiscoveryRun(
       routeTier: input.routeTier,
       userBudgetUsdc: input.userBudgetUsdc,
       selectedServices: activeServices,
+      brainNormalizedGoal: state.brainPlanning?.normalized_goal,
+      brainDiscoveryStrategy: state.brainPlanning?.discovery_strategy,
+      brainSuggestedQueryVariants: state.brainPlanning?.suggested_query_variants || [],
+      brainSafeSummary: state.brainPlanning?.safe_brain_summary,
     });
 
     if (!discoveryResult.ok) {

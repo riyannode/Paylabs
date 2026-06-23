@@ -31,7 +31,9 @@ const SignalScoutSchema = z.object({
 function scoreItemDeterministic(
   item: Record<string, unknown>,
   expandedQueries: string[],
-  entityTerms: string[]
+  entityTerms: string[],
+  negativeFilters: string[] = [],
+  sourcePreferences: string[] = []
 ): number {
   let score = 0;
   const title = String(item.title || "").toLowerCase();
@@ -69,6 +71,22 @@ function scoreItemDeterministic(
   // Publisher diversity bonus
   if (publisher && publisher.length > 0) score += 1;
 
+  // Negative filter penalty
+  for (const nf of negativeFilters) {
+    const nfLower = nf.toLowerCase();
+    if (title.includes(nfLower) || summary.includes(nfLower) || publisher.includes(nfLower)) {
+      score -= 5;
+    }
+  }
+
+  // Source preference boost
+  for (const sp of sourcePreferences) {
+    const spLower = sp.toLowerCase();
+    if (title.includes(spLower) || summary.includes(spLower) || publisher.includes(spLower)) {
+      score += 2;
+    }
+  }
+
   return score;
 }
 
@@ -76,7 +94,9 @@ function runDeterministicSignalScout(
   allActive: Record<string, unknown>[],
   expandedQueries: string[],
   entityTerms: string[],
-  limit = 10
+  limit = 10,
+  negativeFilters: string[] = [],
+  sourcePreferences: string[] = []
 ): Array<{
   feed_item_id: string;
   title: string;
@@ -88,7 +108,7 @@ function runDeterministicSignalScout(
   // Score each item
   const scored = allActive.map((item) => ({
     item,
-    score: scoreItemDeterministic(item, expandedQueries, entityTerms),
+    score: scoreItemDeterministic(item, expandedQueries, entityTerms, negativeFilters, sourcePreferences),
   }));
 
   // Sort by score descending, then by recency
@@ -119,9 +139,11 @@ function runDeterministicSignalScout(
 export const signalScoutHandler: ServiceHandler = async (
   input: ServiceHandlerInput
 ): Promise<ServiceHandlerOutput> => {
-  const { expanded_queries, entity_terms, routeTier } = input.payload as {
+  const { expanded_queries, entity_terms, negative_filters, source_preferences, routeTier } = input.payload as {
     expanded_queries: string[];
     entity_terms: string[];
+    negative_filters?: string[];
+    source_preferences?: string[];
     routeTier?: DelegatedRouteTier;
   };
 
@@ -150,7 +172,10 @@ export const signalScoutHandler: ServiceHandler = async (
     const ranked = runDeterministicSignalScout(
       allActive,
       expanded_queries || [],
-      entity_terms || []
+      entity_terms || [],
+      10,
+      negative_filters || [],
+      source_preferences || []
     );
     return {
       ok: true,
@@ -176,7 +201,9 @@ export const signalScoutHandler: ServiceHandler = async (
     allActive,
     expanded_queries || [],
     entity_terms || [],
-    20
+    20,
+    negative_filters || [],
+    source_preferences || []
   );
 
   // Build safe metadata from deterministic candidates only
@@ -275,7 +302,10 @@ Return exactly:
     const ranked = runDeterministicSignalScout(
       allActive,
       expanded_queries || [],
-      entity_terms || []
+      entity_terms || [],
+      10,
+      negative_filters || [],
+      source_preferences || []
     );
     return {
       ok: true,

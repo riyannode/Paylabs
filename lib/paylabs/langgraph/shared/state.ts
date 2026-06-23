@@ -48,6 +48,15 @@ export const DiscoveryPlannerState = Annotation.Root({
   }),
   parentWalletId: Annotation<string | undefined>,
 
+  // Brain planning pass-through
+  brainNormalizedGoal: Annotation<string | undefined>,
+  brainDiscoveryStrategy: Annotation<string | undefined>,
+  brainSuggestedQueryVariants: Annotation<string[]>({
+    reducer: concatReducer<string>,
+    default: () => [],
+  }),
+  brainSafeSummary: Annotation<string | undefined>,
+
   // Intent Planner output
   normalizedGoal: Annotation<string | undefined>,
   intentType: Annotation<string | undefined>,
@@ -79,6 +88,16 @@ export const DiscoveryPlannerState = Annotation.Root({
     default: () => [],
   }),
   topCandidates: Annotation<string[]>({
+    reducer: concatReducer<string>,
+    default: () => [],
+  }),
+
+  // Filters and preferences (from query_builder)
+  negativeFilters: Annotation<string[]>({
+    reducer: concatReducer<string>,
+    default: () => [],
+  }),
+  sourcePreferences: Annotation<string[]>({
     reducer: concatReducer<string>,
     default: () => [],
   }),
