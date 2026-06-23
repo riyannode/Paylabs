@@ -1081,6 +1081,10 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           return;
         }
 
+        // Extract discovery_run_id from 402 response body for retry row reuse
+        const challengeBody = await first.json().catch(() => ({})) as Record<string, unknown>;
+        const retryDiscoveryRunId = challengeBody.discovery_run_id as string | undefined;
+
         // Sign with appropriate wallet type
         setWalletState("approving");
         let paymentSignature: string;
@@ -1111,14 +1115,18 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           return;
         }
 
-        // Retry with payment signature
+        // Retry with payment signature + discovery_run_id for row reuse
+        const retryBody: Record<string, unknown> = { ...body };
+        if (retryDiscoveryRunId) {
+          retryBody.discovery_run_id = retryDiscoveryRunId;
+        }
         const paid = await fetch("/api/paylabs/discovery-runs/inline", {
           method: "POST",
           headers: {
             "content-type": "application/json",
             "PAYMENT-SIGNATURE": paymentSignature,
           },
-          body: JSON.stringify(body),
+          body: JSON.stringify(retryBody),
         });
 
         const paidData = await paid.json().catch(() => ({}));
