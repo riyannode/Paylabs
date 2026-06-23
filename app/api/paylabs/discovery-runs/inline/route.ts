@@ -181,16 +181,59 @@ async function runX402Orchestration(params: {
     selectedMacroNodes?: string[];
     selectedServices?: string[];
   } | undefined;
+
+  // ── Brain LLM Planning (after x402 settle, direct call — no HTTP timeout) ──
+  let fullBrainPlanning: Record<string, unknown> | null = null;
+  try {
+    const { runBrainPlannerGraph } = await import("@/lib/paylabs/langgraph/brain/brain-planner-graph");
+    const planResult = await runBrainPlannerGraph({
+      discoveryRunId,
+      userGoal,
+      routeTier,
+      userBudgetUsdc,
+      userWallet,
+    });
+
+    if (planResult.ok && planResult.brainPlanning) {
+      const bp = planResult.brainPlanning;
+      fullBrainPlanning = {
+        normalized_goal: bp.normalized_goal,
+        route_tier_hint: bp.route_tier_hint,
+        discovery_strategy: bp.discovery_strategy,
+        suggested_query_variants: bp.suggested_query_variants,
+        service_execution_plan: bp.service_execution_plan,
+        safe_brain_summary: bp.safe_brain_summary,
+        assistant_response: bp.assistant_response,
+        user_visible_reasoning: bp.user_visible_reasoning,
+        tier_decision_reason: bp.tier_decision_reason,
+        plan_rationale: bp.plan_rationale,
+        selected_macro_nodes: bp.selected_macro_nodes,
+        selected_services: bp.selected_services,
+        max_registry_checks: bp.max_registry_checks,
+        max_source_accesses: bp.max_source_accesses,
+        planned_cost_usdc: bp.planned_cost_usdc,
+        planned_cost_breakdown: bp.planned_cost_breakdown,
+      };
+    }
+  } catch (e: unknown) {
+    console.error("[inline] Brain planner failed after x402 settle", {
+      error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200),
+    });
+  }
+
+  // Use full planning output if available, fallback to brainData (x402 response)
+  const resolvedBrainData = fullBrainPlanning || brainData || null;
+
   const macroNodes: string[] = (executionPlan?.selectedMacroNodes as string[])
     || (TIER_PHASE_MAP[routeTier] || TIER_PHASE_MAP.easy);
 
   safeProgressSummaries.push(
-    `Brain settled: ${macroNodes.length} macro-nodes, strategy="${String(brainData?.discovery_strategy || "").slice(0, 60)}"`
+    `Brain settled: ${macroNodes.length} macro-nodes, strategy="${String(resolvedBrainData?.discovery_strategy || "").slice(0, 60)}"`
   );
 
   if (macroNodes.length === 0) {
     return buildX402Output(discoveryRunId, routeTier, userBudgetUsdc, "completed",
-      safeProgressSummaries, paymentGraph, brainData || null, null, null);
+      safeProgressSummaries, paymentGraph, resolvedBrainData || null, null, null);
   }
 
   // ── Steps 2-4: Macro-nodes (Brain → macro-node → child) ──
@@ -241,7 +284,7 @@ async function runX402Orchestration(params: {
       });
       return buildX402Output(discoveryRunId, routeTier, userBudgetUsdc, "failed",
         [...safeProgressSummaries, `FAILED: Macro-node ${node}: ${nodeResult.error}`],
-        paymentGraph, brainData || null, macroNodeResults, `Macro-node ${node} x402 failed: ${nodeResult.error}`);
+        paymentGraph, resolvedBrainData || null, macroNodeResults, `Macro-node ${node} x402 failed: ${nodeResult.error}`);
     }
 
     // Record Brain → macro-node edge (macro allocation payment)
@@ -312,8 +355,8 @@ async function runX402Orchestration(params: {
     if (rankedCandidates.length > 0) {
       try {
         const { resolveSources } = await import("@/lib/paylabs/sources/source-resolver");
-        const normalizedGoal = brainData
-          ? String((brainData as Record<string, unknown>).normalized_goal || "")
+        const normalizedGoal = resolvedBrainData
+          ? String((resolvedBrainData as Record<string, unknown>).normalized_goal || "")
           : "";
         const resolverResult = await resolveSources({
           rankedCandidates,
@@ -331,7 +374,7 @@ async function runX402Orchestration(params: {
   }
 
   return buildX402Output(discoveryRunId, routeTier, userBudgetUsdc, "completed",
-    safeProgressSummaries, paymentGraph, brainData || null, macroNodeResults, null, sourceContext);
+    safeProgressSummaries, paymentGraph, resolvedBrainData || null, macroNodeResults, null, sourceContext);
 }
 
 function buildX402Output(
