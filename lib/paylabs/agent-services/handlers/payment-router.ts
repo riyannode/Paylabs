@@ -5,7 +5,7 @@
  * Requires LLM: no
  *
  * Only routes approved items. No LLM.
- * This handler is ALWAYS audit-only in this PR.
+ * This handler is ALWAYS routing-only in this PR.
  * x402 real payment routing is NOT implemented.
  *
  * Fails closed if:
@@ -16,7 +16,7 @@
  *
  * Output uses routed_items (not paid_items) to avoid implying
  * that real payment has occurred. Status is always "planned".
- * settled is always false. mode is always "audit_only".
+ * settled is always false. mode is always "routing_only".
  *
  * No fake payment_ref, settlement_ref, tx_hash, or batch_id.
  */
@@ -111,7 +111,7 @@ export const paymentRouterHandler: ServiceHandler = async (
   }
 
   const totalPlanned = routedItems.reduce((sum, i) => sum + i.amount_usdc, 0);
-  const safeSummary = `Audit-only: ${routedItems.length}/${approved_items.length} items validated and planned, total: ${totalPlanned.toFixed(6)} USDC. ${failedItems.length} failed validation. No real payment executed — payment_plan_ready only.`;
+  const safeSummary = `Routing-only: ${routedItems.length}/${approved_items.length} items validated and planned, total: ${totalPlanned.toFixed(6)} USDC. ${failedItems.length} failed validation. No real payment executed — payment_plan_ready only.`;
 
   return {
     ok: true,
@@ -119,12 +119,12 @@ export const paymentRouterHandler: ServiceHandler = async (
     data: {
       routed_items: routedItems,
       failed_items: failedItems,
-      mode: "audit_only",
+      mode: "routing_only",
       settled: false,
       safe_payment_summary: safeSummary,
     },
     safeSummary,
-    settled: false, // always false in audit mode
+    settled: false, // always false — creator/source payout not implemented
     error: null,
   };
 };

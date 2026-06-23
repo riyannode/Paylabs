@@ -492,6 +492,28 @@ export async function POST(req: NextRequest) {
       : DEFAULT_EXTERNAL_TIER;
   const budgetUsdc = Number(body.budget_usdc) || 0.01;
 
+  // ── Retry detection: reuse existing row on paid retry ────
+  const customerPaymentSignature =
+    req.headers.get("payment-signature") ||
+    req.headers.get("x-payment");
+
+  const retryRunId =
+    req.nextUrl.searchParams.get("runId") ||
+    body.discovery_run_id ||
+    body.run_id ||
+    null;
+
+  // Fail closed: paid retry MUST include runId from the 402 challenge
+  if (customerPaymentSignature && !retryRunId) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "missing_run_id: paid retry must include discovery_run_id/runId from the 402 challenge",
+      },
+      { status: 400 }
+    );
+  }
+
   // ── Validate required fields ──────────────────────────────
   if (!goal) {
     return NextResponse.json(
@@ -514,36 +536,64 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ── Create Supabase discovery_run row ─────────────────────
-  const now = new Date().toISOString();
-  const { data: runRow, error: runErr } = await supabaseAdmin()
-    .from("paylabs_discovery_runs")
-    .insert({
-      user_wallet: userWallet,
-      goal,
-      route_tier: routeTier,
-      status: "running",
-      payment_kind: "discovery_fee",
-      queued_at: now,
-      started_at: now,
-      budget_usdc: budgetUsdc,
-      runner_id: "vercel-inline", // DB column kept for schema compatibility
-      worker_heartbeat_at: now,
-    })
-    .select("id")
-    .single();
+  // ── Create or reuse Supabase discovery_run row ───────────
+  let discoveryRunId: string;
 
-  if (runErr || !runRow) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: `Failed to create discovery run: ${runErr?.message || "unknown"}`,
-      },
-      { status: 500 }
-    );
+  if (retryRunId) {
+    // Paid retry: reuse existing row, don't create a new one
+    const { data: existingRun, error: existingErr } = await supabaseAdmin()
+      .from("paylabs_discovery_runs")
+      .select("id,user_wallet,goal,route_tier,budget_usdc,entry_payment_status")
+      .eq("id", retryRunId)
+      .single();
+
+    if (existingErr || !existingRun) {
+      return NextResponse.json(
+        { ok: false, error: "invalid_run_id: discovery run not found" },
+        { status: 404 }
+      );
+    }
+
+    if (existingRun.user_wallet?.toLowerCase() !== userWallet) {
+      return NextResponse.json(
+        { ok: false, error: "run_wallet_mismatch" },
+        { status: 403 }
+      );
+    }
+
+    discoveryRunId = existingRun.id;
+  } else {
+    // First request: create new row
+    const now = new Date().toISOString();
+    const { data: runRow, error: runErr } = await supabaseAdmin()
+      .from("paylabs_discovery_runs")
+      .insert({
+        user_wallet: userWallet,
+        goal,
+        route_tier: routeTier,
+        status: "running",
+        payment_kind: "discovery_fee",
+        queued_at: now,
+        started_at: now,
+        budget_usdc: budgetUsdc,
+        runner_id: "vercel-inline", // DB column kept for schema compatibility
+        worker_heartbeat_at: now,
+      })
+      .select("id")
+      .single();
+
+    if (runErr || !runRow) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Failed to create discovery run: ${runErr?.message || "unknown"}`,
+        },
+        { status: 500 }
+      );
+    }
+
+    discoveryRunId = runRow.id as string;
   }
-
-  const discoveryRunId = runRow.id as string;
 
   // ── x402 orchestration: Brain + macro-node endpoints ────
   // Fail closed: x402 must be enabled for production
@@ -694,9 +744,10 @@ async function runX402Path(
 
     if (!customerPaymentSignature) {
       // Return HTTP 402 with x402 challenge for customer entry payment
+      const retryUrl = `${await resolveAppUrl()}/api/paylabs/discovery-runs/inline?runId=${discoveryRunId}&tier=${routeTier}`;
       const { headerValue } = buildCustomerEntryChallenge(
         quote.plannedCostUsdc,
-        `${await resolveAppUrl()}/api/paylabs/discovery-runs/inline?runId=${discoveryRunId}&tier=${routeTier}`,
+        retryUrl,
       );
 
       // Store pending entry payment status
@@ -725,6 +776,8 @@ async function runX402Path(
         JSON.stringify({
           ok: false,
           error: "payment_required",
+          discovery_run_id: discoveryRunId,
+          retry_url: retryUrl,
           message: `Customer entry payment of ${quote.plannedCostUsdc} USDC required for ${quoteTier} tier`,
           quote: {
             routeTier: quote.routeTier,
