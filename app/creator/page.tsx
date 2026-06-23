@@ -2,7 +2,7 @@
 
 export default function CreatorPage() {
   return (
-    <div style={{ display: "grid", gap: 24 }}>
+    <div style={{ display: "grid", gap: 16 }}>
       <div>
         <a href="/" style={{ fontSize: 13, color: "var(--muted)", fontWeight: 500 }}>← Chat</a>
         <h1 className="page-title">Creator Dashboard</h1>

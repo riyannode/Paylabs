@@ -15,7 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body style={{ margin: 0, minHeight: "100vh" }}>
-        <main className="container" style={{ paddingTop: 32, paddingBottom: 64 }}>
+        <main className="container pl-compact-root">
           {children}
         </main>
       </body>
