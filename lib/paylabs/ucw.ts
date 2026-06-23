@@ -11,6 +11,8 @@ import { initiateUserControlledWalletsClient } from "@circle-fin/user-controlled
 import type { Blockchain } from "@circle-fin/user-controlled-wallets";
 import { randomUUID } from "crypto";
 import { createClient } from "@supabase/supabase-js";
+import { createPublicClient, http, isAddress } from "viem";
+import { arcTestnet } from "viem/chains";
 
 // ---------------------------------------------------------------------------
 // Server-side UCW session store — Supabase-backed (production-safe)
@@ -24,6 +26,7 @@ export interface UcwServerSession {
   encryptionKey: string;
   walletId: string;
   walletAddress: string;
+  authMethod: "google" | "email" | "pin" | "";
 }
 
 const SESSION_TTL_SECONDS = 30 * 60; // 30 minutes
@@ -39,8 +42,9 @@ function getSupabase() {
 export async function createSession(): Promise<string> {
   const id = randomUUID();
   const supabase = getSupabase();
-  const empty: UcwServerSession = { deviceId: "", deviceToken: "", deviceEncryptionKey: "", userToken: "", encryptionKey: "", walletId: "", walletAddress: "" };
-  const { error } = await supabase.from("ucw_sessions").insert({ sid: id, data: empty });
+  const empty: UcwServerSession = { deviceId: "", deviceToken: "", deviceEncryptionKey: "", userToken: "", encryptionKey: "", walletId: "", walletAddress: "", authMethod: "" };
+  const expiresAt = new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString();
+  const { error } = await supabase.from("ucw_sessions").insert({ sid: id, data: empty, expires_at: expiresAt });
   if (error) throw new Error(`Session create failed: ${error.message}`);
   return id;
 }
@@ -66,7 +70,8 @@ export async function updateSession(id: string, patch: Partial<UcwServerSession>
   const { data } = await supabase.from("ucw_sessions").select("data").eq("sid", id).single();
   if (!data) return null;
   const merged = { ...data.data, ...patch } as UcwServerSession;
-  const { error } = await supabase.from("ucw_sessions").update({ data: merged }).eq("sid", id);
+  const expiresAt = new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString();
+  const { error } = await supabase.from("ucw_sessions").update({ data: merged, expires_at: expiresAt }).eq("sid", id);
   if (error) return null;
   return merged;
 }
@@ -74,6 +79,13 @@ export async function updateSession(id: string, patch: Partial<UcwServerSession>
 export async function deleteSession(id: string): Promise<void> {
   const supabase = getSupabase();
   await supabase.from("ucw_sessions").delete().eq("sid", id);
+}
+
+/** Refresh session TTL — call on every successful session action. */
+export async function refreshSession(id: string): Promise<void> {
+  const supabase = getSupabase();
+  const expiresAt = new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString();
+  await supabase.from("ucw_sessions").update({ expires_at: expiresAt }).eq("sid", id);
 }
 
 // ---------------------------------------------------------------------------
@@ -325,3 +337,33 @@ export {
   ARC_TESTNET_BLOCKCHAIN,
   ARC_TESTNET_DOMAIN,
 };
+
+// ---------------------------------------------------------------------------
+// On-chain allowance check (viem readContract — no wallet needed)
+// ---------------------------------------------------------------------------
+
+const ERC20_ABI = [
+  {
+    type: "function",
+    name: "allowance",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
+
+const publicClient = createPublicClient({ chain: arcTestnet, transport: http() });
+
+export async function checkAllowance(owner: string): Promise<string> {
+  if (!isAddress(owner)) throw new Error("Invalid wallet address");
+  const allowance = await publicClient.readContract({
+    address: USDC_ARC_TESTNET as `0x${string}`,
+    abi: ERC20_ABI,
+    functionName: "allowance",
+    args: [owner as `0x${string}`, GATEWAY_WALLET_ARC_TESTNET as `0x${string}`],
+  });
+  return allowance.toString();
+}

@@ -7,7 +7,7 @@
  *   POST ?action=list-wallets        — list user wallets
  *   POST ?action=balance             — get wallet USDC balance
  *   POST ?action=sign-challenge      — create signTypedData challenge for x402
- *   POST ?action=approve-deposit     — create approve+deposit challenges for Gateway
+ *   POST ?action=deposit             — allowance-aware Gateway deposit (approve if needed)
  *   POST ?action=gateway-balance     — read Gateway deposited balance
  *   POST ?action=session-create      — create server-side session (httpOnly cookie)
  *   POST ?action=session-restore     — restore session state after OAuth redirect
@@ -21,6 +21,7 @@
  *
  * Security: All sensitive tokens stored server-side in Supabase ucw_sessions.
  *           Frontend only holds httpOnly ucw_sid cookie.
+ *           Legacy body-token actions (initialize, list-wallets, balance) are 403 in production.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -29,6 +30,8 @@ import {
   getSession,
   updateSession,
   deleteSession,
+  refreshSession,
+  checkAllowance,
 } from "@/lib/paylabs/ucw";
 import {
   createDeviceToken,
@@ -82,6 +85,7 @@ export async function POST(req: NextRequest) {
       }
 
       case "initialize": {
+        if (process.env.NODE_ENV === "production") return NextResponse.json({ error: "Use session-bound actions" }, { status: 403 });
         const { userToken } = body as { userToken: string };
         if (!userToken) return NextResponse.json({ error: "userToken required" }, { status: 400 });
         const result = await initializeUser(userToken);
@@ -89,6 +93,7 @@ export async function POST(req: NextRequest) {
       }
 
       case "list-wallets": {
+        if (process.env.NODE_ENV === "production") return NextResponse.json({ error: "Use session-bound actions" }, { status: 403 });
         const { userToken } = body as { userToken: string };
         if (!userToken) return NextResponse.json({ error: "userToken required" }, { status: 400 });
         const wallets = await listWallets(userToken);
@@ -96,6 +101,7 @@ export async function POST(req: NextRequest) {
       }
 
       case "balance": {
+        if (process.env.NODE_ENV === "production") return NextResponse.json({ error: "Use session-bound actions" }, { status: 403 });
         const { walletId, userToken } = body as { walletId: string; userToken: string };
         if (!walletId || !userToken) {
           return NextResponse.json({ error: "walletId and userToken required" }, { status: 400 });
@@ -136,24 +142,61 @@ export async function POST(req: NextRequest) {
         const { data } = body as { data: Record<string, unknown> };
         if (!data) return NextResponse.json({ error: "data required" }, { status: 400 });
         const result = await createSignTypedDataChallenge(sess.userToken, sess.walletId, data);
+        await refreshSession(sid);
         const respSign = NextResponse.json(result);
         respSign.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
         return respSign;
       }
 
-      case "approve-deposit": {
+      case "check-allowance": {
         const sid = req.cookies.get("ucw_sid")?.value;
         if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
         const sess = await getSession(sid);
-        if (!sess?.userToken || !sess?.walletId) return NextResponse.json({ error: "No wallet in session" }, { status: 400 });
+        if (!sess?.walletAddress) return NextResponse.json({ error: "No wallet in session" }, { status: 400 });
+        const { isAddress } = await import("viem");
+        if (!isAddress(sess.walletAddress)) return NextResponse.json({ error: "Invalid wallet address" }, { status: 400 });
+        const { amountAtomic: required } = body as { amountAtomic?: string };
+        if (required && (!/^\d+$/.test(required) || BigInt(required) <= BigInt(0))) {
+          return NextResponse.json({ error: "amountAtomic must be a positive integer string" }, { status: 400 });
+        }
+        const currentAllowance = await checkAllowance(sess.walletAddress);
+        const sufficient = required ? BigInt(currentAllowance) >= BigInt(required) : BigInt(currentAllowance) > BigInt(0);
+        await refreshSession(sid);
+        return NextResponse.json({ allowance: currentAllowance, sufficient });
+      }
+
+      case "deposit": {
+        const sid = req.cookies.get("ucw_sid")?.value;
+        if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
+        const sess = await getSession(sid);
+        if (!sess?.userToken || !sess?.walletId || !sess?.walletAddress) return NextResponse.json({ error: "No wallet in session" }, { status: 400 });
         const { amountAtomic } = body as { amountAtomic: string };
-        if (!amountAtomic) return NextResponse.json({ error: "amountAtomic required" }, { status: 400 });
-        const approve = await createApproveChallenge(sess.userToken, sess.walletId, amountAtomic);
-        const deposit = await createDepositChallenge(sess.userToken, sess.walletId, amountAtomic);
-        const respDeposit = NextResponse.json({
-          approve: { challengeId: approve.challengeId },
-          deposit: { challengeId: deposit.challengeId },
-        });
+        if (!amountAtomic || !/^\d+$/.test(amountAtomic) || BigInt(amountAtomic) <= BigInt(0)) {
+          return NextResponse.json({ error: "amountAtomic must be a positive integer string" }, { status: 400 });
+        }
+        // Validate wallet address
+        const { isAddress } = await import("viem");
+        if (!isAddress(sess.walletAddress)) {
+          return NextResponse.json({ error: "Invalid wallet address in session" }, { status: 400 });
+        }
+        // On-chain allowance check
+        const currentAllowance = await checkAllowance(sess.walletAddress);
+
+        if (BigInt(currentAllowance) >= BigInt(amountAtomic)) {
+          // Allowance sufficient — create deposit challenge only
+          const deposit = await createDepositChallenge(sess.userToken, sess.walletId, amountAtomic);
+          await refreshSession(sid);
+          const resp = NextResponse.json({ step: "deposit_ready", depositChallengeId: deposit.challengeId ?? undefined });
+          resp.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
+          return resp;
+        }
+
+        // Allowance insufficient — return approve challenge only (bounded cap: amount × 10)
+        // Frontend must poll allowance after approve, then request deposit again
+        const approveCap = (BigInt(amountAtomic) * BigInt(10)).toString();
+        const approve = await createApproveChallenge(sess.userToken, sess.walletId, approveCap);
+        await refreshSession(sid);
+        const respDeposit = NextResponse.json({ step: "approve_required", approveChallengeId: approve.challengeId ?? undefined });
         respDeposit.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
         return respDeposit;
       }
@@ -182,12 +225,13 @@ export async function POST(req: NextRequest) {
         if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
         const session = await getSession(sid);
         if (!session) return NextResponse.json({ error: "Session expired" }, { status: 401 });
-        // Refresh cookie TTL on every restore — keeps session alive while user is active
+        await refreshSession(sid);
         const resp = NextResponse.json({
           hasDeviceToken: !!session.deviceToken,
           hasUserToken: !!session.userToken,
           walletId: session.walletId || null,
           walletAddress: session.walletAddress || null,
+          authMethod: session.authMethod || "",
         });
         resp.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
         return resp;
@@ -198,14 +242,16 @@ export async function POST(req: NextRequest) {
         if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
         const session = await getSession(sid);
         if (!session?.deviceToken) return NextResponse.json({ error: "No device token in session" }, { status: 404 });
+        await refreshSession(sid);
         return NextResponse.json({ deviceToken: session.deviceToken, deviceEncryptionKey: session.deviceEncryptionKey });
       }
 
       case "session-save-login": {
         const sid = req.cookies.get("ucw_sid")?.value;
         if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
-        const { userToken: ut, encryptionKey: ek } = body as { userToken: string; encryptionKey: string };
-        const updatedLogin = await updateSession(sid, { userToken: ut, encryptionKey: ek });
+        const { userToken: ut, encryptionKey: ek, authMethod: am } = body as { userToken: string; encryptionKey: string; authMethod?: string };
+        const authMethod = (am === "google" || am === "email" || am === "pin") ? am : "";
+        const updatedLogin = await updateSession(sid, { userToken: ut, encryptionKey: ek, authMethod });
         if (!updatedLogin) return NextResponse.json({ error: "Session save login failed" }, { status: 500 });
         // Finalize: initialize user + list wallets
         const initResult = await initializeUser(ut);
@@ -289,7 +335,7 @@ export async function POST(req: NextRequest) {
           session.walletAddress ? getGatewayBalance(session.walletAddress) : Promise.resolve({ balance: "0", domain: 26 }),
         ]);
         const usdc = balances.find((b) => b.token === "USDC")?.amount ?? "0";
-        // Refresh cookie TTL
+        await refreshSession(sid);
         const resp = NextResponse.json({ usdc, gateway: gw.balance, walletAddress: session.walletAddress });
         resp.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
         return resp;
