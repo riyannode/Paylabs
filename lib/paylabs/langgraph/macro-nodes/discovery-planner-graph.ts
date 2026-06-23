@@ -18,7 +18,7 @@ import { StateGraph, START, END } from "@langchain/langgraph";
 import { DiscoveryPlannerState, type DiscoveryPlannerStateType } from "../shared/state";
 import { createServiceNode } from "../services/service-node";
 import type { ServiceName } from "../../agent-services/types";
-import type { BudgetSnapshot } from "../../delegated-runtime/types";
+import type { BudgetSnapshot, SafeSourceCard } from "../../delegated-runtime/types";
 
 // ─── Node: Intent Planner ───────────────────────────────────
 
@@ -223,6 +223,8 @@ export interface RunDiscoveryPlannerGraphOutput {
     rank: number;
     relevance_score: number;
   }>;
+  normalizedGoal: string;
+  sourceCards: SafeSourceCard[];
   easySummary: string;
   serviceEvaluations: DiscoveryPlannerStateType["serviceEvaluations"];
   paymentEdges: DiscoveryPlannerStateType["paymentEdges"];
@@ -277,9 +279,30 @@ export async function runDiscoveryPlannerGraph(
       `Goal: "${(result.normalizedGoal || input.userGoal).slice(0, 80)}". ` +
       `Intent: ${result.intentType || "unknown"}. 3 services executed.`;
 
+    // Compute normalizedGoal: graph result → brain input → user input
+    const normalizedGoal = result.normalizedGoal || input.brainNormalizedGoal || input.userGoal;
+
+    // Build safe source cards from top 10 ranked candidates
+    const rankedCandidates = result.rankedCandidates || [];
+    const sourceCards: SafeSourceCard[] = [];
+    const { getFeedItemById } = await import("../../../ai/tools");
+    for (const candidate of rankedCandidates.slice(0, 10)) {
+      const feedItem = (await getFeedItemById(candidate.feed_item_id)) as Record<string, unknown> | null;
+      sourceCards.push({
+        feed_item_id: candidate.feed_item_id,
+        title: String(feedItem?.title || candidate.title || ""),
+        source_url: String(feedItem?.canonical_url || ""),
+        publisher: String(feedItem?.publisher || candidate.publisher || ""),
+        claim_status: String(feedItem?.verification_status || "unclaimed"),
+        creator_wallet: feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : null,
+      });
+    }
+
     return {
       ok: !result.error,
-      rankedCandidates: result.rankedCandidates || [],
+      rankedCandidates,
+      normalizedGoal,
+      sourceCards,
       easySummary,
       serviceEvaluations: result.serviceEvaluations || [],
       paymentEdges: result.paymentEdges || [],
@@ -291,6 +314,8 @@ export async function runDiscoveryPlannerGraph(
     return {
       ok: false,
       rankedCandidates: [],
+      normalizedGoal: input.brainNormalizedGoal || input.userGoal,
+      sourceCards: [],
       easySummary: `Discovery Planner failed: ${msg}`,
       serviceEvaluations: [],
       paymentEdges: [],

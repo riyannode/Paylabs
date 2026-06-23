@@ -152,6 +152,22 @@ export const PaymentDecisionState = Annotation.Root({
     default: () => [],
   }),
 
+  // Safe source cards from Easy→Normal handoff
+  sourceCards: Annotation<Array<{
+    feed_item_id: string;
+    title: string;
+    source_url: string;
+    publisher: string;
+    claim_status: string;
+    creator_wallet: string | null;
+  }>>({
+    reducer: concatReducer,
+    default: () => [],
+  }),
+
+  // Discovery summary from Easy route
+  discoverySummary: Annotation<string | undefined>,
+
   // Intent Matcher output
   intentMatchApproved: Annotation<boolean | undefined>,
   intentMatchScore: Annotation<number>,
@@ -206,6 +222,7 @@ export const PaymentDecisionState = Annotation.Root({
     feed_item_id: string;
     source_url: string;
     source_title: string;
+    publisher: string;
     creator_wallet: string | null;
     claim_status: string;
   }>>({

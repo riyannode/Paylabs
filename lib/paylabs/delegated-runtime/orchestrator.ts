@@ -128,10 +128,17 @@ export async function executeDelegatedDiscoveryRun(
       state.paymentEdges.push(pe);
     }
 
+    // Build safe Easy→Normal handoff
+    state.easyToNormalHandoff = {
+      normalizedGoal: discoveryResult.normalizedGoal,
+      easySummary: discoveryResult.easySummary,
+      sourceCards: discoveryResult.sourceCards || [],
+    };
+
     setMacroPhaseStatus(state, "discovery_planner", "completed");
     addProgressSummary(
       state,
-      `Discovery Planner completed: ${discoveryResult.rankedCandidates.length} candidates`
+      `Discovery Planner completed: ${discoveryResult.rankedCandidates.length} candidates, ${discoveryResult.sourceCards?.length || 0} source cards`
     );
 
     if (!activePhases.includes("payment_decision")) {
@@ -145,10 +152,11 @@ export async function executeDelegatedDiscoveryRun(
     const { runPaymentDecisionGraph } = await import("../langgraph/macro-nodes/payment-decision-graph");
     const paymentResult = await runPaymentDecisionGraph({
       discoveryRunId: input.discoveryRunId,
-      userGoal: input.userGoal,
+      userGoal: state.easyToNormalHandoff.normalizedGoal,
       routeTier: input.routeTier,
       userBudgetUsdc: input.userBudgetUsdc,
-      candidates: discoveryResult.rankedCandidates,
+      sourceCards: state.easyToNormalHandoff.sourceCards,
+      discoverySummary: state.easyToNormalHandoff.easySummary,
       selectedServices: activeServices,
     });
 
@@ -274,6 +282,7 @@ function buildOutput(state: ReturnType<typeof createOrchestratorState>): Orchest
     brainPlanning: state.brainPlanning,
     paymentGraph: state.paymentGraph,
     tieredSummaries: buildTieredSummaries(state),
+    easyToNormalHandoff: state.easyToNormalHandoff,
     error: state.error,
   };
 }
@@ -373,14 +382,15 @@ function buildEasyUserFacingSummary(
 function buildTieredSummaries(state: ReturnType<typeof createOrchestratorState>): OrchestratorOutput["tieredSummaries"] {
   const summaries: Record<string, string | undefined> = {};
 
-  // ── Easy summary: user-facing discovery answer ──
-  const discoveryEvals = state.serviceEvaluations.filter((e) => e.macroNode === "discovery_planner");
-  if (discoveryEvals.length > 0) {
-    const { easy_summary, final_summary } = buildEasyUserFacingSummary(state);
-    summaries.easy_summary = easy_summary;
-    summaries.final_summary = final_summary;
+  // ── Easy summary: use easyToNormalHandoff if available, else build from evals ──
+  if (state.easyToNormalHandoff) {
+    summaries.easy_summary = state.easyToNormalHandoff.easySummary;
   } else {
-    summaries.final_summary = state.safeProgressSummaries.join(" | ");
+    const discoveryEvals = state.serviceEvaluations.filter((e) => e.macroNode === "discovery_planner");
+    if (discoveryEvals.length > 0) {
+      const { easy_summary } = buildEasyUserFacingSummary(state);
+      summaries.easy_summary = easy_summary;
+    }
   }
 
   // ── Normal summary: payment decision ──
@@ -391,7 +401,15 @@ function buildTieredSummaries(state: ReturnType<typeof createOrchestratorState>)
       const d = deciderEval.output as Record<string, unknown>;
       const approved = (d.approved_items as unknown[])?.length || 0;
       const skipped = (d.skipped_items as unknown[])?.length || 0;
-      summaries.normal_summary = `Payment Decision: ${approved} approved, ${skipped} skipped.`;
+      const candidateCount = state.easyToNormalHandoff?.sourceCards?.length || 0;
+      const totalSpend = Number(d.total_estimated_spend) || 0;
+      if (candidateCount === 0) {
+        summaries.normal_summary = "Normal route had no discovery source cards to evaluate.";
+      } else if (approved === 0) {
+        summaries.normal_summary = `Discovery produced ${candidateCount} source cards. Normal route evaluated them with intent, source quality, value, trust, and decision checks. None passed the decision gate.`;
+      } else {
+        summaries.normal_summary = `Discovery produced ${candidateCount} source cards. Normal route evaluated them with intent, source quality, value, trust, and decision checks. ${approved} passed the decision gate and ${skipped} were skipped. Estimated approved spend: ${totalSpend.toFixed(6)} USDC.`;
+      }
     }
   }
 
@@ -412,7 +430,7 @@ function buildTieredSummaries(state: ReturnType<typeof createOrchestratorState>)
   if (summaries.normal_summary) parts.push(summaries.normal_summary);
   if (summaries.advanced_summary) parts.push(summaries.advanced_summary);
   if (parts.length > 0) {
-    summaries.final_summary = parts.join(" | ");
+    summaries.final_summary = parts.join("\n\n");
   } else {
     summaries.final_summary = state.safeProgressSummaries.join(" | ") || "Run completed.";
   }

@@ -147,6 +147,8 @@ export interface OrchestratorRunState {
   brainPlanning: BrainPlanningOutput | null;
   executionPlan: ExecutionPlan | null;
   paymentGraph: PaymentGraphEdge[];
+  /** Safe Easy→Normal handoff (computed after discovery phase) */
+  easyToNormalHandoff?: EasyToNormalHandoff;
   error: string | null;
   startedAt: string;
   completedAt: string | null;
@@ -243,6 +245,23 @@ export interface TieredRunSummaries {
   final_summary: string;
 }
 
+// ─── Safe Source Card (frontend-ready, no internals) ──────
+export interface SafeSourceCard {
+  feed_item_id: string;
+  title: string;
+  source_url: string;
+  publisher: string;
+  claim_status: string;
+  creator_wallet: string | null;
+}
+
+// ─── Easy → Normal Handoff ───────────────────────────────
+export interface EasyToNormalHandoff {
+  normalizedGoal: string;
+  easySummary: string;
+  sourceCards: SafeSourceCard[];
+}
+
 // ─── Orchestrator Output ─────────────────────────────────────
 export interface OrchestratorOutput {
   discoveryRunId: string;
@@ -258,6 +277,8 @@ export interface OrchestratorOutput {
   brainPlanning: BrainPlanningOutput | null;
   paymentGraph: PaymentGraphEdge[];
   tieredSummaries?: TieredRunSummaries;
+  /** Safe Easy→Normal handoff: normalizedGoal + easySummary + sourceCards */
+  easyToNormalHandoff?: EasyToNormalHandoff;
   /** Rich source context from signal_scout resolution (post PR #26) */
   sourceContext?: SourceContext;
   error: string | null;
