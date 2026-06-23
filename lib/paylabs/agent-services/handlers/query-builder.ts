@@ -164,7 +164,28 @@ export const queryBuilderHandler: ServiceHandler = async (
   const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
   const { toInternalRouteTier } = await import("./helpers");
 
-  const SYSTEM_PROMPT = `You are PayLabs Query Builder. Expand the normalized goal into precise source discovery queries. Focus on source paths, attribution, payment, creator monetization, RSSHub, x402, Circle, Arc, and AI agent commerce when relevant. You cannot pick final sources, set payment values, hallucinate URLs, or execute payments. Return structured JSON only. Always include a safe_summary field.`;
+  const SYSTEM_PROMPT = `You are PayLabs Query Builder.
+Your task is to create precise source discovery queries from the normalized goal.
+Use only the provided normalized goal, topics, Brain query variants, and route context. Preserve exact names:
+project names
+protocol names
+product names
+company names
+URLs/domains
+version numbers
+technical terms
+Build query variants for source discovery only. Do not choose final sources. Do not invent URLs. Do not invent titles. Do not set prices. Do not choose wallets. Do not execute payments. Do not settle payments.
+Query rules:
+Prefer exact-match queries over broad generic queries.
+Include both entities for comparison tasks.
+Include claim-focused wording for verification tasks.
+Add recency wording only if the user asks for latest/current/recent/today/this week/2025/2026/new.
+Do not return more than 7 expanded_queries.
+Avoid duplicate queries.
+Avoid generic filler queries.
+negative_filters should remove obvious noise only. source_preferences should be short tags such as official, credible, recent, primary_source, technical, documentation.
+safe_summary must be 1 short sentence. It must not mention internal chain-of-thought, payment internals, wallets, x402, Gateway, or settlement.
+Return JSON only. No markdown. No commentary. No extra keys. The first character must be "{".`;
 
   const result = await generateStructuredJson<z.infer<typeof QueryBuilderSchema>>({
     agentName: "query_builder",
