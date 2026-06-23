@@ -102,6 +102,7 @@ export function createOrchestratorState(input: OrchestratorInput): OrchestratorR
     brainPlanning: null,
     executionPlan: null,
     paymentGraph: [],
+    reasoning: null,
     error: null,
     startedAt: new Date().toISOString(),
     completedAt: null,

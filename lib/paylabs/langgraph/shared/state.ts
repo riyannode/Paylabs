@@ -373,6 +373,9 @@ export const BrainPlannerState = Annotation.Root({
 
   // Error tracking
   error: Annotation<string | undefined>,
+
+  // LLM reasoning (MiMo reasoning_content)
+  reasoning: Annotation<string | undefined>,
 });
 
 export type BrainPlannerStateType = typeof BrainPlannerState.State;

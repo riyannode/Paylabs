@@ -878,6 +878,7 @@ async function runX402Path(
                 selected_macro_nodes: result.brainPlanning.selected_macro_nodes,
                 selected_services: result.brainPlanning.selected_services,
                 planned_cost_usdc: result.brainPlanning.planned_cost_usdc,
+                reasoning: result.reasoning || null,
               }
             : null,
           payment_graph: result.paymentGraph.map((e) => ({
@@ -1017,6 +1018,7 @@ async function runX402Path(
         customer_wallet_type: entryPaymentData.customer_wallet_type,
       },
       error: result.error,
+      reasoning: result.reasoning || null,
       visibility_error: visibilityError,
     });
   } catch (e: unknown) {
