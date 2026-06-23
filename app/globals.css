@@ -90,7 +90,7 @@ a:hover { text-decoration: none; }
 /* ── Inputs ── */
 .input {
   width: 100%;
-  min-height: 42px;
+  min-height: 1em;
   background: white;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -526,7 +526,7 @@ a:hover { text-decoration: none; }
 }
 
 .pl-hero-logo {
-  height: 42px;
+  height: 1em;
   width: auto;
   vertical-align: middle;
   border-radius: 6px;
@@ -1157,7 +1157,7 @@ a:hover { text-decoration: none; }
   }
 
   .pl-hero-logo {
-    height: 32px;
+    height: 1em;
   }
 
   .pl-run-card {
