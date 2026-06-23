@@ -201,15 +201,24 @@ async function executeMacroNode(
 
     } else if (nodeName === "payment_decision") {
       const { runPaymentDecisionGraph } = await import("@/lib/paylabs/langgraph/macro-nodes/payment-decision-graph");
-      const candidates = (payload?.ranked_candidates || []) as Array<{
+      const rankedCandidates = (payload?.ranked_candidates || []) as Array<{
         feed_item_id: string; source_url?: string; title: string; publisher: string; rank: number; relevance_score: number;
       }>;
+      // Convert ranked_candidates to SafeSourceCard format
+      const sourceCards = rankedCandidates.map((c) => ({
+        feed_item_id: c.feed_item_id,
+        title: c.title || "",
+        source_url: c.source_url || "",
+        publisher: c.publisher || "",
+        claim_status: "unclaimed",
+        creator_wallet: null,
+      }));
       const graphResult = await runPaymentDecisionGraph({
         discoveryRunId: input.discoveryRunId,
         userGoal: input.userGoal,
         routeTier: input.routeTier,
         userBudgetUsdc: input.userBudgetUsdc,
-        candidates,
+        sourceCards,
         selectedServices,
         parentWalletId,
       });

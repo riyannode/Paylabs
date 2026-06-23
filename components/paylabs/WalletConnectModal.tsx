@@ -39,6 +39,8 @@ type Props = {
   onApprove: () => void;
   showEoaFallback?: boolean;
   onConnectEoa?: () => void;
+  needsReconnectToSign?: boolean;
+  onReconnect?: () => void;
   debugLog?: string[];
 };
 
@@ -79,6 +81,8 @@ export default function WalletConnectModal({
   onApprove,
   showEoaFallback = false,
   onConnectEoa,
+  needsReconnectToSign = false,
+  onReconnect,
   debugLog,
 }: Props) {
   const [tab, setTab] = useState<"login" | "gateway">("login");
@@ -162,7 +166,17 @@ export default function WalletConnectModal({
                 )}
               </div>
             ) : (
-              <ConnectedWalletHero />
+              <div className="pl-connected-hero-v3">
+                <div className="pl-connected-status-v3">
+                  <span className="pl-connected-dot-v3">✓</span>
+                  <span>{needsReconnectToSign ? "Wallet found" : "Wallet connected"}</span>
+                </div>
+                {needsReconnectToSign && (
+                  <button className="pl-primary-v3" onClick={onReconnect} style={{ marginTop: 8 }}>
+                    Reconnect wallet to sign
+                  </button>
+                )}
+              </div>
             )}
 
             <WalletRunSummary
@@ -208,7 +222,13 @@ export default function WalletConnectModal({
               </button>
             )}
 
-            {isConnected && gatewayReady && (
+            {isConnected && gatewayReady && needsReconnectToSign && (
+              <button className="pl-primary-v3" onClick={onReconnect}>
+                Reconnect wallet to sign
+              </button>
+            )}
+
+            {isConnected && gatewayReady && !needsReconnectToSign && (
               <button className="pl-primary-v3" onClick={onApprove}>
                 Run with x402
               </button>

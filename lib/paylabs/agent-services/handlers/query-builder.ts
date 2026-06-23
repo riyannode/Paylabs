@@ -94,26 +94,67 @@ function runDeterministicQueryBuilder(
 export const queryBuilderHandler: ServiceHandler = async (
   input: ServiceHandlerInput
 ): Promise<ServiceHandlerOutput> => {
-  const { normalized_goal, topics, routeTier } = input.payload as {
+  const { normalized_goal, topics, routeTier, brain_query_variants, brain_discovery_strategy, brain_normalized_goal } = input.payload as {
     normalized_goal: string;
     topics: string[];
     routeTier?: DelegatedRouteTier;
+    brain_query_variants?: string[];
+    brain_discovery_strategy?: string;
+    brain_normalized_goal?: string;
   };
 
   // Deterministic mode (default)
   if (shouldRunServiceAsDeterministic("query_builder")) {
-    const det = runDeterministicQueryBuilder(normalized_goal || "", topics || []);
+    // Use brain_normalized_goal as base if present
+    const baseGoal = brain_normalized_goal || normalized_goal || "";
+    const det = runDeterministicQueryBuilder(baseGoal, topics || []);
+
+    // Merge Brain query variants first, deterministic second
+    const brainVariants = (brain_query_variants || []).map((q: string) => q.trim()).filter(Boolean);
+    const merged = [...brainVariants, ...det.expanded_queries];
+
+    // Dedupe case-insensitively, trim, cap to 7
+    const seen = new Set<string>();
+    const deduped: string[] = [];
+    for (const q of merged) {
+      const key = q.toLowerCase().trim();
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        deduped.push(q.trim());
+      }
+    }
+    const finalQueries = deduped.slice(0, 7);
+
+    // Derive negative_filters and source_preferences from constraints
+    const negativeFilters = [...(det.negative_filters || [])];
+    const sourcePreferences = [...(det.source_preferences || [])];
+    for (const c of topics || []) {
+      const cl = c.toLowerCase();
+      if (cl === "recency_priority" && !sourcePreferences.includes("recent")) {
+        sourcePreferences.push("recent");
+      }
+      if (cl === "trust_required" && !sourcePreferences.includes("credible")) {
+        sourcePreferences.push("credible", "official");
+      }
+      if (cl === "free_only" && !negativeFilters.includes("paywall")) {
+        negativeFilters.push("paywall", "premium");
+      }
+      if (cl === "quality_priority" && !sourcePreferences.includes("high_quality")) {
+        sourcePreferences.push("high_quality", "primary_source");
+      }
+    }
+
     return {
       ok: true,
       serviceName: "query_builder",
       data: {
-        expanded_queries: det.expanded_queries,
+        expanded_queries: finalQueries,
         entity_terms: det.entity_terms,
-        negative_filters: det.negative_filters,
-        source_preferences: det.source_preferences,
-        safe_query_summary: `Built ${det.expanded_queries.length} queries, ${det.entity_terms.length} entities, ${det.negative_filters.length} filters. Deterministic expansion.`,
+        negative_filters: negativeFilters,
+        source_preferences: sourcePreferences,
+        safe_query_summary: `Built ${finalQueries.length} queries${brainVariants.length > 0 ? ` (${brainVariants.length} from Brain)` : ""}, ${det.entity_terms.length} entities, ${negativeFilters.length} filters. Deterministic expansion.`,
       },
-      safeSummary: `Built ${det.expanded_queries.length} queries, ${det.entity_terms.length} entities, ${det.negative_filters.length} filters. Deterministic expansion.`,
+      safeSummary: `Built ${finalQueries.length} queries, ${det.entity_terms.length} entities, ${negativeFilters.length} filters. Deterministic expansion.`,
       settled: false,
       error: null,
     };
@@ -123,7 +164,28 @@ export const queryBuilderHandler: ServiceHandler = async (
   const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
   const { toInternalRouteTier } = await import("./helpers");
 
-  const SYSTEM_PROMPT = `You are PayLabs Query Builder. Expand the normalized goal into precise source discovery queries. Focus on source paths, attribution, payment, creator monetization, RSSHub, x402, Circle, Arc, and AI agent commerce when relevant. You cannot pick final sources, set payment values, hallucinate URLs, or execute payments. Return structured JSON only. Always include a safe_summary field.`;
+  const SYSTEM_PROMPT = `You are PayLabs Query Builder.
+Your task is to create precise source discovery queries from the normalized goal.
+Use only the provided normalized goal, topics, Brain query variants, and route context. Preserve exact names:
+project names
+protocol names
+product names
+company names
+URLs/domains
+version numbers
+technical terms
+Build query variants for source discovery only. Do not choose final sources. Do not invent URLs. Do not invent titles. Do not set prices. Do not choose wallets. Do not execute payments. Do not settle payments.
+Query rules:
+Prefer exact-match queries over broad generic queries.
+Include both entities for comparison tasks.
+Include claim-focused wording for verification tasks.
+Add recency wording only if the user asks for latest/current/recent/today/this week/2025/2026/new.
+Do not return more than 7 expanded_queries.
+Avoid duplicate queries.
+Avoid generic filler queries.
+negative_filters should remove obvious noise only. source_preferences should be short tags such as official, credible, recent, primary_source, technical, documentation.
+safe_summary must be 1 short sentence. It must not mention internal chain-of-thought, payment internals, wallets, x402, Gateway, or settlement.
+Return JSON only. No markdown. No commentary. No extra keys. The first character must be "{".`;
 
   const result = await generateStructuredJson<z.infer<typeof QueryBuilderSchema>>({
     agentName: "query_builder",
