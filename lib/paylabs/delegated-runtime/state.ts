@@ -13,6 +13,7 @@ import type {
   MacroNodePhase,
   ServiceEvaluation,
   BrainPlanningOutput,
+  DelegatedRouteTier,
 } from "./types";
 import type { ServiceName } from "../agent-services/types";
 import {
@@ -20,6 +21,33 @@ import {
   FIXED_FEES_USDC,
   quoteDelegatedRun,
 } from "./quote-engine";
+
+// ─── Auto-Tier Resolution ────────────────────────────────────
+
+export type AutoTierResult =
+  | { ok: true; tier: DelegatedRouteTier }
+  | { ok: false; error: string };
+
+/**
+ * Resolve "auto" tier using Brain's route_tier_hint.
+ * For explicit tiers (easy/normal/advanced), use as-is.
+ * For "auto", REQUIRE valid Brain hint — fail closed if missing/invalid.
+ */
+export function resolveAutoTier(
+  requestedTier: string,
+  brainHint: string | undefined,
+): AutoTierResult {
+  if (requestedTier === "auto") {
+    if (brainHint === "easy" || brainHint === "normal" || brainHint === "advanced") {
+      return { ok: true, tier: brainHint };
+    }
+    return { ok: false, error: `Brain planner required for auto tier: got "${brainHint || "none"}"` };
+  }
+  if (requestedTier === "easy" || requestedTier === "normal" || requestedTier === "advanced") {
+    return { ok: true, tier: requestedTier };
+  }
+  return { ok: true, tier: "easy" };
+}
 
 // ─── Re-exports for backward compatibility ───────────────────
 export { TIER_PHASE_MAP };

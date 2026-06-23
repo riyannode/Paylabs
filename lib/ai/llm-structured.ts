@@ -183,7 +183,7 @@ function tryExtractJson(text: string): string | null {
 
 // ─── Providers that support native structured output ────────────
 
-const NATIVE_STRUCTURED_PROVIDERS = new Set(["openai", "anthropic"]);
+const NATIVE_STRUCTURED_PROVIDERS = new Set(["openai", "anthropic", "mimo"]);
 
 function supportsNativeStructured(provider: string): boolean {
   return NATIVE_STRUCTURED_PROVIDERS.has(provider.toLowerCase());
