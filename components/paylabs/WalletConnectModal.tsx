@@ -105,8 +105,8 @@ export default function WalletConnectModal({
   if (!open) return null;
 
   return (
-    <div className="pl-wallet-overlay-v3">
-      <div className="pl-wallet-modal-v3">
+    <div className="pl-wallet-overlay-v3" onClick={onClose}>
+      <div className="pl-wallet-modal-v3" onClick={(e) => e.stopPropagation()}>
         <button className="pl-wallet-x-v3" onClick={onClose} aria-label="Close">
           ×
         </button>

@@ -1,6 +1,19 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { short, shortUrl, usdc } from "@/lib/utils";
 
+/** Strip HTML tags and decode entities for safe display */
+function stripHtml(html: string): string {
+  return html
+    .replace(/<a[^>]*href="([^"]*)"[^>]*>[^<]*<\/a>/gi, "$1")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .trim();
+}
+
 export const dynamic = "force-dynamic";
 
 async function safeQuery<T>(
@@ -74,7 +87,7 @@ export default async function SourcesPage() {
                     overflow: "hidden",
                   }}
                 >
-                  {item.summary}
+                  {stripHtml(item.summary)}
                 </p>
               )}
 
