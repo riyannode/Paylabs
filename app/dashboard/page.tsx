@@ -588,77 +588,8 @@ export default async function DashboardPage() {
         )}
       </section>
 
-      {/* ─── Payment Graph (x402 edges with explorer links) ── */}
-      <section className="card">
-        <h2 className="section-title">Payment Graph (x402 Edges)</h2>
-        <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
-          x402 payment edges from recent discovery runs. Click explorer links to verify on-chain.
-        </p>
-        {discoveryRunRows.filter((r: any) => r.agent_trace?.payment_graph?.length > 0).length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
-            No payment graph data yet. Run an x402-enabled discovery run first.
-          </div>
-        ) : (
-          discoveryRunRows
-            .filter((r: any) => r.agent_trace?.payment_graph?.length > 0)
-            .slice(0, 5)
-            .map((run: any) => (
-              <div key={run.id} style={{ marginBottom: 24 }}>
-                <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13 }}>
-                  Run <span className="data-mono">{short(run.id)}</span>
-                  <span className="muted" style={{ marginLeft: 8 }}>{run.route_tier}</span>
-                  <span className={`badge ${run.status === "paid_path_available" ? "badge-success" : "badge-warning"}`} style={{ marginLeft: 8 }}>
-                    {run.status}
-                  </span>
-                </div>
-                <div style={{ overflowX: "auto" }}>
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Buyer</th>
-                        <th>Seller</th>
-                        <th>Type</th>
-                        <th>Status</th>
-                        <th>TX Hash</th>
-                        <th>Explorer</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {run.agent_trace.payment_graph.map((edge: any, i: number) => (
-                        <tr key={i}>
-                          <td className="data-mono" style={{ fontSize: 11 }}>{edge.buyer}</td>
-                          <td className="data-mono" style={{ fontSize: 11 }}>{edge.seller}</td>
-                          <td>
-                            <span className={`badge ${edge.node_type === "brain" ? "badge-success" : edge.node_type === "macro_node" ? "badge-warning" : ""}`} style={{ fontSize: 10 }}>
-                              {edge.node_type}
-                            </span>
-                          </td>
-                          <td>
-                            <span className={`badge ${edge.status === "paid" ? "badge-success" : edge.status === "skipped" ? "badge-warning" : "badge-danger"}`}>
-                              {edge.status}
-                            </span>
-                          </td>
-                          <td className="data-mono" style={{ fontSize: 10 }}>
-                            {edge.tx_hash ? short(edge.tx_hash) : "—"}
-                          </td>
-                          <td>
-                            {edge.explorer_url ? (
-                              <a href={edge.explorer_url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent, #6366f1)", fontSize: 11, textDecoration: "none" }}>
-                                View on Explorer ↗
-                              </a>
-                            ) : (
-                              <span className="muted" style={{ fontSize: 11 }}>—</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ))
-        )}
-      </section>
+
+
     </div>
   );
 }
