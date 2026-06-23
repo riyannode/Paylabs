@@ -1,17 +1,32 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { short, shortUrl, usdc } from "@/lib/utils";
 
-/** Strip HTML tags and decode entities for safe display */
-function stripHtml(html: string): string {
-  return html
-    .replace(/<a[^>]*href="([^"]*)"[^>]*>[^<]*<\/a>/gi, "$1")
-    .replace(/<[^>]+>/g, "")
+/** Decode HTML entities to plain text — safe for server-side rendering */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .trim();
+    .replace(/&#39;/g, "'");
+}
+
+/** Strip all HTML/XML tags — character scan, not regex */
+function stripTags(html: string): string {
+  let out = "";
+  let inTag = false;
+  for (let i = 0; i < html.length; i++) {
+    const ch = html[i];
+    if (ch === "<") { inTag = true; continue; }
+    if (ch === ">") { inTag = false; continue; }
+    if (!inTag) out += ch;
+  }
+  return out;
+}
+
+/** Strip HTML and decode entities for safe plain-text display */
+function toPlainText(html: string): string {
+  return decodeEntities(stripTags(html)).trim();
 }
 
 export const dynamic = "force-dynamic";
@@ -87,7 +102,7 @@ export default async function SourcesPage() {
                     overflow: "hidden",
                   }}
                 >
-                  {stripHtml(item.summary)}
+                  {toPlainText(item.summary)}
                 </p>
               )}
 
