@@ -75,7 +75,8 @@ function scoreItemDeterministic(
 function runDeterministicSignalScout(
   allActive: Record<string, unknown>[],
   expandedQueries: string[],
-  entityTerms: string[]
+  entityTerms: string[],
+  limit = 10
 ): Array<{
   feed_item_id: string;
   title: string;
@@ -101,7 +102,7 @@ function runDeterministicSignalScout(
   // Normalize scores to 0-1 range
   const maxScore = Math.max(scored[0]?.score || 1, 1);
 
-  return scored.slice(0, 10).map((entry, i) => ({
+  return scored.slice(0, limit).map((entry, i) => ({
     feed_item_id: String(entry.item.id || ""),
     title: String(entry.item.title || ""),
     publisher: String(entry.item.publisher || ""),
@@ -166,9 +167,30 @@ export const signalScoutHandler: ServiceHandler = async (
     };
   }
 
-  // LLM mode
+  // LLM mode — rank only top deterministic candidates (not all active items)
   const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
   const { toInternalRouteTier } = await import("./helpers");
+
+  // Pre-score all active items, keep top 20 for LLM reranking
+  const deterministicCandidates = runDeterministicSignalScout(
+    allActive,
+    expanded_queries || [],
+    entity_terms || [],
+    20
+  );
+
+  // Build safe metadata from deterministic candidates only
+  const candidateIds = new Set(deterministicCandidates.map((c) => c.feed_item_id));
+  const feedMeta = allActive
+    .filter((item) => candidateIds.has(String(item.id)))
+    .map((item) => ({
+      id: item.id,
+      title: item.title,
+      summary: String(item.summary || "").slice(0, 300),
+      publisher: item.publisher,
+      author_name: item.author_name,
+      published_at: item.published_at,
+    }));
 
   const SYSTEM_PROMPT = `
 You are PayLabs Signal Scout, the only hybrid child ranking agent in the source discovery pipeline.
@@ -239,16 +261,6 @@ Return exactly:
   "safe_summary": "string"
 }
 `;
-
-  // Safe metadata for LLM — no wallet, no price
-  const feedMeta = allActive.map((item) => ({
-    id: item.id,
-    title: item.title,
-    summary: (item.summary as string || "").slice(0, 200),
-    publisher: item.publisher,
-    author_name: item.author_name,
-    published_at: item.published_at,
-  }));
 
   const result = await generateStructuredJson<z.infer<typeof SignalScoutSchema>>({
     agentName: "signal_scout",
