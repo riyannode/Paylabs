@@ -3,9 +3,9 @@
  *
  * POST /api/paylabs/agent-services/[serviceName]/run
  *
- * DUAL MODE:
+ * x402-ONLY (fail-closed):
  * - If service is NOT in PAYLABS_X402_ENABLED_SERVICE_NAMES:
- *   audit-only. settled=false, mode="audit_only". Handler runs directly.
+ *   returns 500 config_error. Handler NEVER executes without payment.
  *
  * - If service IS in PAYLABS_X402_ENABLED_SERVICE_NAMES:
  *   First request (no payment header): returns real HTTP 402 + PAYMENT-REQUIRED header.

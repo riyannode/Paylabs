@@ -4,9 +4,9 @@
  * All macro-node phases must call services through this function,
  * never directly via SERVICE_HANDLERS.
  *
- * DUAL PATH:
+ * x402-ONLY (fail-closed):
  *   x402-enabled services: HTTP call to seller endpoint via buyer-transport
- *   audit-only services: direct in-process handler call
+ *   x402-disabled services: returns failClosed() error. Handler NEVER executes without payment.
  *
  * This function:
  * 1. Validates buyer→seller edge with assertAllowedAgentServiceEdge()
@@ -19,9 +19,9 @@
  *    - Fails closed on non-402/free response
  *    - Fails closed on missing safe payment metadata
  *    - Stores safe payment metadata in output
- * 5. If audit-only:
- *    - Calls handler directly (in-process)
- *    - settled=false always
+ * 5. If x402 disabled:
+ *    - Returns failClosed() error (config_error)
+ *    - Handler NEVER executes
  * 6. Returns structured output + safe call metadata
  */
 

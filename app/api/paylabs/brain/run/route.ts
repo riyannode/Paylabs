@@ -5,9 +5,9 @@
  *
  * Payment graph: run_budget_controller → Brain
  *
- * DUAL MODE:
+ * x402-ONLY (fail-closed):
  * - x402 enabled: returns 402 challenge, verifies/settles, then returns Brain data
- * - audit-only: returns Brain data directly (settled=false)
+ * - x402 disabled: returns 500 config_error. Brain NEVER executes without payment.
  */
 
 import { NextRequest, NextResponse } from "next/server";

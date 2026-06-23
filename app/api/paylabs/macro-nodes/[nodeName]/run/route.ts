@@ -5,9 +5,9 @@
  *
  * Payment graph: Brain → macro-node → child services
  *
- * DUAL MODE:
+ * x402-ONLY (fail-closed):
  * - x402 enabled: 402 challenge → verify → settle → execute macro-node graph
- * - audit-only: execute macro-node graph directly
+ * - x402 disabled: returns 500 config_error. Macro-node NEVER executes without payment.
  *
  * After settlement, the macro-node LangGraph executes its child services.
  * Child services are paid by the macro-node's buyer wallet (not Brain's).
