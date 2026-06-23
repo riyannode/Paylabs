@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
     });
 
     const modelConfig = getTutorModelConfig("brain_planner");
+    const bp = result.brainPlanning;
 
     return NextResponse.json({
       ok: result.ok,
@@ -53,12 +54,12 @@ export async function POST(req: NextRequest) {
       agent_key: modelConfig.agentKey,
       max_tokens: modelConfig.maxTokens,
       timeout_ms: modelConfig.timeoutMs,
-      route_tier_hint: "normal",
+      route_tier_hint: bp?.route_tier_hint ?? null,
       selected_macro_nodes: result.selectedMacroNodes,
       selected_services_count: result.selectedServices.length,
-      query_variants_count: result.progressSummaries.length,
-      assistant_response_chars: result.finalSummary?.length ?? 0,
-      user_visible_reasoning_chars: 0,
+      query_variants_count: bp?.suggested_query_variants?.length ?? 0,
+      assistant_response_chars: bp?.assistant_response?.length ?? 0,
+      user_visible_reasoning_chars: bp?.user_visible_reasoning?.length ?? 0,
       error: result.error,
     });
   } catch (e: unknown) {
