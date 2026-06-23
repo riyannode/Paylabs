@@ -1614,7 +1614,7 @@ function BrainIcon() {
 }
 
 function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () => void }) {
-  const [rationaleOpen, setRationaleOpen] = useState(true);
+  const [rationaleOpen, setRationaleOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const rationaleText = result.userVisibleReasoning ?? result.brainRationale;
   return (
