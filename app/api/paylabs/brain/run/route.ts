@@ -54,17 +54,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const x402Enabled = process.env.PAYLABS_BRAIN_X402_ENABLED === "true";
-
-  if (!x402Enabled) {
-    return NextResponse.json({
-      ok: true,
-      nodeType: "brain",
-      mode: "audit_only",
-      settled: false,
-      safeSummary: "Brain: audit-only (x402 not enabled)",
-      data: { userGoal, routeTier, userBudgetUsdc, discoveryRunId },
-    });
+  if (process.env.PAYLABS_BRAIN_X402_ENABLED !== "true") {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "config_error: PAYLABS_BRAIN_X402_ENABLED must be true. Brain is x402-only.",
+      },
+      { status: 500 }
+    );
   }
 
   // ── x402 path ──

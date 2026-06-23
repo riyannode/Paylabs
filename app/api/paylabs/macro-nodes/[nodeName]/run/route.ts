@@ -78,16 +78,14 @@ export async function POST(
     );
   }
 
-  const x402Enabled = process.env.PAYLABS_NODE_X402_ENABLED === "true";
-
-  if (!x402Enabled) {
-    return executeMacroNode(nodeName as MacroNodePhase, {
-      discoveryRunId,
-      userGoal,
-      userWallet: userWallet || "",
-      userBudgetUsdc: userBudgetUsdc || 0,
-      routeTier: routeTier as OrchestratorInput["routeTier"],
-    }, null, nodePayload);
+  if (process.env.PAYLABS_NODE_X402_ENABLED !== "true") {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "config_error: PAYLABS_NODE_X402_ENABLED must be true. Macro nodes are x402-only.",
+      },
+      { status: 500 }
+    );
   }
 
   // ── x402 path ──
@@ -169,11 +167,15 @@ async function executeMacroNode(
   const nodeConfig = getMacroNodeConfig(nodeName);
   const state = createOrchestratorState(input);
 
-  let parentWalletId: string | undefined;
+  let parentWalletId: string;
   try {
     parentWalletId = resolveNodeBuyerWalletId(nodeConfig);
-  } catch {
-    // audit-only: no wallet needed
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json(
+      { ok: false, error: msg },
+      { status: 500 }
+    );
   }
 
   const selectedServices = nodeConfig.childServices;
@@ -257,7 +259,7 @@ async function executeMacroNode(
       ok: true,
       nodeType: "macro_node",
       nodeName,
-      mode: paymentMeta ? "x402" : "audit_only",
+      mode: "x402",
       settled: !!paymentMeta,
       safeSummary: `Macro-node ${nodeName}: ${selectedServices.length} child services`,
       data: result,
