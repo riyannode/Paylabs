@@ -318,7 +318,8 @@ async function signWithUcw(params: {
     ucwSdk.execute(challengeId, (error: unknown, result: unknown) => {
       if (error) reject(error instanceof Error ? error : new Error(String(error)));
       else {
-        const sig = (result as Record<string, string>)?.signature;
+        // Circle SDK returns signature at result.data.signature for SIGN_TYPEDDATA
+        const sig = (result as { data?: { signature?: string } })?.data?.signature;
         if (!sig) reject(new Error("No signature returned from UCW challenge"));
         else resolve(sig);
       }
