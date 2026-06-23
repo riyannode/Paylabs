@@ -1,16 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { short, shortUrl, usdc } from "@/lib/utils";
 
-/** Decode HTML entities to plain text — safe for server-side rendering */
-function decodeEntities(text: string): string {
-  return text
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-}
-
 /** Strip all HTML/XML tags — character scan, not regex */
 function stripTags(html: string): string {
   let out = "";
@@ -21,12 +11,7 @@ function stripTags(html: string): string {
     if (ch === ">") { inTag = false; continue; }
     if (!inTag) out += ch;
   }
-  return out;
-}
-
-/** Strip HTML and decode entities for safe plain-text display */
-function toPlainText(html: string): string {
-  return decodeEntities(stripTags(html)).trim();
+  return out.trim();
 }
 
 export const dynamic = "force-dynamic";
@@ -102,7 +87,7 @@ export default async function SourcesPage() {
                     overflow: "hidden",
                   }}
                 >
-                  {toPlainText(item.summary)}
+                  {stripTags(item.summary)}
                 </p>
               )}
 
