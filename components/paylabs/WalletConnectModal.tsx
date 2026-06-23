@@ -55,7 +55,6 @@ function asNumber(value?: string | null) {
 function ConnectedWalletHero() {
   return (
     <div className="pl-connected-hero-v3">
-      <img className="pl-connected-logo-v3" src="/paylabs-logo.png" alt="PayLabs" />
       <div className="pl-connected-status-v3">
         <span className="pl-connected-dot-v3">✓</span>
         <span>Wallet connected</span>
