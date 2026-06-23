@@ -18,6 +18,15 @@ type Props = {
   analytics: Analytics;
 };
 
+type SourceLink = {
+  title: string;
+  url: string;
+  domain: string | null;
+  summary: string;
+  rank: number;
+  relevance_score: number;
+};
+
 type SafeRunResult = {
   ok: boolean;
   runId: string | null;
@@ -37,6 +46,7 @@ type SafeRunResult = {
   lockedNodes: string[];
   lockedServices: string[];
   tierDecisionReason: string | null;
+  sourcesUsed: SourceLink[];
 };
 
 type ChatMessage =
@@ -110,6 +120,34 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (agentTraceBrain?.safe_summary as string) ??
     null;
 
+  // Extract sources from source_context.sources_used or fallback to exit_output.sources_used
+  const sourceContext = data?.source_context as Record<string, unknown> | undefined;
+  const rawSources: unknown[] =
+    (sourceContext?.sources_used as unknown[]) ??
+    (exitOutput?.sources_used as unknown[]) ??
+    [];
+  const sourcesUsed: SourceLink[] = Array.isArray(rawSources)
+    ? rawSources
+        .filter((s): s is Record<string, unknown> => !!s && typeof s === "object")
+        .map((s) => {
+          const url = typeof s.url === "string" ? s.url : "";
+          const title = typeof s.title === "string" && s.title ? s.title : null;
+          let domain: string | null = typeof s.domain === "string" ? s.domain : null;
+          if (!domain && url) {
+            try { domain = new URL(url).hostname; } catch { /* noop */ }
+          }
+          return {
+            title: title || domain || "Source",
+            url,
+            domain,
+            summary: typeof s.summary === "string" ? s.summary : "",
+            rank: typeof s.rank === "number" ? s.rank : 0,
+            relevance_score: typeof s.relevance_score === "number" ? s.relevance_score : 0,
+          };
+        })
+        .filter((s) => /^https?:\/\//.test(s.url))
+    : [];
+
   return {
     ok: !!data?.ok,
     runId: (data?.discovery_run_id as string) ?? (data?.id as string) ?? null,
@@ -129,6 +167,7 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     lockedNodes: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_macro_nodes as string[]) ?? [],
     lockedServices: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_services as string[]) ?? [],
     tierDecisionReason: (brainPlanning?.tier_decision_reason as string) ?? null,
+    sourcesUsed,
   };
 }
 
@@ -1519,6 +1558,19 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
     <div className="pl-result-card">
       {result.assistantResponse && (
         <div className="pl-assistant-answer">{result.assistantResponse}</div>
+      )}
+      {result.sourcesUsed.length > 0 && (
+        <div className="pl-sources-inline">
+          Sources:{" "}
+          {result.sourcesUsed.slice(0, 3).map((s, i) => (
+            <span key={s.url}>
+              {i > 0 && " · "}
+              <a href={s.url} target="_blank" rel="noopener noreferrer">
+                {s.title} ↗
+              </a>
+            </span>
+          ))}
+        </div>
       )}
       {rationaleText && (
         <div className="pl-rationale-block">

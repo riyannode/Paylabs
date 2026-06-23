@@ -805,6 +805,34 @@ a:hover { text-decoration: none; }
   word-break: break-word;
 }
 
+.pl-sources-inline {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  margin: -4px 0 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted-foreground, #64748b);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px;
+}
+.pl-sources-inline a {
+  color: #3b82f6;
+  text-decoration: none;
+  word-break: break-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+  display: inline-block;
+  vertical-align: baseline;
+}
+.pl-sources-inline a:hover {
+  text-decoration: underline;
+}
+
 .pl-rationale-block {
   border: 1px solid var(--border);
   border-radius: 16px;
