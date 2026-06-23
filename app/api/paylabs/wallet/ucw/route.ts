@@ -156,6 +156,9 @@ export async function POST(req: NextRequest) {
         const { isAddress } = await import("viem");
         if (!isAddress(sess.walletAddress)) return NextResponse.json({ error: "Invalid wallet address" }, { status: 400 });
         const { amountAtomic: required } = body as { amountAtomic?: string };
+        if (required && (!/^\d+$/.test(required) || BigInt(required) <= BigInt(0))) {
+          return NextResponse.json({ error: "amountAtomic must be a positive integer string" }, { status: 400 });
+        }
         const currentAllowance = await checkAllowance(sess.walletAddress);
         const sufficient = required ? BigInt(currentAllowance) >= BigInt(required) : BigInt(currentAllowance) > BigInt(0);
         await refreshSession(sid);

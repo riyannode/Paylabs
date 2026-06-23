@@ -1020,6 +1020,11 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         depositChallengeId?: string;
       };
 
+      // Fail-closed: deposit_ready must have a challengeId
+      if (data.step === "deposit_ready" && !data.depositChallengeId) {
+        throw new Error("Deposit challenge missing. Please try again.");
+      }
+
       const sdk = ucwSdkRef.current as { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (id: string, cb: (err: unknown, res: unknown) => void) => void };
       if (!sdk) throw new Error("UCW SDK not initialized");
 
