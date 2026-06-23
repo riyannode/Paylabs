@@ -52,6 +52,18 @@ function asNumber(value?: string | null) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function ConnectedWalletHero() {
+  return (
+    <div className="pl-connected-hero-v3">
+      <img className="pl-connected-logo-v3" src="/paylabs-logo.png" alt="PayLabs" />
+      <div className="pl-connected-status-v3">
+        <span className="pl-connected-dot-v3">✓</span>
+        <span>Wallet connected</span>
+      </div>
+    </div>
+  );
+}
+
 export default function WalletConnectModal({
   open,
   onClose,
@@ -112,43 +124,47 @@ export default function WalletConnectModal({
 
         {tab === "login" && (
           <div className="pl-wallet-content-v3">
-            <div className="pl-login-stack-v3">
-              <button
-                className="pl-login-option-v3"
-                onClick={onConnectGoogle}
-                disabled={walletState === "connecting"}
-              >
-                <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
-                <b>Social</b>
-              </button>
-
-              <button
-                className="pl-login-option-v3"
-                onClick={() => {
-                  const next = window.prompt("Enter email for OTP");
-                  if (next) onConnectEmail(next);
-                }}
-                disabled={walletState === "connecting"}
-              >
-                <span className="pl-login-icon-v3"><MailIcon /></span>
-                <b>Email</b>
-              </button>
-
-              <button
-                className="pl-login-option-v3"
-                onClick={onConnectPin}
-                disabled={walletState === "connecting"}
-              >
-                <span className="pl-login-icon-v3"><LockIcon /></span>
-                <b>PIN</b>
-              </button>
-
-              {showEoaFallback && onConnectEoa && (
-                <button className="pl-eoa-fallback-v3" onClick={onConnectEoa}>
-                  Browser wallet
+            {!isConnected ? (
+              <div className="pl-login-stack-v3">
+                <button
+                  className="pl-login-option-v3"
+                  onClick={onConnectGoogle}
+                  disabled={walletState === "connecting"}
+                >
+                  <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
+                  <b>Social</b>
                 </button>
-              )}
-            </div>
+
+                <button
+                  className="pl-login-option-v3"
+                  onClick={() => {
+                    const next = window.prompt("Enter email for OTP");
+                    if (next) onConnectEmail(next);
+                  }}
+                  disabled={walletState === "connecting"}
+                >
+                  <span className="pl-login-icon-v3"><MailIcon /></span>
+                  <b>Email</b>
+                </button>
+
+                <button
+                  className="pl-login-option-v3"
+                  onClick={onConnectPin}
+                  disabled={walletState === "connecting"}
+                >
+                  <span className="pl-login-icon-v3"><LockIcon /></span>
+                  <b>PIN</b>
+                </button>
+
+                {showEoaFallback && onConnectEoa && (
+                  <button className="pl-eoa-fallback-v3" onClick={onConnectEoa}>
+                    Browser wallet
+                  </button>
+                )}
+              </div>
+            ) : (
+              <ConnectedWalletHero />
+            )}
 
             <WalletRunSummary
               walletInfo={walletInfo}
