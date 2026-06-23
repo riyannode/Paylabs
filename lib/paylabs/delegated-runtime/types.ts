@@ -262,6 +262,44 @@ export interface EasyToNormalHandoff {
   sourceCards: SafeSourceCard[];
 }
 
+// ─── Brain Refund Recommendation (advisory only) ──────────
+export type BrainRefundRecommendationAction =
+  | "refund_not_required"
+  | "request_refund"
+  | "hold_pending_settlement"
+  | "manual_review";
+
+export interface BrainRefundRecommendation {
+  action: BrainRefundRecommendationAction;
+  safe_reason: string;
+  requested_refund_usdc?: number | null;
+}
+
+// ─── Refund Status (backend-determined) ─────────────────────
+export type RefundStatus =
+  | "not_required"
+  | "eligible"
+  | "pending"
+  | "refunded"
+  | "failed"
+  | "manual_review";
+
+// ─── Budget Refund Reconciliation (backend-computed) ────────
+export interface BudgetRefundReconciliation {
+  userBudgetUsdc: number;
+  plannedCostUsdc: number;
+  paidUpfrontUsdc: number;
+  actualSettledUsdc: number;
+  estimatedUnsettledUsdc: number;
+  pendingSettlementUsdc: number;
+  refundableUsdc: number;
+  refundRequired: boolean;
+  refundStatus: RefundStatus;
+  refundTxHash?: string | null;
+  brainRecommendation?: BrainRefundRecommendation | null;
+  summary: string;
+}
+
 // ─── Orchestrator Output ─────────────────────────────────────
 export interface OrchestratorOutput {
   discoveryRunId: string;
@@ -281,5 +319,7 @@ export interface OrchestratorOutput {
   easyToNormalHandoff?: EasyToNormalHandoff;
   /** Rich source context from signal_scout resolution (post PR #26) */
   sourceContext?: SourceContext;
+  /** Budget refund reconciliation (backend-computed, Brain-advisory) */
+  budgetRefundReconciliation?: BudgetRefundReconciliation;
   error: string | null;
 }

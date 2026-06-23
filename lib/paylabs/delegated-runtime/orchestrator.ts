@@ -21,6 +21,7 @@ import type {
   DelegatedRouteTier,
   MacroNodePhase,
   BrainPlanningOutput,
+  BudgetRefundReconciliation,
 } from "./types";
 import type { ServiceName } from "../agent-services/types";
 import {
@@ -228,7 +229,7 @@ export async function executeDelegatedDiscoveryRun(
     );
 
     markOrchestratorComplete(state, "completed");
-    return buildOutput(state);
+    return await buildOutputWithRefund(state, input);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     markOrchestratorComplete(state, "failed", `Orchestrator error: ${msg}`);
@@ -285,6 +286,86 @@ function buildOutput(state: ReturnType<typeof createOrchestratorState>): Orchest
     easyToNormalHandoff: state.easyToNormalHandoff,
     error: state.error,
   };
+}
+
+// ─── Refund Reconciliation (async, fail-soft) ───────────────
+
+/**
+ * Build output with budget refund reconciliation.
+ * Fail-soft: if reconciliation fails, output still returns with error status.
+ */
+async function buildOutputWithRefund(
+  state: ReturnType<typeof createOrchestratorState>,
+  input: OrchestratorInput
+): Promise<OrchestratorOutput> {
+  const output = buildOutput(state);
+
+  try {
+    const {
+      buildSafeBudgetRefundContext,
+      toBrainSafeRefundContext,
+      reconcileAndMaybeRefund,
+    } = await import("../budget/refund-reconciliation");
+    const { getBrainRefundRecommendation } = await import("../budget/refund-brain-policy");
+
+    // Derive paidUpfrontUsdc from real entry payment receipt state only.
+    // Currently no real entry payment capture exists — default to 0.
+    const paidUpfrontUsdc = 0;
+
+    const safeRefundContext = buildSafeBudgetRefundContext({
+      input,
+      state,
+      executionPlan: state.executionPlan,
+      budgetSnapshot: state.budgetSnapshot,
+      serviceEvaluations: state.serviceEvaluations,
+      paymentEdges: state.paymentEdges,
+      paidUpfrontUsdc,
+    });
+
+    // Ask Brain for recommendation (advisory only, fail-soft)
+    const brainSafeContext = toBrainSafeRefundContext(safeRefundContext, state.routeTier);
+    const brainRecommendation = await getBrainRefundRecommendation(brainSafeContext);
+
+    // Backend deterministic reconciliation
+    const budgetRefundReconciliation = await reconcileAndMaybeRefund({
+      context: safeRefundContext,
+      brainRecommendation,
+    });
+
+    const output2 = { ...output, budgetRefundReconciliation };
+
+    // Append refund-aware wording to tier summaries (no overclaiming)
+    if (output2.tieredSummaries) {
+      const refundNote = "Budget/refund status is reported separately.";
+      if (output2.tieredSummaries.easy_summary && !output2.tieredSummaries.easy_summary.includes(refundNote)) {
+        output2.tieredSummaries.easy_summary += ` ${refundNote}`;
+      }
+      if (output2.tieredSummaries.normal_summary && !output2.tieredSummaries.normal_summary.includes(refundNote)) {
+        output2.tieredSummaries.normal_summary += ` ${refundNote}`;
+      }
+      if (output2.tieredSummaries.advanced_summary) {
+        output2.tieredSummaries.advanced_summary += " Real settlement/refund status is shown only when safe payment evidence exists.";
+      }
+    }
+
+    return output2;
+  } catch (e: unknown) {
+    // Fail-soft: refund failure must not erase main run result
+    const refundErr = e instanceof Error ? e.message : String(e);
+    const failedReconciliation: BudgetRefundReconciliation = {
+      userBudgetUsdc: input.userBudgetUsdc,
+      plannedCostUsdc: state.executionPlan?.plannedCostUsdc ?? 0,
+      paidUpfrontUsdc: 0,
+      actualSettledUsdc: 0,
+      estimatedUnsettledUsdc: 0,
+      pendingSettlementUsdc: 0,
+      refundableUsdc: 0,
+      refundRequired: false,
+      refundStatus: "failed",
+      summary: `Refund reconciliation error: ${refundErr}`,
+    };
+    return { ...output, budgetRefundReconciliation: failedReconciliation };
+  }
 }
 
 // ─── Safe Candidate Extraction ─────────────────────────────
