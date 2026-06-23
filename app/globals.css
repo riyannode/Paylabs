@@ -760,41 +760,6 @@ a:hover { text-decoration: none; }
   background: var(--card-soft);
 }
 
-.pl-reasoning-block {
-  border-bottom: 1px solid var(--border);
-}
-
-.pl-reasoning-toggle {
-  width: 100%;
-  cursor: pointer;
-  background: var(--card-soft);
-  border: 0;
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--info);
-  text-align: left;
-  transition: background 0.12s;
-}
-
-.pl-reasoning-toggle:hover {
-  background: var(--info-soft);
-}
-
-.pl-reasoning-content {
-  background: #f8fafc;
-  color: var(--foreground);
-  padding: 12px;
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 300px;
-  overflow-y: auto;
-  border-top: 1px solid var(--border);
-  margin: 0;
-}
-
 .pl-result-links a {
   font-size: 12px;
   font-weight: 600;

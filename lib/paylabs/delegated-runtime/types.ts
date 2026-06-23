@@ -149,8 +149,6 @@ export interface OrchestratorRunState {
   paymentGraph: PaymentGraphEdge[];
   /** Safe Easy→Normal handoff (computed after discovery phase) */
   easyToNormalHandoff?: EasyToNormalHandoff;
-  /** LLM reasoning (MiMo reasoning_content from Brain planning) */
-  reasoning?: string | null;
   error: string | null;
   startedAt: string;
   completedAt: string | null;
@@ -323,7 +321,5 @@ export interface OrchestratorOutput {
   sourceContext?: SourceContext;
   /** Budget refund reconciliation (backend-computed, Brain-advisory) */
   budgetRefundReconciliation?: BudgetRefundReconciliation;
-  /** LLM reasoning (MiMo reasoning_content from Brain planning) */
-  reasoning?: string;
   error: string | null;
 }

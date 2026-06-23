@@ -321,7 +321,6 @@ Analyze this goal and produce a structured execution plan.`,
         `${data.service_execution_plan.length} services planned, ` +
         `${data.suggested_query_variants.length} query variants`,
       ],
-      reasoning: (result.meta?.reasoning as string) || undefined,
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -438,7 +437,6 @@ export interface RunBrainPlannerGraphOutput {
   plannedCostUsdc: number;
   finalSummary: string;
   progressSummaries: string[];
-  reasoning?: string;
   error: string | null;
 }
 
@@ -478,7 +476,6 @@ export async function runBrainPlannerGraph(
       plannedCostUsdc: result.plannedCostUsdc || 0,
       finalSummary,
       progressSummaries: result.progressSummaries || [],
-      reasoning: result.reasoning || undefined,
       error: result.error || null,
     };
   } catch (e: unknown) {

@@ -300,11 +300,6 @@ export async function generateStructuredJson<T>(
       const result = await (model as ChatOpenAI).invoke(strategyMessages);
       const jsonStr = extractJsonFromResponse(result);
 
-      // Capture MiMo reasoning_content for live display
-      const rawResult = result as unknown as Record<string, unknown>;
-      const rawAk = rawResult?.additional_kwargs as Record<string, unknown> | undefined;
-      const capturedReasoning = (rawAk?.reasoning_content as string) || "";
-
       // Safe debug: no content preview, no full prompt, no secrets
       if (process.env.PAYLABS_LLM_DEBUG === "true") {
         const dbg = result as unknown as Record<string, unknown>;
@@ -380,9 +375,6 @@ export async function generateStructuredJson<T>(
       }
 
       const meta = buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, attempt, "llm_structured_json_extract");
-      if (capturedReasoning) {
-        (meta as Record<string, unknown>).reasoning = capturedReasoning;
-      }
       return { ok: true, data: parsed.data as T, meta };
 
     } catch (e: unknown) {

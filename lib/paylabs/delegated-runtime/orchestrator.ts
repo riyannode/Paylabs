@@ -72,9 +72,6 @@ export async function executeDelegatedDiscoveryRun(
 
   if (brainResult.ok) {
     state.brainPlanning = brainResult.data;
-    if (brainResult.reasoning) {
-      state.reasoning = brainResult.reasoning;
-    }
 
     const executionPlan = validateAndLockExecutionPlan(
       resolvedTier,
@@ -258,7 +255,7 @@ export async function executeDelegatedDiscoveryRun(
 
 async function runBrainPlanning(
   input: OrchestratorInput
-): Promise<{ ok: true; data: BrainPlanningOutput; reasoning?: string } | { ok: false; error: string }> {
+): Promise<{ ok: true; data: BrainPlanningOutput } | { ok: false; error: string }> {
   try {
     const { runBrainPlannerGraph } = await import("../langgraph/brain/brain-planner-graph");
     const result = await runBrainPlannerGraph({
@@ -270,7 +267,7 @@ async function runBrainPlanning(
     });
 
     if (result.ok && result.brainPlanning) {
-      return { ok: true, data: result.brainPlanning, reasoning: result.reasoning };
+      return { ok: true, data: result.brainPlanning };
     }
     return { ok: false, error: result.error || "Brain planning failed" };
   } catch (e: unknown) {
@@ -301,7 +298,6 @@ function buildOutput(state: ReturnType<typeof createOrchestratorState>): Orchest
     paymentGraph: state.paymentGraph,
     tieredSummaries: buildTieredSummaries(state),
     easyToNormalHandoff: state.easyToNormalHandoff,
-    reasoning: state.reasoning || undefined,
     error: state.error,
   };
 }

@@ -29,7 +29,6 @@ type SafeRunResult = {
   totalEdges: number;
   receiptReady: boolean;
   safeSummary: string;
-  reasoning: string | null;
 };
 
 // UCW sensitive tokens are stored server-side in httpOnly session cookie.
@@ -85,10 +84,6 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
       (exitOutput?.final_summary as string) ??
       (data?.tiered_summaries as Record<string, string>)?.final_summary ??
       "Run completed.",
-    reasoning:
-      (data?.reasoning as string) ??
-      ((data?.agent_trace as Record<string, unknown>)?.brain_planning as Record<string, string>)?.reasoning ??
-      null,
   };
 }
 
@@ -1305,7 +1300,6 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 // ─── Result Card ────────────────────────────────────────────
 
 function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () => void }) {
-  const [reasoningOpen, setReasoningOpen] = useState(false);
   return (
     <div className="pl-result-card">
       <div className="pl-result-row">
@@ -1332,19 +1326,6 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
         <span>Receipt</span>
         <b>{result.receiptReady ? "Ready" : "Pending"}</b>
       </div>
-      {result.reasoning && (
-        <div className="pl-reasoning-block">
-          <button
-            className="pl-reasoning-toggle"
-            onClick={() => setReasoningOpen(!reasoningOpen)}
-          >
-            {reasoningOpen ? "▾" : "▸"} Brain Thinking
-          </button>
-          {reasoningOpen && (
-            <pre className="pl-reasoning-content">{result.reasoning}</pre>
-          )}
-        </div>
-      )}
       {result.runId && (
         <div className="pl-result-links">
           <a href={`/dashboard?run=${result.runId}`}>View details</a>
