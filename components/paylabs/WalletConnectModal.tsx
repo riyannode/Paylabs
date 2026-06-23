@@ -35,7 +35,7 @@ type Props = {
   onConnectGoogle: () => void;
   onConnectEmail: (email: string) => void;
   onConnectPin: () => void;
-  onDepositGateway: () => void;
+  onDepositGateway: (amountAtomic: string) => void;
   onApprove: () => void;
   showEoaFallback?: boolean;
   onConnectEoa?: () => void;
@@ -86,6 +86,7 @@ export default function WalletConnectModal({
   debugLog,
 }: Props) {
   const [tab, setTab] = useState<"login" | "gateway">("login");
+  const [depositAmount, setDepositAmount] = useState("");
 
   const isConnected = !!walletInfo?.address;
   const gatewayBalance = asNumber(ucwBalance?.gateway);
@@ -217,12 +218,30 @@ export default function WalletConnectModal({
             )}
 
             {isConnected && (
-              <button className="pl-primary-v3" onClick={onDepositGateway}>
-                {gatewayReady ? "Deposit more" : "Deposit to Gateway"}
-              </button>
+              <>
+                <input
+                  className="pl-deposit-input-v3"
+                  type="number"
+                  min="0"
+                  step="0.000001"
+                  placeholder="Amount in USDC"
+                  value={depositAmount}
+                  onChange={(e) => setDepositAmount(e.target.value)}
+                />
+                <button
+                  className="pl-primary-v3"
+                  onClick={() => {
+                    const parsed = parseFloat(depositAmount);
+                    const atomic = Math.round((!isNaN(parsed) && parsed > 0 ? parsed : parseFloat(plannedCost) * 2) * 1_000_000).toString();
+                    onDepositGateway(atomic);
+                  }}
+                >
+                  {gatewayReady ? "Deposit more" : "Deposit to Gateway"}
+                </button>
+              </>
             )}
 
-            {isConnected && gatewayReady && needsReconnectToSign && (
+            {isConnected && needsReconnectToSign && (
               <button className="pl-primary-v3" onClick={onReconnect}>
                 Reconnect wallet to sign
               </button>

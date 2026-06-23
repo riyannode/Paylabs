@@ -932,12 +932,10 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
   }, [planned, walletState]);
 
   // ── Gateway deposit (UCW contract execution) ──
-  const depositGateway = useCallback(async () => {
+  const depositGateway = useCallback(async (amountAtomic: string) => {
     setWalletState("approving");
     setWalletError(null);
     try {
-      const amountUsdc = parseFloat(planned) * 2;
-      const amountAtomic = Math.round(amountUsdc * 1_000_000).toString();
 
       const resp = await fetch("/api/paylabs/wallet/ucw?action=approve-deposit", {
         method: "POST",

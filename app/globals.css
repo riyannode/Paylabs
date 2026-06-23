@@ -1017,6 +1017,28 @@ a:hover { text-decoration: none; }
   box-shadow: none;
 }
 
+.pl-deposit-input-v3 {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  color: #0f172a;
+  background: #fff;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.pl-deposit-input-v3:focus {
+  border-color: #6366f1;
+}
+
+.pl-deposit-input-v3::placeholder {
+  color: #cbd5e1;
+}
+
 .pl-wallet-error-v3 {
   margin-top: 14px;
   border-radius: 14px;
