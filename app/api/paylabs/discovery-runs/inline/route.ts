@@ -1088,8 +1088,8 @@ async function runX402Path(
       discovery_run_id: discoveryRunId,
       status: result.status,
       requested_route_tier: routeTier,
-      route_tier: result.routeTier,
-      effective_route_tier: result.routeTier,
+      route_tier: result._lockedPlan ? result.routeTier : (result.status === "failed" ? null : result.routeTier),
+      effective_route_tier: result._lockedPlan ? result.routeTier : (result.status === "failed" ? null : result.routeTier),
       locked_execution_plan: result._lockedPlan
         ? {
             selected_macro_nodes: result._lockedPlan.selectedMacroNodes,
