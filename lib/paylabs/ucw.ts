@@ -11,7 +11,7 @@ import { initiateUserControlledWalletsClient } from "@circle-fin/user-controlled
 import type { Blockchain } from "@circle-fin/user-controlled-wallets";
 import { randomUUID } from "crypto";
 import { createClient } from "@supabase/supabase-js";
-import { createPublicClient, http, formatUnits } from "viem";
+import { createPublicClient, http, isAddress } from "viem";
 import { arcTestnet } from "viem/chains";
 
 // ---------------------------------------------------------------------------
@@ -358,6 +358,7 @@ const ERC20_ABI = [
 const publicClient = createPublicClient({ chain: arcTestnet, transport: http() });
 
 export async function checkAllowance(owner: string): Promise<string> {
+  if (!isAddress(owner)) throw new Error("Invalid wallet address");
   const allowance = await publicClient.readContract({
     address: USDC_ARC_TESTNET as `0x${string}`,
     abi: ERC20_ABI,

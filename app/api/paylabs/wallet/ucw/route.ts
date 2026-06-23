@@ -148,6 +148,20 @@ export async function POST(req: NextRequest) {
         return respSign;
       }
 
+      case "check-allowance": {
+        const sid = req.cookies.get("ucw_sid")?.value;
+        if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
+        const sess = await getSession(sid);
+        if (!sess?.walletAddress) return NextResponse.json({ error: "No wallet in session" }, { status: 400 });
+        const { isAddress } = await import("viem");
+        if (!isAddress(sess.walletAddress)) return NextResponse.json({ error: "Invalid wallet address" }, { status: 400 });
+        const { amountAtomic: required } = body as { amountAtomic?: string };
+        const currentAllowance = await checkAllowance(sess.walletAddress);
+        const sufficient = required ? BigInt(currentAllowance) >= BigInt(required) : BigInt(currentAllowance) > BigInt(0);
+        await refreshSession(sid);
+        return NextResponse.json({ allowance: currentAllowance, sufficient });
+      }
+
       case "deposit": {
         const sid = req.cookies.get("ucw_sid")?.value;
         if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
@@ -157,28 +171,29 @@ export async function POST(req: NextRequest) {
         if (!amountAtomic || !/^\d+$/.test(amountAtomic) || BigInt(amountAtomic) <= BigInt(0)) {
           return NextResponse.json({ error: "amountAtomic must be a positive integer string" }, { status: 400 });
         }
-        // On-chain allowance check — skip approve if sufficient
+        // Validate wallet address
+        const { isAddress } = await import("viem");
+        if (!isAddress(sess.walletAddress)) {
+          return NextResponse.json({ error: "Invalid wallet address in session" }, { status: 400 });
+        }
+        // On-chain allowance check
         const currentAllowance = await checkAllowance(sess.walletAddress);
-        let step: "approve_required" | "deposit_ready";
-        let approveChallengeId: string | undefined;
-        let depositChallengeId: string | undefined;
 
         if (BigInt(currentAllowance) >= BigInt(amountAtomic)) {
-          // Allowance sufficient — only create deposit challenge
+          // Allowance sufficient — create deposit challenge only
           const deposit = await createDepositChallenge(sess.userToken, sess.walletId, amountAtomic);
-          step = "deposit_ready";
-          depositChallengeId = deposit.challengeId ?? undefined;
-        } else {
-          // Need approve first — create both, frontend executes sequentially
-          const approve = await createApproveChallenge(sess.userToken, sess.walletId, amountAtomic);
-          step = "approve_required";
-          approveChallengeId = approve.challengeId ?? undefined;
-          // Also create deposit challenge for frontend to execute after approve
-          const deposit = await createDepositChallenge(sess.userToken, sess.walletId, amountAtomic);
-          depositChallengeId = deposit.challengeId ?? undefined;
+          await refreshSession(sid);
+          const resp = NextResponse.json({ step: "deposit_ready", depositChallengeId: deposit.challengeId ?? undefined });
+          resp.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
+          return resp;
         }
+
+        // Allowance insufficient — return approve challenge only (bounded cap: amount × 10)
+        // Frontend must poll allowance after approve, then request deposit again
+        const approveCap = (BigInt(amountAtomic) * BigInt(10)).toString();
+        const approve = await createApproveChallenge(sess.userToken, sess.walletId, approveCap);
         await refreshSession(sid);
-        const respDeposit = NextResponse.json({ step, ...(approveChallengeId && { approveChallengeId }), ...(depositChallengeId && { depositChallengeId }) });
+        const respDeposit = NextResponse.json({ step: "approve_required", approveChallengeId: approve.challengeId ?? undefined });
         respDeposit.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
         return respDeposit;
       }
@@ -207,7 +222,7 @@ export async function POST(req: NextRequest) {
         if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
         const session = await getSession(sid);
         if (!session) return NextResponse.json({ error: "Session expired" }, { status: 401 });
-        // Refresh cookie TTL on every restore — keeps session alive while user is active
+        await refreshSession(sid);
         const resp = NextResponse.json({
           hasDeviceToken: !!session.deviceToken,
           hasUserToken: !!session.userToken,

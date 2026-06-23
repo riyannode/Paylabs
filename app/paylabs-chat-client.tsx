@@ -897,6 +897,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
             return;
           }
           const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
+          ucwAuthRef.current = encryptionKey ? { userToken, encryptionKey } : { userToken };
           setAuthMethod("email");
           const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
             method: "POST",
@@ -990,13 +991,14 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
     }
   }, [planned, walletState]);
 
-  // ── Gateway deposit — allowance-aware with balance polling ──
+  // ── Gateway deposit — approve polls allowance, then creates deposit ──
   const depositGateway = useCallback(async (amountAtomic: string) => {
     setWalletState("approving");
     setWalletError(null);
     setDepositStatus(null);
     try {
 
+      // Step 1: Check allowance / get first challenge
       const resp = await fetch("/api/paylabs/wallet/ucw?action=deposit", {
         method: "POST",
         credentials: "include",
@@ -1026,7 +1028,6 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         return new Error(msg);
       };
 
-      // Prepare SDK for execute
       const prepareSdk = async () => {
         await sdk.getDeviceId();
         const auth = ucwAuthRef.current;
@@ -1036,19 +1037,57 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         }
       };
 
-      // Execute approve if needed
+      // Step 2: If approve needed, execute and poll allowance until confirmed
       if (data.step === "approve_required" && data.approveChallengeId) {
         setDepositStatus("Approval required");
         await prepareSdk();
         await new Promise<void>((resolve, reject) => {
           sdk.execute(data.approveChallengeId!, (err: unknown) => err ? reject(execErr(err)) : resolve());
         });
+
+        // Poll allowance until confirmed
         setDepositStatus("Approving USDC allowance…");
-        // Small delay for on-chain confirmation
-        await new Promise((r) => setTimeout(r, 3000));
+        let allowanceConfirmed = false;
+        for (let i = 0; i < 15; i++) { // 15 × 2s = 30s max
+          await new Promise((r) => setTimeout(r, 2000));
+          const checkResp = await fetch("/api/paylabs/wallet/ucw?action=check-allowance", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ amountAtomic }),
+          });
+          if (checkResp.ok) {
+            const check = (await checkResp.json()) as { sufficient: boolean };
+            if (check.sufficient) {
+              allowanceConfirmed = true;
+              break;
+            }
+          }
+        }
+        if (!allowanceConfirmed) {
+          setDepositStatus("Approval submitted. Allowance is not confirmed yet. Please try deposit again shortly.");
+          setWalletState(parseFloat((await fetchSessionBalance()).gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+          return;
+        }
+
+        // Step 3: Allowance confirmed — request deposit challenge
+        setDepositStatus("Allowance confirmed. Creating deposit…");
+        const depositResp = await fetch("/api/paylabs/wallet/ucw?action=deposit", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ amountAtomic }),
+        });
+        if (!depositResp.ok) {
+          const err = await depositResp.json().catch(() => ({}));
+          throw new Error(`Deposit challenge failed: ${(err as Record<string, string>).error || depositResp.status}`);
+        }
+        const depositData = (await depositResp.json()) as { step: string; depositChallengeId?: string };
+        if (!depositData.depositChallengeId) throw new Error("No deposit challenge returned after allowance confirmed");
+        data.depositChallengeId = depositData.depositChallengeId;
       }
 
-      // Execute deposit
+      // Step 4: Execute deposit
       if (data.depositChallengeId) {
         setDepositStatus("Depositing to Gateway…");
         await prepareSdk();
@@ -1057,7 +1096,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         });
       }
 
-      // Poll for balance update instead of fixed wait
+      // Step 5: Poll for balance update
       setDepositStatus("Waiting for Gateway balance confirmation…");
       const startBal = parseFloat((await fetchSessionBalance()).gateway);
       const requiredBal = parseFloat(amountAtomic) / 1_000_000; // atomic → USDC
