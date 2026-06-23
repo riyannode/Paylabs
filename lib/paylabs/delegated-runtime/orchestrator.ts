@@ -278,22 +278,112 @@ function buildOutput(state: ReturnType<typeof createOrchestratorState>): Orchest
   };
 }
 
-function buildTieredSummaries(state: ReturnType<typeof createOrchestratorState>): OrchestratorOutput["tieredSummaries"] {
-  const summaries: Record<string, string | undefined> = {
-    final_summary: state.safeProgressSummaries.join(" | "),
-  };
+// ─── Safe Candidate Extraction ─────────────────────────────
 
-  const discoveryEvals = state.serviceEvaluations.filter((e) => e.macroNode === "discovery_planner");
-  if (discoveryEvals.length > 0) {
-    const candidateCount = state.serviceEvaluations
-      .filter((e) => e.serviceName === "signal_scout" && e.output)
-      .reduce((count, e) => {
-        const rc = (e.output as Record<string, unknown>)?.ranked_candidates as unknown[] | undefined;
-        return count + (rc?.length || 0);
-      }, 0);
-    summaries.easy_summary = `Discovery: ${candidateCount} candidates found.`;
+/** Safe candidate object — only user-facing fields, no raw payloads/wallets/sigs. */
+interface SafeCandidate {
+  title: string;
+  publisher: string;
+  rank: number;
+  relevance_score: number;
+  reason?: string;
+  feed_item_id: string;
+}
+
+/**
+ * Extract safe candidate objects from Signal Scout service evaluations.
+ * Only includes title, publisher, rank, relevance_score, reason, feed_item_id.
+ * Never exposes raw RSS payload, wallet data, x402 metadata, signatures, or tx hashes.
+ */
+function extractDiscoveryCandidates(
+  state: ReturnType<typeof createOrchestratorState>
+): SafeCandidate[] {
+  const candidates: SafeCandidate[] = [];
+  const scoutEvals = state.serviceEvaluations.filter(
+    (e) => e.macroNode === "discovery_planner" && e.serviceName === "signal_scout" && e.output
+  );
+  for (const eval_ of scoutEvals) {
+    const rc = (eval_.output as Record<string, unknown>)?.ranked_candidates;
+    if (!Array.isArray(rc)) continue;
+    for (const item of rc) {
+      const c = item as Record<string, unknown>;
+      candidates.push({
+        title: String(c.title || ""),
+        publisher: String(c.publisher || ""),
+        rank: Number(c.rank) || 0,
+        relevance_score: Number(c.relevance_score) || 0,
+        reason: c.reason ? String(c.reason) : undefined,
+        feed_item_id: String(c.feed_item_id || ""),
+      });
+    }
+  }
+  // Sort by rank ascending (rank 1 = best)
+  candidates.sort((a, b) => a.rank - b.rank);
+  return candidates;
+}
+
+/**
+ * Build a deterministic user-facing easy summary from Brain planning + Signal Scout candidates.
+ * No LLM. No payment internals. No settlement/wallet/x402 data.
+ */
+function buildEasyUserFacingSummary(
+  state: ReturnType<typeof createOrchestratorState>
+): { easy_summary: string; final_summary: string } {
+  const candidates = extractDiscoveryCandidates(state);
+  const goal = state.brainPlanning?.normalized_goal || state.userGoal;
+  const routeTier = state.routeTier;
+
+  if (candidates.length === 0) {
+    const easy = `No useful source candidates were found for: "${goal.slice(0, 80)}". The discovery planner ran but found no matching feed items.`;
+    return { easy_summary: easy, final_summary: easy };
   }
 
+  // Top 3 for user-facing summary
+  const top3 = candidates.slice(0, 3);
+  const topNames = top3
+    .map((c) => {
+      const parts: string[] = [];
+      if (c.title) parts.push(c.title);
+      if (c.publisher && c.publisher !== c.title) parts.push(`(${c.publisher})`);
+      return parts.join(" ") || c.feed_item_id;
+    })
+    .join(", ");
+
+  const easyLines = [
+    `Found ${candidates.length} relevant source candidates for: "${goal.slice(0, 80)}".`,
+    `Top candidates: ${topNames}.`,
+    `Easy route only performed discovery/ranking; it did not run source verification or trust checks.`,
+  ];
+  const easy_summary = easyLines.join(" ");
+
+  // final_summary for easy route — mirrors easy, no overclaiming
+  if (routeTier === "easy") {
+    const finalLines = [
+      `Found ${candidates.length} source candidates matching the discovery goal.`,
+      `Strongest candidates are ranked by entity/query relevance.`,
+      `This is an easy-route discovery result — no source verification or trust checks were performed.`,
+    ];
+    return { easy_summary, final_summary: finalLines.join(" ") };
+  }
+
+  // For normal/advanced, final_summary will be built by buildTieredSummaries
+  return { easy_summary, final_summary: easy_summary };
+}
+
+function buildTieredSummaries(state: ReturnType<typeof createOrchestratorState>): OrchestratorOutput["tieredSummaries"] {
+  const summaries: Record<string, string | undefined> = {};
+
+  // ── Easy summary: user-facing discovery answer ──
+  const discoveryEvals = state.serviceEvaluations.filter((e) => e.macroNode === "discovery_planner");
+  if (discoveryEvals.length > 0) {
+    const { easy_summary, final_summary } = buildEasyUserFacingSummary(state);
+    summaries.easy_summary = easy_summary;
+    summaries.final_summary = final_summary;
+  } else {
+    summaries.final_summary = state.safeProgressSummaries.join(" | ");
+  }
+
+  // ── Normal summary: payment decision ──
   const paymentEvals = state.serviceEvaluations.filter((e) => e.macroNode === "payment_decision");
   if (paymentEvals.length > 0) {
     const deciderEval = paymentEvals.find((e) => e.serviceName === "payment_decider");
@@ -305,6 +395,7 @@ function buildTieredSummaries(state: ReturnType<typeof createOrchestratorState>)
     }
   }
 
+  // ── Advanced summary: settlement ──
   const settlementEvals = state.serviceEvaluations.filter((e) => e.macroNode === "settlement_memory");
   if (settlementEvals.length > 0) {
     const routerEval = settlementEvals.find((e) => e.serviceName === "payment_router");
@@ -313,6 +404,17 @@ function buildTieredSummaries(state: ReturnType<typeof createOrchestratorState>)
       const routed = (r.routed_items as unknown[])?.length || 0;
       summaries.advanced_summary = `Settlement: ${routed} items routed.`;
     }
+  }
+
+  // ── Final summary: combine tier summaries (no raw progress list) ──
+  const parts: string[] = [];
+  if (summaries.easy_summary) parts.push(summaries.easy_summary);
+  if (summaries.normal_summary) parts.push(summaries.normal_summary);
+  if (summaries.advanced_summary) parts.push(summaries.advanced_summary);
+  if (parts.length > 0) {
+    summaries.final_summary = parts.join(" | ");
+  } else {
+    summaries.final_summary = state.safeProgressSummaries.join(" | ") || "Run completed.";
   }
 
   return summaries as unknown as OrchestratorOutput["tieredSummaries"];
