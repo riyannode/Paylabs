@@ -550,6 +550,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SafeRunResult | null>(null);
   const [signingPhase, setSigningPhase] = useState<string | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   // Chat message history
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -1535,11 +1536,42 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
             </div>
           </div>
 
-          <div className="pl-chips">
-            <button onClick={() => setPrompt("Find the cheapest route under my budget")}>Cheapest route</button>
-            <button onClick={() => setPrompt("Show my recent receipts")}>Recent receipts</button>
-            <button onClick={() => setPrompt("Explain my last payment")}>Explain payment</button>
-            <button onClick={() => setPrompt("Open global explorer")}>Global explorer</button>
+          <div className="pl-guide-block">
+            <button
+              className="pl-guide-toggle"
+              onClick={() => setGuideOpen(!guideOpen)}
+            >
+              <span>Route guide</span>
+              <span>{guideOpen ? "▾" : "▸"}</span>
+            </button>
+            {guideOpen && (
+              <div className="pl-guide-rows">
+                <div className="pl-guide-row">
+                  <div className="pl-guide-info">
+                    <b>Easy</b>
+                    <span>Best for: Quick answer</span>
+                    <span className="pl-guide-example">Explain Arc x402 simply using source-backed info.</span>
+                  </div>
+                  <button className="pl-guide-use" onClick={() => setPrompt("Explain Arc x402 simply using source-backed info.")}>Use</button>
+                </div>
+                <div className="pl-guide-row">
+                  <div className="pl-guide-info">
+                    <b>Normal</b>
+                    <span>Best for: Compare / verify</span>
+                    <span className="pl-guide-example">Compare Arc x402 and Circle Gateway and verify the main claims.</span>
+                  </div>
+                  <button className="pl-guide-use" onClick={() => setPrompt("Compare Arc x402 and Circle Gateway and verify the main claims.")}>Use</button>
+                </div>
+                <div className="pl-guide-row">
+                  <div className="pl-guide-info">
+                    <b>Advanced</b>
+                    <span>Best for: Paid source / receipt</span>
+                    <span className="pl-guide-example">Use advanced route, unlock paid or creator-monetized sources if needed, and return receipt confirmation.</span>
+                  </div>
+                  <button className="pl-guide-use" onClick={() => setPrompt("Use advanced route, unlock paid or creator-monetized sources if needed, and return receipt confirmation.")}>Use</button>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       </main>
