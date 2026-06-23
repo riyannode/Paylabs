@@ -1173,7 +1173,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         </div>
 
         <section className="pl-hero">
-          <h1>Ask PayLabs</h1>
+          <h1 className="pl-hero-title">Ask <img src="/paylabs-logo.png" alt="PayLabs" className="pl-hero-logo" /></h1>
           <p>Source Discovery, receipts, and x402 payments.</p>
 
           <div className="pl-search">
