@@ -24,25 +24,29 @@ import {
 
 // ─── Auto-Tier Resolution ────────────────────────────────────
 
+export type AutoTierResult =
+  | { ok: true; tier: DelegatedRouteTier }
+  | { ok: false; error: string };
+
 /**
  * Resolve "auto" tier using Brain's route_tier_hint.
  * For explicit tiers (easy/normal/advanced), use as-is.
- * For "auto", use Brain's hint; fall back to "easy" if invalid.
+ * For "auto", REQUIRE valid Brain hint — fail closed if missing/invalid.
  */
 export function resolveAutoTier(
   requestedTier: string,
   brainHint: string | undefined,
-): DelegatedRouteTier {
+): AutoTierResult {
   if (requestedTier === "auto") {
     if (brainHint === "easy" || brainHint === "normal" || brainHint === "advanced") {
-      return brainHint;
+      return { ok: true, tier: brainHint };
     }
-    return "easy";
+    return { ok: false, error: `Brain planner required for auto tier: got "${brainHint || "none"}"` };
   }
   if (requestedTier === "easy" || requestedTier === "normal" || requestedTier === "advanced") {
-    return requestedTier;
+    return { ok: true, tier: requestedTier };
   }
-  return "easy";
+  return { ok: true, tier: "easy" };
 }
 
 // ─── Re-exports for backward compatibility ───────────────────

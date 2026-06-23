@@ -230,7 +230,15 @@ async function runX402Orchestration(params: {
   const brainHint = resolvedBrainData
     ? (resolvedBrainData as Record<string, unknown>).route_tier_hint as string | undefined
     : undefined;
-  const effectiveRouteTier = resolveAutoTier(routeTier, brainHint);
+  const tierResult = resolveAutoTier(routeTier, brainHint);
+
+  if (!tierResult.ok) {
+    // auto tier requires valid Brain planner — fail closed
+    const failOutput = buildX402Output(discoveryRunId, "easy", userBudgetUsdc, "failed",
+      [...safeProgressSummaries, `FAILED: ${tierResult.error}`], paymentGraph, null, null, tierResult.error);
+    return { ...failOutput, _lockedPlan: null };
+  }
+  const effectiveRouteTier = tierResult.tier;
 
   safeProgressSummaries.push(
     `Tier resolved: requested="${routeTier}", effective="${effectiveRouteTier}", brain_hint="${brainHint || "none"}"`
@@ -272,13 +280,22 @@ async function runX402Orchestration(params: {
   );
   const macroNodes = lockedPlan.selectedMacroNodes;
 
+  // ── Budget guard: fail closed if locked plan exceeds user budget ──
+  if (lockedPlan.plannedCostUsdc > userBudgetUsdc) {
+    const budgetFailMsg = `Brain locked plan exceeds user budget: planned=${lockedPlan.plannedCostUsdc.toFixed(6)}, budget=${userBudgetUsdc}`;
+    const failOutput = buildX402Output(discoveryRunId, effectiveRouteTier, userBudgetUsdc, "failed",
+      [...safeProgressSummaries, `FAILED: ${budgetFailMsg}`], paymentGraph, resolvedBrainData || null, null, budgetFailMsg, undefined, lockedPlan);
+    return { ...failOutput, _lockedPlan: lockedPlan };
+  }
+
   safeProgressSummaries.push(
     `Brain settled: ${macroNodes.length} macro-nodes, strategy="${String(resolvedBrainData?.discovery_strategy || "").slice(0, 60)}"`
   );
 
   if (macroNodes.length === 0) {
-    return buildX402Output(discoveryRunId, effectiveRouteTier, userBudgetUsdc, "completed",
+    const zeroOutput = buildX402Output(discoveryRunId, effectiveRouteTier, userBudgetUsdc, "completed",
       safeProgressSummaries, paymentGraph, resolvedBrainData || null, null, null, undefined, lockedPlan);
+    return { ...zeroOutput, _lockedPlan: lockedPlan };
   }
 
   // ── Steps 2-4: Macro-nodes (Brain → macro-node → child) ──
@@ -327,9 +344,10 @@ async function runX402Orchestration(params: {
         nodeType: "macro_node",
         paymentRef: null,
       });
-      return buildX402Output(discoveryRunId, effectiveRouteTier, userBudgetUsdc, "failed",
+      const macroFailOutput = buildX402Output(discoveryRunId, effectiveRouteTier, userBudgetUsdc, "failed",
         [...safeProgressSummaries, `FAILED: Macro-node ${node}: ${nodeResult.error}`],
         paymentGraph, resolvedBrainData || null, macroNodeResults, `Macro-node ${node} x402 failed: ${nodeResult.error}`, undefined, lockedPlan);
+      return { ...macroFailOutput, _lockedPlan: lockedPlan };
     }
 
     // Record Brain → macro-node edge (macro allocation payment)
