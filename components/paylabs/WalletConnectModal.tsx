@@ -293,26 +293,26 @@ function WalletRunSummary({
     <div className="pl-summary-card-v3">
       <InfoRow
         icon={<WalletIcon />}
-        label="Wallet address"
+        label="Wallet"
         value={shortAddr(walletInfo?.address)}
         copyValue={walletInfo?.address}
       />
 
       <InfoRow
         icon={<CoinsIcon />}
-        label="Wallet balance"
+        label="Wallet USDC"
         value={`${ucwBalance?.usdc ?? "0.00"} USDC`}
       />
 
       <InfoRow
         icon={<GatewayIcon />}
-        label="Gateway balance"
+        label="Gateway"
         value={`${ucwBalance?.gateway ?? "0.00"} USDC`}
         danger={isConnected && !gatewayReady}
       />
 
       <InfoRow icon={<PieIcon />} label="Budget" value={`${budget} USDC`} />
-      <InfoRow icon={<TrendIcon />} label="Planned cost" value={`${plannedCost} USDC`} />
+      <InfoRow icon={<TrendIcon />} label="Cost" value={`${plannedCost} USDC`} />
     </div>
   );
 }
