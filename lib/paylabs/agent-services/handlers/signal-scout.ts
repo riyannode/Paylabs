@@ -31,7 +31,9 @@ const SignalScoutSchema = z.object({
 function scoreItemDeterministic(
   item: Record<string, unknown>,
   expandedQueries: string[],
-  entityTerms: string[]
+  entityTerms: string[],
+  negativeFilters: string[] = [],
+  sourcePreferences: string[] = []
 ): number {
   let score = 0;
   const title = String(item.title || "").toLowerCase();
@@ -69,13 +71,32 @@ function scoreItemDeterministic(
   // Publisher diversity bonus
   if (publisher && publisher.length > 0) score += 1;
 
+  // Negative filter penalty
+  for (const nf of negativeFilters) {
+    const nfLower = nf.toLowerCase();
+    if (title.includes(nfLower) || summary.includes(nfLower) || publisher.includes(nfLower)) {
+      score -= 5;
+    }
+  }
+
+  // Source preference boost
+  for (const sp of sourcePreferences) {
+    const spLower = sp.toLowerCase();
+    if (title.includes(spLower) || summary.includes(spLower) || publisher.includes(spLower)) {
+      score += 2;
+    }
+  }
+
   return score;
 }
 
 function runDeterministicSignalScout(
   allActive: Record<string, unknown>[],
   expandedQueries: string[],
-  entityTerms: string[]
+  entityTerms: string[],
+  limit = 10,
+  negativeFilters: string[] = [],
+  sourcePreferences: string[] = []
 ): Array<{
   feed_item_id: string;
   title: string;
@@ -87,7 +108,7 @@ function runDeterministicSignalScout(
   // Score each item
   const scored = allActive.map((item) => ({
     item,
-    score: scoreItemDeterministic(item, expandedQueries, entityTerms),
+    score: scoreItemDeterministic(item, expandedQueries, entityTerms, negativeFilters, sourcePreferences),
   }));
 
   // Sort by score descending, then by recency
@@ -101,7 +122,7 @@ function runDeterministicSignalScout(
   // Normalize scores to 0-1 range
   const maxScore = Math.max(scored[0]?.score || 1, 1);
 
-  return scored.slice(0, 10).map((entry, i) => ({
+  return scored.slice(0, limit).map((entry, i) => ({
     feed_item_id: String(entry.item.id || ""),
     title: String(entry.item.title || ""),
     publisher: String(entry.item.publisher || ""),
@@ -118,9 +139,11 @@ function runDeterministicSignalScout(
 export const signalScoutHandler: ServiceHandler = async (
   input: ServiceHandlerInput
 ): Promise<ServiceHandlerOutput> => {
-  const { expanded_queries, entity_terms, routeTier } = input.payload as {
+  const { expanded_queries, entity_terms, negative_filters, source_preferences, routeTier } = input.payload as {
     expanded_queries: string[];
     entity_terms: string[];
+    negative_filters?: string[];
+    source_preferences?: string[];
     routeTier?: DelegatedRouteTier;
   };
 
@@ -149,7 +172,10 @@ export const signalScoutHandler: ServiceHandler = async (
     const ranked = runDeterministicSignalScout(
       allActive,
       expanded_queries || [],
-      entity_terms || []
+      entity_terms || [],
+      10,
+      negative_filters || [],
+      source_preferences || []
     );
     return {
       ok: true,
@@ -166,21 +192,58 @@ export const signalScoutHandler: ServiceHandler = async (
     };
   }
 
-  // LLM mode
+  // LLM mode — rank only top deterministic candidates (not all active items)
   const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
   const { toInternalRouteTier } = await import("./helpers");
 
-  const SYSTEM_PROMPT = `You are PayLabs Signal Scout. Rank the provided feed items by relevance to the user's queries. Select the most useful items for the user's research need. You cannot set prices, wallets, or execute payments. Return structured JSON only. Always include a safe_summary field.`;
+  // Pre-score all active items, keep top 20 for LLM reranking
+  const deterministicCandidates = runDeterministicSignalScout(
+    allActive,
+    expanded_queries || [],
+    entity_terms || [],
+    20,
+    negative_filters || [],
+    source_preferences || []
+  );
 
-  // Safe metadata for LLM — no wallet, no price
-  const feedMeta = allActive.map((item) => ({
-    id: item.id,
-    title: item.title,
-    summary: (item.summary as string || "").slice(0, 200),
-    publisher: item.publisher,
-    author_name: item.author_name,
-    published_at: item.published_at,
-  }));
+  // Build safe metadata from deterministic candidates only
+  const candidateIds = new Set(deterministicCandidates.map((c) => c.feed_item_id));
+  const feedMeta = allActive
+    .filter((item) => candidateIds.has(String(item.id)))
+    .map((item) => ({
+      id: item.id,
+      title: item.title,
+      summary: String(item.summary || "").slice(0, 300),
+      publisher: item.publisher,
+      author_name: item.author_name,
+      published_at: item.published_at,
+    }));
+
+  const SYSTEM_PROMPT = `You are PayLabs Signal Scout.
+Your task is to rerank pre-fetched feed items for source discovery.
+You may only use feed items provided in the input. You are not a browser. You are not a crawler. You are not a wallet. You are not a payment router. You are not a pricer.
+Never invent:
+feed_item_id
+title
+publisher
+URL
+author
+date
+wallet
+price
+tx hash
+payment status
+settlement status
+Ranking priorities:
+exact entity match in title or summary
+direct relevance to the query
+source usefulness for the user's goal
+freshness only if the query asks for latest/current/recent/today/this week/2025/2026/new
+avoid duplicates and weak filler sources
+Use only the provided candidate feed items. If no useful source exists, return ranked_sources: [].
+reason must be 1 short user-safe sentence. Do not mention internal scoring math. Do not mention relevance_score. Do not mention x402, wallets, payment, Gateway, or settlement.
+safe_summary must be 1 short sentence.
+Return JSON only. No markdown. No commentary. No extra keys. The first character must be "{".`;
 
   const result = await generateStructuredJson<z.infer<typeof SignalScoutSchema>>({
     agentName: "signal_scout",
@@ -195,7 +258,10 @@ export const signalScoutHandler: ServiceHandler = async (
     const ranked = runDeterministicSignalScout(
       allActive,
       expanded_queries || [],
-      entity_terms || []
+      entity_terms || [],
+      10,
+      negative_filters || [],
+      source_preferences || []
     );
     return {
       ok: true,
@@ -226,6 +292,7 @@ export const signalScoutHandler: ServiceHandler = async (
         publisher: String(allActive.find((f) => f.id === r.feed_item_id)?.publisher || ""),
         rank: r.rank,
         relevance_score: r.relevance_score,
+        reason: r.reason,
       })),
       top_candidates: llmRanked.slice(0, 3).map((r) => r.feed_item_id),
       quick_relevance_notes: llmRanked.slice(0, 5).map((r) => r.reason),

@@ -111,7 +111,18 @@ export const intentMatcherHandler: ServiceHandler = async (
   const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
   const { toInternalRouteTier } = await import("./helpers");
 
-  const SYSTEM_PROMPT = `You are PayLabs Intent Matcher. Evaluate how well the candidate sources match the user's normalized goal. Score relevance 0-1 and decide if the candidates are worth a quality check. You cannot set prices, wallets, or execute payments. Return structured JSON only. Always include a safe_summary field.`;
+  const SYSTEM_PROMPT = `You are PayLabs Intent Matcher.
+Your task is to evaluate whether each candidate source matches the normalized user goal.
+Use only the provided normalized goal and candidate metadata. Use feed_item_id exactly as provided. Do not invent candidates. Do not invent source metadata.
+You only judge relevance and intent fit. You do not verify source quality. You do not evaluate creator trust. You do not set prices. You do not approve payments. You do not execute payments. You do not settle payments.
+Scoring:
+0.85 to 1.00: strong direct match
+0.70 to 0.84: good match
+0.50 to 0.69: partial but useful
+below 0.50: weak match
+approved_for_quality_check should be true only when relevance_score >= 0.50.
+intent_fit_reason must be 1 short user-safe sentence. safe_summary must be 1 short sentence.
+Return JSON only. No markdown. No commentary. No extra keys. The first character must be "{".`;
 
   const result = await generateStructuredJson<z.infer<typeof IntentMatcherSchema>>({
     agentName: "intent_matcher",

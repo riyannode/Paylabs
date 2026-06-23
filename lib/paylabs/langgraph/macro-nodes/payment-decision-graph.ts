@@ -20,7 +20,7 @@ import { StateGraph, START, END } from "@langchain/langgraph";
 import { PaymentDecisionState, type PaymentDecisionStateType } from "../shared/state";
 import { createServiceNode } from "../services/service-node";
 import type { ServiceName } from "../../agent-services/types";
-import type { BudgetSnapshot } from "../../delegated-runtime/types";
+import type { BudgetSnapshot, SafeSourceCard } from "../../delegated-runtime/types";
 
 // ─── Helper to cast state in payload functions ──────────────
 
@@ -37,11 +37,10 @@ const intentMatcherNode = createServiceNode(
     const s = asDecisionState(state);
     return {
       normalized_goal: s.userGoal,
-      candidates: (s.candidates || []).slice(0, 10).map((c: { feed_item_id: string; title: string; publisher: string; rank: number }) => ({
+      candidates: (s.sourceCards || []).slice(0, 10).map((c) => ({
         feed_item_id: c.feed_item_id,
         title: c.title,
         publisher: c.publisher,
-        rank: c.rank,
       })),
       routeTier: s.routeTier,
     };
@@ -52,11 +51,11 @@ const intentMatcherNode = createServiceNode(
 // ─── Node: Prepare Candidates ───────────────────────────────
 
 async function prepareCandidates(state: PaymentDecisionStateType) {
-  const candidates = state.candidates || [];
-  if (candidates.length === 0) {
+  const sourceCards = state.sourceCards || [];
+  if (sourceCards.length === 0) {
     return {
       candidateMeta: [] as PaymentDecisionStateType["candidateMeta"],
-      progressSummaries: ["Payment Decision: 0 candidates to evaluate"],
+      progressSummaries: ["Payment Decision: 0 discovery source cards to evaluate"],
     };
   }
 
@@ -64,20 +63,21 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
   const { getFeedItemById } = await import("../../../ai/tools");
 
   const candidateMeta: PaymentDecisionStateType["candidateMeta"] = [];
-  for (const candidate of candidates.slice(0, 10)) {
-    const feedItem = (await getFeedItemById(candidate.feed_item_id)) as Record<string, unknown> | null;
+  for (const card of sourceCards.slice(0, 10)) {
+    const feedItem = (await getFeedItemById(card.feed_item_id)) as Record<string, unknown> | null;
     candidateMeta.push({
-      feed_item_id: candidate.feed_item_id,
-      source_url: String(feedItem?.canonical_url || candidate.source_url || ""),
-      source_title: String(feedItem?.title || candidate.title || ""),
-      creator_wallet: feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : null,
-      claim_status: String(feedItem?.verification_status || "unclaimed"),
+      feed_item_id: card.feed_item_id,
+      source_url: String(feedItem?.canonical_url || card.source_url || ""),
+      source_title: String(feedItem?.title || card.title || ""),
+      publisher: String(feedItem?.publisher || card.publisher || ""),
+      creator_wallet: feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : (card.creator_wallet || null),
+      claim_status: String(feedItem?.verification_status || card.claim_status || "unclaimed"),
     });
   }
 
   return {
     candidateMeta,
-    progressSummaries: [`Payment Decision: prepared ${candidateMeta.length} candidates for evaluation`],
+    progressSummaries: [`Payment Decision: prepared ${candidateMeta.length} candidates from ${sourceCards.length} source cards`],
   };
 }
 
@@ -287,10 +287,16 @@ async function buildNormalSummary(state: PaymentDecisionStateType) {
   const approvedCount = state.approvedItems?.length || 0;
   const skippedCount = state.skippedItems?.length || 0;
   const totalSpend = state.totalEstimatedSpend || 0;
-  const candidateCount = state.candidates?.length || 0;
+  const candidateCount = state.sourceCards?.length || state.candidates?.length || 0;
 
-  const summary = `Payment Decision: ${approvedCount}/${candidateCount} approved, ` +
-    `${skippedCount} skipped. Total estimated: ${totalSpend.toFixed(6)} USDC. 5 services executed.`;
+  let summary: string;
+  if (candidateCount === 0) {
+    summary = "Normal route had no discovery source cards to evaluate.";
+  } else if (approvedCount === 0) {
+    summary = `Discovery produced ${candidateCount} source cards. Normal route evaluated them with intent, source quality, value, trust, and decision checks. None passed the decision gate.`;
+  } else {
+    summary = `Discovery produced ${candidateCount} source cards. Normal route evaluated them with intent, source quality, value, trust, and decision checks. ${approvedCount} passed the decision gate and ${skippedCount} were skipped. Estimated approved spend: ${totalSpend.toFixed(6)} USDC.`;
+  }
 
   return {
     progressSummaries: [summary],
@@ -334,14 +340,8 @@ export interface RunPaymentDecisionGraphInput {
   userGoal: string;
   routeTier: "easy" | "normal" | "advanced";
   userBudgetUsdc: number;
-  candidates: Array<{
-    feed_item_id: string;
-    source_url?: string;
-    title: string;
-    publisher: string;
-    rank: number;
-    relevance_score: number;
-  }>;
+  sourceCards: SafeSourceCard[];
+  discoverySummary?: string;
   selectedServices?: ServiceName[];
   parentWalletId?: string;
 }
@@ -391,7 +391,8 @@ export async function runPaymentDecisionGraph(
       userGoal: input.userGoal,
       routeTier: input.routeTier,
       userBudgetUsdc: input.userBudgetUsdc,
-      candidates: input.candidates,
+      sourceCards: input.sourceCards || [],
+      discoverySummary: input.discoverySummary,
       selectedServices: input.selectedServices || [],
       parentWalletId: input.parentWalletId,
       budgetSnapshot: initialBudget,
@@ -402,6 +403,7 @@ export async function runPaymentDecisionGraph(
       valueScores: {},
       riskScores: {},
       candidateMeta: [],
+      candidates: [],
       approvedItems: [],
       skippedItems: [],
       serviceEvaluations: [],
@@ -412,10 +414,16 @@ export async function runPaymentDecisionGraph(
     const approvedCount = result.approvedItems?.length || 0;
     const skippedCount = result.skippedItems?.length || 0;
     const totalSpend = result.totalEstimatedSpend || 0;
-    const candidateCount = input.candidates.length;
+    const candidateCount = input.sourceCards.length;
 
-    const normalSummary = `Payment Decision: ${approvedCount}/${candidateCount} approved, ` +
-      `${skippedCount} skipped. Total estimated: ${totalSpend.toFixed(6)} USDC. 5 services executed.`;
+    let normalSummary: string;
+    if (candidateCount === 0) {
+      normalSummary = "Normal route had no discovery source cards to evaluate.";
+    } else if (approvedCount === 0) {
+      normalSummary = `Discovery produced ${candidateCount} source cards. Normal route evaluated them with intent, source quality, value, trust, and decision checks. None passed the decision gate.`;
+    } else {
+      normalSummary = `Discovery produced ${candidateCount} source cards. Normal route evaluated them with intent, source quality, value, trust, and decision checks. ${approvedCount} passed the decision gate and ${skippedCount} were skipped. Estimated approved spend: ${totalSpend.toFixed(6)} USDC.`;
+    }
 
     return {
       ok: !result.error,
