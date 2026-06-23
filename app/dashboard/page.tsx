@@ -317,7 +317,11 @@ export default async function DashboardPage() {
                     </td>
                     <td>{f.author_name || f.publisher || "—"}</td>
                     <td className="muted" style={{ fontSize: 11 }}>
-                      {shortUrl(f.canonical_url, 35)}
+                      {f.canonical_url ? (
+                        <a href={f.canonical_url} target="_blank" rel="noopener noreferrer">
+                          {shortUrl(f.canonical_url, 35)}
+                        </a>
+                      ) : shortUrl(f.canonical_url, 35)}
                     </td>
                     <td>
                       <span className={`badge ${f.is_monetized ? "badge-success" : ""}`} style={!f.is_monetized ? { fontSize: 10 } : undefined}>
@@ -371,7 +375,11 @@ export default async function DashboardPage() {
                     <td className="muted">{timeAgo(r.created_at)}</td>
                     <td className="data-mono">{short(r.user_wallet)}</td>
                     <td className="muted" style={{ fontSize: 11 }}>
-                      {shortUrl(r.source_url, 35)}
+                      {r.source_url ? (
+                        <a href={r.source_url} target="_blank" rel="noopener noreferrer">
+                          {shortUrl(r.source_url, 35)}
+                        </a>
+                      ) : shortUrl(r.source_url, 35)}
                     </td>
                     <td>
                       <span className="badge" style={{ fontSize: 10 }}>
