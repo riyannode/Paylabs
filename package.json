@@ -8,10 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit",
-    "seed:lessons": "tsx scripts/seed-lessons.ts",
-    "clear:legacy-lessons": "tsx scripts/clear-legacy-lessons.ts",
-    "worker:discovery": "tsx scripts/run-discovery-worker.ts"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "^10.6.0",
