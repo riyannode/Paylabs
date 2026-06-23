@@ -34,6 +34,8 @@ import type { ExternalRouteTier } from "@/lib/paylabs/route-tier";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 import type { OrchestratorOutput, PaymentGraphEdge, TieredRunSummaries } from "@/lib/paylabs/delegated-runtime/types";
 import { TIER_PHASE_MAP } from "@/lib/paylabs/delegated-runtime/state";
+import { resolveAutoTier } from "@/lib/paylabs/delegated-runtime/state";
+import { validateAndLockExecutionPlan } from "@/lib/paylabs/delegated-runtime/state";
 import { getMacroNodeAllocationUsdc } from "@/lib/paylabs/delegated-runtime/node-registry";
 import { FIXED_FEES_USDC } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import type { MacroNodePhase } from "@/lib/paylabs/delegated-runtime/types";
@@ -141,7 +143,7 @@ async function runX402Orchestration(params: {
   userBudgetUsdc: number;
   routeTier: DelegatedRouteTier;
   dcwSigner: import("@/lib/paylabs/x402/buyer-transport").DcwSigner;
-}): Promise<OrchestratorOutput> {
+}): Promise<OrchestratorOutput & { _lockedPlan?: import("@/lib/paylabs/delegated-runtime/types").ExecutionPlan | null }> {
   const { discoveryRunId, userGoal, userWallet, userBudgetUsdc, routeTier, dcwSigner } = params;
   const safeProgressSummaries: string[] = [];
   const paymentGraph: PaymentGraphEdge[] = [];
@@ -224,16 +226,59 @@ async function runX402Orchestration(params: {
   // Use full planning output if available, fallback to brainData (x402 response)
   const resolvedBrainData = fullBrainPlanning || brainData || null;
 
-  const macroNodes: string[] = (executionPlan?.selectedMacroNodes as string[])
-    || (TIER_PHASE_MAP[routeTier] || TIER_PHASE_MAP.easy);
+  // ── Auto-tier resolution: "auto" → Brain's route_tier_hint ──
+  const brainHint = resolvedBrainData
+    ? (resolvedBrainData as Record<string, unknown>).route_tier_hint as string | undefined
+    : undefined;
+  const effectiveRouteTier = resolveAutoTier(routeTier, brainHint);
+
+  safeProgressSummaries.push(
+    `Tier resolved: requested="${routeTier}", effective="${effectiveRouteTier}", brain_hint="${brainHint || "none"}"`
+  );
+
+  // ── Tier-specific env preflight (after tier resolution) ──
+  const tierRequiredEnv: string[] = [
+    "PAYLABS_BRAIN_SELLER_WALLET_ADDRESS",
+    "PAYLABS_BRAIN_BUYER_WALLET_ID",
+    "PAYLABS_NODE_DISCOVERY_PLANNER_SELLER_WALLET_ADDRESS",
+    "PAYLABS_NODE_DISCOVERY_PLANNER_BUYER_WALLET_ID",
+  ];
+  if (effectiveRouteTier === "normal" || effectiveRouteTier === "advanced") {
+    tierRequiredEnv.push(
+      "PAYLABS_NODE_PAYMENT_DECISION_SELLER_WALLET_ADDRESS",
+      "PAYLABS_NODE_PAYMENT_DECISION_BUYER_WALLET_ID",
+    );
+  }
+  if (effectiveRouteTier === "advanced") {
+    tierRequiredEnv.push(
+      "PAYLABS_NODE_SETTLEMENT_MEMORY_SELLER_WALLET_ADDRESS",
+      "PAYLABS_NODE_SETTLEMENT_MEMORY_BUYER_WALLET_ID",
+      "PAYLABS_SERVICE_PAYMENT_ROUTER_SELLER_WALLET_ADDRESS",
+    );
+  }
+  const missingTierEnv = tierRequiredEnv.filter((key) => !process.env[key]);
+  if (missingTierEnv.length > 0) {
+    throw new Error(`config_error: missing tier x402 envs: ${missingTierEnv.join(", ")}`);
+  }
+
+  // ── Lock execution plan from Brain proposal + canonical tier bundle ──
+  const bp = resolvedBrainData as Record<string, unknown> | null;
+  const lockedPlan = validateAndLockExecutionPlan(
+    effectiveRouteTier,
+    ((bp?.selected_macro_nodes as string[]) || []) as import("@/lib/paylabs/delegated-runtime/types").MacroNodePhase[],
+    ((bp?.selected_services as string[]) || []) as import("@/lib/paylabs/agent-services/types").ServiceName[],
+    (bp?.max_registry_checks as number) ?? 10,
+    (bp?.max_source_accesses as number) ?? 10,
+  );
+  const macroNodes = lockedPlan.selectedMacroNodes;
 
   safeProgressSummaries.push(
     `Brain settled: ${macroNodes.length} macro-nodes, strategy="${String(resolvedBrainData?.discovery_strategy || "").slice(0, 60)}"`
   );
 
   if (macroNodes.length === 0) {
-    return buildX402Output(discoveryRunId, routeTier, userBudgetUsdc, "completed",
-      safeProgressSummaries, paymentGraph, resolvedBrainData || null, null, null);
+    return buildX402Output(discoveryRunId, effectiveRouteTier, userBudgetUsdc, "completed",
+      safeProgressSummaries, paymentGraph, resolvedBrainData || null, null, null, undefined, lockedPlan);
   }
 
   // ── Steps 2-4: Macro-nodes (Brain → macro-node → child) ──
@@ -266,7 +311,7 @@ async function runX402Orchestration(params: {
     const nodeResult = await callMacroNodeX402(dcwSigner, node, {
       discoveryRunId,
       userGoal,
-      routeTier,
+      routeTier: effectiveRouteTier,
       userBudgetUsdc,
       userWallet,
       payload,
@@ -282,9 +327,9 @@ async function runX402Orchestration(params: {
         nodeType: "macro_node",
         paymentRef: null,
       });
-      return buildX402Output(discoveryRunId, routeTier, userBudgetUsdc, "failed",
+      return buildX402Output(discoveryRunId, effectiveRouteTier, userBudgetUsdc, "failed",
         [...safeProgressSummaries, `FAILED: Macro-node ${node}: ${nodeResult.error}`],
-        paymentGraph, resolvedBrainData || null, macroNodeResults, `Macro-node ${node} x402 failed: ${nodeResult.error}`);
+        paymentGraph, resolvedBrainData || null, macroNodeResults, `Macro-node ${node} x402 failed: ${nodeResult.error}`, undefined, lockedPlan);
     }
 
     // Record Brain → macro-node edge (macro allocation payment)
@@ -373,8 +418,9 @@ async function runX402Orchestration(params: {
     }
   }
 
-  return buildX402Output(discoveryRunId, routeTier, userBudgetUsdc, "completed",
-    safeProgressSummaries, paymentGraph, resolvedBrainData || null, macroNodeResults, null, sourceContext);
+  const outResult = buildX402Output(discoveryRunId, effectiveRouteTier, userBudgetUsdc, "completed",
+    safeProgressSummaries, paymentGraph, resolvedBrainData || null, macroNodeResults, null, sourceContext, lockedPlan);
+  return { ...outResult, _lockedPlan: lockedPlan };
 }
 
 function buildX402Output(
@@ -388,8 +434,10 @@ function buildX402Output(
   macroNodeResults: Record<string, Record<string, unknown>> | null,
   error: string | null,
   sourceContext?: import("@/lib/paylabs/sources/types").SourceContext,
+  lockedPlan?: import("@/lib/paylabs/delegated-runtime/types").ExecutionPlan | null,
 ): OrchestratorOutput {
-  const macroNodes = TIER_PHASE_MAP[routeTier] || TIER_PHASE_MAP.easy;
+  const macroNodes = lockedPlan?.selectedMacroNodes
+    ?? (TIER_PHASE_MAP[routeTier] || TIER_PHASE_MAP.easy);
 
   // Build payment plan from payment_decision result
   const paymentResult = macroNodeResults?.["payment_decision"];
@@ -695,34 +743,6 @@ async function runX402Path(
     // Discovery planner buyer wallet (for child service payments)
     if (!process.env.PAYLABS_NODE_DISCOVERY_PLANNER_BUYER_WALLET_ID) {
       throw new Error("config_error: missing PAYLABS_NODE_DISCOVERY_PLANNER_BUYER_WALLET_ID");
-    }
-
-    // ── Tier-specific env preflight: fail fast before orchestration ──
-    const tierRequiredEnv: string[] = [
-      "PAYLABS_BRAIN_SELLER_WALLET_ADDRESS",
-      "PAYLABS_BRAIN_BUYER_WALLET_ID",
-      "PAYLABS_NODE_DISCOVERY_PLANNER_SELLER_WALLET_ADDRESS",
-      "PAYLABS_NODE_DISCOVERY_PLANNER_BUYER_WALLET_ID",
-    ];
-
-    if (routeTier === "normal" || routeTier === "advanced") {
-      tierRequiredEnv.push(
-        "PAYLABS_NODE_PAYMENT_DECISION_SELLER_WALLET_ADDRESS",
-        "PAYLABS_NODE_PAYMENT_DECISION_BUYER_WALLET_ID",
-      );
-    }
-
-    if (routeTier === "advanced") {
-      tierRequiredEnv.push(
-        "PAYLABS_NODE_SETTLEMENT_MEMORY_SELLER_WALLET_ADDRESS",
-        "PAYLABS_NODE_SETTLEMENT_MEMORY_BUYER_WALLET_ID",
-        "PAYLABS_SERVICE_PAYMENT_ROUTER_SELLER_WALLET_ADDRESS",
-      );
-    }
-
-    const missingTierEnv = tierRequiredEnv.filter((key) => !process.env[key]);
-    if (missingTierEnv.length > 0) {
-      throw new Error(`config_error: missing tier x402 envs: ${missingTierEnv.join(", ")}`);
     }
 
     // ── Preflight quote: deterministic budget guardrail ──────
@@ -1034,7 +1054,7 @@ async function runX402Path(
       await writePayLabsVisibility({
         discoveryRunId,
         userWallet,
-        routeTier: routeTier as DelegatedRouteTier,
+        routeTier: result.routeTier,
         result,
       });
     } catch (e) {
@@ -1049,7 +1069,19 @@ async function runX402Path(
       ok: result.status === "completed",
       discovery_run_id: discoveryRunId,
       status: result.status,
+      requested_route_tier: routeTier,
       route_tier: result.routeTier,
+      effective_route_tier: result.routeTier,
+      locked_execution_plan: result._lockedPlan
+        ? {
+            selected_macro_nodes: result._lockedPlan.selectedMacroNodes,
+            selected_services: result._lockedPlan.selectedServices,
+            planned_cost_usdc: result._lockedPlan.plannedCostUsdc,
+            planned_cost_breakdown: result._lockedPlan.plannedCostBreakdown,
+            locked: true,
+            source: "brain_planner_validated",
+          }
+        : null,
       execution_origin: "vercel_inline",
       execution_mode: "x402_orchestration",
       worker_used: false,

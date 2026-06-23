@@ -22,7 +22,9 @@ type SafeRunResult = {
   ok: boolean;
   runId: string | null;
   status: string | null;
+  requestedTier: string | null;
   tier: string | null;
+  effectiveTier: string | null;
   entryPaymentStatus: string | null;
   plannedCostUsdc: number | null;
   paidEdges: number;
@@ -32,6 +34,9 @@ type SafeRunResult = {
   assistantResponse: string | null;
   userVisibleReasoning: string | null;
   brainRationale: string | null;
+  lockedNodes: string[];
+  lockedServices: string[];
+  tierDecisionReason: string | null;
 };
 
 // UCW sensitive tokens are stored server-side in httpOnly session cookie.
@@ -97,7 +102,9 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     ok: !!data?.ok,
     runId: (data?.discovery_run_id as string) ?? (data?.id as string) ?? null,
     status: (data?.status as string) ?? null,
-    tier: (data?.route_tier as string) ?? null,
+    requestedTier: (data?.requested_route_tier as string) ?? null,
+    tier: (data?.effective_route_tier as string) ?? (data?.route_tier as string) ?? null,
+    effectiveTier: (data?.effective_route_tier as string) ?? (data?.route_tier as string) ?? null,
     entryPaymentStatus: (data?.entry_payment as Record<string, string>)?.status ?? null,
     plannedCostUsdc: (quote?.plannedCostUsdc as number) ?? (exitOutput?.planned_cost_usdc as number) ?? null,
     paidEdges,
@@ -107,6 +114,9 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     assistantResponse,
     userVisibleReasoning,
     brainRationale,
+    lockedNodes: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_macro_nodes as string[]) ?? [],
+    lockedServices: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_services as string[]) ?? [],
+    tierDecisionReason: (brainPlanning?.tier_decision_reason as string) ?? null,
   };
 }
 
@@ -1360,8 +1370,20 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
       </div>
       <div className="pl-result-row">
         <span>Tier</span>
-        <b style={{ textTransform: "capitalize" }}>{result.tier || "—"}</b>
+        <b style={{ textTransform: "capitalize" }}>{result.effectiveTier || result.tier || "—"}</b>
       </div>
+      {result.requestedTier && result.requestedTier !== result.effectiveTier && (
+        <div className="pl-result-row">
+          <span>Requested</span>
+          <b style={{ textTransform: "capitalize" }}>{result.requestedTier}</b>
+        </div>
+      )}
+      {result.lockedNodes.length > 0 && (
+        <div className="pl-result-row">
+          <span>Nodes</span>
+          <b>{result.lockedNodes.join(" → ")}</b>
+        </div>
+      )}
       <div className="pl-result-row">
         <span>Entry</span>
         <b>{result.entryPaymentStatus || "—"}</b>
