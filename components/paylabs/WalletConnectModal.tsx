@@ -41,6 +41,8 @@ type Props = {
   onConnectEoa?: () => void;
   needsReconnectToSign?: boolean;
   onReconnect?: () => void;
+  authMethod?: string;
+  depositStatus?: string | null;
   debugLog?: string[];
 };
 
@@ -83,6 +85,8 @@ export default function WalletConnectModal({
   onConnectEoa,
   needsReconnectToSign = false,
   onReconnect,
+  authMethod,
+  depositStatus,
   debugLog,
 }: Props) {
   const [tab, setTab] = useState<"login" | "gateway">("login");
@@ -174,7 +178,7 @@ export default function WalletConnectModal({
                 </div>
                 {needsReconnectToSign && (
                   <button className="pl-primary-v3" onClick={onReconnect} style={{ marginTop: 8 }}>
-                    Reconnect wallet to sign
+                    {authMethod ? `Reconnect via ${authMethod} to sign` : "Reconnect to sign"}
                   </button>
                 )}
               </div>
@@ -238,12 +242,15 @@ export default function WalletConnectModal({
                 >
                   {gatewayReady ? "Deposit more" : "Deposit to Gateway"}
                 </button>
+                {depositStatus && (
+                  <div className="pl-deposit-status">{depositStatus}</div>
+                )}
               </>
             )}
 
             {isConnected && needsReconnectToSign && (
               <button className="pl-primary-v3" onClick={onReconnect}>
-                Reconnect wallet to sign
+                {authMethod ? `Reconnect via ${authMethod} to sign` : "Reconnect to sign"}
               </button>
             )}
 
