@@ -338,6 +338,15 @@ export async function generateStructuredJson<T>(
         const hasReasoning = !!ak?.reasoning_content;
 
         if (hasEmptyContent && hasReasoning) {
+          // Log for debugging MiMo response structure
+          console.log("[llm-structured] MiMo empty content + reasoning_content detected", {
+            agent: agentName,
+            reasoning_type: typeof ak?.reasoning_content,
+            reasoning_length: typeof ak?.reasoning_content === "string" ? (ak.reasoning_content as string).length : 0,
+            reasoning_preview: typeof ak?.reasoning_content === "string" ? (ak.reasoning_content as string).substring(0, 200) : "not-string",
+            msg_keys: Object.keys(msg || {}),
+            ak_keys: Object.keys(ak || {}),
+          });
           lastError = "MiMo returned reasoning_content with empty content — no JSON extractable";
           break;
         }
