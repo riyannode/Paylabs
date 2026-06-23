@@ -294,11 +294,13 @@ async function signWithEoa(params: {
 }
 
 /** Safe debug log — gated behind NEXT_PUBLIC_PAYLABS_UCW_DEBUG=1 */
+const ucwDebugEnabled = typeof window !== "undefined" && process.env.NEXT_PUBLIC_PAYLABS_UCW_DEBUG === "1";
 function signDbg(msg: string) {
-  if (typeof window !== "undefined" && process.env.NEXT_PUBLIC_PAYLABS_UCW_DEBUG === "1") {
-    console.log("[UCW-sign]", msg);
+  if (ucwDebugEnabled) {
+    console.log(`[ucw_sign] ${msg}`);
   }
 }
+const nowMs = () => Math.round(performance.now());
 
 /** Sign with Circle UCW via challenge-response */
 async function signWithUcw(params: {
@@ -308,24 +310,30 @@ async function signWithUcw(params: {
   auth?: { userToken: string; encryptionKey?: string } | null;
 }): Promise<string> {
   const { challenge, walletAddress, ucwSdk, auth } = params;
+  const signStart = nowMs();
   const { domain, types, message, requirement, x402Version } = buildEip712Params(challenge, walletAddress);
 
   // Preflight: ensure session exists with wallet data before sign-challenge
   signDbg("preflight: checking session-restore...");
+  const t0 = nowMs();
   const checkResp = await fetch("/api/paylabs/wallet/ucw?action=session-restore", { method: "POST", credentials: "include" });
-  signDbg(`session-restore: status=${checkResp.status}`);
+  signDbg(`session-restore: status=${checkResp.status} ${nowMs() - t0}ms`);
   if (checkResp.ok) {
     const sess = (await checkResp.json()) as { hasUserToken: boolean; walletId: string | null; walletAddress: string | null };
     if (!sess.hasUserToken || !sess.walletId || !sess.walletAddress) {
       // Session exists but incomplete — try repair
       if (auth) {
+        const t1 = nowMs();
         const createResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
+        signDbg(`session-create: status=${createResp.status} ${nowMs() - t1}ms`);
         if (!createResp.ok) throw new Error("Session expired. Reconnect wallet.");
+        const t2 = nowMs();
         const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
           method: "POST", credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ userToken: auth.userToken, encryptionKey: auth.encryptionKey }),
         });
+        signDbg(`session-save-login: status=${saveResp.status} ${nowMs() - t2}ms`);
         if (!saveResp.ok) throw new Error("Session expired. Reconnect wallet.");
         const repaired = (await saveResp.json()) as { walletAddress?: string | null };
         if (repaired.walletAddress && repaired.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
@@ -337,13 +345,17 @@ async function signWithUcw(params: {
     }
   } else if (checkResp.status === 401 && auth) {
     // Session expired — recreate and re-save auth
+    const t1 = nowMs();
     const createResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
+    signDbg(`session-create(401): status=${createResp.status} ${nowMs() - t1}ms`);
     if (!createResp.ok) throw new Error("Session expired. Reconnect wallet.");
+    const t2 = nowMs();
     const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
       method: "POST", credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ userToken: auth.userToken, encryptionKey: auth.encryptionKey }),
     });
+    signDbg(`session-save-login(401): status=${saveResp.status} ${nowMs() - t2}ms`);
     if (!saveResp.ok) throw new Error("Session expired. Reconnect wallet.");
     const repaired = (await saveResp.json()) as { walletAddress?: string | null };
     if (repaired.walletAddress && repaired.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
@@ -354,7 +366,9 @@ async function signWithUcw(params: {
   }
 
   // Backend reads walletId/userToken from httpOnly session
+  const t3 = nowMs();
   await ucwSdk.getDeviceId();
+  signDbg(`getDeviceId: ${nowMs() - t3}ms`);
   if (auth?.encryptionKey) {
     const ek: string = auth.encryptionKey;
     ucwSdk.setAuthentication({ userToken: auth.userToken, encryptionKey: ek });
@@ -382,13 +396,14 @@ async function signWithUcw(params: {
 
   // sign-challenge reads userToken/walletId from httpOnly session
   signDbg("signChallenge: started");
+  const t4 = nowMs();
   const signResp = await fetch("/api/paylabs/wallet/ucw?action=sign-challenge", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ data: signData }),
   });
-  signDbg(`signChallenge: status=${signResp.status}`);
+  signDbg(`signChallenge: status=${signResp.status} ${nowMs() - t4}ms`);
   if (!signResp.ok) {
     const err = await signResp.json().catch(() => ({}));
     throw new Error(`Sign challenge failed: ${(err as Record<string, string>).error || signResp.status}`);
@@ -398,6 +413,7 @@ async function signWithUcw(params: {
   signDbg("signChallenge: ok, executing challenge via UCW SDK...");
 
   // Step 2: Execute challenge via UCW SDK (user approves via Circle hosted UI)
+  const t5 = nowMs();
   const signature: string = await new Promise((resolve, reject) => {
     ucwSdk.execute(challengeId, (error: unknown, result: unknown) => {
       if (error) reject(error instanceof Error ? error : new Error(String(error)));
@@ -409,6 +425,8 @@ async function signWithUcw(params: {
       }
     });
   });
+  signDbg(`ucwSdk.execute: ${nowMs() - t5}ms`);
+  signDbg(`signWithUcw total: ${nowMs() - signStart}ms`);
 
   return buildPaymentPayload(challenge, requirement, message, signature, x402Version);
 }
@@ -531,6 +549,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [status, setStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SafeRunResult | null>(null);
+  const [signingPhase, setSigningPhase] = useState<string | null>(null);
 
   // Chat message history
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -1225,11 +1244,13 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
     };
 
     try {
+      const inlineStart = nowMs();
       const first = await fetch("/api/paylabs/discovery-runs/inline", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (ucwDebugEnabled) signDbg(`inline POST: status=${first.status} ${nowMs() - inlineStart}ms`);
 
       // ── Handle 402: payment required ──
       if (first.status === 402) {
@@ -1257,15 +1278,18 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
         // Sign with appropriate wallet type
         setWalletState("approving");
+        setSigningPhase("Preparing x402 approval…");
         let paymentSignature: string;
         try {
           if (walletInfo.walletType === "circle_user_controlled" && ucwSdkRef.current) {
+            setSigningPhase("Opening Circle approval…");
             paymentSignature = await signWithUcw({
               challenge,
               walletAddress: walletInfo.address,
               ucwSdk: ucwSdkRef.current as { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (id: string, cb: (err: unknown, res: unknown) => void) => void },
               auth: ucwAuthRef.current,
             });
+            setSigningPhase(null);
           } else if (walletInfo.walletType === "circle_user_controlled" && !ucwSdkRef.current) {
             // UCW wallet but SDK/auth lost (e.g. after refresh) — never fall back to EOA
             finishAssistant({ status: "error", error: "Reconnect wallet to sign x402 payments." });
@@ -1280,6 +1304,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           }
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : "Signing failed.";
+          setSigningPhase(null);
           finishAssistant({ status: "error", error: msg });
           setError(msg);
           setWalletState("ready_to_approve");
@@ -1288,10 +1313,12 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         }
 
         // Retry with payment signature + discovery_run_id for row reuse
+        setSigningPhase("Submitting paid request…");
         const retryBody: Record<string, unknown> = { ...body };
         if (retryDiscoveryRunId) {
           retryBody.discovery_run_id = retryDiscoveryRunId;
         }
+        const retryStart = nowMs();
         const paid = await fetch("/api/paylabs/discovery-runs/inline", {
           method: "POST",
           headers: {
@@ -1300,6 +1327,8 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           },
           body: JSON.stringify(retryBody),
         });
+        if (ucwDebugEnabled) signDbg(`paid retry: status=${paid.status} ${nowMs() - retryStart}ms`);
+        setSigningPhase(null);
 
         const paidData = await paid.json().catch(() => ({}));
         if (!paid.ok) {
@@ -1459,6 +1488,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
                               <div className="pl-typing-dot" />
                               <div className="pl-typing-dot" />
                               <div className="pl-typing-dot" />
+                              {signingPhase && <span className="pl-signing-phase">{signingPhase}</span>}
                             </div>
                           )}
                           {msg.status === "error" && (
@@ -1553,6 +1583,7 @@ function BrainIcon() {
 
 function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () => void }) {
   const [rationaleOpen, setRationaleOpen] = useState(true);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const rationaleText = result.userVisibleReasoning ?? result.brainRationale;
   return (
     <div className="pl-result-card">
@@ -1589,41 +1620,52 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
           )}
         </div>
       )}
-      <div className="pl-result-grid">
-        <div className="pl-result-pill">
-          <span>Status</span>
-          <b>{result.ok ? "Run completed" : "Run failed"}</b>
-        </div>
-        <div className="pl-result-pill">
-          <span>Tier</span>
-          <b style={{ textTransform: "capitalize" }}>{result.effectiveTier || result.tier || "—"}</b>
-        </div>
-        {result.requestedTier && result.requestedTier !== result.effectiveTier && (
-          <div className="pl-result-pill">
-            <span>Requested</span>
-            <b style={{ textTransform: "capitalize" }}>{result.requestedTier}</b>
-          </div>
-        )}
-        <div className="pl-result-pill">
-          <span>Entry</span>
-          <b>{result.entryPaymentStatus || "—"}</b>
-        </div>
-        <div className="pl-result-pill">
-          <span>Paid edges</span>
-          <b>{result.paidEdges}/{result.totalEdges}</b>
-        </div>
-        <div className="pl-result-pill">
-          <span>Planned</span>
-          <b>{result.plannedCostUsdc != null ? `${result.plannedCostUsdc} USDC` : "—"}</b>
-        </div>
-        <div className="pl-result-pill">
-          <span>Receipt</span>
-          <b>{result.receiptReady ? "Ready" : "Pending"}</b>
-        </div>
-        {result.lockedNodes.length > 0 && (
-          <div className="pl-result-pill">
-            <span>Nodes</span>
-            <b>{result.lockedNodes.join(" → ")}</b>
+      <div className="pl-rationale-block">
+        <button
+          className="pl-rationale-toggle"
+          onClick={() => setDetailsOpen(!detailsOpen)}
+        >
+          <span className="pl-rationale-title">Run details</span>
+          <span className="pl-rationale-caret">{detailsOpen ? "▾" : "▸"}</span>
+        </button>
+        {detailsOpen && (
+          <div className="pl-result-grid">
+            <div className="pl-result-pill">
+              <span>Status</span>
+              <b>{result.ok ? "Completed" : "Failed"}</b>
+            </div>
+            <div className="pl-result-pill">
+              <span>Tier</span>
+              <b style={{ textTransform: "capitalize" }}>{result.effectiveTier || result.tier || "—"}</b>
+            </div>
+            {result.requestedTier && result.requestedTier !== result.effectiveTier && (
+              <div className="pl-result-pill">
+                <span>Requested</span>
+                <b style={{ textTransform: "capitalize" }}>{result.requestedTier}</b>
+              </div>
+            )}
+            <div className="pl-result-pill">
+              <span>Entry</span>
+              <b style={{ textTransform: "capitalize" }}>{result.entryPaymentStatus || "—"}</b>
+            </div>
+            <div className="pl-result-pill">
+              <span>Edges</span>
+              <b>{result.paidEdges}/{result.totalEdges}</b>
+            </div>
+            <div className="pl-result-pill">
+              <span>Cost</span>
+              <b>{result.plannedCostUsdc != null ? `${result.plannedCostUsdc} USDC` : "—"}</b>
+            </div>
+            <div className="pl-result-pill">
+              <span>Receipt</span>
+              <b>{result.receiptReady ? "Ready" : "Pending"}</b>
+            </div>
+            {result.lockedNodes.length > 0 && (
+              <div className="pl-result-pill">
+                <span>Nodes</span>
+                <b>{result.lockedNodes.join(" → ")}</b>
+              </div>
+            )}
           </div>
         )}
       </div>
