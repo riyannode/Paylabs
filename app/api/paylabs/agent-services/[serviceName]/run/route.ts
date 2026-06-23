@@ -3,9 +3,9 @@
  *
  * POST /api/paylabs/agent-services/[serviceName]/run
  *
- * DUAL MODE:
+ * x402-ONLY (fail-closed):
  * - If service is NOT in PAYLABS_X402_ENABLED_SERVICE_NAMES:
- *   audit-only. settled=false, mode="audit_only". Handler runs directly.
+ *   returns 500 config_error. Handler NEVER executes without payment.
  *
  * - If service IS in PAYLABS_X402_ENABLED_SERVICE_NAMES:
  *   First request (no payment header): returns real HTTP 402 + PAYMENT-REQUIRED header.
@@ -137,56 +137,17 @@ export async function POST(
   const x402Enabled = isX402EnabledForService(serviceNameTyped);
 
   if (!x402Enabled) {
-    // ── Audit-only path: handler runs directly ──
-    return executeAuditOnly(serviceNameTyped, buyerAgentName, discoveryRunId, payload);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `config_error: service ${serviceNameTyped} is not enabled for x402. Set PAYLABS_X402_ENABLED_SERVICE_NAMES=all or include this service.`,
+      },
+      { status: 500 }
+    );
   }
 
   // ── x402 path: challenge → verify → settle → handler ──
   return executeX402SellerPath(req, serviceNameTyped, config, buyerAgentName, discoveryRunId, payload);
-}
-
-// ─── Audit-Only Path ─────────────────────────────────────────
-
-async function executeAuditOnly(
-  serviceNameTyped: ServiceName,
-  buyerAgentName: string,
-  discoveryRunId: string,
-  payload: Record<string, unknown>
-) {
-  const handler = SERVICE_HANDLERS[serviceNameTyped];
-  if (!handler) {
-    return NextResponse.json(
-      { ok: false, error: `No handler for service: ${serviceNameTyped}` },
-      { status: 500 }
-    );
-  }
-
-  const handlerInput: ServiceHandlerInput = {
-    discoveryRunId,
-    serviceName: serviceNameTyped,
-    buyerAgentName,
-    payload,
-  };
-
-  try {
-    const result = await handler(handlerInput);
-
-    return NextResponse.json({
-      ok: result.ok,
-      serviceName: result.serviceName,
-      data: result.data,
-      safeSummary: result.safeSummary,
-      settled: false,
-      mode: "audit_only",
-      error: result.error,
-    });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json(
-      { ok: false, serviceName: serviceNameTyped, error: `Handler error: ${msg}` },
-      { status: 500 }
-    );
-  }
 }
 
 // ─── x402 Seller Path ────────────────────────────────────────

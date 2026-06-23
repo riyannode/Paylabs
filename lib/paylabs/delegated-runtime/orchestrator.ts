@@ -46,21 +46,35 @@ export async function executeDelegatedDiscoveryRun(
   input: OrchestratorInput
 ): Promise<OrchestratorOutput> {
   const state = createOrchestratorState(input);
-  const phasesToRun = TIER_PHASE_MAP[input.routeTier] || TIER_PHASE_MAP.easy;
+  // ── Brain Planning (LangGraph) ──
+  const brainResult = await runBrainPlanning(input);
+
+  // When route_tier is "auto", use Brain's recommendation
+  let resolvedTier = input.routeTier;
+  if (brainResult.ok && input.routeTier === ("auto" as unknown as string)) {
+    const brainHint = brainResult.data.route_tier_hint;
+    if (brainHint === "easy" || brainHint === "normal" || brainHint === "advanced") {
+      resolvedTier = brainHint;
+      addProgressSummary(state, `Brain auto-tier: "${brainHint}" (from route_tier_hint)`);
+    } else {
+      resolvedTier = "easy";
+      addProgressSummary(state, `Brain auto-tier: fallback to "easy" (invalid hint: "${brainHint}")`);
+    }
+  }
+
+  const phasesToRun = TIER_PHASE_MAP[resolvedTier] || TIER_PHASE_MAP.easy;
+  state.routeTier = resolvedTier;
 
   addProgressSummary(
     state,
-    `Orchestrator started: tier=${input.routeTier}, budget=${input.userBudgetUsdc} USDC, phases=${phasesToRun.join(",")}`
+    `Orchestrator started: tier=${resolvedTier}, budget=${input.userBudgetUsdc} USDC, phases=${phasesToRun.join(",")}`
   );
-
-  // ── Brain Planning (LangGraph) ──
-  const brainResult = await runBrainPlanning(input);
 
   if (brainResult.ok) {
     state.brainPlanning = brainResult.data;
 
     const executionPlan = validateAndLockExecutionPlan(
-      input.routeTier,
+      resolvedTier,
       brainResult.data.selected_macro_nodes,
       brainResult.data.selected_services,
       brainResult.data.max_registry_checks,
@@ -75,7 +89,7 @@ export async function executeDelegatedDiscoveryRun(
 
     addProgressSummary(
       state,
-      `Execution plan locked: tier=${input.routeTier}, nodes=${executionPlan.selectedMacroNodes.length}, services=${executionPlan.selectedServices.length}, plannedCost=${executionPlan.plannedCostUsdc.toFixed(6)} USDC`
+      `Execution plan locked: tier=${resolvedTier}, nodes=${executionPlan.selectedMacroNodes.length}, services=${executionPlan.selectedServices.length}, plannedCost=${executionPlan.plannedCostUsdc.toFixed(6)} USDC`
     );
     addProgressSummary(
       state,
@@ -106,7 +120,7 @@ export async function executeDelegatedDiscoveryRun(
     const discoveryResult = await runDiscoveryPlannerGraph({
       discoveryRunId: input.discoveryRunId,
       userGoal: input.userGoal,
-      routeTier: input.routeTier,
+      routeTier: resolvedTier,
       userBudgetUsdc: input.userBudgetUsdc,
       selectedServices: activeServices,
       brainNormalizedGoal: state.brainPlanning?.normalized_goal,
@@ -154,7 +168,7 @@ export async function executeDelegatedDiscoveryRun(
     const paymentResult = await runPaymentDecisionGraph({
       discoveryRunId: input.discoveryRunId,
       userGoal: state.easyToNormalHandoff.normalizedGoal,
-      routeTier: input.routeTier,
+      routeTier: resolvedTier,
       userBudgetUsdc: input.userBudgetUsdc,
       sourceCards: state.easyToNormalHandoff.sourceCards,
       discoverySummary: state.easyToNormalHandoff.easySummary,
@@ -203,7 +217,7 @@ export async function executeDelegatedDiscoveryRun(
     const settlementResult = await runSettlementMemoryGraph({
       discoveryRunId: input.discoveryRunId,
       userGoal: input.userGoal,
-      routeTier: input.routeTier,
+      routeTier: resolvedTier,
       userBudgetUsdc: input.userBudgetUsdc,
       approvedItems: paymentResult.approvedItems,
       selectedServices: activeServices,
