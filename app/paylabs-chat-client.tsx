@@ -29,6 +29,9 @@ type SafeRunResult = {
   totalEdges: number;
   receiptReady: boolean;
   safeSummary: string;
+  assistantResponse: string | null;
+  userVisibleReasoning: string | null;
+  brainRationale: string | null;
 };
 
 // UCW sensitive tokens are stored server-side in httpOnly session cookie.
@@ -58,17 +61,37 @@ const TIER_COSTS: Record<string, string> = {
 function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
   const paymentGraph =
     (data?.payment_graph as unknown[]) ??
-    (data?.result as Record<string, unknown>)?.paymentGraph as unknown[] ??
-    (data?.agent_trace as Record<string, unknown>)?.payment_graph as unknown[] ??
-    (data?.exit_output as Record<string, unknown>)?.payment_graph as unknown[] ??
+    ((data?.result as Record<string, unknown>)?.paymentGraph as unknown[]) ??
+    ((data?.agent_trace as Record<string, unknown>)?.payment_graph as unknown[]) ??
+    ((data?.exit_output as Record<string, unknown>)?.payment_graph as unknown[]) ??
     [];
-
   const paidEdges = Array.isArray(paymentGraph)
     ? paymentGraph.filter((e: unknown) => (e as Record<string, string>).status === "paid").length
     : 0;
-
   const exitOutput = data?.exit_output as Record<string, unknown> | undefined;
   const quote = data?.quote as Record<string, unknown> | undefined;
+  const tieredSummaries = data?.tiered_summaries as Record<string, string> | undefined;
+  const brainPlanning = data?.brain_planning as Record<string, unknown> | undefined;
+  const agentTraceBrain = (data?.agent_trace as Record<string, unknown>)?.brain_planning as Record<string, unknown> | undefined;
+
+  const assistantResponse =
+    (brainPlanning?.assistant_response as string) ??
+    (agentTraceBrain?.assistant_response as string) ??
+    (exitOutput?.final_summary as string) ??
+    tieredSummaries?.final_summary ??
+    "Run completed.";
+  const userVisibleReasoning =
+    (brainPlanning?.user_visible_reasoning as string) ??
+    (agentTraceBrain?.user_visible_reasoning as string) ??
+    null;
+  const brainRationale =
+    (brainPlanning?.plan_rationale as string) ??
+    (brainPlanning?.tier_decision_reason as string) ??
+    (brainPlanning?.safe_summary as string) ??
+    (agentTraceBrain?.plan_rationale as string) ??
+    (agentTraceBrain?.tier_decision_reason as string) ??
+    (agentTraceBrain?.safe_summary as string) ??
+    null;
 
   return {
     ok: !!data?.ok,
@@ -80,10 +103,10 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     paidEdges,
     totalEdges: Array.isArray(paymentGraph) ? paymentGraph.length : 0,
     receiptReady: (data?.receipt_ready as boolean) ?? (exitOutput?.receipt_ready as boolean) ?? false,
-    safeSummary:
-      (exitOutput?.final_summary as string) ??
-      (data?.tiered_summaries as Record<string, string>)?.final_summary ??
-      "Run completed.",
+    safeSummary: (exitOutput?.final_summary as string) ?? tieredSummaries?.final_summary ?? "Run completed.",
+    assistantResponse,
+    userVisibleReasoning,
+    brainRationale,
   };
 }
 
@@ -1300,8 +1323,29 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 // ─── Result Card ────────────────────────────────────────────
 
 function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () => void }) {
+  const [rationaleOpen, setRationaleOpen] = useState(false);
+  const rationaleText = result.userVisibleReasoning ?? result.brainRationale;
   return (
     <div className="pl-result-card">
+      {result.assistantResponse && (
+        <div className="pl-assistant-answer">
+          <div className="pl-assistant-label">Assistant</div>
+          <div>{result.assistantResponse}</div>
+        </div>
+      )}
+      {rationaleText && (
+        <div className="pl-rationale-block">
+          <button
+            className="pl-rationale-toggle"
+            onClick={() => setRationaleOpen(!rationaleOpen)}
+          >
+            {rationaleOpen ? "▾" : "▸"} Reasoning
+          </button>
+          {rationaleOpen && (
+            <pre className="pl-rationale-content">{rationaleText}</pre>
+          )}
+        </div>
+      )}
       <div className="pl-result-row">
         <span>Status</span>
         <b>{result.ok ? "Run completed" : "Run failed"}</b>

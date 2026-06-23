@@ -928,6 +928,10 @@ async function runX402Path(
           brain_planning: result.brainPlanning
             ? {
                 safe_summary: result.brainPlanning.safe_brain_summary,
+                assistant_response: result.brainPlanning.assistant_response,
+                user_visible_reasoning: result.brainPlanning.user_visible_reasoning,
+                tier_decision_reason: result.brainPlanning.tier_decision_reason,
+                plan_rationale: result.brainPlanning.plan_rationale,
                 selected_macro_nodes: result.brainPlanning.selected_macro_nodes,
                 selected_services: result.brainPlanning.selected_services,
                 planned_cost_usdc: result.brainPlanning.planned_cost_usdc,
@@ -1011,6 +1015,10 @@ async function runX402Path(
       brain_planning: result.brainPlanning
         ? {
             safe_summary: result.brainPlanning.safe_brain_summary,
+            assistant_response: result.brainPlanning.assistant_response,
+            user_visible_reasoning: result.brainPlanning.user_visible_reasoning,
+            tier_decision_reason: result.brainPlanning.tier_decision_reason,
+            plan_rationale: result.brainPlanning.plan_rationale,
             discovery_strategy: result.brainPlanning.discovery_strategy,
             query_variants: result.brainPlanning.suggested_query_variants,
             selected_macro_nodes: result.brainPlanning.selected_macro_nodes,
