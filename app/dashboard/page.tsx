@@ -168,7 +168,7 @@ export default async function DashboardPage() {
     totalUsers,
     recentUsers7d,
     recentUsers24h,
-    topUsers,
+
   ] = await Promise.all([
     safeQuery<{ user_wallet: string }>(() =>
       supabaseAdmin()
@@ -190,30 +190,6 @@ export default async function DashboardPage() {
         .gte("created_at", new Date(Date.now() - 86400000).toISOString())
         .limit(10000)
     ).then((rows) => new Set(rows.map((r) => r.user_wallet?.toLowerCase()).filter(Boolean)).size),
-    safeQuery<{ user_wallet: string; route_tier: string; status: string; created_at: string }>(() =>
-      supabaseAdmin()
-        .from("paylabs_discovery_runs")
-        .select("user_wallet, route_tier, status, created_at")
-        .order("created_at", { ascending: false })
-        .limit(5000)
-    ).then((rows) => {
-      const byUser = new Map<string, { wallet: string; runs: number; lastActive: string; lastTier: string }>();
-      for (const r of rows) {
-        const w = r.user_wallet?.toLowerCase();
-        if (!w) continue;
-        const existing = byUser.get(w);
-        if (existing) {
-          existing.runs++;
-          if (r.created_at > existing.lastActive) {
-            existing.lastActive = r.created_at;
-            existing.lastTier = r.route_tier;
-          }
-        } else {
-          byUser.set(w, { wallet: r.user_wallet, runs: 1, lastActive: r.created_at, lastTier: r.route_tier });
-        }
-      }
-      return [...byUser.values()].sort((a, b) => b.runs - a.runs).slice(0, 15);
-    }),
   ]);
 
   return (
@@ -253,57 +229,7 @@ export default async function DashboardPage() {
         ))}
       </div>
 
-      {/* ─── User Analytics ──────────────────────────────────── */}
-      <section className="card">
-        <h2 className="section-title">User Analytics</h2>
-        <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
-          Unique wallets that submitted discovery runs. Top users ranked by total runs.
-        </p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 16 }}>
-          <div className="card" style={{ padding: 12 }}>
-            <div className="muted" style={{ fontSize: 12 }}>Total Unique Users</div>
-            <div className="kpi" style={{ marginTop: 4 }}>{totalUsers}</div>
-          </div>
-          <div className="card" style={{ padding: 12 }}>
-            <div className="muted" style={{ fontSize: 12 }}>Active (24h)</div>
-            <div className="kpi" style={{ marginTop: 4 }}>{recentUsers24h}</div>
-          </div>
-          <div className="card" style={{ padding: 12 }}>
-            <div className="muted" style={{ fontSize: 12 }}>Active (7d)</div>
-            <div className="kpi" style={{ marginTop: 4 }}>{recentUsers7d}</div>
-          </div>
-        </div>
-        {topUsers.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
-            No users yet.
-          </div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Wallet</th>
-                  <th>Total Runs</th>
-                  <th>Last Tier</th>
-                  <th>Last Active</th>
-                </tr>
-              </thead>
-              <tbody>
-                {topUsers.map((u: any, i: number) => (
-                  <tr key={u.wallet}>
-                    <td className="muted">{i + 1}</td>
-                    <td className="data-mono">{short(u.wallet)}</td>
-                    <td className="data-mono" style={{ fontWeight: 600 }}>{u.runs}</td>
-                    <td>{u.lastTier}</td>
-                    <td className="muted">{timeAgo(u.lastActive)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+
 
       {/* ─── RSSHub Routes Table ───────────────────────────── */}
       <section className="card">
