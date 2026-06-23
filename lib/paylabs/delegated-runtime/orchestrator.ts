@@ -21,6 +21,7 @@ import type {
   DelegatedRouteTier,
   MacroNodePhase,
   BrainPlanningOutput,
+  BudgetRefundReconciliation,
 } from "./types";
 import type { ServiceName } from "../agent-services/types";
 import {
@@ -108,6 +109,10 @@ export async function executeDelegatedDiscoveryRun(
       routeTier: input.routeTier,
       userBudgetUsdc: input.userBudgetUsdc,
       selectedServices: activeServices,
+      brainNormalizedGoal: state.brainPlanning?.normalized_goal,
+      brainDiscoveryStrategy: state.brainPlanning?.discovery_strategy,
+      brainSuggestedQueryVariants: state.brainPlanning?.suggested_query_variants || [],
+      brainSafeSummary: state.brainPlanning?.safe_brain_summary,
     });
 
     if (!discoveryResult.ok) {
@@ -124,10 +129,17 @@ export async function executeDelegatedDiscoveryRun(
       state.paymentEdges.push(pe);
     }
 
+    // Build safe Easy→Normal handoff
+    state.easyToNormalHandoff = {
+      normalizedGoal: discoveryResult.normalizedGoal,
+      easySummary: discoveryResult.easySummary,
+      sourceCards: discoveryResult.sourceCards || [],
+    };
+
     setMacroPhaseStatus(state, "discovery_planner", "completed");
     addProgressSummary(
       state,
-      `Discovery Planner completed: ${discoveryResult.rankedCandidates.length} candidates`
+      `Discovery Planner completed: ${discoveryResult.rankedCandidates.length} candidates, ${discoveryResult.sourceCards?.length || 0} source cards`
     );
 
     if (!activePhases.includes("payment_decision")) {
@@ -141,10 +153,11 @@ export async function executeDelegatedDiscoveryRun(
     const { runPaymentDecisionGraph } = await import("../langgraph/macro-nodes/payment-decision-graph");
     const paymentResult = await runPaymentDecisionGraph({
       discoveryRunId: input.discoveryRunId,
-      userGoal: input.userGoal,
+      userGoal: state.easyToNormalHandoff.normalizedGoal,
       routeTier: input.routeTier,
       userBudgetUsdc: input.userBudgetUsdc,
-      candidates: discoveryResult.rankedCandidates,
+      sourceCards: state.easyToNormalHandoff.sourceCards,
+      discoverySummary: state.easyToNormalHandoff.easySummary,
       selectedServices: activeServices,
     });
 
@@ -216,7 +229,7 @@ export async function executeDelegatedDiscoveryRun(
     );
 
     markOrchestratorComplete(state, "completed");
-    return buildOutput(state);
+    return await buildOutputWithRefund(state, input);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     markOrchestratorComplete(state, "failed", `Orchestrator error: ${msg}`);
@@ -270,26 +283,198 @@ function buildOutput(state: ReturnType<typeof createOrchestratorState>): Orchest
     brainPlanning: state.brainPlanning,
     paymentGraph: state.paymentGraph,
     tieredSummaries: buildTieredSummaries(state),
+    easyToNormalHandoff: state.easyToNormalHandoff,
     error: state.error,
   };
 }
 
-function buildTieredSummaries(state: ReturnType<typeof createOrchestratorState>): OrchestratorOutput["tieredSummaries"] {
-  const summaries: Record<string, string | undefined> = {
-    final_summary: state.safeProgressSummaries.join(" | "),
-  };
+// ─── Refund Reconciliation (async, fail-soft) ───────────────
 
-  const discoveryEvals = state.serviceEvaluations.filter((e) => e.macroNode === "discovery_planner");
-  if (discoveryEvals.length > 0) {
-    const candidateCount = state.serviceEvaluations
-      .filter((e) => e.serviceName === "signal_scout" && e.output)
-      .reduce((count, e) => {
-        const rc = (e.output as Record<string, unknown>)?.ranked_candidates as unknown[] | undefined;
-        return count + (rc?.length || 0);
-      }, 0);
-    summaries.easy_summary = `Discovery: ${candidateCount} candidates found.`;
+/**
+ * Build output with budget refund reconciliation.
+ * Fail-soft: if reconciliation fails, output still returns with error status.
+ */
+async function buildOutputWithRefund(
+  state: ReturnType<typeof createOrchestratorState>,
+  input: OrchestratorInput
+): Promise<OrchestratorOutput> {
+  const output = buildOutput(state);
+
+  try {
+    const {
+      buildSafeBudgetRefundContext,
+      toBrainSafeRefundContext,
+      reconcileAndMaybeRefund,
+    } = await import("../budget/refund-reconciliation");
+    const { getBrainRefundRecommendation } = await import("../budget/refund-brain-policy");
+
+    // Derive paidUpfrontUsdc from real entry payment receipt state only.
+    // Currently no real entry payment capture exists — default to 0.
+    const paidUpfrontUsdc = 0;
+
+    const safeRefundContext = buildSafeBudgetRefundContext({
+      input,
+      state,
+      executionPlan: state.executionPlan,
+      budgetSnapshot: state.budgetSnapshot,
+      serviceEvaluations: state.serviceEvaluations,
+      paymentEdges: state.paymentEdges,
+      paidUpfrontUsdc,
+    });
+
+    // Ask Brain for recommendation (advisory only, fail-soft)
+    const brainSafeContext = toBrainSafeRefundContext(safeRefundContext, state.routeTier);
+    const brainRecommendation = await getBrainRefundRecommendation(brainSafeContext);
+
+    // Backend deterministic reconciliation
+    const budgetRefundReconciliation = await reconcileAndMaybeRefund({
+      context: safeRefundContext,
+      brainRecommendation,
+    });
+
+    const output2 = { ...output, budgetRefundReconciliation };
+
+    // Append refund-aware wording to tier summaries (no overclaiming)
+    if (output2.tieredSummaries) {
+      const refundNote = "Budget/refund status is reported separately.";
+      if (output2.tieredSummaries.easy_summary && !output2.tieredSummaries.easy_summary.includes(refundNote)) {
+        output2.tieredSummaries.easy_summary += ` ${refundNote}`;
+      }
+      if (output2.tieredSummaries.normal_summary && !output2.tieredSummaries.normal_summary.includes(refundNote)) {
+        output2.tieredSummaries.normal_summary += ` ${refundNote}`;
+      }
+      if (output2.tieredSummaries.advanced_summary) {
+        output2.tieredSummaries.advanced_summary += " Real settlement/refund status is shown only when safe payment evidence exists.";
+      }
+    }
+
+    return output2;
+  } catch (e: unknown) {
+    // Fail-soft: refund failure must not erase main run result
+    const refundErr = e instanceof Error ? e.message : String(e);
+    const failedReconciliation: BudgetRefundReconciliation = {
+      userBudgetUsdc: input.userBudgetUsdc,
+      plannedCostUsdc: state.executionPlan?.plannedCostUsdc ?? 0,
+      paidUpfrontUsdc: 0,
+      actualSettledUsdc: 0,
+      estimatedUnsettledUsdc: 0,
+      pendingSettlementUsdc: 0,
+      refundableUsdc: 0,
+      refundRequired: false,
+      refundStatus: "failed",
+      summary: `Refund reconciliation error: ${refundErr}`,
+    };
+    return { ...output, budgetRefundReconciliation: failedReconciliation };
+  }
+}
+
+// ─── Safe Candidate Extraction ─────────────────────────────
+
+/** Safe candidate object — only user-facing fields, no raw payloads/wallets/sigs. */
+interface SafeCandidate {
+  title: string;
+  publisher: string;
+  rank: number;
+  relevance_score: number;
+  reason?: string;
+  feed_item_id: string;
+}
+
+/**
+ * Extract safe candidate objects from Signal Scout service evaluations.
+ * Only includes title, publisher, rank, relevance_score, reason, feed_item_id.
+ * Never exposes raw RSS payload, wallet data, x402 metadata, signatures, or tx hashes.
+ */
+function extractDiscoveryCandidates(
+  state: ReturnType<typeof createOrchestratorState>
+): SafeCandidate[] {
+  const candidates: SafeCandidate[] = [];
+  const scoutEvals = state.serviceEvaluations.filter(
+    (e) => e.macroNode === "discovery_planner" && e.serviceName === "signal_scout" && e.output
+  );
+  for (const eval_ of scoutEvals) {
+    const rc = (eval_.output as Record<string, unknown>)?.ranked_candidates;
+    if (!Array.isArray(rc)) continue;
+    for (const item of rc) {
+      const c = item as Record<string, unknown>;
+      candidates.push({
+        title: String(c.title || ""),
+        publisher: String(c.publisher || ""),
+        rank: Number(c.rank) || 0,
+        relevance_score: Number(c.relevance_score) || 0,
+        reason: c.reason ? String(c.reason) : undefined,
+        feed_item_id: String(c.feed_item_id || ""),
+      });
+    }
+  }
+  // Sort by rank ascending (rank 1 = best)
+  candidates.sort((a, b) => a.rank - b.rank);
+  return candidates;
+}
+
+/**
+ * Build a deterministic user-facing easy summary from Brain planning + Signal Scout candidates.
+ * No LLM. No payment internals. No settlement/wallet/x402 data.
+ */
+function buildEasyUserFacingSummary(
+  state: ReturnType<typeof createOrchestratorState>
+): { easy_summary: string; final_summary: string } {
+  const candidates = extractDiscoveryCandidates(state);
+  const goal = state.brainPlanning?.normalized_goal || state.userGoal;
+  const routeTier = state.routeTier;
+
+  if (candidates.length === 0) {
+    const easy = `No useful source candidates were found for: "${goal.slice(0, 80)}". The discovery planner ran but found no matching feed items.`;
+    return { easy_summary: easy, final_summary: easy };
   }
 
+  // Top 3 for user-facing summary
+  const top3 = candidates.slice(0, 3);
+  const topNames = top3
+    .map((c) => {
+      const parts: string[] = [];
+      if (c.title) parts.push(c.title);
+      if (c.publisher && c.publisher !== c.title) parts.push(`(${c.publisher})`);
+      return parts.join(" ") || c.feed_item_id;
+    })
+    .join(", ");
+
+  const easyLines = [
+    `Found ${candidates.length} relevant source candidates for: "${goal.slice(0, 80)}".`,
+    `Top candidates: ${topNames}.`,
+    `Easy route only performed discovery/ranking; it did not run source verification or trust checks.`,
+  ];
+  const easy_summary = easyLines.join(" ");
+
+  // final_summary for easy route — mirrors easy, no overclaiming
+  if (routeTier === "easy") {
+    const finalLines = [
+      `Found ${candidates.length} source candidates matching the discovery goal.`,
+      `Strongest candidates are ranked by entity/query relevance.`,
+      `This is an easy-route discovery result — no source verification or trust checks were performed.`,
+    ];
+    return { easy_summary, final_summary: finalLines.join(" ") };
+  }
+
+  // For normal/advanced, final_summary will be built by buildTieredSummaries
+  return { easy_summary, final_summary: easy_summary };
+}
+
+function buildTieredSummaries(state: ReturnType<typeof createOrchestratorState>): OrchestratorOutput["tieredSummaries"] {
+  const summaries: Record<string, string | undefined> = {};
+
+  // ── Easy summary: use easyToNormalHandoff if available, else build from evals ──
+  if (state.easyToNormalHandoff) {
+    summaries.easy_summary = state.easyToNormalHandoff.easySummary;
+  } else {
+    const discoveryEvals = state.serviceEvaluations.filter((e) => e.macroNode === "discovery_planner");
+    if (discoveryEvals.length > 0) {
+      const { easy_summary } = buildEasyUserFacingSummary(state);
+      summaries.easy_summary = easy_summary;
+    }
+  }
+
+  // ── Normal summary: payment decision ──
   const paymentEvals = state.serviceEvaluations.filter((e) => e.macroNode === "payment_decision");
   if (paymentEvals.length > 0) {
     const deciderEval = paymentEvals.find((e) => e.serviceName === "payment_decider");
@@ -297,10 +482,19 @@ function buildTieredSummaries(state: ReturnType<typeof createOrchestratorState>)
       const d = deciderEval.output as Record<string, unknown>;
       const approved = (d.approved_items as unknown[])?.length || 0;
       const skipped = (d.skipped_items as unknown[])?.length || 0;
-      summaries.normal_summary = `Payment Decision: ${approved} approved, ${skipped} skipped.`;
+      const candidateCount = state.easyToNormalHandoff?.sourceCards?.length || 0;
+      const totalSpend = Number(d.total_estimated_spend) || 0;
+      if (candidateCount === 0) {
+        summaries.normal_summary = "Normal route had no discovery source cards to evaluate.";
+      } else if (approved === 0) {
+        summaries.normal_summary = `Discovery produced ${candidateCount} source cards. Normal route evaluated them with intent, source quality, value, trust, and decision checks. None passed the decision gate.`;
+      } else {
+        summaries.normal_summary = `Discovery produced ${candidateCount} source cards. Normal route evaluated them with intent, source quality, value, trust, and decision checks. ${approved} passed the decision gate and ${skipped} were skipped. Estimated approved spend: ${totalSpend.toFixed(6)} USDC.`;
+      }
     }
   }
 
+  // ── Advanced summary: settlement ──
   const settlementEvals = state.serviceEvaluations.filter((e) => e.macroNode === "settlement_memory");
   if (settlementEvals.length > 0) {
     const routerEval = settlementEvals.find((e) => e.serviceName === "payment_router");
@@ -309,6 +503,17 @@ function buildTieredSummaries(state: ReturnType<typeof createOrchestratorState>)
       const routed = (r.routed_items as unknown[])?.length || 0;
       summaries.advanced_summary = `Settlement: ${routed} items routed.`;
     }
+  }
+
+  // ── Final summary: combine tier summaries (no raw progress list) ──
+  const parts: string[] = [];
+  if (summaries.easy_summary) parts.push(summaries.easy_summary);
+  if (summaries.normal_summary) parts.push(summaries.normal_summary);
+  if (summaries.advanced_summary) parts.push(summaries.advanced_summary);
+  if (parts.length > 0) {
+    summaries.final_summary = parts.join("\n\n");
+  } else {
+    summaries.final_summary = state.safeProgressSummaries.join(" | ") || "Run completed.";
   }
 
   return summaries as unknown as OrchestratorOutput["tieredSummaries"];

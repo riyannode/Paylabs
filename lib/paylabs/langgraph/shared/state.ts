@@ -48,6 +48,15 @@ export const DiscoveryPlannerState = Annotation.Root({
   }),
   parentWalletId: Annotation<string | undefined>,
 
+  // Brain planning pass-through
+  brainNormalizedGoal: Annotation<string | undefined>,
+  brainDiscoveryStrategy: Annotation<string | undefined>,
+  brainSuggestedQueryVariants: Annotation<string[]>({
+    reducer: concatReducer<string>,
+    default: () => [],
+  }),
+  brainSafeSummary: Annotation<string | undefined>,
+
   // Intent Planner output
   normalizedGoal: Annotation<string | undefined>,
   intentType: Annotation<string | undefined>,
@@ -79,6 +88,16 @@ export const DiscoveryPlannerState = Annotation.Root({
     default: () => [],
   }),
   topCandidates: Annotation<string[]>({
+    reducer: concatReducer<string>,
+    default: () => [],
+  }),
+
+  // Filters and preferences (from query_builder)
+  negativeFilters: Annotation<string[]>({
+    reducer: concatReducer<string>,
+    default: () => [],
+  }),
+  sourcePreferences: Annotation<string[]>({
     reducer: concatReducer<string>,
     default: () => [],
   }),
@@ -132,6 +151,22 @@ export const PaymentDecisionState = Annotation.Root({
     reducer: concatReducer,
     default: () => [],
   }),
+
+  // Safe source cards from Easy→Normal handoff
+  sourceCards: Annotation<Array<{
+    feed_item_id: string;
+    title: string;
+    source_url: string;
+    publisher: string;
+    claim_status: string;
+    creator_wallet: string | null;
+  }>>({
+    reducer: concatReducer,
+    default: () => [],
+  }),
+
+  // Discovery summary from Easy route
+  discoverySummary: Annotation<string | undefined>,
 
   // Intent Matcher output
   intentMatchApproved: Annotation<boolean | undefined>,
@@ -187,6 +222,7 @@ export const PaymentDecisionState = Annotation.Root({
     feed_item_id: string;
     source_url: string;
     source_title: string;
+    publisher: string;
     creator_wallet: string | null;
     claim_status: string;
   }>>({

@@ -461,6 +461,16 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const ucwSdkRef = useRef<unknown>(null); // W3SSdk instance
   const ucwAuthRef = useRef<{ userToken: string; encryptionKey?: string } | null>(null);
 
+  // Derived: can this wallet actually sign right now?
+  const ucwCanSign = walletInfo?.walletType === "circle_user_controlled"
+    ? !!ucwSdkRef.current && !!ucwAuthRef.current
+    : !!walletInfo?.address;
+
+  const needsReconnectToSign =
+    walletInfo?.walletType === "circle_user_controlled" &&
+    !!walletInfo.address &&
+    !ucwCanSign;
+
   // Debug log — gated behind env var, stripped from production
   const ucwDebug = process.env.NEXT_PUBLIC_PAYLABS_UCW_DEBUG === "1";
   const [debugLog, setDebugLog] = useState<string[]>([]);
@@ -495,13 +505,17 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
         // If we already have a wallet from a previous session, just restore UI
         if (data.walletId && data.walletAddress && data.hasUserToken) {
-          dbg("Wallet already in session — restoring UI");
+          dbg("Wallet already in session — restoring UI (SDK/auth may be missing)");
           setUcwWalletId(data.walletId);
           setWalletInfo({ address: data.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
           setWalletState("connected");
           const balance = await fetchSessionBalance();
           setUcwBalance(balance);
-          setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+          // After refresh, ucwSdkRef/ucwAuthRef are null — don't set ready_to_approve.
+          // Let needsReconnectToSign drive the UI. User must reconnect to sign.
+          if (parseFloat(balance.gateway) < parseFloat(planned)) {
+            setWalletState("needs_gateway_deposit");
+          }
           return;
         }
 
@@ -515,7 +529,10 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
             setUcwWalletId(fin.walletId);
             setWalletInfo({ address: fin.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
             setUcwBalance({ usdc: fin.usdc ?? "0", gateway: fin.gateway ?? "0" });
-            setWalletState(parseFloat(fin.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+            setWalletState("connected");
+            if (parseFloat(fin.gateway) < parseFloat(planned)) {
+              setWalletState("needs_gateway_deposit");
+            }
             return;
           }
           // If finalize fails (no wallets yet), destroy stale session and start fresh
@@ -989,6 +1006,13 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       return;
     }
 
+    // Run gating: UCW wallet must have live SDK/auth to sign
+    if (walletInfo.walletType === "circle_user_controlled" && (!ucwSdkRef.current || !ucwAuthRef.current)) {
+      setWalletError("Reconnect wallet to sign x402 payments.");
+      setWalletOpen(true);
+      return;
+    }
+
     // Run gating: UCW must have sufficient Gateway balance
     if (walletInfo.walletType === "circle_user_controlled" && ucwBalance) {
       if (parseFloat(ucwBalance.gateway) < parseFloat(planned)) {
@@ -1047,8 +1071,15 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
               ucwSdk: ucwSdkRef.current as { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (id: string, cb: (err: unknown, res: unknown) => void) => void },
               auth: ucwAuthRef.current,
             });
+          } else if (walletInfo.walletType === "circle_user_controlled" && !ucwSdkRef.current) {
+            // UCW wallet but SDK/auth lost (e.g. after refresh) — never fall back to EOA
+            setError("Reconnect wallet to sign x402 payments.");
+            setWalletOpen(true);
+            setWalletState("connected");
+            setStatus("error");
+            return;
           } else {
-            // EOA fallback
+            // EOA fallback — only for external_eoa wallets
             paymentSignature = await signWithEoa({ challenge, walletAddress: walletInfo.address });
           }
         } catch (e: unknown) {
@@ -1260,6 +1291,8 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         onDepositGateway={depositGateway}
         onApprove={() => { setWalletOpen(false); submitChat(); }}
         showEoaFallback={showEoaFallback}
+        needsReconnectToSign={needsReconnectToSign}
+        onReconnect={connectGoogle}
         debugLog={ucwDebug ? debugLog : undefined}
       />
     </div>

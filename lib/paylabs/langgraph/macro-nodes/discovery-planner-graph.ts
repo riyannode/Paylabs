@@ -18,7 +18,7 @@ import { StateGraph, START, END } from "@langchain/langgraph";
 import { DiscoveryPlannerState, type DiscoveryPlannerStateType } from "../shared/state";
 import { createServiceNode } from "../services/service-node";
 import type { ServiceName } from "../../agent-services/types";
-import type { BudgetSnapshot } from "../../delegated-runtime/types";
+import type { BudgetSnapshot, SafeSourceCard } from "../../delegated-runtime/types";
 
 // ─── Node: Intent Planner ───────────────────────────────────
 
@@ -29,6 +29,9 @@ const intentPlannerNode = createServiceNode(
     goal: state.userGoal,
     budgetUsdc: state.userBudgetUsdc,
     routeTier: state.routeTier,
+    brainNormalizedGoal: (state as DiscoveryPlannerStateType).brainNormalizedGoal,
+    brainDiscoveryStrategy: (state as DiscoveryPlannerStateType).brainDiscoveryStrategy,
+    brainSafeSummary: (state as DiscoveryPlannerStateType).brainSafeSummary,
   }),
   { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: true, skipIfNotSelected: false }
 );
@@ -43,6 +46,9 @@ const queryBuilderNode = createServiceNode(
     normalized_goal: (state as DiscoveryPlannerStateType).normalizedGoal || state.userGoal,
     topics: (state as DiscoveryPlannerStateType).constraints || [],
     routeTier: state.routeTier,
+    brain_query_variants: (state as DiscoveryPlannerStateType).brainSuggestedQueryVariants || [],
+    brain_discovery_strategy: (state as DiscoveryPlannerStateType).brainDiscoveryStrategy,
+    brain_normalized_goal: (state as DiscoveryPlannerStateType).brainNormalizedGoal,
   }),
   { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: true, skipIfNotSelected: false }
 );
@@ -55,6 +61,8 @@ const signalScoutNode = createServiceNode(
   (state) => ({
     expanded_queries: (state as DiscoveryPlannerStateType).expandedQueries || [],
     entity_terms: (state as DiscoveryPlannerStateType).entityTerms || [],
+    negative_filters: (state as DiscoveryPlannerStateType).negativeFilters || [],
+    source_preferences: (state as DiscoveryPlannerStateType).sourcePreferences || [],
     routeTier: state.routeTier,
   }),
   { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: true, skipIfNotSelected: false }
@@ -109,11 +117,15 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
   const data = queryEval.output as {
     expanded_queries?: string[];
     entity_terms?: string[];
+    negative_filters?: string[];
+    source_preferences?: string[];
   };
 
   return {
     expandedQueries: data.expanded_queries || [],
     entityTerms: data.entity_terms || [],
+    negativeFilters: data.negative_filters || [],
+    sourcePreferences: data.source_preferences || [],
   };
 }
 
@@ -196,6 +208,10 @@ export interface RunDiscoveryPlannerGraphInput {
   userBudgetUsdc: number;
   selectedServices?: ServiceName[];
   parentWalletId?: string;
+  brainNormalizedGoal?: string;
+  brainDiscoveryStrategy?: string;
+  brainSuggestedQueryVariants?: string[];
+  brainSafeSummary?: string;
 }
 
 export interface RunDiscoveryPlannerGraphOutput {
@@ -207,6 +223,8 @@ export interface RunDiscoveryPlannerGraphOutput {
     rank: number;
     relevance_score: number;
   }>;
+  normalizedGoal: string;
+  sourceCards: SafeSourceCard[];
   easySummary: string;
   serviceEvaluations: DiscoveryPlannerStateType["serviceEvaluations"];
   paymentEdges: DiscoveryPlannerStateType["paymentEdges"];
@@ -238,12 +256,19 @@ export async function runDiscoveryPlannerGraph(
       selectedServices: input.selectedServices || [],
       parentWalletId: input.parentWalletId,
       budgetSnapshot: initialBudget,
+      // Brain planning pass-through
+      brainNormalizedGoal: input.brainNormalizedGoal,
+      brainDiscoveryStrategy: input.brainDiscoveryStrategy,
+      brainSuggestedQueryVariants: input.brainSuggestedQueryVariants || [],
+      brainSafeSummary: input.brainSafeSummary,
       // Initialize arrays
       constraints: [],
       expandedQueries: [],
       entityTerms: [],
       rankedCandidates: [],
       topCandidates: [],
+      negativeFilters: [],
+      sourcePreferences: [],
       serviceEvaluations: [],
       paymentEdges: [],
       progressSummaries: [],
@@ -254,9 +279,30 @@ export async function runDiscoveryPlannerGraph(
       `Goal: "${(result.normalizedGoal || input.userGoal).slice(0, 80)}". ` +
       `Intent: ${result.intentType || "unknown"}. 3 services executed.`;
 
+    // Compute normalizedGoal: graph result → brain input → user input
+    const normalizedGoal = result.normalizedGoal || input.brainNormalizedGoal || input.userGoal;
+
+    // Build safe source cards from top 10 ranked candidates
+    const rankedCandidates = result.rankedCandidates || [];
+    const sourceCards: SafeSourceCard[] = [];
+    const { getFeedItemById } = await import("../../../ai/tools");
+    for (const candidate of rankedCandidates.slice(0, 10)) {
+      const feedItem = (await getFeedItemById(candidate.feed_item_id)) as Record<string, unknown> | null;
+      sourceCards.push({
+        feed_item_id: candidate.feed_item_id,
+        title: String(feedItem?.title || candidate.title || ""),
+        source_url: String(feedItem?.canonical_url || ""),
+        publisher: String(feedItem?.publisher || candidate.publisher || ""),
+        claim_status: String(feedItem?.verification_status || "unclaimed"),
+        creator_wallet: feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : null,
+      });
+    }
+
     return {
       ok: !result.error,
-      rankedCandidates: result.rankedCandidates || [],
+      rankedCandidates,
+      normalizedGoal,
+      sourceCards,
       easySummary,
       serviceEvaluations: result.serviceEvaluations || [],
       paymentEdges: result.paymentEdges || [],
@@ -268,6 +314,8 @@ export async function runDiscoveryPlannerGraph(
     return {
       ok: false,
       rankedCandidates: [],
+      normalizedGoal: input.brainNormalizedGoal || input.userGoal,
+      sourceCards: [],
       easySummary: `Discovery Planner failed: ${msg}`,
       serviceEvaluations: [],
       paymentEdges: [],
