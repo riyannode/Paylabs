@@ -484,9 +484,12 @@ export async function POST(req: NextRequest) {
   const goal = (body.goal || "").trim();
   const userWallet = (body.user_wallet || "").trim().toLowerCase();
   const rawTier = (body.route_tier || DEFAULT_EXTERNAL_TIER).toLowerCase();
-  const routeTier: ExternalRouteTier = isValidExternalTier(rawTier)
-    ? (rawTier as ExternalRouteTier)
-    : DEFAULT_EXTERNAL_TIER;
+  // "auto" defers to Brain's route_tier_hint after planning
+  const routeTier = rawTier === "auto"
+    ? "auto" as unknown as ExternalRouteTier
+    : isValidExternalTier(rawTier)
+      ? (rawTier as ExternalRouteTier)
+      : DEFAULT_EXTERNAL_TIER;
   const budgetUsdc = Number(body.budget_usdc) || 0.01;
 
   // ── Validate required fields ──────────────────────────────
@@ -631,8 +634,10 @@ async function runX402Path(
 
     // ── Preflight quote: deterministic budget guardrail ──────
     // Compute quote BEFORE any x402 payment. Fail closed if over budget.
+    // When tier is "auto", use "easy" for the initial quote — Brain resolves actual tier after payment.
+    const quoteTier = routeTier === ("auto" as unknown as ExternalRouteTier) ? "easy" as ExternalRouteTier : routeTier;
     const quote = quoteDelegatedRun({
-      routeTier: routeTier as DelegatedRouteTier,
+      routeTier: quoteTier as DelegatedRouteTier,
       userBudgetUsdc: budgetUsdc,
       maxRegistryChecks: 0,
       maxSourceAccesses: 0,
@@ -720,7 +725,7 @@ async function runX402Path(
         JSON.stringify({
           ok: false,
           error: "payment_required",
-          message: `Customer entry payment of ${quote.plannedCostUsdc} USDC required for ${routeTier} tier`,
+          message: `Customer entry payment of ${quote.plannedCostUsdc} USDC required for ${quoteTier} tier`,
           quote: {
             routeTier: quote.routeTier,
             plannedCostUsdc: quote.plannedCostUsdc,
