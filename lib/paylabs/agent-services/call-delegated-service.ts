@@ -4,9 +4,9 @@
  * All macro-node phases must call services through this function,
  * never directly via SERVICE_HANDLERS.
  *
- * DUAL PATH:
+ * x402-ONLY (fail-closed):
  *   x402-enabled services: HTTP call to seller endpoint via buyer-transport
- *   audit-only services: direct in-process handler call
+ *   x402-disabled services: returns failClosed() error. Handler NEVER executes without payment.
  *
  * This function:
  * 1. Validates buyer→seller edge with assertAllowedAgentServiceEdge()
@@ -19,9 +19,9 @@
  *    - Fails closed on non-402/free response
  *    - Fails closed on missing safe payment metadata
  *    - Stores safe payment metadata in output
- * 5. If audit-only:
- *    - Calls handler directly (in-process)
- *    - settled=false always
+ * 5. If x402 disabled:
+ *    - Returns failClosed() error (config_error)
+ *    - Handler NEVER executes
  * 6. Returns structured output + safe call metadata
  */
 
@@ -252,55 +252,14 @@ export async function callDelegatedService(
     });
   }
 
-  // ── Step 5: Audit-only path: direct in-process handler call ──
-  const handlerInput: ServiceHandlerInput = {
-    discoveryRunId,
-    serviceName: sellerServiceName,
+  // ── Fail-closed: x402-only, no audit-only path ──
+  return failClosed(
+    sellerServiceName,
     buyerAgentName,
-    payload,
-  };
-
-  try {
-    const result = await handler(handlerInput);
-
-    // Enforce settled=false in audit mode regardless of what handler returns
-    return {
-      ok: result.ok,
-      serviceName: result.serviceName,
-      data: result.data,
-      safeSummary: result.safeSummary,
-      settled: false, // audit-only: never settled
-      mode: "audit_only",
-      error: result.error,
-      safeCallMeta: {
-        buyer: buyerAgentName,
-        seller: sellerServiceName,
-        edgeValid: true,
-        schemaValid: true,
-        costUsdc,
-        timestamp,
-      },
-    };
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return {
-      ok: false,
-      serviceName: sellerServiceName,
-      data: null,
-      safeSummary: `Handler error: ${msg}`,
-      settled: false,
-      mode: "audit_only",
-      error: `Handler error: ${msg}`,
-      safeCallMeta: {
-        buyer: buyerAgentName,
-        seller: sellerServiceName,
-        edgeValid: true,
-        schemaValid: true,
-        costUsdc,
-        timestamp,
-      },
-    };
-  }
+    costUsdc,
+    timestamp,
+    `config_error: ${sellerServiceName} is x402-only but not enabled in PAYLABS_X402_ENABLED_SERVICE_NAMES`
+  );
 }
 
 // ─── x402 Path ───────────────────────────────────────────────

@@ -484,10 +484,35 @@ export async function POST(req: NextRequest) {
   const goal = (body.goal || "").trim();
   const userWallet = (body.user_wallet || "").trim().toLowerCase();
   const rawTier = (body.route_tier || DEFAULT_EXTERNAL_TIER).toLowerCase();
-  const routeTier: ExternalRouteTier = isValidExternalTier(rawTier)
-    ? (rawTier as ExternalRouteTier)
-    : DEFAULT_EXTERNAL_TIER;
+  // "auto" defers to Brain's route_tier_hint after planning
+  const routeTier = rawTier === "auto"
+    ? "auto" as unknown as ExternalRouteTier
+    : isValidExternalTier(rawTier)
+      ? (rawTier as ExternalRouteTier)
+      : DEFAULT_EXTERNAL_TIER;
   const budgetUsdc = Number(body.budget_usdc) || 0.01;
+
+  // ── Retry detection: reuse existing row on paid retry ────
+  const customerPaymentSignature =
+    req.headers.get("payment-signature") ||
+    req.headers.get("x-payment");
+
+  const retryRunId =
+    req.nextUrl.searchParams.get("runId") ||
+    body.discovery_run_id ||
+    body.run_id ||
+    null;
+
+  // Fail closed: paid retry MUST include runId from the 402 challenge
+  if (customerPaymentSignature && !retryRunId) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "missing_run_id: paid retry must include discovery_run_id/runId from the 402 challenge",
+      },
+      { status: 400 }
+    );
+  }
 
   // ── Validate required fields ──────────────────────────────
   if (!goal) {
@@ -511,36 +536,64 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ── Create Supabase discovery_run row ─────────────────────
-  const now = new Date().toISOString();
-  const { data: runRow, error: runErr } = await supabaseAdmin()
-    .from("paylabs_discovery_runs")
-    .insert({
-      user_wallet: userWallet,
-      goal,
-      route_tier: routeTier,
-      status: "running",
-      payment_kind: "discovery_fee",
-      queued_at: now,
-      started_at: now,
-      budget_usdc: budgetUsdc,
-      runner_id: "vercel-inline", // DB column kept for schema compatibility
-      worker_heartbeat_at: now,
-    })
-    .select("id")
-    .single();
+  // ── Create or reuse Supabase discovery_run row ───────────
+  let discoveryRunId: string;
 
-  if (runErr || !runRow) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: `Failed to create discovery run: ${runErr?.message || "unknown"}`,
-      },
-      { status: 500 }
-    );
+  if (retryRunId) {
+    // Paid retry: reuse existing row, don't create a new one
+    const { data: existingRun, error: existingErr } = await supabaseAdmin()
+      .from("paylabs_discovery_runs")
+      .select("id,user_wallet,goal,route_tier,budget_usdc,entry_payment_status")
+      .eq("id", retryRunId)
+      .single();
+
+    if (existingErr || !existingRun) {
+      return NextResponse.json(
+        { ok: false, error: "invalid_run_id: discovery run not found" },
+        { status: 404 }
+      );
+    }
+
+    if (existingRun.user_wallet?.toLowerCase() !== userWallet) {
+      return NextResponse.json(
+        { ok: false, error: "run_wallet_mismatch" },
+        { status: 403 }
+      );
+    }
+
+    discoveryRunId = existingRun.id;
+  } else {
+    // First request: create new row
+    const now = new Date().toISOString();
+    const { data: runRow, error: runErr } = await supabaseAdmin()
+      .from("paylabs_discovery_runs")
+      .insert({
+        user_wallet: userWallet,
+        goal,
+        route_tier: routeTier,
+        status: "running",
+        payment_kind: "discovery_fee",
+        queued_at: now,
+        started_at: now,
+        budget_usdc: budgetUsdc,
+        runner_id: "vercel-inline", // DB column kept for schema compatibility
+        worker_heartbeat_at: now,
+      })
+      .select("id")
+      .single();
+
+    if (runErr || !runRow) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Failed to create discovery run: ${runErr?.message || "unknown"}`,
+        },
+        { status: 500 }
+      );
+    }
+
+    discoveryRunId = runRow.id as string;
   }
-
-  const discoveryRunId = runRow.id as string;
 
   // ── x402 orchestration: Brain + macro-node endpoints ────
   // Fail closed: x402 must be enabled for production
@@ -631,8 +684,10 @@ async function runX402Path(
 
     // ── Preflight quote: deterministic budget guardrail ──────
     // Compute quote BEFORE any x402 payment. Fail closed if over budget.
+    // When tier is "auto", use "easy" for the initial quote — Brain resolves actual tier after payment.
+    const quoteTier = routeTier === ("auto" as unknown as ExternalRouteTier) ? "easy" as ExternalRouteTier : routeTier;
     const quote = quoteDelegatedRun({
-      routeTier: routeTier as DelegatedRouteTier,
+      routeTier: quoteTier as DelegatedRouteTier,
       userBudgetUsdc: budgetUsdc,
       maxRegistryChecks: 0,
       maxSourceAccesses: 0,
@@ -689,9 +744,10 @@ async function runX402Path(
 
     if (!customerPaymentSignature) {
       // Return HTTP 402 with x402 challenge for customer entry payment
+      const retryUrl = `${await resolveAppUrl()}/api/paylabs/discovery-runs/inline?runId=${discoveryRunId}&tier=${routeTier}`;
       const { headerValue } = buildCustomerEntryChallenge(
         quote.plannedCostUsdc,
-        `${await resolveAppUrl()}/api/paylabs/discovery-runs/inline?runId=${discoveryRunId}&tier=${routeTier}`,
+        retryUrl,
       );
 
       // Store pending entry payment status
@@ -720,7 +776,9 @@ async function runX402Path(
         JSON.stringify({
           ok: false,
           error: "payment_required",
-          message: `Customer entry payment of ${quote.plannedCostUsdc} USDC required for ${routeTier} tier`,
+          discovery_run_id: discoveryRunId,
+          retry_url: retryUrl,
+          message: `Customer entry payment of ${quote.plannedCostUsdc} USDC required for ${quoteTier} tier`,
           quote: {
             routeTier: quote.routeTier,
             plannedCostUsdc: quote.plannedCostUsdc,
@@ -870,6 +928,10 @@ async function runX402Path(
           brain_planning: result.brainPlanning
             ? {
                 safe_summary: result.brainPlanning.safe_brain_summary,
+                assistant_response: result.brainPlanning.assistant_response,
+                user_visible_reasoning: result.brainPlanning.user_visible_reasoning,
+                tier_decision_reason: result.brainPlanning.tier_decision_reason,
+                plan_rationale: result.brainPlanning.plan_rationale,
                 selected_macro_nodes: result.brainPlanning.selected_macro_nodes,
                 selected_services: result.brainPlanning.selected_services,
                 planned_cost_usdc: result.brainPlanning.planned_cost_usdc,
@@ -953,6 +1015,10 @@ async function runX402Path(
       brain_planning: result.brainPlanning
         ? {
             safe_summary: result.brainPlanning.safe_brain_summary,
+            assistant_response: result.brainPlanning.assistant_response,
+            user_visible_reasoning: result.brainPlanning.user_visible_reasoning,
+            tier_decision_reason: result.brainPlanning.tier_decision_reason,
+            plan_rationale: result.brainPlanning.plan_rationale,
             discovery_strategy: result.brainPlanning.discovery_strategy,
             query_variants: result.brainPlanning.suggested_query_variants,
             selected_macro_nodes: result.brainPlanning.selected_macro_nodes,

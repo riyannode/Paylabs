@@ -34,6 +34,10 @@ const BrainPlanningSchema = (() => {
     suggested_query_variants: z.array(z.string()),
     service_execution_plan: z.array(z.string()),
     safe_brain_summary: z.string(),
+    assistant_response: z.string(),
+    user_visible_reasoning: z.string(),
+    tier_decision_reason: z.string(),
+    plan_rationale: z.string(),
     selected_macro_nodes: z.array(z.enum(["discovery_planner", "payment_decision", "settlement_memory"])),
     selected_services: z.array(z.string()),
     max_registry_checks: z.number().int().min(0).max(50),
@@ -207,6 +211,27 @@ It must describe the plan in plain language.
 It must not mention internal service names, macro node names, settlement mode, wallet logic, payment refs, tx hashes, or raw x402 details.
 It must not promise specific sources, prices, or results.
 
+VISIBLE ASSISTANT RESPONSE RULES
+
+assistant_response: Write a concise natural assistant response to the user.
+It should sound like a normal AI assistant answer.
+It may explain the selected route at a high level.
+It must not expose raw chain-of-thought, hidden reasoning, provider reasoning_content,
+wallet internals, raw x402 headers, payment refs, tx hashes, raw Gateway responses,
+private keys, API keys, or secrets.
+
+user_visible_reasoning: Write 2–4 short sentences explaining the visible reasoning
+behind the chosen plan. This is intended for the user and is not hidden chain-of-thought.
+It must not include private deliberation, step-by-step hidden reasoning, provider
+reasoning_content, wallet internals, raw x402 details, payment refs, tx hashes, raw
+Gateway responses, private keys, API keys, or secrets.
+
+tier_decision_reason: Write one short sentence explaining why the selected route tier
+was chosen. It must be safe for user display.
+
+plan_rationale: Write one or two short sentences explaining why this plan fits the
+user's request. It must be safe for user display.
+
 OUTPUT CONTRACT
 
 Return JSON only.
@@ -225,6 +250,10 @@ Return exactly this JSON shape:
   "suggested_query_variants": ["string"],
   "service_execution_plan": ["intent_planner", "query_builder", "signal_scout"],
   "safe_brain_summary": "string",
+  "assistant_response": "string",
+  "user_visible_reasoning": "string",
+  "tier_decision_reason": "string",
+  "plan_rationale": "string",
   "selected_macro_nodes": ["discovery_planner"],
   "selected_services": ["intent_planner", "query_builder", "signal_scout"],
   "max_registry_checks": 1,
@@ -279,6 +308,10 @@ Analyze this goal and produce a structured execution plan.`,
       suggested_query_variants: string[];
       service_execution_plan: string[];
       safe_brain_summary: string;
+      assistant_response: string;
+      user_visible_reasoning: string;
+      tier_decision_reason: string;
+      plan_rationale: string;
       selected_macro_nodes: string[];
       selected_services: string[];
       max_registry_checks: number;
@@ -303,6 +336,10 @@ Analyze this goal and produce a structured execution plan.`,
         suggested_query_variants: data.suggested_query_variants,
         service_execution_plan: data.service_execution_plan,
         safe_brain_summary: data.safe_brain_summary,
+        assistant_response: data.assistant_response,
+        user_visible_reasoning: data.user_visible_reasoning,
+        tier_decision_reason: data.tier_decision_reason,
+        plan_rationale: data.plan_rationale,
         selected_macro_nodes: data.selected_macro_nodes as MacroNodePhase[],
         selected_services: data.selected_services as ServiceName[],
         max_registry_checks: data.max_registry_checks,

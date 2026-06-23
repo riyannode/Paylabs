@@ -523,9 +523,13 @@ a:hover { text-decoration: none; }
 }
 
 .pl-hero p {
-  margin: 8px 0 20px;
+  margin: 8px 0 30px;
   color: var(--muted);
   font-size: 15px;
+}
+
+@media (max-width: 640px) {
+  .pl-hero p { margin: 8px 0 26px; }
 }
 
 .pl-search {
@@ -645,14 +649,31 @@ a:hover { text-decoration: none; }
 
 .pl-conversation {
   max-width: 800px;
-  margin: 20px auto 0;
+  margin: 22px auto 0;
   display: grid;
   gap: 12px;
+  max-height: min(58vh, 620px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 2px 12px;
+  scroll-behavior: smooth;
+}
+
+@media (max-width: 640px) {
+  .pl-conversation {
+    margin-top: 18px;
+    max-height: 52vh;
+    padding-bottom: 18px;
+  }
 }
 
 .pl-user-bubble {
   justify-self: end;
-  max-width: 560px;
+  max-width: min(560px, 92%);
+  max-height: 160px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
   background: var(--card-soft);
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -667,6 +688,13 @@ a:hover { text-decoration: none; }
   border-radius: 16px;
   background: #fff;
   padding: 16px;
+  max-height: min(52vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 640px) {
+  .pl-answer-card { max-height: 48vh; }
 }
 
 .pl-answer-head {
@@ -764,6 +792,78 @@ a:hover { text-decoration: none; }
   font-size: 12px;
   font-weight: 600;
   color: var(--info);
+}
+
+/* ── Assistant Answer ── */
+
+.pl-assistant-answer {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--foreground);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.pl-assistant-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── Rationale ── */
+
+.pl-rationale-block {
+  border-bottom: 1px solid var(--border);
+}
+
+.pl-rationale-toggle {
+  width: 100%;
+  cursor: pointer;
+  background: var(--card-soft);
+  border: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--info);
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.pl-rationale-toggle:hover {
+  background: var(--info-soft);
+}
+
+.pl-rationale-content {
+  background: #f8fafc;
+  color: var(--foreground);
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: min(32vh, 260px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--border);
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .pl-rationale-content { max-height: 28vh; }
+}
+
+/* ── Mobile Action Row ── */
+
+@media (max-width: 640px) {
+  .pl-search-actions { flex-wrap: wrap; }
+  .pl-run-btn { min-width: 64px; }
 }
 
 .pl-new-run {
@@ -1015,6 +1115,28 @@ a:hover { text-decoration: none; }
   opacity: 0.45;
   cursor: not-allowed;
   box-shadow: none;
+}
+
+.pl-deposit-input-v3 {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  color: #0f172a;
+  background: #fff;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.pl-deposit-input-v3:focus {
+  border-color: #6366f1;
+}
+
+.pl-deposit-input-v3::placeholder {
+  color: #cbd5e1;
 }
 
 .pl-wallet-error-v3 {
