@@ -39,6 +39,18 @@ type SafeRunResult = {
   tierDecisionReason: string | null;
 };
 
+type ChatMessage =
+  | { id: string; role: "user"; content: string; createdAt: number; }
+  | { id: string; role: "assistant"; status: "running" | "done" | "error"; result?: SafeRunResult | null; error?: string | null; createdAt: number; };
+
+function makeChatId(prefix: string): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+function formatChatTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 // UCW sensitive tokens are stored server-side in httpOnly session cookie.
 // Frontend only holds wallet address + wallet ID (non-sensitive) in memory.
 
@@ -481,6 +493,10 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SafeRunResult | null>(null);
 
+  // Chat message history
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const chatThreadRef = useRef<HTMLDivElement | null>(null);
+
   // Wallet state
   const [walletOpen, setWalletOpen] = useState(false);
   const [walletState, setWalletState] = useState<WalletState>("not_connected");
@@ -518,6 +534,11 @@ export default function PayLabsChatClient({ analytics }: Props) {
   // TODO(#27): Replace with backend quote once inline route returns plannedCostUsdc.
 // For now, this is a frontend estimate used only for run gating (balance < cost → block).
 const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
+
+  // Auto-scroll chat thread
+  useEffect(() => {
+    chatThreadRef.current?.scrollTo({ top: chatThreadRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages]);
 
   // ── Post-redirect: restore SDK from server session ──
   useEffect(() => {
@@ -1053,12 +1074,26 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       }
     }
 
+    const userMsg: ChatMessage = { id: makeChatId("user"), role: "user", content: prompt.trim(), createdAt: Date.now() };
+    const assistantId = makeChatId("assistant");
+    const assistantMsg: ChatMessage = { id: assistantId, role: "assistant", status: "running", createdAt: Date.now() };
+
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    setPrompt("");
     setStatus("running");
     setError(null);
     setResult(null);
 
+    const finishAssistant = (patch: Partial<Extract<ChatMessage, { role: "assistant" }>>) => {
+      setMessages((prev) => prev.map((msg) =>
+        msg.role === "assistant" && msg.id === assistantId
+          ? { ...msg, ...patch }
+          : msg,
+      ));
+    };
+
     const body = {
-      goal: prompt.trim(),
+      goal: userMsg.content,
       user_wallet: walletInfo.address,
       route_tier: "auto",
       budget_usdc: Number(budget),
@@ -1077,6 +1112,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       if (first.status === 402) {
         const paymentRequired = first.headers.get("PAYMENT-REQUIRED");
         if (!paymentRequired) {
+          finishAssistant({ status: "error", error: "Payment challenge missing." });
           setError("Payment challenge missing.");
           setStatus("error");
           return;
@@ -1086,6 +1122,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         try {
           challenge = JSON.parse(atob(paymentRequired));
         } catch {
+          finishAssistant({ status: "error", error: "Invalid payment challenge." });
           setError("Invalid payment challenge.");
           setStatus("error");
           return;
@@ -1108,6 +1145,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
             });
           } else if (walletInfo.walletType === "circle_user_controlled" && !ucwSdkRef.current) {
             // UCW wallet but SDK/auth lost (e.g. after refresh) — never fall back to EOA
+            finishAssistant({ status: "error", error: "Reconnect wallet to sign x402 payments." });
             setError("Reconnect wallet to sign x402 payments.");
             setWalletOpen(true);
             setWalletState("connected");
@@ -1119,6 +1157,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           }
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : "Signing failed.";
+          finishAssistant({ status: "error", error: msg });
           setError(msg);
           setWalletState("ready_to_approve");
           setStatus("error");
@@ -1141,14 +1180,18 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
         const paidData = await paid.json().catch(() => ({}));
         if (!paid.ok) {
-          setError((paidData as Record<string, string>)?.error || "Payment failed.");
+          const errMsg = (paidData as Record<string, string>)?.error || "Payment failed.";
+          finishAssistant({ status: "error", error: errMsg });
+          setError(errMsg);
           setWalletState("failed");
           setStatus("error");
           return;
         }
 
+        const safeResult = toSafeRunResult(paidData as Record<string, unknown>);
         setWalletState("paid");
-        setResult(toSafeRunResult(paidData as Record<string, unknown>));
+        finishAssistant({ status: "done", result: safeResult });
+        setResult(safeResult);
         setStatus("done");
         return;
       }
@@ -1156,15 +1199,21 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       // ── Handle non-402 responses ──
       const data = await first.json().catch(() => ({}));
       if (!first.ok) {
-        setError((data as Record<string, string>)?.error || "Run failed.");
+        const errMsg = (data as Record<string, string>)?.error || "Run failed.";
+        finishAssistant({ status: "error", error: errMsg });
+        setError(errMsg);
         setStatus("error");
         return;
       }
 
-      setResult(toSafeRunResult(data as Record<string, unknown>));
+      const safeResult = toSafeRunResult(data as Record<string, unknown>);
+      finishAssistant({ status: "done", result: safeResult });
+      setResult(safeResult);
       setStatus("done");
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Network error.");
+      const errMsg = e instanceof Error ? e.message : "Network error.";
+      finishAssistant({ status: "error", error: errMsg });
+      setError(errMsg);
       setStatus("error");
     }
   }, [prompt, budget, walletInfo, ucwWalletId, ucwBalance, planned]);
@@ -1174,6 +1223,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
     setResult(null);
     setError(null);
     setStatus("idle");
+    setMessages([]);
   }, []);
 
   // ── Disconnect wallet ──
@@ -1246,33 +1296,75 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           <h1>Ask PayLabs</h1>
           <p>Source Discovery, receipts, and x402 payments.</p>
 
-          <div className="pl-search">
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Ask for a route, receipt, or source-backed payment…"
-              rows={2}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  submitChat();
-                }
-              }}
-            />
-            <div className="pl-search-actions">
-<span className="pl-plan-auto">Plan: Auto</span>
-              <div className="pl-budget">
-                <span>Max budget</span>
-                <input value={budget} onChange={(e) => setBudget(e.target.value)} type="number" step="0.001" min="0" />
-                <small>USDC</small>
+          <div className={`pl-chat-shell ${messages.length > 0 ? "has-thread" : ""}`}>
+            {messages.length > 0 && (
+              <div className="pl-chat-thread" ref={chatThreadRef}>
+                <div className="pl-day-divider">Today</div>
+                {messages.map((msg) =>
+                  msg.role === "user" ? (
+                    <div key={msg.id} className="pl-user-message-row">
+                      <div className="pl-user-message">
+                        {msg.content}
+                        <span className="pl-message-time">{formatChatTime(msg.createdAt)}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div key={msg.id} className="pl-assistant-message-row">
+                      <div className="pl-assistant-avatar">P</div>
+                      <div className="pl-assistant-message-wrap">
+                        <div className="pl-assistant-meta">
+                          <b>PayLabs</b>
+                          <span>{formatChatTime(msg.createdAt)}</span>
+                        </div>
+                        <div className="pl-assistant-card">
+                          {msg.status === "running" && (
+                            <div className="pl-typing-row">
+                              <div className="pl-typing-dot" />
+                              <div className="pl-typing-dot" />
+                              <div className="pl-typing-dot" />
+                            </div>
+                          )}
+                          {msg.status === "error" && (
+                            <div className="pl-error-msg">{msg.error || "Something went wrong."}</div>
+                          )}
+                          {msg.status === "done" && msg.result && (
+                            <ResultCard result={msg.result} onReset={resetChat} />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ),
+                )}
               </div>
-              <button
-                className="pl-run-btn"
-                onClick={submitChat}
-                disabled={status === "running" || !prompt.trim()}
-              >
-                {status === "running" ? "Running…" : "Run"}
-              </button>
+            )}
+
+            <div className="pl-chat-composer">
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="Ask for a route, receipt, or source-backed payment…"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    submitChat();
+                  }
+                }}
+              />
+              <div className="pl-search-actions">
+                <span className="pl-plan-auto">Plan: Auto</span>
+                <div className="pl-budget">
+                  <span>Max budget</span>
+                  <input value={budget} onChange={(e) => setBudget(e.target.value)} type="number" step="0.001" min="0" />
+                  <small>USDC</small>
+                </div>
+                <button
+                  className="pl-run-btn"
+                  onClick={submitChat}
+                  disabled={status === "running" || !prompt.trim()}
+                >
+                  {status === "running" ? "Running…" : "Run"}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1283,35 +1375,6 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
             <button onClick={() => setPrompt("Open global explorer")}>Global explorer</button>
           </div>
         </section>
-
-        {/* Conversation area */}
-        {(result || error || status === "running") && (
-          <section className="pl-conversation">
-            {prompt && <div className="pl-user-bubble">{prompt}</div>}
-
-            <div className="pl-answer-card">
-              <div className="pl-answer-head">
-                <b>PayLabs</b>
-                <span>
-                  {status === "running" ? "Running…" : status === "error" ? "Error" : "Done"}
-                </span>
-              </div>
-
-              {status === "running" && (
-                <div className="pl-run-card">
-                  <div><span>Plan</span><b>Auto</b></div>
-                  <div><span>Budget</span><b>{budget} USDC</b></div>
-                  <div><span>Planned</span><b>{planned} USDC</b></div>
-                  <div className="pl-run-status">Processing…</div>
-                </div>
-              )}
-
-              {error && <div className="pl-error-msg">{error}</div>}
-
-              {result && <ResultCard result={result} onReset={resetChat} />}
-            </div>
-          </section>
-        )}
       </main>
 
       <WalletConnectModal
@@ -1340,16 +1403,22 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
 // ─── Result Card ────────────────────────────────────────────
 
+function BrainIcon() {
+  return (
+    <svg className="pl-brain-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M8.2 4.2C6.4 4.2 5 5.6 5 7.4c0 .2 0 .5.1.7A3.3 3.3 0 0 0 3.5 11c0 1.2.6 2.3 1.5 2.9v1.2c0 2 1.6 3.7 3.7 3.7 1.2 0 2.3-.6 3-1.5.7.9 1.8 1.5 3 1.5 2 0 3.7-1.6 3.7-3.7v-1.2c.9-.6 1.5-1.7 1.5-2.9 0-1.2-.6-2.3-1.6-2.9.1-.2.1-.5.1-.7 0-1.8-1.4-3.2-3.2-3.2-1.1 0-2.1.6-2.7 1.5-.6-.9-1.6-1.5-2.7-1.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M11.7 6v11.3M8.1 8.2c1.1 0 2 .9 2 2M8 14.4c1.2 0 2.1-.8 2.3-2M15.3 8.2c-1.1 0-2 .9-2 2M15.4 14.4c-1.2 0-2.1-.8-2.3-2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () => void }) {
-  const [rationaleOpen, setRationaleOpen] = useState(false);
+  const [rationaleOpen, setRationaleOpen] = useState(true);
   const rationaleText = result.userVisibleReasoning ?? result.brainRationale;
   return (
     <div className="pl-result-card">
       {result.assistantResponse && (
-        <div className="pl-assistant-answer">
-          <div className="pl-assistant-label">Assistant</div>
-          <div>{result.assistantResponse}</div>
-        </div>
+        <div className="pl-assistant-answer">{result.assistantResponse}</div>
       )}
       {rationaleText && (
         <div className="pl-rationale-block">
@@ -1357,48 +1426,54 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
             className="pl-rationale-toggle"
             onClick={() => setRationaleOpen(!rationaleOpen)}
           >
-            {rationaleOpen ? "▾" : "▸"} Reasoning
+            <span className="pl-rationale-title">
+              <BrainIcon />
+              Reasoning
+            </span>
+            <span className="pl-rationale-caret">{rationaleOpen ? "▾" : "▸"}</span>
           </button>
           {rationaleOpen && (
             <pre className="pl-rationale-content">{rationaleText}</pre>
           )}
         </div>
       )}
-      <div className="pl-result-row">
-        <span>Status</span>
-        <b>{result.ok ? "Run completed" : "Run failed"}</b>
-      </div>
-      <div className="pl-result-row">
-        <span>Tier</span>
-        <b style={{ textTransform: "capitalize" }}>{result.effectiveTier || result.tier || "—"}</b>
-      </div>
-      {result.requestedTier && result.requestedTier !== result.effectiveTier && (
-        <div className="pl-result-row">
-          <span>Requested</span>
-          <b style={{ textTransform: "capitalize" }}>{result.requestedTier}</b>
+      <div className="pl-result-grid">
+        <div className="pl-result-pill">
+          <span>Status</span>
+          <b>{result.ok ? "Run completed" : "Run failed"}</b>
         </div>
-      )}
-      {result.lockedNodes.length > 0 && (
-        <div className="pl-result-row">
-          <span>Nodes</span>
-          <b>{result.lockedNodes.join(" → ")}</b>
+        <div className="pl-result-pill">
+          <span>Tier</span>
+          <b style={{ textTransform: "capitalize" }}>{result.effectiveTier || result.tier || "—"}</b>
         </div>
-      )}
-      <div className="pl-result-row">
-        <span>Entry</span>
-        <b>{result.entryPaymentStatus || "—"}</b>
-      </div>
-      <div className="pl-result-row">
-        <span>Paid edges</span>
-        <b>{result.paidEdges}/{result.totalEdges}</b>
-      </div>
-      <div className="pl-result-row">
-        <span>Planned</span>
-        <b>{result.plannedCostUsdc != null ? `${result.plannedCostUsdc} USDC` : "—"}</b>
-      </div>
-      <div className="pl-result-row">
-        <span>Receipt</span>
-        <b>{result.receiptReady ? "Ready" : "Pending"}</b>
+        {result.requestedTier && result.requestedTier !== result.effectiveTier && (
+          <div className="pl-result-pill">
+            <span>Requested</span>
+            <b style={{ textTransform: "capitalize" }}>{result.requestedTier}</b>
+          </div>
+        )}
+        <div className="pl-result-pill">
+          <span>Entry</span>
+          <b>{result.entryPaymentStatus || "—"}</b>
+        </div>
+        <div className="pl-result-pill">
+          <span>Paid edges</span>
+          <b>{result.paidEdges}/{result.totalEdges}</b>
+        </div>
+        <div className="pl-result-pill">
+          <span>Planned</span>
+          <b>{result.plannedCostUsdc != null ? `${result.plannedCostUsdc} USDC` : "—"}</b>
+        </div>
+        <div className="pl-result-pill">
+          <span>Receipt</span>
+          <b>{result.receiptReady ? "Ready" : "Pending"}</b>
+        </div>
+        {result.lockedNodes.length > 0 && (
+          <div className="pl-result-pill">
+            <span>Nodes</span>
+            <b>{result.lockedNodes.join(" → ")}</b>
+          </div>
+        )}
       </div>
       {result.runId && (
         <div className="pl-result-links">
