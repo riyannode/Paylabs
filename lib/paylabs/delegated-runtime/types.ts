@@ -216,6 +216,10 @@ export interface BrainPlanningOutput {
   suggested_query_variants: string[];
   service_execution_plan: string[];
   safe_brain_summary: string;
+  assistant_response: string;
+  user_visible_reasoning: string;
+  tier_decision_reason: string;
+  plan_rationale: string;
   // ── Deterministic quote planning fields ──
   /** Macro-nodes Brain selected for this run */
   selected_macro_nodes: MacroNodePhase[];

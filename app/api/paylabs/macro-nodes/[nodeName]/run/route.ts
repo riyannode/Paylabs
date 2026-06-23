@@ -5,9 +5,9 @@
  *
  * Payment graph: Brain → macro-node → child services
  *
- * DUAL MODE:
+ * x402-ONLY (fail-closed):
  * - x402 enabled: 402 challenge → verify → settle → execute macro-node graph
- * - audit-only: execute macro-node graph directly
+ * - x402 disabled: returns 500 config_error. Macro-node NEVER executes without payment.
  *
  * After settlement, the macro-node LangGraph executes its child services.
  * Child services are paid by the macro-node's buyer wallet (not Brain's).
@@ -78,16 +78,14 @@ export async function POST(
     );
   }
 
-  const x402Enabled = process.env.PAYLABS_NODE_X402_ENABLED === "true";
-
-  if (!x402Enabled) {
-    return executeMacroNode(nodeName as MacroNodePhase, {
-      discoveryRunId,
-      userGoal,
-      userWallet: userWallet || "",
-      userBudgetUsdc: userBudgetUsdc || 0,
-      routeTier: routeTier as OrchestratorInput["routeTier"],
-    }, null, nodePayload);
+  if (process.env.PAYLABS_NODE_X402_ENABLED !== "true") {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "config_error: PAYLABS_NODE_X402_ENABLED must be true. Macro nodes are x402-only.",
+      },
+      { status: 500 }
+    );
   }
 
   // ── x402 path ──
@@ -169,11 +167,15 @@ async function executeMacroNode(
   const nodeConfig = getMacroNodeConfig(nodeName);
   const state = createOrchestratorState(input);
 
-  let parentWalletId: string | undefined;
+  let parentWalletId: string;
   try {
     parentWalletId = resolveNodeBuyerWalletId(nodeConfig);
-  } catch {
-    // audit-only: no wallet needed
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json(
+      { ok: false, error: msg },
+      { status: 500 }
+    );
   }
 
   const selectedServices = nodeConfig.childServices;
@@ -257,7 +259,7 @@ async function executeMacroNode(
       ok: true,
       nodeType: "macro_node",
       nodeName,
-      mode: paymentMeta ? "x402" : "audit_only",
+      mode: "x402",
       settled: !!paymentMeta,
       safeSummary: `Macro-node ${nodeName}: ${selectedServices.length} child services`,
       data: result,

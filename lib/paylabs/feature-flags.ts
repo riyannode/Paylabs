@@ -3,6 +3,21 @@ import type { ServiceName } from "./agent-services/types";
 // ─── Delegated Runtime Flags ────────────────────────────────────
 
 /**
+ * All services eligible for x402 payment.
+ */
+const ALL_X402_SERVICES: readonly string[] = [
+  "intent_planner",
+  "query_builder",
+  "signal_scout",
+  "intent_matcher",
+  "source_verifier",
+  "value_allocator",
+  "trust_verifier",
+  "payment_decider",
+  "payment_router",
+];
+
+/**
  * Check if the delegated agentic runtime is enabled.
  * Default: false (existing flow unchanged).
  */
@@ -12,15 +27,17 @@ export function isDelegatedRuntimeEnabled(): boolean {
 
 /**
  * Parse the x402 service allowlist from env.
- * PAYLABS_X402_ENABLED_SERVICE_NAMES — comma-separated service names.
+ * PAYLABS_X402_ENABLED_SERVICE_NAMES — comma-separated service names, or "all"/"*".
  * Default: empty array (no services enabled for real x402).
  *
  * Example: PAYLABS_X402_ENABLED_SERVICE_NAMES=intent_planner
  * Example: PAYLABS_X402_ENABLED_SERVICE_NAMES=intent_planner,query_builder
+ * Example: PAYLABS_X402_ENABLED_SERVICE_NAMES=all
  */
 export function getX402EnabledServices(): string[] {
-  const raw = (process.env.PAYLABS_X402_ENABLED_SERVICE_NAMES || "").trim();
+  const raw = (process.env.PAYLABS_X402_ENABLED_SERVICE_NAMES || "").trim().toLowerCase();
   if (!raw) return [];
+  if (raw === "all" || raw === "*") return [...ALL_X402_SERVICES];
   return raw
     .split(",")
     .map((s) => s.trim().toLowerCase())

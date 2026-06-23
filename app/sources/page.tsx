@@ -1,6 +1,19 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { short, shortUrl, usdc } from "@/lib/utils";
 
+/** Strip all HTML/XML tags — character scan, not regex */
+function stripTags(html: string): string {
+  let out = "";
+  let inTag = false;
+  for (let i = 0; i < html.length; i++) {
+    const ch = html[i];
+    if (ch === "<") { inTag = true; continue; }
+    if (ch === ">") { inTag = false; continue; }
+    if (!inTag) out += ch;
+  }
+  return out.trim();
+}
+
 export const dynamic = "force-dynamic";
 
 async function safeQuery<T>(
@@ -74,7 +87,7 @@ export default async function SourcesPage() {
                     overflow: "hidden",
                   }}
                 >
-                  {item.summary}
+                  {stripTags(item.summary)}
                 </p>
               )}
 
