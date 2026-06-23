@@ -90,7 +90,7 @@ a:hover { text-decoration: none; }
 /* ── Inputs ── */
 .input {
   width: 100%;
-  min-height: 1em;
+  min-height: 42px;
   background: white;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -514,24 +514,13 @@ a:hover { text-decoration: none; }
   text-align: center;
 }
 
-.pl-hero h1, .pl-hero-title {
+.pl-hero h1 {
   margin: 0;
   font-size: 38px;
   font-weight: 800;
   letter-spacing: -0.05em;
   line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
 }
-
-.pl-hero-logo {
-  height: 1em;
-  width: auto;
-  vertical-align: middle;
-  border-radius: 6px;
-}
-
 
 .pl-hero p {
   margin: 8px 0 20px;
@@ -1152,12 +1141,8 @@ a:hover { text-decoration: none; }
     padding: 16px;
   }
 
-  .pl-hero h1, .pl-hero-title {
+  .pl-hero h1 {
     font-size: 28px;
-  }
-
-  .pl-hero-logo {
-    height: 1em;
   }
 
   .pl-run-card {
