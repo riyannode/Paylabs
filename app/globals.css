@@ -1071,6 +1071,59 @@ a:hover { text-decoration: none; }
   }
 }
 
+.pl-connected-hero-v3 {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 22px 12px 18px;
+}
+
+.pl-connected-logo-v3 {
+  width: min(340px, 86%);
+  max-height: 112px;
+  object-fit: contain;
+  display: block;
+}
+
+.pl-connected-status-v3 {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 13px;
+  border-radius: 999px;
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #14532d;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.pl-connected-dot-v3 {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #22c55e;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+@media (max-width: 640px) {
+  .pl-connected-hero-v3 {
+    padding: 20px 8px 16px;
+  }
+
+  .pl-connected-logo-v3 {
+    width: min(300px, 90%);
+    max-height: 100px;
+  }
+}
 
 @media (max-width: 960px) {
   .pl-app {
