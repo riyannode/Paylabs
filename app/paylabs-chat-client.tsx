@@ -488,7 +488,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
   // Chat state
   const [prompt, setPrompt] = useState("");
 
-  const [budget, setBudget] = useState("0.02");
+  const [budget, setBudget] = useState("0.0001");
   const [status, setStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SafeRunResult | null>(null);
@@ -1451,7 +1451,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
               <div className="pl-search-actions">
                 <span className="pl-plan-auto">Plan: Auto</span>
                 <div className="pl-budget">
-                  <span>Max budget</span>
+                  <span>Budget</span>
                   <input value={budget} onChange={(e) => setBudget(e.target.value)} type="number" step="0.001" min="0" />
                   <small>USDC</small>
                 </div>
