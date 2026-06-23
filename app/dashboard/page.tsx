@@ -168,7 +168,7 @@ export default async function DashboardPage() {
     totalUsers,
     recentUsers7d,
     recentUsers24h,
-    topUsers,
+
   ] = await Promise.all([
     safeQuery<{ user_wallet: string }>(() =>
       supabaseAdmin()
@@ -190,30 +190,6 @@ export default async function DashboardPage() {
         .gte("created_at", new Date(Date.now() - 86400000).toISOString())
         .limit(10000)
     ).then((rows) => new Set(rows.map((r) => r.user_wallet?.toLowerCase()).filter(Boolean)).size),
-    safeQuery<{ user_wallet: string; route_tier: string; status: string; created_at: string }>(() =>
-      supabaseAdmin()
-        .from("paylabs_discovery_runs")
-        .select("user_wallet, route_tier, status, created_at")
-        .order("created_at", { ascending: false })
-        .limit(5000)
-    ).then((rows) => {
-      const byUser = new Map<string, { wallet: string; runs: number; lastActive: string; lastTier: string }>();
-      for (const r of rows) {
-        const w = r.user_wallet?.toLowerCase();
-        if (!w) continue;
-        const existing = byUser.get(w);
-        if (existing) {
-          existing.runs++;
-          if (r.created_at > existing.lastActive) {
-            existing.lastActive = r.created_at;
-            existing.lastTier = r.route_tier;
-          }
-        } else {
-          byUser.set(w, { wallet: r.user_wallet, runs: 1, lastActive: r.created_at, lastTier: r.route_tier });
-        }
-      }
-      return [...byUser.values()].sort((a, b) => b.runs - a.runs).slice(0, 15);
-    }),
   ]);
 
   return (
@@ -253,57 +229,7 @@ export default async function DashboardPage() {
         ))}
       </div>
 
-      {/* ─── User Analytics ──────────────────────────────────── */}
-      <section className="card">
-        <h2 className="section-title">User Analytics</h2>
-        <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
-          Unique wallets that submitted discovery runs. Top users ranked by total runs.
-        </p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 16 }}>
-          <div className="card" style={{ padding: 12 }}>
-            <div className="muted" style={{ fontSize: 12 }}>Total Unique Users</div>
-            <div className="kpi" style={{ marginTop: 4 }}>{totalUsers}</div>
-          </div>
-          <div className="card" style={{ padding: 12 }}>
-            <div className="muted" style={{ fontSize: 12 }}>Active (24h)</div>
-            <div className="kpi" style={{ marginTop: 4 }}>{recentUsers24h}</div>
-          </div>
-          <div className="card" style={{ padding: 12 }}>
-            <div className="muted" style={{ fontSize: 12 }}>Active (7d)</div>
-            <div className="kpi" style={{ marginTop: 4 }}>{recentUsers7d}</div>
-          </div>
-        </div>
-        {topUsers.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
-            No users yet.
-          </div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Wallet</th>
-                  <th>Total Runs</th>
-                  <th>Last Tier</th>
-                  <th>Last Active</th>
-                </tr>
-              </thead>
-              <tbody>
-                {topUsers.map((u: any, i: number) => (
-                  <tr key={u.wallet}>
-                    <td className="muted">{i + 1}</td>
-                    <td className="data-mono">{short(u.wallet)}</td>
-                    <td className="data-mono" style={{ fontWeight: 600 }}>{u.runs}</td>
-                    <td>{u.lastTier}</td>
-                    <td className="muted">{timeAgo(u.lastActive)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+
 
       {/* ─── RSSHub Routes Table ───────────────────────────── */}
       <section className="card">
@@ -662,77 +588,8 @@ export default async function DashboardPage() {
         )}
       </section>
 
-      {/* ─── Payment Graph (x402 edges with explorer links) ── */}
-      <section className="card">
-        <h2 className="section-title">Payment Graph (x402 Edges)</h2>
-        <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
-          x402 payment edges from recent discovery runs. Click explorer links to verify on-chain.
-        </p>
-        {discoveryRunRows.filter((r: any) => r.agent_trace?.payment_graph?.length > 0).length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
-            No payment graph data yet. Run an x402-enabled discovery run first.
-          </div>
-        ) : (
-          discoveryRunRows
-            .filter((r: any) => r.agent_trace?.payment_graph?.length > 0)
-            .slice(0, 5)
-            .map((run: any) => (
-              <div key={run.id} style={{ marginBottom: 24 }}>
-                <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13 }}>
-                  Run <span className="data-mono">{short(run.id)}</span>
-                  <span className="muted" style={{ marginLeft: 8 }}>{run.route_tier}</span>
-                  <span className={`badge ${run.status === "paid_path_available" ? "badge-success" : "badge-warning"}`} style={{ marginLeft: 8 }}>
-                    {run.status}
-                  </span>
-                </div>
-                <div style={{ overflowX: "auto" }}>
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Buyer</th>
-                        <th>Seller</th>
-                        <th>Type</th>
-                        <th>Status</th>
-                        <th>TX Hash</th>
-                        <th>Explorer</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {run.agent_trace.payment_graph.map((edge: any, i: number) => (
-                        <tr key={i}>
-                          <td className="data-mono" style={{ fontSize: 11 }}>{edge.buyer}</td>
-                          <td className="data-mono" style={{ fontSize: 11 }}>{edge.seller}</td>
-                          <td>
-                            <span className={`badge ${edge.node_type === "brain" ? "badge-success" : edge.node_type === "macro_node" ? "badge-warning" : ""}`} style={{ fontSize: 10 }}>
-                              {edge.node_type}
-                            </span>
-                          </td>
-                          <td>
-                            <span className={`badge ${edge.status === "paid" ? "badge-success" : edge.status === "skipped" ? "badge-warning" : "badge-danger"}`}>
-                              {edge.status}
-                            </span>
-                          </td>
-                          <td className="data-mono" style={{ fontSize: 10 }}>
-                            {edge.tx_hash ? short(edge.tx_hash) : "—"}
-                          </td>
-                          <td>
-                            {edge.explorer_url ? (
-                              <a href={edge.explorer_url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent, #6366f1)", fontSize: 11, textDecoration: "none" }}>
-                                View on Explorer ↗
-                              </a>
-                            ) : (
-                              <span className="muted" style={{ fontSize: 11 }}>—</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ))
-        )}
-      </section>
+
+
     </div>
   );
 }
