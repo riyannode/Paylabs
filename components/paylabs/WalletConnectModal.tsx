@@ -14,7 +14,7 @@ export type WalletState =
 
 export type WalletInfo = {
   address: string;
-  walletType: "external_eoa" | "circle_user_controlled";
+  walletType: "external_eoa" | "circle_user_controlled" | "circle_developer_controlled";
   network: string;
 };
 

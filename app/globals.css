@@ -1585,6 +1585,129 @@ a:hover { text-decoration: none; }
   white-space: nowrap;
 }
 
+/* ─── Wallet Picker Modal ─────────────────────────────────── */
+
+.pl-picker-modal {
+  background: var(--surface, #fff);
+  border-radius: 16px;
+  padding: 28px 24px;
+  max-width: 440px;
+  width: 90vw;
+  position: relative;
+  box-shadow: 0 24px 64px rgba(0,0,0,.18);
+}
+
+.pl-picker-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pl-picker-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px;
+  border: 2px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .15s, box-shadow .15s;
+}
+.pl-picker-card:hover {
+  border-color: var(--accent, #6366f1);
+  box-shadow: 0 0 0 3px rgba(99,102,241,.12);
+}
+
+.pl-picker-icon {
+  font-size: 28px;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg, #f8fafc);
+  border-radius: 10px;
+}
+
+.pl-picker-info { flex: 1; }
+.pl-picker-info b { font-size: 15px; display: block; }
+
+.pl-picker-tag {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--accent-bg, rgba(99,102,241,.08));
+  color: var(--accent, #6366f1);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ─── DCW Modal ───────────────────────────────────────────── */
+
+.pl-dcw-modal {
+  background: var(--surface, #fff);
+  border-radius: 16px;
+  padding: 28px 24px;
+  max-width: 420px;
+  width: 90vw;
+  position: relative;
+  box-shadow: 0 24px 64px rgba(0,0,0,.18);
+}
+
+.pl-dcw-header { text-align: center; margin-bottom: 20px; }
+.pl-dcw-header h3 { margin: 8px 0 4px; font-size: 18px; }
+
+.pl-dcw-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .5px;
+}
+
+.pl-dcw-step { display: flex; flex-direction: column; gap: 12px; }
+.pl-dcw-label { font-size: 13px; font-weight: 600; color: var(--muted, #64748b); }
+
+.pl-dcw-wallet-card {
+  background: var(--bg, #f8fafc);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pl-dcw-wallet-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+
+.pl-dcw-deposit-info { margin-top: 8px; }
+
+.pl-dcw-address-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg, #f8fafc);
+  border: 1px dashed var(--border, #d1d5db);
+  border-radius: 8px;
+  font-family: monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+.pl-dcw-address-box code { flex: 1; }
+
 @media (max-width: 640px) {
   .pl-compact-root { padding-top: var(--pl-space-sm); padding-bottom: var(--pl-space-lg); }
   .container { padding: 0 var(--pl-space-sm); }

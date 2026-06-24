@@ -1356,7 +1356,30 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         setSigningPhase("Preparing x402 approval…");
         let paymentSignature: string;
         try {
-          if (walletInfo.walletType === "circle_user_controlled" && ucwSdkRef.current) {
+          if (walletInfo.walletType === "circle_developer_controlled") {
+            // DCW: server-side signing — no client popup
+            setSigningPhase("Auto-signing via DCW…");
+            const dcwEmail = localStorage.getItem("paylabs_dcw_email");
+            if (!dcwEmail) {
+              throw new Error("DCW email not found. Please reconnect.");
+            }
+            const dcwResp = await fetch("/api/paylabs/dcw/sign-x402", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                email: dcwEmail,
+                sellerUrl: window.location.origin + "/api/paylabs/discovery-runs/inline",
+                requestBody: body,
+                maxAmountUsdc: budget || "1.0",
+              }),
+            });
+            const dcwResult = await dcwResp.json();
+            if (!dcwResult.ok) {
+              throw new Error(dcwResult.error || "DCW signing failed");
+            }
+            paymentSignature = "__dcw_handled__";
+            setSigningPhase(null);
+          } else if (walletInfo.walletType === "circle_user_controlled" && ucwSdkRef.current) {
             setSigningPhase("Opening Circle approval…");
             paymentSignature = await signWithUcw({
               challenge,
