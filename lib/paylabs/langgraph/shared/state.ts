@@ -171,6 +171,8 @@ export const PaymentDecisionState = Annotation.Root({
     publisher: string;
     claim_status: string;
     creator_wallet: string | null;
+    source_kind?: string;
+    provider?: string;
   }>>({
     reducer: concatReducer,
     default: () => [],

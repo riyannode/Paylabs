@@ -219,6 +219,8 @@ async function executeMacroNode(
         publisher: c.publisher || "",
         claim_status: "unclaimed",
         creator_wallet: null,
+        source_kind: (c as Record<string, unknown>).source_kind as string | undefined,
+        provider: (c as Record<string, unknown>).provider as string | undefined,
       }));
       const graphResult = await runPaymentDecisionGraph({
         discoveryRunId: input.discoveryRunId,

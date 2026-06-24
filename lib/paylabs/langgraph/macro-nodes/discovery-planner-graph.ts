@@ -320,6 +320,8 @@ export async function runDiscoveryPlannerGraph(
           publisher: candidate.publisher || "",
           claim_status: "unclaimed",
           creator_wallet: null,
+          source_kind: candidate.source_kind,
+          provider: candidate.provider,
         });
       } else {
         // DB candidate: enrich via getFeedItemById

@@ -65,7 +65,34 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
 
   const candidateMeta: PaymentDecisionStateType["candidateMeta"] = [];
   for (const card of sourceCards.slice(0, 10)) {
-    const feedItem = (await getFeedItemById(card.feed_item_id)) as Record<string, unknown> | null;
+    // Skip DB lookup for live source IDs (rsshub_live:*, tavily_live:*)
+    // These are synthetic IDs that don't exist in paylabs_feed_items.
+    const isLiveSource = card.source_kind === "rsshub_live" ||
+      card.source_kind === "tavily_live" ||
+      card.feed_item_id.startsWith("rsshub_live:") ||
+      card.feed_item_id.startsWith("tavily_live:");
+
+    if (isLiveSource) {
+      // Live sources: use card data directly, always non-monetized/unclaimed
+      candidateMeta.push({
+        feed_item_id: card.feed_item_id,
+        source_url: card.source_url || "",
+        source_title: card.title || "",
+        publisher: card.publisher || "",
+        creator_wallet: null,
+        claim_status: "unclaimed",
+      });
+      continue;
+    }
+
+    // DB feed item: enrich via getFeedItemById
+    let feedItem: Record<string, unknown> | null = null;
+    try {
+      feedItem = (await getFeedItemById(card.feed_item_id)) as Record<string, unknown> | null;
+    } catch {
+      // Feed item not found in DB — use card data as fallback
+      feedItem = null;
+    }
     candidateMeta.push({
       feed_item_id: card.feed_item_id,
       source_url: String(feedItem?.canonical_url || card.source_url || ""),

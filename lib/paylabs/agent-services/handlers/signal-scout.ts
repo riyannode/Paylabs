@@ -202,8 +202,11 @@ async function runLiveSearch(
   try {
     const { liveSearchRsshub } = await import("@/lib/rsshub/rsshub-live-search");
 
-    // Build user goal from expanded queries
-    const userGoal = expandedQueries[0] || entityTerms.join(" ") || "";
+    // Finding 5: Build resolver query from ALL variants, not just the first one
+    // Route resolver needs to see all query variants to extract entities like openai/codex
+    const userGoal = expandedQueries.length > 0
+      ? expandedQueries.join(" ")
+      : entityTerms.join(" ") || "";
 
     const result = await liveSearchRsshub({
       userGoal,
@@ -289,10 +292,20 @@ export const signalScoutHandler: ServiceHandler = async (
   const { listActiveFeedItems } = await import("@/lib/ai/tools");
   const dbMaxItems = Number(process.env.PAYLABS_DB_FALLBACK_MAX_ITEMS) || 200;
   const allActiveRaw = await listActiveFeedItems() as Record<string, unknown>[];
-  // Limit DB fallback to avoid performance issues at scale
-  const allActive = allActiveRaw.slice(0, dbMaxItems);
 
-  if (allActive.length === 0) {
+  // Finding 6: Derive domain from canonical_url if not present
+  for (const item of allActiveRaw) {
+    if (!item.domain && item.canonical_url) {
+      try {
+        item.domain = new URL(String(item.canonical_url)).hostname;
+      } catch { /* invalid URL, skip */ }
+    }
+  }
+
+  // Finding 4: Score ALL items first, then cap output — don't slice before scoring
+  // (older exact matches must not be excluded by recency slicing)
+
+  if (allActiveRaw.length === 0) {
     return {
       ok: true,
       serviceName: "signal_scout",
@@ -315,7 +328,7 @@ export const signalScoutHandler: ServiceHandler = async (
   // Deterministic mode (default)
   if (shouldRunServiceAsDeterministic("signal_scout")) {
     const ranked = runDeterministicSignalScout(
-      allActive,
+      allActiveRaw,
       expanded_queries || [],
       entity_terms || [],
       10,
@@ -343,7 +356,7 @@ export const signalScoutHandler: ServiceHandler = async (
 
   // Pre-score all active items, keep top 20 for LLM reranking
   const deterministicCandidates = runDeterministicSignalScout(
-    allActive,
+    allActiveRaw,
     expanded_queries || [],
     entity_terms || [],
     20,
@@ -353,7 +366,7 @@ export const signalScoutHandler: ServiceHandler = async (
 
   // Build safe metadata from deterministic candidates only
   const candidateIds = new Set(deterministicCandidates.map((c) => c.feed_item_id));
-  const feedMeta = allActive
+  const feedMeta = allActiveRaw
     .filter((item) => candidateIds.has(String(item.id)))
     .map((item) => ({
       id: item.id,
@@ -401,7 +414,7 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
   if (!result.ok) {
     // Fallback: deterministic ranking
     const ranked = runDeterministicSignalScout(
-      allActive,
+      allActiveRaw,
       expanded_queries || [],
       entity_terms || [],
       10,
@@ -424,7 +437,7 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
   }
 
   const llmRanked = result.data.ranked_sources.filter((r) =>
-    allActive.some((f) => f.id === r.feed_item_id)
+    allActiveRaw.some((f) => f.id === r.feed_item_id)
   );
 
   return {
@@ -433,11 +446,11 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
     data: {
       ranked_candidates: llmRanked.map((r) => ({
         feed_item_id: r.feed_item_id,
-        title: String(allActive.find((f) => f.id === r.feed_item_id)?.title || ""),
-        publisher: String(allActive.find((f) => f.id === r.feed_item_id)?.publisher || ""),
+        title: String(allActiveRaw.find((f) => f.id === r.feed_item_id)?.title || ""),
+        publisher: String(allActiveRaw.find((f) => f.id === r.feed_item_id)?.publisher || ""),
         source_kind: r.source_kind || "db_feed_item",
         provider: r.provider || "supabase",
-        source_url: r.source_url || String((allActive.find((f) => f.id === r.feed_item_id) as Record<string, unknown>)?.canonical_url || ""),
+        source_url: r.source_url || String((allActiveRaw.find((f) => f.id === r.feed_item_id) as Record<string, unknown>)?.canonical_url || ""),
         domain: r.domain ?? null,
         summary: r.summary || "",
         author: r.author || "",

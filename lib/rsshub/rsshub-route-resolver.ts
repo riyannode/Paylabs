@@ -262,38 +262,31 @@ function resolveSingleRoute(
   if (
     route.namespace === "github" ||
     fullPath.includes("/github/") ||
-    (params.includes("owner") && params.includes("repo"))
+    (params.includes("owner") && params.includes("repo")) ||
+    (params.includes("user") && params.includes("repo"))
   ) {
     const gh = extractGithubOwnerRepo(entityTerms, query);
     if (gh) {
       let resolved = fullPath;
+      // Replace :owner OR :user with the extracted owner
       resolved = resolved.replace(
         /:owner(\{[^}]*\})?/,
+        encodeURIComponent(gh.owner)
+      );
+      resolved = resolved.replace(
+        /:user(\{[^}]*\})?/,
         encodeURIComponent(gh.owner)
       );
       resolved = resolved.replace(
         /:repo(\{[^}]*\})?/,
         encodeURIComponent(gh.repo)
       );
-      // Check for unresolved params
+      // Check for unresolved params — do NOT fill from docs examples
+      // (Finding 2: docs examples may be unrelated to the user's query)
       const remaining = extractParamNames(resolved);
       if (remaining.length > 0) {
-        // Try to resolve remaining from example
-        if (route.example) {
-          const exampleParts = route.example.split("/").filter(Boolean);
-          for (const rp of remaining) {
-            const idx = params.indexOf(rp);
-            if (idx >= 0 && exampleParts.length > idx + 1) {
-              const placeholder = new RegExp(`:${rp}(\\{[^}]*\\})?`);
-              resolved = resolved.replace(
-                placeholder,
-                encodeURIComponent(exampleParts[idx + 1])
-              );
-            }
-          }
-        }
-        // Still unresolved? Skip
-        if (extractParamNames(resolved).length > 0) return null;
+        // Cannot resolve all params from actual query — skip this route
+        return null;
       }
       return {
         route,
@@ -347,13 +340,25 @@ function resolveSingleRoute(
     }
   }
 
-  // Last resort: use example ONLY if directly relevant
-  if (route.example && candidate.matchedTerms.length > 0) {
-    const exampleLower = route.example.toLowerCase();
-    const isRelevant = candidate.matchedTerms.some(
-      (t) => exampleLower.includes(t.toLowerCase()) || t.toLowerCase().includes(exampleLower.split("/").pop() || "")
+  // Last resort: use example ONLY if example param value matches an actual requested entity
+  // (Finding 2: namespace/path terms alone are NOT enough — the example entity must match user query)
+  if (route.example && entityTerms.length > 0) {
+    const exampleParts = route.example.split("/").filter(Boolean);
+    // Extract the param values from the example path (the parts that would fill :param slots)
+    const paramNames = extractParamNames(routePath);
+    const exampleParamValues: string[] = [];
+    for (let i = 0; i < paramNames.length; i++) {
+      // Find the example part that corresponds to this param
+      // Simple heuristic: param values are the non-namespace parts of the example path
+      const part = exampleParts[i + 1]; // +1 to skip namespace
+      if (part) exampleParamValues.push(part.toLowerCase());
+    }
+    // Check if any example param value matches an actual entity term from the user's query
+    const entityTermsLower = entityTerms.map((e) => e.toLowerCase().trim());
+    const exampleMatchesEntity = exampleParamValues.some((ev) =>
+      entityTermsLower.some((et) => et === ev || et.includes(ev) || ev.includes(et))
     );
-    if (isRelevant) {
+    if (exampleMatchesEntity) {
       return {
         route,
         resolvedPath: route.example,
@@ -361,7 +366,7 @@ function resolveSingleRoute(
         docsUrl: route.docsUrl,
         resolveMode: "example_direct",
         confidence: 0.6,
-        safeReason: `example (relevant match)`,
+        safeReason: `example (entity match)`,
       };
     }
   }
