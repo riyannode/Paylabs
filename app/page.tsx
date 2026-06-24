@@ -47,25 +47,10 @@ export default async function Page() {
     ),
   ]);
 
-  // Find top wallet
-  const walletRunCounts = new Map<string, number>();
-  for (const r of userRowsAll) {
-    const w = r.user_wallet?.toLowerCase();
-    if (!w) continue;
-    walletRunCounts.set(w, (walletRunCounts.get(w) ?? 0) + 1);
-  }
-  let topWallet: { address: string; runs: number } | null = null;
-  for (const [address, runs] of walletRunCounts) {
-    if (!topWallet || runs > topWallet.runs) {
-      topWallet = { address, runs };
-    }
-  }
-
   const analytics = {
     uniqueUsers: uniqueWalletCount(userRowsAll),
     active24h: uniqueWalletCount(userRows24h),
     active7d: uniqueWalletCount(userRows7d),
-    topWallet,
   };
 
   return <PayLabsChatClient analytics={analytics} />;
