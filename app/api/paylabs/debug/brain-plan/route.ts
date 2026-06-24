@@ -33,8 +33,12 @@ export async function POST(req: NextRequest) {
     const { runBrainPlannerGraph } = await import(
       "@/lib/paylabs/langgraph/brain/brain-planner-graph"
     );
+    const { getTutorModelConfig } = await import("@/lib/ai/llm");
 
     const discoveryRunId = `debug-${crypto.randomUUID()}`;
+
+    // LLM config (no API key exposed)
+    const modelConfig = getTutorModelConfig("brain_planner");
 
     const result = await runBrainPlannerGraph({
       discoveryRunId,
@@ -52,6 +56,15 @@ export async function POST(req: NextRequest) {
     // Safe fields only
     return NextResponse.json({
       ok: result.ok,
+      model_config: {
+        provider: modelConfig.provider,
+        model: modelConfig.model,
+        agent_key: modelConfig.agentKey,
+        api_key_present: modelConfig.apiKeyPresent,
+        base_url_present: !!modelConfig.baseUrl,
+        timeout_ms: modelConfig.timeoutMs,
+        max_tokens: modelConfig.maxTokens,
+      },
       route_tier_hint: hintValid ? rawHint : (rawHint ?? "none"),
       route_tier_hint_valid: hintValid,
       selected_macro_nodes_count: bp?.selected_macro_nodes?.length ?? 0,

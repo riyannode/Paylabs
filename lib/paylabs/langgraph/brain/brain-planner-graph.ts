@@ -314,9 +314,12 @@ Analyze this goal and produce a structured execution plan.`,
     });
 
     if (!result.ok) {
+      // Safe error detail: code + first 160 chars of error (no secrets, no raw LLM)
+      const safeErrorClass = result.code || "unknown";
+      const safeErrorMsg = result.error ? result.error.slice(0, 160) : "unknown";
       return {
-        error: "Brain planning LLM call failed",
-        progressSummaries: ["Brain planning failed — LLM call unsuccessful"],
+        error: `Brain planning LLM call failed: [${safeErrorClass}] ${safeErrorMsg}`,
+        progressSummaries: [`Brain planning failed — ${safeErrorClass}: ${safeErrorMsg}`],
       };
     }
 
