@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { short, shortUrl, usdc } from "@/lib/utils";
+import BatchResolverLink from "@/components/paylabs/BatchResolverLink";
 
 async function getRecentX402Payments(limit = 50) {
   const { data } = await supabaseAdmin()
@@ -493,8 +494,7 @@ export default async function DashboardPage() {
                   <th>Amount</th>
                   <th>Status</th>
                   <th>Mode</th>
-                  <th>TX Hash</th>
-                  <th>Explorer</th>
+                  <th>Payment Visibility</th>
                   <th>Error</th>
                 </tr>
               </thead>
@@ -523,17 +523,13 @@ export default async function DashboardPage() {
                       </span>
                     </td>
                     <td style={{ fontSize: 11 }}>{r.mode}</td>
-                    <td className="data-mono" style={{ fontSize: 10 }}>
-                      {r.tx_hash ? short(r.tx_hash) : "—"}
-                    </td>
                     <td>
-                      {r.explorer_url ? (
-                        <a href={r.explorer_url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent, #6366f1)", fontSize: 11, textDecoration: "none" }}>
-                          View ↗
-                        </a>
-                      ) : (
-                        <span className="muted" style={{ fontSize: 11 }}>—</span>
-                      )}
+                      <BatchResolverLink
+                        runId={r.discovery_run_id}
+                        initialBatchExplorerUrl={r.batch_explorer_url}
+                        initialBatchTxHash={r.batch_tx_hash}
+                        directExplorerUrl={r.explorer_url}
+                      />
                     </td>
                     <td className="muted" style={{ fontSize: 10, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {r.error || "—"}
@@ -568,7 +564,7 @@ export default async function DashboardPage() {
                   <th>Settled</th>
                   <th>Remaining</th>
                   <th>Payments</th>
-                  <th>Last TX</th>
+                  <th>Payment Links</th>
                   <th>Summary</th>
                 </tr>
               </thead>
@@ -582,8 +578,13 @@ export default async function DashboardPage() {
                     <td className="data-mono" style={{ fontWeight: 600 }}>{usdc(r.actual_settled_usdc)}</td>
                     <td className="data-mono">{r.remaining_budget_usdc != null ? usdc(r.remaining_budget_usdc) : "—"}</td>
                     <td className="data-mono">{r.payment_count}</td>
-                    <td className="data-mono" style={{ fontSize: 10 }}>
-                      {r.last_tx_hash ? short(r.last_tx_hash) : "tx unavailable"}
+                    <td>
+                      <BatchResolverLink
+                        runId={r.discovery_run_id}
+                        initialBatchExplorerUrl={r.last_batch_explorer_url}
+                        initialBatchTxHash={r.last_batch_tx_hash}
+                        directExplorerUrl={r.last_explorer_url}
+                      />
                     </td>
                     <td className="muted" style={{ fontSize: 11, maxWidth: 250, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {r.safe_receipt_summary || "—"}
