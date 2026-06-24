@@ -317,7 +317,7 @@ const nowMs = () => Math.round(performance.now());
 async function signWithUcw(params: {
   challenge: Record<string, unknown>;
   walletAddress: string;
-  ucwSdk: { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void };
+  ucwSdk: { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void; setLocalizations: (l: Record<string, unknown>) => void };
   auth?: { userToken: string; encryptionKey?: string } | null;
 }): Promise<string> {
   const { challenge, walletAddress, ucwSdk, auth } = params;
@@ -424,12 +424,20 @@ async function signWithUcw(params: {
   signDbg("signChallenge: ok, executing challenge via UCW SDK...");
 
   // Step 2: Execute challenge via UCW SDK (user approves via Circle hosted UI)
+  // Per Circle docs: use sdk.setLocalizations() to customize the confirmation UI
+  // so users see a friendly description instead of raw EIP-712 JSON.
   const t5 = nowMs();
+  const amountDisplay = message.value ? (Number(message.value) / 1_000_000).toFixed(6) : "?";
+  ucwSdk.setLocalizations({
+    signatureRequest: {
+      title: "Confirm Payment",
+      description: `Authorize ${amountDisplay} USDC payment via x402`,
+    },
+  });
   const signature: string = await new Promise((resolve, reject) => {
     ucwSdk.execute(challengeId, (error: unknown, result: unknown) => {
       if (error) reject(error instanceof Error ? error : new Error(String(error)));
       else {
-        // Circle SDK returns signature at result.data.signature for SIGN_TYPEDDATA
         const sig = (result as { data?: { signature?: string } })?.data?.signature;
         if (!sig) reject(new Error("No signature returned from UCW challenge"));
         else resolve(sig);
@@ -464,7 +472,7 @@ type FinalizeCallbacks = {
  */
 async function finalizeWalletAfterLogin(
   saveData: SaveLoginData,
-  sdk: { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void },
+  sdk: { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void; setLocalizations: (l: Record<string, unknown>) => void },
   cbs: FinalizeCallbacks,
   planned: string,
   auth?: { userToken: string; encryptionKey?: string },
@@ -487,6 +495,13 @@ async function finalizeWalletAfterLogin(
         const ek: string = auth.encryptionKey;
         sdk.setAuthentication({ userToken: auth.userToken, encryptionKey: ek });
       }
+      // Per Circle docs: use sdk.setLocalizations() to customize the UI
+      sdk.setLocalizations({
+        signatureRequest: {
+          title: "Create Wallet",
+          description: "Set up your secure wallet on Arc Testnet",
+        },
+      });
       await new Promise<void>((resolve, reject) => {
         sdk.execute(saveData.challengeId!, (err: unknown, result: unknown) => {
           if (err) {
@@ -581,6 +596,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const ucwAuthRef = useRef<{ userToken: string; encryptionKey?: string } | null>(null);
   const [authMethod, setAuthMethod] = useState<"google" | "email" | "pin" | "">("");
   const [depositStatus, setDepositStatus] = useState<string | null>(null);
+  const [showEmailInputForReconnect, setShowEmailInputForReconnect] = useState(false);
 
   // Derived: can this wallet actually sign right now?
   const ucwCanSign = walletInfo?.walletType === "circle_user_controlled"
@@ -631,15 +647,45 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
         // If we already have a wallet from a previous session, just restore UI
         if (data.walletId && data.walletAddress && data.hasUserToken) {
-          dbg("Wallet already in session — restoring UI (SDK/auth may be missing)");
+          dbg("Wallet already in session — restoring UI + re-creating SDK");
           setUcwWalletId(data.walletId);
           setWalletInfo({ address: data.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
           setWalletState("connected");
           if (data.authMethod) setAuthMethod(data.authMethod as "google" | "email" | "pin");
+
+          // Re-create SDK + re-auth so user can sign without "Reconnect"
+          try {
+            const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
+            const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
+            if (appId) {
+              const sdk = new W3SSdk({ appSettings: { appId } });
+              await sdk.getDeviceId();
+              ucwSdkRef.current = sdk;
+
+              // Restore auth tokens from server session
+              const authResp = await fetch("/api/paylabs/wallet/ucw?action=session-get-auth", {
+                method: "POST",
+                credentials: "include",
+                headers: { "X-Requested-With": "ucw-sdk-restore" },
+              });
+              if (authResp.ok) {
+                const authData = (await authResp.json()) as { userToken: string; encryptionKey: string | null; authMethod: string };
+                if (authData.encryptionKey) {
+                  ucwAuthRef.current = { userToken: authData.userToken, encryptionKey: authData.encryptionKey };
+                  sdk.setAuthentication({ userToken: authData.userToken, encryptionKey: authData.encryptionKey });
+                } else {
+                  ucwAuthRef.current = { userToken: authData.userToken };
+                }
+                dbg("SDK re-created and authenticated after refresh");
+              }
+            }
+          } catch (e) {
+            dbg(`SDK re-creation failed (will show reconnect): ${e instanceof Error ? e.message : String(e)}`);
+            // Non-fatal — user can still reconnect manually
+          }
+
           const balance = await fetchSessionBalance();
           setUcwBalance(balance);
-          // After refresh, ucwSdkRef/ucwAuthRef are null — don't set ready_to_approve.
-          // Let needsReconnectToSign drive the UI. User must reconnect to sign.
           if (parseFloat(balance.gateway) < parseFloat(planned)) {
             setWalletState("needs_gateway_deposit");
           }
@@ -1095,7 +1141,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         throw new Error("Deposit challenge missing. Please try again.");
       }
 
-      const sdk = ucwSdkRef.current as { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (id: string, cb: (err: unknown, res: unknown) => void) => void };
+      const sdk = ucwSdkRef.current as { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (id: string, cb: (err: unknown, res: unknown) => void) => void; setLocalizations: (l: Record<string, unknown>) => void };
       if (!sdk) throw new Error("UCW SDK not initialized");
 
       const execErr = (err: unknown) => {
@@ -1114,8 +1160,15 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
       // Step 2: If approve needed, execute and poll allowance until confirmed
       if (data.step === "approve_required" && data.approveChallengeId) {
-        setDepositStatus("Approval required");
+        setDepositStatus("Step 1/2: Approving USDC spend…");
         await prepareSdk();
+        // Per Circle docs: use contractInteraction for contract execution UI
+        sdk.setLocalizations({
+          contractInteraction: {
+            title: "Approve USDC",
+            subtitle: "Allow Gateway to spend your USDC for deposits",
+          },
+        });
         await new Promise<void>((resolve, reject) => {
           sdk.execute(data.approveChallengeId!, (err: unknown) => err ? reject(execErr(err)) : resolve());
         });
@@ -1164,8 +1217,14 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
       // Step 4: Execute deposit
       if (data.depositChallengeId) {
-        setDepositStatus("Depositing to Gateway…");
+        setDepositStatus("Step 2/2: Depositing to Gateway…");
         await prepareSdk();
+        sdk.setLocalizations({
+          contractInteraction: {
+            title: "Deposit to Gateway",
+            subtitle: `Deposit ${Number(amountAtomic) / 1_000_000} USDC to Gateway`,
+          },
+        });
         await new Promise<void>((resolve, reject) => {
           sdk.execute(data.depositChallengeId!, (err: unknown) => err ? reject(execErr(err)) : resolve());
         });
@@ -1259,6 +1318,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       const inlineStart = nowMs();
       const first = await fetch("/api/paylabs/discovery-runs/inline", {
         method: "POST",
+        credentials: "include",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -1298,7 +1358,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
             paymentSignature = await signWithUcw({
               challenge,
               walletAddress: walletInfo.address,
-              ucwSdk: ucwSdkRef.current as { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (id: string, cb: (err: unknown, res: unknown) => void) => void },
+              ucwSdk: ucwSdkRef.current as { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (id: string, cb: (err: unknown, res: unknown) => void) => void; setLocalizations: (l: Record<string, unknown>) => void },
               auth: ucwAuthRef.current,
             });
             setSigningPhase(null);
@@ -1333,6 +1393,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         const retryStart = nowMs();
         const paid = await fetch("/api/paylabs/discovery-runs/inline", {
           method: "POST",
+          credentials: "include",
           headers: {
             "content-type": "application/json",
             "PAYMENT-SIGNATURE": paymentSignature,
@@ -1407,15 +1468,15 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
   const reconnectByAuth = useCallback(() => {
     if (authMethod === "google") connectGoogle();
     else if (authMethod === "email") {
-      const email = window.prompt("Enter email for OTP");
-      if (email) connectEmail(email);
+      // Open wallet modal with email input visible
+      setShowEmailInputForReconnect(true);
+      setWalletOpen(true);
     }
     else if (authMethod === "pin") connectPin();
     else {
-      // Unknown method — open picker (just open the modal)
       setWalletOpen(true);
     }
-  }, [authMethod, connectGoogle, connectEmail, connectPin]);
+  }, [authMethod, connectGoogle, connectPin]);
 
   const copyWalletAddress = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
@@ -1589,7 +1650,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
       <WalletConnectModal
         open={walletOpen}
-        onClose={() => setWalletOpen(false)}
+        onClose={() => { setWalletOpen(false); setShowEmailInputForReconnect(false); }}
         walletState={walletState}
         walletInfo={walletInfo}
         ucwBalance={ucwBalance}
@@ -1608,6 +1669,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         authMethod={authMethod}
         depositStatus={depositStatus}
         debugLog={ucwDebug ? debugLog : undefined}
+        defaultShowEmailInput={showEmailInputForReconnect}
       />
     </div>
   );

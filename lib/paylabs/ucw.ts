@@ -355,7 +355,7 @@ const ERC20_ABI = [
   },
 ] as const;
 
-const publicClient = createPublicClient({ chain: arcTestnet, transport: http() });
+const publicClient = createPublicClient({ chain: arcTestnet, transport: http(process.env.ARC_RPC_URL || undefined) });
 
 export async function checkAllowance(owner: string): Promise<string> {
   if (!isAddress(owner)) throw new Error("Invalid wallet address");

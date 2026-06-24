@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 
 export type WalletState =
   | "not_connected"
@@ -44,6 +44,7 @@ type Props = {
   authMethod?: string;
   depositStatus?: string | null;
   debugLog?: string[];
+  defaultShowEmailInput?: boolean;
 };
 
 function shortAddr(addr?: string | null) {
@@ -88,9 +89,19 @@ export default function WalletConnectModal({
   authMethod,
   depositStatus,
   debugLog,
+  defaultShowEmailInput = false,
 }: Props) {
   const [tab, setTab] = useState<"login" | "gateway">("login");
   const [depositAmount, setDepositAmount] = useState("");
+  const [showEmailInput, setShowEmailInput] = useState(defaultShowEmailInput);
+  const [emailValue, setEmailValue] = useState("");
+
+  useEffect(() => {
+    if (defaultShowEmailInput) {
+      setTab("login");
+      setShowEmailInput(true);
+    }
+  }, [defaultShowEmailInput]);
 
   const isConnected = !!walletInfo?.address;
   const gatewayBalance = asNumber(ucwBalance?.gateway);
@@ -145,15 +156,39 @@ export default function WalletConnectModal({
 
                 <button
                   className="pl-login-option-v3"
-                  onClick={() => {
-                    const next = window.prompt("Enter email for OTP");
-                    if (next) onConnectEmail(next);
-                  }}
+                  onClick={() => setShowEmailInput(!showEmailInput)}
                   disabled={walletState === "connecting"}
                 >
                   <span className="pl-login-icon-v3"><MailIcon /></span>
                   <b>Email</b>
                 </button>
+
+                {showEmailInput && (
+                  <div className="pl-email-input-row">
+                    <input
+                      className="pl-email-otp-input"
+                      type="email"
+                      placeholder="you@example.com"
+                      value={emailValue}
+                      onChange={(e) => setEmailValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && emailValue.includes("@")) {
+                          onConnectEmail(emailValue);
+                        }
+                      }}
+                      autoFocus
+                    />
+                    <button
+                      className="pl-email-submit-btn"
+                      onClick={() => {
+                        if (emailValue.includes("@")) onConnectEmail(emailValue);
+                      }}
+                      disabled={walletState === "connecting" || !emailValue.includes("@")}
+                    >
+                      Send OTP
+                    </button>
+                  </div>
+                )}
 
                 <button
                   className="pl-login-option-v3"
@@ -236,14 +271,19 @@ export default function WalletConnectModal({
                   className="pl-primary-v3"
                   onClick={() => {
                     const parsed = parseFloat(depositAmount);
-                    const atomic = Math.round((!isNaN(parsed) && parsed > 0 ? parsed : parseFloat(plannedCost) * 2) * 1_000_000).toString();
+                    if (isNaN(parsed) || parsed <= 0) return; // require explicit amount
+                    const atomic = Math.round(parsed * 1_000_000).toString();
                     onDepositGateway(atomic);
                   }}
+                  disabled={!depositAmount || parseFloat(depositAmount) <= 0}
                 >
                   {gatewayReady ? "Deposit more" : "Deposit to Gateway"}
                 </button>
                 {depositStatus && (
-                  <div className="pl-deposit-status">{depositStatus}</div>
+                  <div className="pl-deposit-status">
+                    {depositStatus.includes("Step") && <span className="pl-deposit-step-icon">⏳</span>}
+                    {depositStatus}
+                  </div>
                 )}
               </>
             )}
