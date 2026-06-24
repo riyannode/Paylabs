@@ -102,15 +102,6 @@ export default function BatchResolverLink({
   const batchHref = hrefFromTx(batchUrl, batchHash);
   const label = statusLabel(resolverStatus, !!batchHref);
 
-  // Case E: old row with no settlement and no direct tx
-  if (!directHref && !resolverStatus && !batchHref) {
-    return (
-      <div style={{ fontSize: 11, color: "var(--muted, #888)" }}>
-        No settlement captured
-      </div>
-    );
-  }
-
   return (
     <div
       style={{
