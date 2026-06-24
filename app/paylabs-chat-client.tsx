@@ -1357,28 +1357,36 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         let paymentSignature: string;
         try {
           if (walletInfo.walletType === "circle_developer_controlled") {
-            // DCW: server-side signing — no client popup
-            setSigningPhase("Auto-signing via DCW…");
-            const dcwEmail = localStorage.getItem("paylabs_dcw_email");
-            if (!dcwEmail) {
-              throw new Error("DCW email not found. Please reconnect.");
-            }
-            const dcwResp = await fetch("/api/paylabs/dcw/sign-x402", {
+            // DCW: full server-side paid run — no client retry
+            setSigningPhase("Running via DCW (auto-pay)…");
+            const dcwResp = await fetch("/api/paylabs/dcw/run-paid", {
               method: "POST",
+              credentials: "include",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                email: dcwEmail,
-                sellerUrl: window.location.origin + "/api/paylabs/discovery-runs/inline",
-                requestBody: body,
-                maxAmountUsdc: budget || "1.0",
+                goal: body.goal || prompt,
+                routeTier: body.route_tier || "standard",
               }),
             });
             const dcwResult = await dcwResp.json();
-            if (!dcwResult.ok) {
-              throw new Error(dcwResult.error || "DCW signing failed");
-            }
-            paymentSignature = "__dcw_handled__";
             setSigningPhase(null);
+
+            if (!dcwResult.ok) {
+              const errMsg = dcwResult.error || "DCW payment failed.";
+              finishAssistant({ status: "error", error: errMsg });
+              setError(errMsg);
+              setWalletState("failed");
+              setStatus("error");
+              return;
+            }
+
+            // DCW returned final result — done, no client retry
+            const safeResult = toSafeRunResult(dcwResult.data || dcwResult);
+            setWalletState("paid");
+            finishAssistant({ status: "done", result: safeResult });
+            setResult(safeResult);
+            setStatus("done");
+            return;
           } else if (walletInfo.walletType === "circle_user_controlled" && ucwSdkRef.current) {
             setSigningPhase("Opening Circle approval…");
             paymentSignature = await signWithUcw({
@@ -1684,12 +1692,14 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       <DcwModal
         open={dcwOpen}
         onClose={() => setDcwOpen(false)}
-        walletAddress={null}
-        gatewayBalance="0.00"
-        onConnectEmail={() => {}}
-        onDisconnect={() => {}}
-        connecting={false}
-        error={null}
+        onWalletReady={(w) => {
+          setWalletInfo({
+            address: w.address,
+            walletType: "circle_developer_controlled",
+            network: w.chain,
+          });
+          setDcwOpen(false);
+        }}
       />
 
       <WalletConnectModal

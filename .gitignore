@@ -40,3 +40,4 @@ scripts/*.ts
 scripts/*.sh
 .env*
 _test_reason.cjs
+scripts/

@@ -1,16 +1,17 @@
 /**
  * POST /api/paylabs/dcw/create-wallet
  *
- * Creates (or returns existing) DCW wallet for a user email.
- * DCW = Developer-Controlled Wallet — Circle holds keys, app signs x402 server-side.
+ * Creates DCW wallet for the authenticated session user.
+ * REQUIRES valid session cookie (passkey auth).
  *
- * Body: { email: string }
+ * No body required — user identity comes from session.
  * Returns: { walletId, address, chain, isNew }
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { createRequire } from "node:module";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { getSession } from "@/lib/paylabs/auth/session";
 
 const _require = createRequire(import.meta.url);
 
@@ -20,80 +21,59 @@ let _dcwClient: any = null;
 
 function getDcwClient() {
   if (_dcwClient) return _dcwClient;
-
   const apiKey = process.env.CIRCLE_API_KEY;
   const entitySecret = process.env.CIRCLE_ENTITY_SECRET;
-
   if (!apiKey || !entitySecret) {
     throw new Error("CIRCLE_API_KEY and CIRCLE_ENTITY_SECRET required");
   }
-
   const mod = _require("@circle-fin/developer-controlled-wallets");
-  _dcwClient = mod.initiateDeveloperControlledWalletsClient({
-    apiKey,
-    entitySecret,
-  });
+  _dcwClient = mod.initiateDeveloperControlledWalletsClient({ apiKey, entitySecret });
   return _dcwClient;
 }
 
-// ─── Wallet Set Management ───────────────────────────────────
+// ─── Wallet Set ──────────────────────────────────────────────
 
 const WALLET_SET_NAME = "PayLabs-DCW-Global";
 let _walletSetId: string | null = null;
 
 async function getOrCreateWalletSetId(): Promise<string> {
   if (_walletSetId) return _walletSetId;
-
   const client = getDcwClient();
-
-  // Try to find existing wallet set
   try {
     const listResp = await client.getWalletSets();
     const sets = listResp?.data?.walletSets || [];
     const existing = sets.find((s: any) => s.name === WALLET_SET_NAME);
-    if (existing) {
-      _walletSetId = existing.id;
-      return _walletSetId!;
-    }
-  } catch {
-    // If listing fails, create a new one
-  }
-
-  // Create new wallet set
-  const createResp = await client.createWalletSet({
-    name: WALLET_SET_NAME,
-  });
+    if (existing) { _walletSetId = existing.id; return _walletSetId!; }
+  } catch {}
+  const createResp = await client.createWalletSet({ name: WALLET_SET_NAME });
   _walletSetId = createResp?.data?.walletSet?.id;
-  if (!_walletSetId) {
-    throw new Error("Failed to create wallet set");
-  }
+  if (!_walletSetId) throw new Error("Failed to create wallet set");
   return _walletSetId;
 }
 
-// ─── Main Handler ────────────────────────────────────────────
+// ─── Handler ─────────────────────────────────────────────────
 
-export async function POST(req: NextRequest) {
+export async function POST(_req: NextRequest) {
   try {
-    const body = await req.json();
-    const email = (body.email || "").trim().toLowerCase();
-
-    if (!email || !email.includes("@")) {
-      return NextResponse.json(
-        { ok: false, error: "Valid email required" },
-        { status: 400 }
-      );
+    // 1. Auth required — session identity, not email from body
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ ok: false, error: "Authentication required" }, { status: 401 });
     }
 
-    // 1. Check if wallet already exists for this email
+    const userId = session.sub;
+    const email = session.email;
+
+    // 2. Check if wallet already exists
     const { data: existing } = await supabaseAdmin()
       .from("paylabs_dcw_wallets")
-      .select("wallet_id, wallet_address, chain, status")
-      .eq("email", email)
-      .eq("status", "active")
+      .select("wallet_id, wallet_address, chain")
+      .eq("id", userId)
+      .not("wallet_id", "eq", "")
       .limit(1)
       .single();
 
-    if (existing) {
+    if (existing?.wallet_id) {
       return NextResponse.json({
         ok: true,
         walletId: existing.wallet_id,
@@ -103,7 +83,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 2. Create new DCW wallet via Circle SDK
+    // 3. Create DCW wallet via Circle SDK
     const client = getDcwClient();
     const walletSetId = await getOrCreateWalletSetId();
 
@@ -114,21 +94,17 @@ export async function POST(req: NextRequest) {
       walletSetId,
     });
 
-    const wallets = createResp?.data?.wallets || [];
-    const wallet = wallets[0];
-
+    const wallet = createResp?.data?.wallets?.[0];
     if (!wallet?.id || !wallet?.address) {
       console.error("[dcw/create-wallet] Circle SDK returned no wallet:", JSON.stringify(createResp?.data));
-      return NextResponse.json(
-        { ok: false, error: "Circle SDK failed to create wallet" },
-        { status: 502 }
-      );
+      return NextResponse.json({ ok: false, error: "Circle SDK failed to create wallet" }, { status: 502 });
     }
 
-    // 3. Store in Supabase
-    const { error: insertError } = await supabaseAdmin()
+    // 4. Upsert in Supabase (user row may exist from passkey registration with empty wallet_id)
+    const { error: upsertError } = await supabaseAdmin()
       .from("paylabs_dcw_wallets")
-      .insert({
+      .upsert({
+        id: userId,
         email,
         wallet_id: wallet.id,
         wallet_address: wallet.address.toLowerCase(),
@@ -136,12 +112,10 @@ export async function POST(req: NextRequest) {
         chain: "ARC-TESTNET",
         account_type: "EOA",
         status: "active",
-      });
+      }, { onConflict: "id" });
 
-    if (insertError) {
-      console.error("[dcw/create-wallet] Supabase insert error:", insertError);
-      // Wallet was created in Circle but not stored — still return it
-      // The user can retry and we'll find it via Circle API
+    if (upsertError) {
+      console.error("[dcw/create-wallet] Supabase upsert error:", upsertError);
     }
 
     return NextResponse.json({
@@ -154,9 +128,6 @@ export async function POST(req: NextRequest) {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[dcw/create-wallet] Error:", msg);
-    return NextResponse.json(
-      { ok: false, error: msg },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }

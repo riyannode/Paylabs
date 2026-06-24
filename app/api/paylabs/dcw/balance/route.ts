@@ -1,54 +1,40 @@
 /**
- * GET /api/paylabs/dcw/balance?email=... OR ?address=...
+ * GET /api/paylabs/dcw/balance
  *
- * Returns DCW wallet info + Gateway balance for a user.
- * Gateway balance = USDC available for x402 payments.
+ * Returns DCW wallet info + Gateway balance for the authenticated user.
+ * REQUIRES valid session cookie.
  *
- * Returns: { ok, walletId, address, gatewayBalance, walletBalance }
+ * Returns: { ok, walletId, address, gateway }
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { getSession } from "@/lib/paylabs/auth/session";
 import { checkGatewayBalance } from "@/lib/paylabs/x402/gateway-balance";
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
-    const email = req.nextUrl.searchParams.get("email")?.trim().toLowerCase();
-    const address = req.nextUrl.searchParams.get("address")?.trim().toLowerCase();
-
-    if (!email && !address) {
-      return NextResponse.json(
-        { ok: false, error: "email or address query param required" },
-        { status: 400 }
-      );
+    // Auth required
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ ok: false, error: "Authentication required" }, { status: 401 });
     }
 
-    // 1. Look up wallet in Supabase
-    let query = supabaseAdmin()
+    // Look up wallet by session user ID
+    const { data: wallet, error } = await supabaseAdmin()
       .from("paylabs_dcw_wallets")
-      .select("wallet_id, wallet_address, chain, status")
-      .eq("status", "active")
-      .limit(1);
+      .select("wallet_id, wallet_address, chain")
+      .eq("id", session.sub)
+      .not("wallet_id", "eq", "")
+      .limit(1)
+      .single();
 
-    if (email) {
-      query = query.eq("email", email);
-    } else if (address) {
-      query = query.eq("wallet_address", address);
+    if (error || !wallet?.wallet_id) {
+      return NextResponse.json({ ok: false, error: "No DCW wallet found" }, { status: 404 });
     }
 
-    const { data: wallet, error } = await query.single();
-
-    if (error || !wallet) {
-      return NextResponse.json(
-        { ok: false, error: "No DCW wallet found" },
-        { status: 404 }
-      );
-    }
-
-    // 2. Check Gateway balance
-    const gwBalance = await checkGatewayBalance({
-      depositor: wallet.wallet_address,
-    });
+    // Check Gateway balance
+    const gwBalance = await checkGatewayBalance({ depositor: wallet.wallet_address });
 
     return NextResponse.json({
       ok: true,
@@ -65,9 +51,6 @@ export async function GET(req: NextRequest) {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[dcw/balance] Error:", msg);
-    return NextResponse.json(
-      { ok: false, error: msg },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }
