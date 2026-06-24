@@ -51,13 +51,34 @@ import { randomUUID } from "node:crypto";
 // callPaidSeller handles: send → 402 challenge → sign → retry.
 
 async function resolveAppUrl(): Promise<string> {
-  // Prefer VERCEL_URL (auto-set by Vercel to current deployment hostname)
-  // to avoid chicken-and-egg: PAYLABS_APP_URL may point to old deployment
-  const base = (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "")
+  // Priority: PAYLABS_INTERNAL_APP_URL > VERCEL_URL > PAYLABS_APP_URL
+  // PAYLABS_INTERNAL_APP_URL is a dedicated override for serverless self-calls
+  // when VERCEL_URL auto-detection is unreliable.
+  const raw =
+    process.env.PAYLABS_INTERNAL_APP_URL
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "")
     || process.env.PAYLABS_APP_URL
     || "";
-  if (!base) throw new Error("config_error: No VERCEL_URL or PAYLABS_APP_URL");
-  return base.replace(/\/+$/, "");
+  if (!raw) throw new Error("config_error: No PAYLABS_INTERNAL_APP_URL, VERCEL_URL, or PAYLABS_APP_URL");
+
+  // Normalize: add https:// if missing, strip trailing slash
+  let base = raw.trim();
+  if (!/^https?:\/\//.test(base)) base = `https://${base}`;
+  base = base.replace(/\/+$/, "");
+
+  // Validate: must parse as URL with non-empty hostname
+  try {
+    const parsed = new URL(base);
+    if (!parsed.hostname) throw new Error("empty hostname");
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      throw new Error(`invalid protocol: ${parsed.protocol}`);
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`config_error: invalid resolved app URL: ${msg}`);
+  }
+
+  return base;
 }
 
 type X402CallResult = {
@@ -76,6 +97,29 @@ async function callBrainX402(dcwSigner: import("@/lib/paylabs/x402/buyer-transpo
   const { callPaidSeller } = await import("@/lib/paylabs/x402/buyer-transport");
 
   const base = await resolveAppUrl();
+
+  // ── Safe diagnostics: log self-call target (no secrets) ──
+  let selectedBaseSource = "unknown";
+  if (process.env.VERCEL_URL) selectedBaseSource = "VERCEL_URL";
+  else if (process.env.PAYLABS_INTERNAL_APP_URL) selectedBaseSource = "PAYLABS_INTERNAL_APP_URL";
+  else if (process.env.PAYLABS_APP_URL) selectedBaseSource = "PAYLABS_APP_URL";
+
+  const sellerUrl = `${base}/api/paylabs/brain/run`;
+  let sellerHostname = "";
+  let sellerPath = "/api/paylabs/brain/run";
+  try {
+    const parsed = new URL(sellerUrl);
+    sellerHostname = parsed.hostname;
+    sellerPath = parsed.pathname;
+  } catch { /* ignore parse error */ }
+
+  console.log("[x402_self_call_debug] sellerService=brain", {
+    selectedBaseSource,
+    sellerHostname,
+    sellerPath,
+    discoveryRunIdShort: body.discoveryRunId?.substring(0, 8),
+  });
+
   const result = await callPaidSeller(dcwSigner, {
     sellerUrl: `${base}/api/paylabs/brain/run`,
     method: "POST",
@@ -88,6 +132,14 @@ async function callBrainX402(dcwSigner: import("@/lib/paylabs/x402/buyer-transpo
     discoveryRunId: body.discoveryRunId,
     maxAmountUsdc: "0.001",
     requirePayment: true,
+  });
+
+  // ── Safe diagnostics: log self-call result (no secrets) ──
+  console.log("[x402_self_call_debug] result sellerService=brain", {
+    ok: result.ok,
+    status: result.status ?? "n/a",
+    hasError: !!result.error,
+    errorClass: result.error?.substring(0, 80) || "none",
   });
 
   return {
