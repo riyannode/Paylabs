@@ -12,17 +12,50 @@ type BatchResolverLinkProps = {
 };
 
 type ResolverResult = {
-  status: string;
+  ok: boolean;
+  status?: string;
+  direct_explorer_url?: string | null;
   batch_tx_hash?: string | null;
   batch_explorer_url?: string | null;
+  matched_by?: string | null;
 };
+
+/**
+ * Map resolver status to user-facing label.
+ * Never shows raw status strings to the user.
+ */
+function statusLabel(status: string | null, batchResolved: boolean): string | null {
+  if (batchResolved) return "Batch resolved";
+  if (!status) return null;
+  switch (status) {
+    case "missing_settlement_id":
+      return "No settlement captured";
+    case "pending":
+    case "received":
+    case "processing":
+    case "queued":
+      return "Batch pending";
+    case "unresolved":
+      return "Batch tx not found yet";
+    case "gateway_fetch_failed":
+    case "gateway_fetch_error":
+      return "Gateway lookup failed";
+    case "completed":
+    case "confirmed":
+    case "settled":
+      return "Batch tx not found yet";
+    default:
+      return status;
+  }
+}
 
 /**
  * Renders payment links for dashboard x402 Service Payments and Receipts.
  *
  * - x402 payment ↗ (direct explorer link via hrefFromTx)
- * - Batch resolver ↗ (clickable, fetches once on click)
+ * - Check batch / Check again button (fetches resolver API in background)
  * - Batch payment ↗ (when resolved, via hrefFromTx)
+ * - Small status text when pending/missing
  *
  * Never renders raw settlement UUID, Gateway response, or secrets.
  */
@@ -41,10 +74,9 @@ export default function BatchResolverLink({
   );
   const [resolverStatus, setResolverStatus] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
-  const [fetched, setFetched] = useState(!!initialBatchExplorerUrl);
 
   const handleResolverClick = useCallback(async () => {
-    if (fetched || fetching) return;
+    if (fetching) return;
     setFetching(true);
     try {
       const res = await fetch(
@@ -58,17 +90,17 @@ export default function BatchResolverLink({
         setBatchUrl(data.batch_explorer_url);
         setBatchHash(data.batch_tx_hash);
       }
-      setFetched(true);
     } catch {
       // silent — dashboard stays quiet
     } finally {
       setFetching(false);
     }
-  }, [runId, fetched, fetching]);
+  }, [runId, fetching]);
 
   // Validate URLs against explorer allowlist via shared helper
   const directHref = hrefFromTx(directExplorerUrl, directTxHash);
   const batchHref = hrefFromTx(batchUrl, batchHash);
+  const label = statusLabel(resolverStatus, !!batchHref);
 
   return (
     <div
@@ -95,22 +127,32 @@ export default function BatchResolverLink({
         </a>
       )}
 
-      {/* Batch resolver link */}
-      <a
-        href={`/api/paylabs/x402/runs/${encodeURIComponent(runId)}/batch-tx`}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={() => {
-          void handleResolverClick();
-        }}
-        style={{
-          color: "var(--muted, #888)",
-          textDecoration: "none",
-          whiteSpace: "nowrap",
-        }}
-      >
-        Batch resolver ↗
-      </a>
+      {/* Check batch button — hidden only when batchHref exists */}
+      {!batchHref && (
+        <button
+          type="button"
+          onClick={() => {
+            void handleResolverClick();
+          }}
+          disabled={fetching}
+          style={{
+            color: "var(--muted, #888)",
+            textDecoration: "none",
+            whiteSpace: "nowrap",
+            background: "none",
+            border: "none",
+            padding: 0,
+            cursor: fetching ? "default" : "pointer",
+            fontSize: 11,
+          }}
+        >
+          {fetching
+            ? "Checking…"
+            : resolverStatus
+              ? "Check again"
+              : "Check batch"}
+        </button>
+      )}
 
       {/* Batch payment link (appears when resolved) */}
       {batchHref && (
@@ -128,19 +170,15 @@ export default function BatchResolverLink({
         </a>
       )}
 
-      {/* Status badge */}
-      {!batchHref && resolverStatus && (
+      {/* Status text */}
+      {!batchHref && label && (
         <span
           style={{
             fontSize: 10,
-            padding: "1px 6px",
-            borderRadius: 4,
-            background: "var(--warning-bg, rgba(234,179,8,0.1))",
-            color: "var(--warning, #eab308)",
-            width: "fit-content",
+            color: "var(--muted, #888)",
           }}
         >
-          {resolverStatus}
+          {label}
         </span>
       )}
     </div>

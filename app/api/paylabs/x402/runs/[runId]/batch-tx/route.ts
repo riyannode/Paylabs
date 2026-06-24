@@ -42,14 +42,12 @@ export async function GET(
     );
   }
 
-  const resolverUrl = `/api/paylabs/x402/runs/${encodeURIComponent(runId)}/batch-tx`;
-
   try {
     // ── 1. Look up run ───────────────────────────────────────
     const { data: run, error: runErr } = await supabaseAdmin()
       .from("paylabs_discovery_runs")
       .select(
-        "id, entry_payment_settlement_id, entry_payment_tx_hash, entry_payment_explorer_url, entry_payment_batch_tx_hash, entry_payment_batch_explorer_url",
+        "id, entry_payment_settlement_id, entry_payment_tx_hash, entry_payment_explorer_url, entry_payment_batch_tx_hash, entry_payment_batch_explorer_url, agent_trace",
       )
       .eq("id", runId)
       .single();
@@ -61,57 +59,101 @@ export async function GET(
       );
     }
 
+    // ── 2. Resolve from agent_trace fallback ─────────────────
+    const entryPaymentTrace =
+      run.agent_trace && typeof run.agent_trace === "object"
+        ? (run.agent_trace as Record<string, any>).entry_payment
+        : null;
+
+    const settlementId =
+      run.entry_payment_settlement_id ||
+      entryPaymentTrace?.settlement_id ||
+      null;
+
+    const directTxHash =
+      run.entry_payment_tx_hash ||
+      entryPaymentTrace?.tx_hash ||
+      null;
+
     const directExplorerUrl =
       safeExplorerUrl(run.entry_payment_explorer_url) ??
-      buildTxExplorerUrl(run.entry_payment_tx_hash);
+      safeExplorerUrl(entryPaymentTrace?.explorer_url) ??
+      buildTxExplorerUrl(directTxHash);
 
-    // ── 2. If batch already resolved, return immediately ─────
-    if (run.entry_payment_batch_explorer_url && run.entry_payment_batch_tx_hash) {
+    const cachedBatchTxHash =
+      run.entry_payment_batch_tx_hash ||
+      entryPaymentTrace?.batch_tx_hash ||
+      null;
+
+    const cachedBatchExplorerUrl =
+      safeExplorerUrl(run.entry_payment_batch_explorer_url) ??
+      safeExplorerUrl(entryPaymentTrace?.batch_explorer_url) ??
+      buildTxExplorerUrl(cachedBatchTxHash);
+
+    // ── 3. If batch already cached in DB/trace, return immediately ──
+    if (cachedBatchTxHash && cachedBatchExplorerUrl) {
       return NextResponse.json({
         ok: true,
         status: "completed",
-        resolver_url: resolverUrl,
         direct_explorer_url: directExplorerUrl,
-        batch_tx_hash: run.entry_payment_batch_tx_hash,
-        batch_explorer_url: safeExplorerUrl(run.entry_payment_batch_explorer_url),
-        matched_by: "db_cached",
+        batch_tx_hash: cachedBatchTxHash,
+        batch_explorer_url: cachedBatchExplorerUrl,
+        matched_by: "db_or_trace_cached",
+        trace: {
+          has_settlement_id: !!settlementId,
+          has_direct_tx: !!directTxHash,
+          has_batch_tx: true,
+          gateway_status: null,
+        },
       });
     }
 
-    // ── 3. If no settlement ID, return missing ───────────────
-    if (!run.entry_payment_settlement_id) {
+    // ── 4. If no settlement ID, return missing ───────────────
+    if (!settlementId) {
       return NextResponse.json({
         ok: true,
         status: "missing_settlement_id",
-        resolver_url: resolverUrl,
         direct_explorer_url: directExplorerUrl,
         batch_tx_hash: null,
         batch_explorer_url: null,
+        matched_by: null,
+        trace: {
+          has_settlement_id: false,
+          has_direct_tx: !!directTxHash,
+          has_batch_tx: false,
+          gateway_status: null,
+        },
       });
     }
 
-    // ── 4. Fetch Gateway transfer status ─────────────────────
+    // ── 5. Fetch Gateway transfer status ─────────────────────
     let gatewayStatus: string;
     let gatewayUpdatedAt: string | null = null;
     let gatewayTxHash: string | null = null;
 
     try {
       const gwResp = await fetch(
-        `${GATEWAY_API}/v1/x402/transfers/${encodeURIComponent(run.entry_payment_settlement_id)}`,
+        `${GATEWAY_API}/v1/x402/transfers/${encodeURIComponent(settlementId)}`,
         { signal: AbortSignal.timeout(10_000) },
       );
       if (!gwResp.ok) {
         console.log("[batch-tx-resolver] gateway fetch failed", {
           status: gwResp.status,
-          hasSettlementId: !!run.entry_payment_settlement_id,
+          hasSettlementId: true,
         });
         return NextResponse.json({
           ok: true,
           status: "gateway_fetch_failed",
-          resolver_url: resolverUrl,
           direct_explorer_url: directExplorerUrl,
           batch_tx_hash: null,
           batch_explorer_url: null,
+          matched_by: null,
+          trace: {
+            has_settlement_id: true,
+            has_direct_tx: !!directTxHash,
+            has_batch_tx: false,
+            gateway_status: null,
+          },
         });
       }
 
@@ -135,36 +177,54 @@ export async function GET(
       return NextResponse.json({
         ok: true,
         status: "gateway_fetch_error",
-        resolver_url: resolverUrl,
         direct_explorer_url: directExplorerUrl,
         batch_tx_hash: null,
         batch_explorer_url: null,
+        matched_by: null,
+        trace: {
+          has_settlement_id: true,
+          has_direct_tx: !!directTxHash,
+          has_batch_tx: false,
+          gateway_status: null,
+        },
       });
     }
 
-    // ── 5. If still pending, return pending ──────────────────
+    // ── 6. If still pending, return pending ──────────────────
     const pendingStatuses = new Set(["pending", "received", "processing", "queued"]);
     if (pendingStatuses.has(gatewayStatus)) {
       return NextResponse.json({
         ok: true,
         status: gatewayStatus,
-        resolver_url: resolverUrl,
         direct_explorer_url: directExplorerUrl,
         batch_tx_hash: null,
         batch_explorer_url: null,
+        matched_by: null,
+        trace: {
+          has_settlement_id: true,
+          has_direct_tx: !!directTxHash,
+          has_batch_tx: false,
+          gateway_status: gatewayStatus,
+        },
       });
     }
 
-    // ── 6. Completed — resolve batch tx hash ─────────────────
+    // ── 7. Completed — resolve batch tx hash ─────────────────
     const completedStatuses = new Set(["completed", "confirmed", "settled"]);
     if (!completedStatuses.has(gatewayStatus)) {
       return NextResponse.json({
         ok: true,
         status: gatewayStatus,
-        resolver_url: resolverUrl,
         direct_explorer_url: directExplorerUrl,
         batch_tx_hash: null,
         batch_explorer_url: null,
+        matched_by: null,
+        trace: {
+          has_settlement_id: true,
+          has_direct_tx: !!directTxHash,
+          has_batch_tx: false,
+          gateway_status: gatewayStatus,
+        },
       });
     }
 
@@ -207,11 +267,11 @@ export async function GET(
 
     const batchExplorerUrl = buildTxExplorerUrl(batchTxHash);
 
-    // ── 7. Persist to all dashboard-visible tables (fire-and-forget) ──
+    // ── 8. Persist to all dashboard-visible tables (fire-and-forget) ──
     if (batchTxHash && batchExplorerUrl) {
       const db = supabaseAdmin();
 
-      // 7a. paylabs_discovery_runs
+      // 8a. paylabs_discovery_runs
       try {
         await db
           .from("paylabs_discovery_runs")
@@ -227,7 +287,7 @@ export async function GET(
         });
       }
 
-      // 7b. paylabs_service_payment_events
+      // 8b. paylabs_service_payment_events
       try {
         await db
           .from("paylabs_service_payment_events")
@@ -243,7 +303,7 @@ export async function GET(
         });
       }
 
-      // 7c. paylabs_run_events (only rows that have settlement_id)
+      // 8c. paylabs_run_events (only rows that have settlement_id)
       try {
         await db
           .from("paylabs_run_events")
@@ -260,7 +320,7 @@ export async function GET(
         });
       }
 
-      // 7d. paylabs_receipts
+      // 8d. paylabs_receipts
       try {
         await db
           .from("paylabs_receipts")
@@ -280,11 +340,16 @@ export async function GET(
     return NextResponse.json({
       ok: true,
       status: batchTxHash ? "completed" : "unresolved",
-      resolver_url: resolverUrl,
       direct_explorer_url: directExplorerUrl,
       batch_tx_hash: batchTxHash,
       batch_explorer_url: batchExplorerUrl,
       matched_by: batchTxHash ? matchedBy : null,
+      trace: {
+        has_settlement_id: true,
+        has_direct_tx: !!directTxHash,
+        has_batch_tx: !!batchTxHash,
+        gateway_status: gatewayStatus,
+      },
     });
   } catch (e) {
     console.log("[batch-tx-resolver] unexpected error", {
