@@ -45,7 +45,6 @@ import {
 } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import type { DelegatedRunQuote } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import { randomUUID } from "node:crypto";
-import { computeBodyHash } from "@/lib/paylabs/x402/seller-challenge";
 
 // ─── x402 Orchestration via callPaidSeller ──────────────────
 // Each endpoint handles its own x402 settlement.
@@ -594,9 +593,6 @@ export async function POST(req: NextRequest) {
   const goal = (body.goal || "").trim();
   const userWallet = (body.user_wallet || "").trim().toLowerCase();
   const rawTier = (body.route_tier || DEFAULT_EXTERNAL_TIER).toLowerCase();
-
-  // Compute bodyHash for POST body binding (used in x402 challenge)
-  const bodyHash = computeBodyHash(body);
   // "auto" defers to Brain's route_tier_hint after planning
   const routeTier = rawTier === "auto"
     ? "auto" as unknown as ExternalRouteTier
@@ -710,7 +706,7 @@ export async function POST(req: NextRequest) {
 
   // ── x402 orchestration: Brain + macro-node endpoints ────
   // Fail closed: x402 must be enabled for production
-  return runX402Path(req, discoveryRunId, goal, userWallet, budgetUsdc, routeTier, bodyHash, body);
+  return runX402Path(req, discoveryRunId, goal, userWallet, budgetUsdc, routeTier);
 }
 
 // ─── x402 Path ──────────────────────────────────────────────
@@ -722,8 +718,6 @@ async function runX402Path(
   userWallet: string,
   budgetUsdc: number,
   routeTier: ExternalRouteTier,
-  bodyHash: string = "",
-  body: Record<string, unknown> = {},
 ): Promise<NextResponse> {
   try {
     // Initialize DCW signer for x402 payment signing
@@ -835,7 +829,6 @@ async function runX402Path(
       const { headerValue } = buildCustomerEntryChallenge(
         quote.plannedCostUsdc,
         retryUrl,
-        bodyHash,
       );
 
       // Store pending entry payment status
@@ -889,25 +882,6 @@ async function runX402Path(
       customerPaymentSignature,
       quote.plannedCostUsdc,
     );
-
-    // Verify bodyHash: extract from signed payment payload, compare with current body
-    if (entryResult.ok && entryResult.settled) {
-      try {
-        const decoded = JSON.parse(Buffer.from(customerPaymentSignature, "base64").toString("utf-8"));
-        const signedBodyHash = decoded?.accepted?.extra?.bodyHash;
-        if (signedBodyHash) {
-          const currentBodyHash = computeBodyHash(body);
-          if (currentBodyHash !== signedBodyHash) {
-            return NextResponse.json(
-              { ok: false, error: "Body hash mismatch: request body differs from signed entry payment" },
-              { status: 402 }
-            );
-          }
-        }
-      } catch {
-        // proceed if decode fails (verify+settle already passed)
-      }
-    }
 
     // Blocker 1: fail closed if payer != userWallet
     // Skip check when Gateway settle doesn't return payer (ARC-TESTNET returns null)

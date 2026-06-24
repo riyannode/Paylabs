@@ -57,8 +57,6 @@ export interface X402ChallengeRequirements {
     name: string;
     version: string;
     verifyingContract: string;
-    /** SHA-256 hash of canonical request body for POST body binding (app-level, not Circle protocol) */
-    bodyHash?: string;
   };
 }
 
@@ -116,55 +114,6 @@ const ARC_NETWORK = "eip155:5042002";
 /** x402 protocol version */
 export const X402_VERSION = 2;
 
-// ─── Body Hash Helpers ──────────────────────────────────────────
-
-import { createHash } from "node:crypto";
-
-/**
- * Canonical JSON: sorted keys recursively, compact (no whitespace).
- * Matches Python _canonical_json() and JS sidecar canonicalize().
- */
-function canonicalize(obj: unknown): string {
-  if (obj === null || typeof obj !== "object") return JSON.stringify(obj);
-  if (Array.isArray(obj)) return "[" + obj.map(canonicalize).join(",") + "]";
-  const record = obj as Record<string, unknown>;
-  return (
-    "{" +
-    Object.keys(record)
-      .sort()
-      .map((k) => JSON.stringify(k) + ":" + canonicalize(record[k]))
-      .join(",") +
-    "}"
-  );
-}
-
-/**
- * Compute bodyHash from a parsed JSON body.
- * Returns 16-char hex prefix of SHA-256 of canonical JSON.
- * Returns empty string if body is null/undefined.
- */
-export function computeBodyHash(body: unknown): string {
-  if (body == null) return "";
-  const canonical = canonicalize(body);
-  return createHash("sha256").update(canonical).digest("hex").slice(0, 16);
-}
-
-/**
- * Verify bodyHash on paid retry. Returns error message or null if valid.
- * Rejects if bodyHash was in challenge but retry body doesn't match.
- */
-export function verifyBodyHash(
-  challengeBodyHash: string | undefined,
-  retryBody: unknown
-): string | null {
-  if (!challengeBodyHash) return null; // no bodyHash in challenge = no binding
-  const retryHash = computeBodyHash(retryBody);
-  if (retryHash !== challengeBodyHash) {
-    return `Body hash mismatch: expected ${challengeBodyHash}, got ${retryHash}. Request body must match the original unpaid request.`;
-  }
-  return null;
-}
-
 /**
  * Default timeout for payment authorization.
  * MUST match GATEWAY_AUTH_VALIDITY_WINDOW_SECONDS from @circle-fin/x402-batching
@@ -206,16 +155,9 @@ export function buildPaymentRequirements(
 export function buildX402Challenge(
   sellerAddress: string,
   amountAtomic: string,
-  resourceUrl?: string,
-  bodyHash?: string
+  resourceUrl?: string
 ): X402ChallengeResponse {
   const requirements = buildPaymentRequirements(sellerAddress, amountAtomic);
-
-  // Include bodyHash in extra for POST body binding (not part of Circle protocol,
-  // but carried through and verified on retry to prevent body tampering)
-  if (bodyHash) {
-    requirements.extra = { ...requirements.extra, bodyHash };
-  }
 
   return {
     x402Version: X402_VERSION,
