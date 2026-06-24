@@ -529,6 +529,7 @@ export default async function DashboardPage() {
                         initialBatchExplorerUrl={r.batch_explorer_url}
                         initialBatchTxHash={r.batch_tx_hash}
                         directExplorerUrl={r.explorer_url}
+                        directTxHash={r.tx_hash}
                       />
                     </td>
                     <td className="muted" style={{ fontSize: 10, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -584,6 +585,7 @@ export default async function DashboardPage() {
                         initialBatchExplorerUrl={r.last_batch_explorer_url}
                         initialBatchTxHash={r.last_batch_tx_hash}
                         directExplorerUrl={r.last_explorer_url}
+                        directTxHash={r.last_tx_hash}
                       />
                     </td>
                     <td className="muted" style={{ fontSize: 11, maxWidth: 250, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

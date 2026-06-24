@@ -207,10 +207,13 @@ export async function GET(
 
     const batchExplorerUrl = buildTxExplorerUrl(batchTxHash);
 
-    // ── 7. Persist to DB (fire-and-forget) ──────────────────
+    // ── 7. Persist to all dashboard-visible tables (fire-and-forget) ──
     if (batchTxHash && batchExplorerUrl) {
+      const db = supabaseAdmin();
+
+      // 7a. paylabs_discovery_runs
       try {
-        await supabaseAdmin()
+        await db
           .from("paylabs_discovery_runs")
           .update({
             entry_payment_batch_tx_hash: batchTxHash,
@@ -218,7 +221,56 @@ export async function GET(
           })
           .eq("id", runId);
       } catch (e) {
-        console.log("[batch-tx-resolver] db persist failed", {
+        console.log("[batch-tx-resolver] db persist discovery_runs failed", {
+          hasError: true,
+          errorType: e instanceof Error ? e.message : "unknown",
+        });
+      }
+
+      // 7b. paylabs_service_payment_events
+      try {
+        await db
+          .from("paylabs_service_payment_events")
+          .update({
+            batch_tx_hash: batchTxHash,
+            batch_explorer_url: batchExplorerUrl,
+          })
+          .eq("discovery_run_id", runId);
+      } catch (e) {
+        console.log("[batch-tx-resolver] db persist service_payment_events failed", {
+          hasError: true,
+          errorType: e instanceof Error ? e.message : "unknown",
+        });
+      }
+
+      // 7c. paylabs_run_events (only rows that have settlement_id)
+      try {
+        await db
+          .from("paylabs_run_events")
+          .update({
+            batch_tx_hash: batchTxHash,
+            batch_explorer_url: batchExplorerUrl,
+          })
+          .eq("discovery_run_id", runId)
+          .not("settlement_id", "is", null);
+      } catch (e) {
+        console.log("[batch-tx-resolver] db persist run_events failed", {
+          hasError: true,
+          errorType: e instanceof Error ? e.message : "unknown",
+        });
+      }
+
+      // 7d. paylabs_receipts
+      try {
+        await db
+          .from("paylabs_receipts")
+          .update({
+            last_batch_tx_hash: batchTxHash,
+            last_batch_explorer_url: batchExplorerUrl,
+          })
+          .eq("discovery_run_id", runId);
+      } catch (e) {
+        console.log("[batch-tx-resolver] db persist receipts failed", {
           hasError: true,
           errorType: e instanceof Error ? e.message : "unknown",
         });

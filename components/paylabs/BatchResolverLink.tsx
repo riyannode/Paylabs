@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { hrefFromTx } from "@/lib/paylabs/x402/payment-links";
 
 type BatchResolverLinkProps = {
   runId: string;
   initialBatchExplorerUrl?: string | null;
   initialBatchTxHash?: string | null;
   directExplorerUrl?: string | null;
+  directTxHash?: string | null;
 };
 
 type ResolverResult = {
@@ -16,11 +18,11 @@ type ResolverResult = {
 };
 
 /**
- * Renders payment links for dashboard x402 Service Payments.
+ * Renders payment links for dashboard x402 Service Payments and Receipts.
  *
- * - x402 payment ↗ (direct explorer link)
+ * - x402 payment ↗ (direct explorer link via hrefFromTx)
  * - Batch resolver ↗ (clickable, fetches once on click)
- * - Batch payment ↗ (when resolved)
+ * - Batch payment ↗ (when resolved, via hrefFromTx)
  *
  * Never renders raw settlement UUID, Gateway response, or secrets.
  */
@@ -29,6 +31,7 @@ export default function BatchResolverLink({
   initialBatchExplorerUrl,
   initialBatchTxHash,
   directExplorerUrl,
+  directTxHash,
 }: BatchResolverLinkProps) {
   const [batchUrl, setBatchUrl] = useState<string | null>(
     initialBatchExplorerUrl ?? null,
@@ -63,8 +66,9 @@ export default function BatchResolverLink({
     }
   }, [runId, fetched, fetching]);
 
-  const hasDirect = !!directExplorerUrl;
-  const hasBatch = !!batchUrl;
+  // Validate URLs against explorer allowlist via shared helper
+  const directHref = hrefFromTx(directExplorerUrl, directTxHash);
+  const batchHref = hrefFromTx(batchUrl, batchHash);
 
   return (
     <div
@@ -76,9 +80,9 @@ export default function BatchResolverLink({
       }}
     >
       {/* Direct x402 link */}
-      {hasDirect && (
+      {directHref && (
         <a
-          href={directExplorerUrl!}
+          href={directHref}
           target="_blank"
           rel="noopener noreferrer"
           style={{
@@ -96,8 +100,7 @@ export default function BatchResolverLink({
         href={`/api/paylabs/x402/runs/${encodeURIComponent(runId)}/batch-tx`}
         target="_blank"
         rel="noopener noreferrer"
-        onClick={(e) => {
-          // Fetch silently on click to update batch link
+        onClick={() => {
           void handleResolverClick();
         }}
         style={{
@@ -110,9 +113,9 @@ export default function BatchResolverLink({
       </a>
 
       {/* Batch payment link (appears when resolved) */}
-      {hasBatch && (
+      {batchHref && (
         <a
-          href={batchUrl!}
+          href={batchHref}
           target="_blank"
           rel="noopener noreferrer"
           style={{
@@ -126,7 +129,7 @@ export default function BatchResolverLink({
       )}
 
       {/* Status badge */}
-      {!hasBatch && resolverStatus && (
+      {!batchHref && resolverStatus && (
         <span
           style={{
             fontSize: 10,
