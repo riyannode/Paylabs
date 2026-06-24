@@ -4,6 +4,8 @@ import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import SidebarPanel from "@/components/paylabs/SidebarPanel";
 import WalletConnectModal from "@/components/paylabs/WalletConnectModal";
 import type { WalletState, WalletInfo, UcwBalance } from "@/components/paylabs/WalletConnectModal";
+import PaymentExplorerLinks from "@/components/paylabs/PaymentExplorerLinks";
+import { safeExplorerUrl as validateExplorerUrl } from "@/lib/paylabs/x402/payment-links";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -47,6 +49,8 @@ type SafeRunResult = {
   lockedServices: string[];
   tierDecisionReason: string | null;
   sourcesUsed: SourceLink[];
+  // Payment link fields — chat renders direct explorer link only, never settlement UUID
+  entryExplorerUrl: string | null;
 };
 
 type ChatMessage =
@@ -148,6 +152,12 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
         .filter((s) => /^https?:\/\//.test(s.url))
     : [];
 
+  // Extract entry payment link fields (safe URLs only, never settlement UUID)
+  const entryPayment = data?.entry_payment as Record<string, unknown> | undefined;
+  const agentTrace = data?.agent_trace as Record<string, unknown> | undefined;
+  const agentTraceEntry = agentTrace?.entry_payment as Record<string, unknown> | undefined;
+  const resolvedEntry = entryPayment ?? agentTraceEntry;
+
   return {
     ok: !!data?.ok,
     runId: (data?.discovery_run_id as string) ?? (data?.id as string) ?? null,
@@ -168,6 +178,7 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     lockedServices: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_services as string[]) ?? [],
     tierDecisionReason: (brainPlanning?.tier_decision_reason as string) ?? null,
     sourcesUsed,
+    entryExplorerUrl: validateExplorerUrl(resolvedEntry?.explorer_url) ?? validateExplorerUrl(data?.entry_payment_explorer_url),
   };
 }
 
@@ -1701,6 +1712,12 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
           </div>
         )}
       </div>
+      {result.entryExplorerUrl && (
+        <PaymentExplorerLinks
+          directExplorerUrl={result.entryExplorerUrl}
+          className="pl-payment-links-inline"
+        />
+      )}
       {result.runId && (
         <div className="pl-result-links">
           <a href={`/dashboard?run=${result.runId}`}>View details</a>
