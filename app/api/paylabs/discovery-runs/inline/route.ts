@@ -304,7 +304,18 @@ async function runX402Orchestration(params: {
   for (const node of macroNodes) {
     // Build payload: previous step's output feeds next step
     let payload: Record<string, unknown> = {};
-    if (node === "payment_decision") {
+    if (node === "discovery_planner") {
+      // V3: Pass Brain planning fields to discovery_planner for better query expansion
+      const bp = resolvedBrainData as Record<string, unknown> | null;
+      if (bp) {
+        payload = {
+          brain_normalized_goal: bp.normalized_goal || null,
+          brain_discovery_strategy: bp.discovery_strategy || null,
+          brain_suggested_query_variants: bp.suggested_query_variants || [],
+          brain_safe_summary: bp.safe_brain_summary || null,
+        };
+      }
+    } else if (node === "payment_decision") {
       const prev = macroNodeResults["discovery_planner"];
       if (prev) {
         const d = (prev.data as Record<string, unknown>) || prev;
@@ -1074,6 +1085,54 @@ async function runX402Path(
       console.error("[paylabs_source_context] build failed", { discoveryRunId, error: sourceContextError });
     }
 
+    // ── V3: Build source-grounded final_answer ──
+    let finalAnswer: string | null = null;
+    try {
+      const { buildSourceGroundedFinalAnswer } = await import("@/lib/paylabs/sources/source-final-answer");
+      const sourcesUsed = exitOutput.sources_used || [];
+      finalAnswer = buildSourceGroundedFinalAnswer({
+        goal,
+        sourcesUsed,
+        sourceConfidence: exitOutput.source_confidence || 0,
+        retrievalMode: sourcesUsed.some((s) => s.source_kind === "rsshub_live") ? "rsshub_live" : sourcesUsed.length > 0 ? "db_fallback" : "none",
+      });
+    } catch (e: unknown) {
+      console.error("[paylabs_final_answer] build failed", {
+        error: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
+      });
+    }
+
+    // ── V3: Store source_context snapshot in agent_trace ──
+    if (exitOutput.sources_used && exitOutput.sources_used.length > 0) {
+      try {
+        await supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .update({
+            agent_trace: {
+              source_context: {
+                source_count: exitOutput.source_count || 0,
+                source_confidence: exitOutput.source_confidence || 0,
+                retrieval_mode: exitOutput.sources_used.some((s) => s.source_kind === "rsshub_live") ? "rsshub_live" : "db_fallback",
+                sources_used: exitOutput.sources_used.slice(0, 20).map((s) => ({
+                  title: s.title,
+                  url: s.url,
+                  domain: s.domain,
+                  rank: s.rank,
+                  source_kind: s.source_kind,
+                  provider: s.provider,
+                })),
+              },
+              final_answer: finalAnswer,
+            },
+          })
+          .eq("id", discoveryRunId);
+      } catch (e: unknown) {
+        console.error("[paylabs_source_snapshot] store failed", {
+          error: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
+        });
+      }
+    }
+
     // ── Write canonical x402 visibility (events + receipt) ──
     let visibilityError: string | null = null;
     try {
@@ -1094,6 +1153,7 @@ async function runX402Path(
 
     return NextResponse.json({
       ok: result.status === "completed",
+      final_answer: finalAnswer,
       discovery_run_id: discoveryRunId,
       status: result.status,
       requested_route_tier: routeTier,

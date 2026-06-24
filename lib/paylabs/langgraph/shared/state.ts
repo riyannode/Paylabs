@@ -81,6 +81,17 @@ export const DiscoveryPlannerState = Annotation.Root({
     feed_item_id: string;
     title: string;
     publisher: string;
+    source_kind?: string;
+    provider?: string;
+    source_url?: string;
+    domain?: string | null;
+    summary?: string;
+    author?: string;
+    published_at?: string | null;
+    route_path?: string;
+    rsshub_feed_url?: string | null;
+    docs_url?: string | null;
+    reason?: string;
     rank: number;
     relevance_score: number;
   }>>({

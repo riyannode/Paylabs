@@ -192,6 +192,11 @@ async function executeMacroNode(
         userBudgetUsdc: input.userBudgetUsdc,
         selectedServices,
         parentWalletId,
+        // V3: Brain pass-through for better query expansion
+        brainNormalizedGoal: typeof payload?.brain_normalized_goal === "string" ? payload.brain_normalized_goal : undefined,
+        brainDiscoveryStrategy: typeof payload?.brain_discovery_strategy === "string" ? payload.brain_discovery_strategy : undefined,
+        brainSuggestedQueryVariants: Array.isArray(payload?.brain_suggested_query_variants) ? payload.brain_suggested_query_variants as string[] : undefined,
+        brainSafeSummary: typeof payload?.brain_safe_summary === "string" ? payload.brain_safe_summary : undefined,
       });
       for (const ev of graphResult.serviceEvaluations) {
         addServiceEvaluation(state, ev);

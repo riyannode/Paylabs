@@ -148,6 +148,17 @@ async function processSignalResult(state: DiscoveryPlannerStateType) {
       feed_item_id: string;
       title: string;
       publisher: string;
+      source_kind?: string;
+      provider?: string;
+      source_url?: string;
+      domain?: string | null;
+      summary?: string;
+      author?: string;
+      published_at?: string | null;
+      route_path?: string;
+      rsshub_feed_url?: string | null;
+      docs_url?: string | null;
+      reason?: string;
       rank: number;
       relevance_score: number;
     }>;
@@ -220,6 +231,17 @@ export interface RunDiscoveryPlannerGraphOutput {
     feed_item_id: string;
     title: string;
     publisher: string;
+    source_kind?: string;
+    provider?: string;
+    source_url?: string;
+    domain?: string | null;
+    summary?: string;
+    author?: string;
+    published_at?: string | null;
+    route_path?: string;
+    rsshub_feed_url?: string | null;
+    docs_url?: string | null;
+    reason?: string;
     rank: number;
     relevance_score: number;
   }>;
@@ -282,20 +304,36 @@ export async function runDiscoveryPlannerGraph(
     // Compute normalizedGoal: graph result → brain input → user input
     const normalizedGoal = result.normalizedGoal || input.brainNormalizedGoal || input.userGoal;
 
-    // Build safe source cards from top 10 ranked candidates
+    // Build safe source cards from ranked candidates
+    // Live candidates: build directly from candidate fields (no DB lookup)
+    // DB candidates: enrich via getFeedItemById
     const rankedCandidates = result.rankedCandidates || [];
     const sourceCards: SafeSourceCard[] = [];
-    const { getFeedItemById } = await import("../../../ai/tools");
-    for (const candidate of rankedCandidates.slice(0, 10)) {
-      const feedItem = (await getFeedItemById(candidate.feed_item_id)) as Record<string, unknown> | null;
-      sourceCards.push({
-        feed_item_id: candidate.feed_item_id,
-        title: String(feedItem?.title || candidate.title || ""),
-        source_url: String(feedItem?.canonical_url || ""),
-        publisher: String(feedItem?.publisher || candidate.publisher || ""),
-        claim_status: String(feedItem?.verification_status || "unclaimed"),
-        creator_wallet: feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : null,
-      });
+    const maxSourceCards = Number(process.env.PAYLABS_SOURCE_CONTEXT_MAX_SOURCES) || 20;
+    for (const candidate of rankedCandidates.slice(0, maxSourceCards)) {
+      // Live candidate: has source_url directly
+      if (candidate.source_kind === "rsshub_live" || candidate.source_kind === "tavily_live") {
+        sourceCards.push({
+          feed_item_id: candidate.feed_item_id,
+          title: candidate.title || "",
+          source_url: candidate.source_url || "",
+          publisher: candidate.publisher || "",
+          claim_status: "unclaimed",
+          creator_wallet: null,
+        });
+      } else {
+        // DB candidate: enrich via getFeedItemById
+        const { getFeedItemById } = await import("../../../ai/tools");
+        const feedItem = (await getFeedItemById(candidate.feed_item_id)) as Record<string, unknown> | null;
+        sourceCards.push({
+          feed_item_id: candidate.feed_item_id,
+          title: String(feedItem?.title || candidate.title || ""),
+          source_url: String(feedItem?.canonical_url || ""),
+          publisher: String(feedItem?.publisher || candidate.publisher || ""),
+          claim_status: String(feedItem?.verification_status || "unclaimed"),
+          creator_wallet: feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : null,
+        });
+      }
     }
 
     return {

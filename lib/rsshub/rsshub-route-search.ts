@@ -1,0 +1,200 @@
+/**
+ * RSSHub Route Search
+ *
+ * Scores flattened RSSHub catalog routes against user intent.
+ * Metadata-only — no network feed fetch. Returns top candidates.
+ *
+ * No LLM. No secrets. No raw payload exposure.
+ */
+
+import type { RsshubCatalogRoute } from "./rsshub-catalog";
+import { getRsshubCatalog } from "./rsshub-catalog";
+
+// ─── Types ──────────────────────────────────────────────────
+
+export interface RsshubRouteCandidate {
+  route: RsshubCatalogRoute;
+  score: number;
+  matchedTerms: string[];
+  reason: string;
+}
+
+// ─── Scoring ────────────────────────────────────────────────
+
+function normalizeLower(s: string): string {
+  return s.toLowerCase().trim();
+}
+
+/**
+ * Score a single route against search terms.
+ * Exact entity match > title/name match > description > category > heat.
+ */
+function scoreRoute(
+  route: RsshubCatalogRoute,
+  terms: string[],
+  entityTerms: string[]
+): { score: number; matchedTerms: string[]; reason: string } {
+  let score = 0;
+  const matched: string[] = [];
+  const reasons: string[] = [];
+
+  const routeName = normalizeLower(route.name);
+  const routePath = normalizeLower(route.fullPath);
+  const routeDesc = normalizeLower(route.description);
+  const routeExample = route.example ? normalizeLower(route.example) : "";
+  const routeNsUrl = normalizeLower(route.namespaceUrl);
+  const routeCategories = route.categories.map(normalizeLower);
+
+  // 1. Exact entity match (strongest signal)
+  for (const entity of entityTerms) {
+    const e = normalizeLower(entity);
+    if (!e) continue;
+
+    // Exact name match
+    if (routeName === e || routeName.includes(e)) {
+      score += 20;
+      matched.push(entity);
+      reasons.push(`name:${entity}`);
+    }
+    // Path contains entity
+    else if (routePath.includes(e)) {
+      score += 15;
+      matched.push(entity);
+      reasons.push(`path:${entity}`);
+    }
+    // Example contains entity (strong only if entity is specific)
+    else if (routeExample.includes(e) && e.length > 3) {
+      score += 12;
+      matched.push(entity);
+      reasons.push(`example:${entity}`);
+    }
+    // Namespace URL contains entity
+    else if (routeNsUrl.includes(e)) {
+      score += 10;
+      matched.push(entity);
+      reasons.push(`nsurl:${entity}`);
+    }
+    // Description contains entity
+    else if (routeDesc.includes(e)) {
+      score += 5;
+      matched.push(entity);
+      reasons.push(`desc:${entity}`);
+    }
+  }
+
+  // 2. General term match (weaker)
+  for (const term of terms) {
+    const t = normalizeLower(term);
+    if (!t || t.length < 3) continue;
+    // Skip if already matched as entity
+    if (matched.some((m) => normalizeLower(m).includes(t))) continue;
+
+    if (routeName.includes(t)) {
+      score += 8;
+      matched.push(term);
+      reasons.push(`name_term:${term}`);
+    } else if (routePath.includes(t)) {
+      score += 5;
+      matched.push(term);
+    } else if (routeDesc.includes(t)) {
+      score += 2;
+    }
+  }
+
+  // 3. Category match
+  for (const term of [...entityTerms, ...terms]) {
+    const t = normalizeLower(term);
+    if (routeCategories.some((c) => c.includes(t) || t.includes(c))) {
+      score += 3;
+      reasons.push(`category:${term}`);
+      break;
+    }
+  }
+
+  // 4. Heat tie-breaker (small)
+  if (route.heat > 50) score += 2;
+  else if (route.heat > 10) score += 1;
+
+  // 5. Has usable example (small boost)
+  if (route.example && score > 0) score += 1;
+
+  // 6. Dynamic params penalty if no entity resolved
+  const hasDynamicParams = /:[a-zA-Z]/.test(route.routePath);
+  if (hasDynamicParams && entityTerms.length === 0) {
+    score -= 3;
+    reasons.push("dynamic_no_entity");
+  }
+
+  // 7. Penalize generic category-only match with no entity
+  if (score > 0 && score <= 3 && entityTerms.length > 0 && matched.length === 0) {
+    score = 0;
+    reasons.length = 0;
+  }
+
+  return {
+    score: Math.max(0, score),
+    matchedTerms: [...new Set(matched)],
+    reason: reasons.slice(0, 3).join(", ") || (score > 0 ? "weak_match" : "no_match"),
+  };
+}
+
+// ─── Public API ─────────────────────────────────────────────
+
+/**
+ * Search RSSHub catalog routes against user intent.
+ * Returns top candidates sorted by relevance score.
+ *
+ * @param input.userGoal - original user goal
+ * @param input.expandedQueries - query variants from query_builder
+ * @param input.entityTerms - exact entity terms
+ * @param input.limit - max results (default 20)
+ */
+export async function searchRsshubRoutes(input: {
+  userGoal: string;
+  expandedQueries?: string[];
+  entityTerms?: string[];
+  limit?: number;
+}): Promise<RsshubRouteCandidate[]> {
+  const {
+    userGoal,
+    expandedQueries = [],
+    entityTerms = [],
+    limit = Number(process.env.PAYLABS_RSSHUB_ROUTE_SEARCH_LIMIT) || 20,
+  } = input;
+
+  const catalog = await getRsshubCatalog();
+  if (catalog.length === 0) return [];
+
+  // Build search terms: entity terms + expanded query words
+  const allTerms: string[] = [];
+  for (const q of expandedQueries) {
+    allTerms.push(...q.split(/\s+/).filter((w) => w.length > 2));
+  }
+  // Also add userGoal words
+  allTerms.push(...userGoal.split(/\s+/).filter((w) => w.length > 2));
+
+  const uniqueTerms = [...new Set(allTerms)];
+  const uniqueEntities = [...new Set(entityTerms)];
+
+  // Score all routes
+  const scored: RsshubRouteCandidate[] = [];
+  for (const route of catalog) {
+    const result = scoreRoute(route, uniqueTerms, uniqueEntities);
+    if (result.score > 0) {
+      scored.push({
+        route,
+        score: result.score,
+        matchedTerms: result.matchedTerms,
+        reason: result.reason,
+      });
+    }
+  }
+
+  // Sort by score descending, heat as tie-breaker
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return b.route.heat - a.route.heat;
+  });
+
+  return scored.slice(0, limit);
+}

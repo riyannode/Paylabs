@@ -107,10 +107,12 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
   const agentTraceBrain = (data?.agent_trace as Record<string, unknown>)?.brain_planning as Record<string, unknown> | undefined;
 
   const assistantResponse =
-    (brainPlanning?.assistant_response as string) ??
-    (agentTraceBrain?.assistant_response as string) ??
+    (data?.final_answer as string) ??
+    (exitOutput?.final_answer as string) ??
     (exitOutput?.final_summary as string) ??
     tieredSummaries?.final_summary ??
+    (brainPlanning?.assistant_response as string) ??
+    (agentTraceBrain?.assistant_response as string) ??
     "Run completed.";
   const userVisibleReasoning =
     (brainPlanning?.user_visible_reasoning as string) ??
