@@ -1204,6 +1204,58 @@ a:hover { text-decoration: none; }
   background: #f3f6fb;
 }
 
+.pl-email-input-row {
+  display: flex;
+  gap: 6px;
+  padding: 0 4px;
+  margin-top: -4px;
+  animation: pl-slideDown 0.15s ease-out;
+}
+
+.pl-email-otp-input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1.5px solid #d1d5e0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  background: #fff;
+  color: #0f172a;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.pl-email-otp-input:focus {
+  border-color: #6366f1;
+}
+
+.pl-email-submit-btn {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 8px;
+  background: #6366f1;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.pl-email-submit-btn:hover:not(:disabled) {
+  background: #4f46e5;
+}
+
+.pl-email-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@keyframes pl-slideDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .pl-login-icon-v3.google {
   background: transparent;
 }
@@ -1339,7 +1391,30 @@ a:hover { text-decoration: none; }
 }
 
 .pl-deposit-input-v3::placeholder {
-  color: #cbd5e1;
+  color: #94a3b8;
+}
+
+.pl-deposit-status {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #f0f4ff;
+  color: #4338ca;
+  font-size: 13px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+}
+
+.pl-deposit-step-icon {
+  animation: pl-spin 1s linear infinite;
+  display: inline-block;
+}
+
+@keyframes pl-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .pl-wallet-error-v3 {

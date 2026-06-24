@@ -246,6 +246,38 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ deviceToken: session.deviceToken, deviceEncryptionKey: session.deviceEncryptionKey });
       }
 
+      case "session-get-auth": {
+        // Returns auth tokens for SDK re-initialization after page refresh.
+        // Security hardening:
+        // 1. Origin check — only same-origin requests allowed
+        // 2. Custom header required — browsers don't send custom headers cross-origin (CSRF protection)
+        // 3. Cache: no-store — never cache auth tokens
+        // 4. Tokens are behind httpOnly cookie — only reachable from same-origin with valid session
+        const origin = req.headers.get("origin") || req.headers.get("referer");
+        const appUrl = process.env.PAYLABS_APP_URL || process.env.NEXT_PUBLIC_PAYLABS_APP_URL;
+        if (appUrl && origin && !origin.startsWith(appUrl)) {
+          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
+        // Require X-Requested-With header (simple CSRF: cross-origin JS can't set custom headers)
+        if (req.headers.get("x-requested-with") !== "ucw-sdk-restore") {
+          return NextResponse.json({ error: "Missing required header" }, { status: 403 });
+        }
+        const sid = req.cookies.get("ucw_sid")?.value;
+        if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
+        const session = await getSession(sid);
+        if (!session?.userToken) return NextResponse.json({ error: "No user token in session" }, { status: 404 });
+        await refreshSession(sid);
+        const respAuth = NextResponse.json({
+          userToken: session.userToken,
+          encryptionKey: session.encryptionKey || null,
+          authMethod: session.authMethod || "",
+        });
+        respAuth.headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
+        respAuth.headers.set("Pragma", "no-cache");
+        respAuth.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
+        return respAuth;
+      }
+
       case "session-save-login": {
         const sid = req.cookies.get("ucw_sid")?.value;
         if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
