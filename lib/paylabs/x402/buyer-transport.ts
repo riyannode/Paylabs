@@ -115,6 +115,52 @@ export interface X402BuyerCallResult {
   challengeStatus?: number;
 }
 
+// ─── SSRF Protection ──────────────────────────────────────────
+
+const BLOCKED_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "0.0.0.0",
+  "::1",
+  "metadata.google.internal",
+  "169.254.169.254",
+]);
+
+/**
+ * Validate seller URL against SSRF.
+ * Blocks private/internal IPs, metadata endpoints, and non-HTTP schemes.
+ * Returns error string if invalid, null if safe.
+ */
+function validateSellerUrl(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return `Invalid seller URL: ${url}`;
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return `Seller URL must use http or https protocol, got: ${parsed.protocol}`;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+
+  if (BLOCKED_HOSTS.has(hostname)) {
+    return `Seller URL hostname is blocked: ${hostname}`;
+  }
+
+  // Block private IP ranges (10.x, 172.16-31.x, 192.168.x)
+  if (
+    /^10\./.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
+    /^192\.168\./.test(hostname)
+  ) {
+    return `Seller URL points to private network: ${hostname}`;
+  }
+
+  return null;
+}
+
 // ─── Core Buyer Transport ────────────────────────────────────
 
 /**
@@ -146,6 +192,12 @@ export async function callPaidSeller(
     maxAmountUsdc,
     requirePayment = false,
   } = input;
+
+  // ── SSRF guard: validate seller URL ─────────────────────
+  const urlError = validateSellerUrl(sellerUrl);
+  if (urlError) {
+    return { ok: false, error: urlError };
+  }
 
   // ── Step 1: Initial request (no payment) ─────────────────
 
@@ -193,6 +245,16 @@ export async function callPaidSeller(
   }
 
   // ── Step 2: Decode 402 challenge ─────────────────────────
+
+  // Parse 402 response body for retry metadata (discovery_run_id, retry_url)
+  let challengeBody: Record<string, unknown> = {};
+  try {
+    challengeBody = await initialResp.clone().json();
+  } catch {
+    // Body may not be JSON — that's fine, we only need the header
+  }
+  const retryRunId = (challengeBody.discovery_run_id as string) || undefined;
+  const retryUrl = (challengeBody.retry_url as string) || undefined;
 
   const paymentRequiredHeader =
     initialResp.headers.get("payment-required") ??
@@ -348,15 +410,23 @@ export async function callPaidSeller(
 
   // ── Step 7: Retry with payment ───────────────────────────
 
+  // Use retry_url if provided (e.g. inline route returns a URL with ?runId=...)
+  // Otherwise fall back to original sellerUrl.
+  // Always include discovery_run_id in body for row reuse.
+  const finalRetryUrl = retryUrl || sellerUrl;
+  const retryBody = retryRunId
+    ? { ...(body as Record<string, unknown>), discovery_run_id: retryRunId }
+    : body;
+
   let retryResp: Response;
   try {
-    retryResp = await fetch(sellerUrl, {
+    retryResp = await fetch(finalRetryUrl, {
       method,
       headers: {
         ...initialHeaders,
         "PAYMENT-SIGNATURE": paymentSignatureValue,
       },
-      body: body ? JSON.stringify(body) : undefined,
+      body: retryBody ? JSON.stringify(retryBody) : undefined,
       signal: AbortSignal.timeout(30000),
     });
   } catch (e: unknown) {

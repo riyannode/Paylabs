@@ -4,6 +4,8 @@ import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import SidebarPanel from "@/components/paylabs/SidebarPanel";
 import WalletConnectModal from "@/components/paylabs/WalletConnectModal";
 import type { WalletState, WalletInfo, UcwBalance } from "@/components/paylabs/WalletConnectModal";
+import WalletPicker from "@/components/paylabs/WalletPicker";
+import DcwModal from "@/components/paylabs/DcwModal";
 import PaymentExplorerLinks from "@/components/paylabs/PaymentExplorerLinks";
 import { safeExplorerUrl as validateExplorerUrl } from "@/lib/paylabs/x402/payment-links";
 
@@ -583,6 +585,8 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
   // Wallet state
   const [walletOpen, setWalletOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [dcwOpen, setDcwOpen] = useState(false);
   const [walletState, setWalletState] = useState<WalletState>("not_connected");
   const [walletInfo, setWalletInfo] = useState<WalletInfo | null>(null);
   const [walletError, setWalletError] = useState<string | null>(null);
@@ -1266,7 +1270,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
     // Run gating: must have wallet
     if (!walletInfo?.address) {
-      setWalletOpen(true);
+      setPickerOpen(true);
       return;
     }
 
@@ -1314,6 +1318,40 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
     };
 
     try {
+      // ── DCW: bypass inline entirely, go straight to server-side run-paid ──
+      if (walletInfo.walletType === "circle_developer_controlled") {
+        setWalletState("approving");
+        setSigningPhase("Running via DCW (auto-pay)…");
+        const dcwResp = await fetch("/api/paylabs/dcw/run-paid", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            goal: body.goal || prompt,
+            routeTier: body.route_tier || "standard",
+          }),
+        });
+        const dcwResult = await dcwResp.json();
+        setSigningPhase(null);
+
+        if (!dcwResult.ok) {
+          const errMsg = dcwResult.error || "DCW payment failed.";
+          finishAssistant({ status: "error", error: errMsg });
+          setError(errMsg);
+          setWalletState("failed");
+          setStatus("error");
+          return;
+        }
+
+        const safeResult = toSafeRunResult(dcwResult.data || dcwResult);
+        setWalletState("paid");
+        finishAssistant({ status: "done", result: safeResult });
+        setResult(safeResult);
+        setStatus("done");
+        return;
+      }
+
+      // ── UCW / EOA: call inline first, handle 402 client-side ──
       const inlineStart = nowMs();
       const first = await fetch("/api/paylabs/discovery-runs/inline", {
         method: "POST",
@@ -1323,7 +1361,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       });
       if (ucwDebugEnabled) signDbg(`inline POST: status=${first.status} ${nowMs() - inlineStart}ms`);
 
-      // ── Handle 402: payment required ──
+      // ── Handle 402: payment required (UCW/EOA only) ──
       if (first.status === 402) {
         const paymentRequired = first.headers.get("PAYMENT-REQUIRED");
         if (!paymentRequired) {
@@ -1500,7 +1538,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           <button
             type="button"
             className={`pl-wallet-pill ${walletInfo?.address ? "connected" : ""}`}
-            onClick={() => setWalletOpen(true)}
+            onClick={() => walletInfo?.address ? setWalletOpen(true) : setPickerOpen(true)}
             title={walletInfo?.address || "Connect wallet"}
           >
             {walletInfo?.address ? (
@@ -1646,6 +1684,26 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           </div>
         </section>
       </main>
+
+      <WalletPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onSelectUcw={() => { setPickerOpen(false); setWalletOpen(true); }}
+        onSelectDcw={() => { setPickerOpen(false); setDcwOpen(true); }}
+      />
+
+      <DcwModal
+        open={dcwOpen}
+        onClose={() => setDcwOpen(false)}
+        onWalletReady={(w) => {
+          setWalletInfo({
+            address: w.address,
+            walletType: "circle_developer_controlled",
+            network: w.chain,
+          });
+          setDcwOpen(false);
+        }}
+      />
 
       <WalletConnectModal
         open={walletOpen}
