@@ -95,22 +95,29 @@ export default function BatchResolverLink({
         </a>
       )}
 
-      {/* Batch resolver link */}
-      <a
-        href={`/api/paylabs/x402/runs/${encodeURIComponent(runId)}/batch-tx`}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={() => {
-          void handleResolverClick();
-        }}
-        style={{
-          color: "var(--muted, #888)",
-          textDecoration: "none",
-          whiteSpace: "nowrap",
-        }}
-      >
-        Batch resolver ↗
-      </a>
+      {/* Batch resolver button — fetches API in background, never navigates to API URL */}
+      {!batchHref && (
+        <button
+          type="button"
+          onClick={() => {
+            void handleResolverClick();
+          }}
+          disabled={fetching || fetched}
+          style={{
+            color: "var(--muted, #888)",
+            textDecoration: "none",
+            whiteSpace: "nowrap",
+            background: "none",
+            border: "none",
+            padding: 0,
+            cursor: fetching || fetched ? "default" : "pointer",
+            fontSize: 11,
+            opacity: fetched ? 0.6 : 1,
+          }}
+        >
+          {fetching ? "Resolving…" : fetched ? "Resolved" : "Resolve batch ↗"}
+        </button>
+      )}
 
       {/* Batch payment link (appears when resolved) */}
       {batchHref && (
