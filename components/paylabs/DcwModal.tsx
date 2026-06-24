@@ -29,6 +29,10 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
 
   // Check existing session on open
   useEffect(() => {
@@ -185,6 +189,71 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
     }
   }, [email, onWalletReady]);
 
+  // ── Email OTP: Send Code ────────────────────────────────
+  const handleSendOtp = useCallback(async () => {
+    if (!email.includes("@")) return;
+    setIsSendingOtp(true);
+    setError(null);
+
+    try {
+      const resp = await fetch("/api/paylabs/auth/otp/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email }),
+      });
+      const data = await resp.json();
+
+      if (!data.ok) {
+        setError(data.error || "Failed to send code");
+        return;
+      }
+
+      setOtpSent(true);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to send code");
+    } finally {
+      setIsSendingOtp(false);
+    }
+  }, [email]);
+
+  // ── Email OTP: Verify Code ──────────────────────────────
+  const handleVerifyOtp = useCallback(async () => {
+    if (!email.includes("@") || otpCode.length !== 6) return;
+    setIsVerifyingOtp(true);
+    setError(null);
+
+    try {
+      const resp = await fetch("/api/paylabs/auth/otp/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email, code: otpCode }),
+      });
+      const data = await resp.json();
+
+      if (!data.ok) {
+        setError(data.error || "Verification failed");
+        return;
+      }
+
+      // Auth complete — now create wallet or show deposit
+      if (data.hasWallet && data.walletAddress) {
+        setWallet({ walletId: "", address: data.walletAddress, chain: "ARC-TESTNET" });
+        setStep("deposit");
+        refreshBalance();
+        onWalletReady?.({ walletId: "", address: data.walletAddress, chain: "ARC-TESTNET" });
+      } else {
+        setStep("creating");
+        createWallet();
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Verification failed");
+    } finally {
+      setIsVerifyingOtp(false);
+    }
+  }, [email, otpCode, onWalletReady]);
+
   // ── Create Wallet (after auth) ────────────────────────────
   const createWallet = useCallback(async () => {
     try {
@@ -270,8 +339,49 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
             >
               Already have a passkey? Sign in
             </button>
+            <div className="pl-auth-divider"><span>or</span></div>
+            {!otpSent ? (
+              <button
+                className="pl-eoa-fallback-v3"
+                onClick={handleSendOtp}
+                disabled={!email.includes("@") || isSendingOtp}
+              >
+                {isSendingOtp ? "Sending…" : "📧 Send Code to Email"}
+              </button>
+            ) : (
+              <div className="pl-otp-input-group">
+                <input
+                  className="pl-email-otp-input"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder="000000"
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && otpCode.length === 6) handleVerifyOtp();
+                  }}
+                  autoFocus
+                />
+                <button
+                  className="pl-primary-v3"
+                  onClick={handleVerifyOtp}
+                  disabled={otpCode.length !== 6 || isVerifyingOtp}
+                >
+                  {isVerifyingOtp ? "Verifying…" : "Verify Code"}
+                </button>
+                <button
+                  className="pl-eoa-fallback-v3"
+                  onClick={handleSendOtp}
+                  disabled={isSendingOtp}
+                  style={{ marginTop: 4 }}
+                >
+                  Resend code
+                </button>
+              </div>
+            )}
             <p className="muted" style={{ fontSize: 11, marginTop: 8 }}>
-              Uses your device biometrics (Face ID, Touch ID, fingerprint). No passwords.
+              Biometrics or email code. No passwords.
             </p>
           </div>
         )}

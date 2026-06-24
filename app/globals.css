@@ -1954,3 +1954,26 @@ a:hover { text-decoration: none; }
     margin-bottom: 52px !important;
   }
 }
+
+/* ── Email OTP auth divider ────────────────────────────────── */
+.pl-auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 12px;
+}
+.pl-auth-divider::before,
+.pl-auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.pl-otp-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
