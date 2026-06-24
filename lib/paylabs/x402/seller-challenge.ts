@@ -17,6 +17,13 @@
  */
 
 import { createRequire } from "node:module";
+import {
+  buildBatchResolverUrl,
+  buildSettlementUrl,
+  buildTxExplorerUrl,
+  isEvmTxHash as isEvmTxHashFromLinks,
+  isUuid,
+} from "./payment-links";
 
 // CJS interop — @circle-fin/x402-batching has CJS entry
 const _require = createRequire(import.meta.url);
@@ -77,6 +84,16 @@ export interface VerifyAndSettleResult {
     txHash: string | null;
     /** Block explorer URL if txHash is valid */
     explorerUrl: string | null;
+    /** Circle x402 transfer/settlement UUID — do not show raw in chat UI */
+    settlementId: string | null;
+    /** Backend settlement resolver URL */
+    settlementUrl: string | null;
+    /** Batch settlement tx hash — null until batch settles */
+    batchTxHash: string | null;
+    /** Batch settlement explorer URL — null until batch settles */
+    batchExplorerUrl: string | null;
+    /** Backend batch resolver URL */
+    batchResolverUrl: string | null;
   };
   /** Payer address if verified */
   payer?: string;
@@ -197,15 +214,36 @@ function extractTxHash(value: unknown): string | null {
   return null;
 }
 
-function buildExplorerUrl(network: string, txHash: string | null): string | null {
-  if (!txHash) return null;
+function extractSettlementId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
 
-  if (network === "eip155:5042002") {
-    const base =
-      process.env.PAYLABS_ARC_TESTNET_EXPLORER_TX_BASE ||
-      "https://arc-testnet.blockscout.com/tx";
+  const obj = value as Record<string, unknown>;
+  const transactionObj =
+    obj.transaction && typeof obj.transaction === "object"
+      ? (obj.transaction as Record<string, unknown>)
+      : null;
 
-    return `${base.replace(/\/+$/, "")}/${txHash}`;
+  const receipt = obj.receipt as Record<string, unknown> | undefined;
+  const settlement = obj.settlement as Record<string, unknown> | undefined;
+  const transfer = obj.transfer as Record<string, unknown> | undefined;
+
+  const candidates = [
+    obj.id,
+    obj.settlementId,
+    obj.settlement_id,
+    obj.transferId,
+    obj.transfer_id,
+    typeof obj.transaction === "string" ? obj.transaction : null,
+    transactionObj?.id,
+    receipt?.id,
+    settlement?.id,
+    settlement?.settlementId,
+    settlement?.transferId,
+    transfer?.id,
+  ];
+
+  for (const candidate of candidates) {
+    if (isUuid(candidate)) return candidate;
   }
 
   return null;
@@ -285,20 +323,17 @@ export async function verifyAndSettlePayment(
 
     // Extract txHash — check multiple possible locations in SDK response
     const txHash = extractTxHash(settleResult);
-    const explorerUrl = buildExplorerUrl(requirements.network, txHash);
+    const explorerUrl = buildTxExplorerUrl(txHash);
+    const settlementId = extractSettlementId(settleResult);
+    const settlementUrl = buildSettlementUrl(settlementId);
+    const batchResolverUrl = buildBatchResolverUrl(settlementId);
 
-    // Safe log — keys only, never raw payload or signature
-    const txVal = settleData.transaction;
+    // Safe log — booleans only, never raw payload or signature
     console.log("[x402-settle-proof]", {
       settled: true,
       hasTxHash: !!txHash,
-      txHash,
-      explorerUrl,
-      settleResultKeys: Object.keys(settleData),
-      transactionType: typeof txVal,
-      transactionLength: typeof txVal === "string" ? txVal.length : null,
-      transactionPrefix: typeof txVal === "string" ? txVal.slice(0, 10) : null,
-      transactionIsHexString: isEvmTxHash(txVal),
+      hasSettlementId: !!settlementId,
+      hasBatchResolverUrl: !!batchResolverUrl,
     });
 
     return {
@@ -311,6 +346,11 @@ export async function verifyAndSettlePayment(
         x402Version: X402_VERSION,
         txHash,
         explorerUrl,
+        settlementId,
+        settlementUrl,
+        batchTxHash: null,
+        batchExplorerUrl: null,
+        batchResolverUrl,
       },
       payer: settleData?.payer as string | undefined,
     };

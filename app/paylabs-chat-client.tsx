@@ -4,6 +4,8 @@ import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import SidebarPanel from "@/components/paylabs/SidebarPanel";
 import WalletConnectModal from "@/components/paylabs/WalletConnectModal";
 import type { WalletState, WalletInfo, UcwBalance } from "@/components/paylabs/WalletConnectModal";
+import PaymentExplorerLinks from "@/components/paylabs/PaymentExplorerLinks";
+import { safeExplorerUrl as validateExplorerUrl, hrefFromTx } from "@/lib/paylabs/x402/payment-links";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -47,6 +49,11 @@ type SafeRunResult = {
   lockedServices: string[];
   tierDecisionReason: string | null;
   sourcesUsed: SourceLink[];
+  // Quiet payment link fields — chat renders max 2 links, never settlement UUID
+  entryExplorerUrl: string | null;
+  entryTxHash: string | null;
+  entryBatchResolverUrl: string | null;
+  entryBatchExplorerUrl: string | null;
 };
 
 type ChatMessage =
@@ -148,6 +155,12 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
         .filter((s) => /^https?:\/\//.test(s.url))
     : [];
 
+  // Extract entry payment link fields (safe URLs only, never settlement UUID)
+  const entryPayment = data?.entry_payment as Record<string, unknown> | undefined;
+  const agentTrace = data?.agent_trace as Record<string, unknown> | undefined;
+  const agentTraceEntry = agentTrace?.entry_payment as Record<string, unknown> | undefined;
+  const resolvedEntry = entryPayment ?? agentTraceEntry;
+
   return {
     ok: !!data?.ok,
     runId: (data?.discovery_run_id as string) ?? (data?.id as string) ?? null,
@@ -168,6 +181,10 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     lockedServices: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_services as string[]) ?? [],
     tierDecisionReason: (brainPlanning?.tier_decision_reason as string) ?? null,
     sourcesUsed,
+    entryExplorerUrl: validateExplorerUrl(resolvedEntry?.explorer_url) ?? validateExplorerUrl(data?.entry_payment_explorer_url),
+    entryTxHash: (typeof resolvedEntry?.tx_hash === "string" ? resolvedEntry.tx_hash : null) ?? null,
+    entryBatchResolverUrl: (typeof resolvedEntry?.batch_resolver_url === "string" ? resolvedEntry.batch_resolver_url : null) ?? (typeof data?.entry_payment_batch_resolver_url === "string" ? data.entry_payment_batch_resolver_url : null) ?? null,
+    entryBatchExplorerUrl: validateExplorerUrl(resolvedEntry?.batch_explorer_url) ?? validateExplorerUrl(data?.entry_payment_batch_explorer_url),
   };
 }
 
@@ -1613,6 +1630,52 @@ function BrainIcon() {
   );
 }
 
+function QuietPaymentLinks({ result }: { result: SafeRunResult }) {
+  const [batchUrl, setBatchUrl] = useState<string | null>(
+    validateExplorerUrl(result.entryBatchExplorerUrl)
+  );
+
+  const vanillaHref = validateExplorerUrl(result.entryExplorerUrl);
+
+  useEffect(() => {
+    if (batchUrl) return;
+    if (!result.entryBatchResolverUrl) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 45;
+
+    const poll = async () => {
+      if (cancelled || attempts >= maxAttempts) return;
+      attempts += 1;
+      try {
+        const res = await fetch(result.entryBatchResolverUrl!, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json().catch(() => null) as Record<string, unknown> | null;
+        const status = typeof data?.status === "string" ? data.status.toLowerCase() : "";
+        const url = validateExplorerUrl(data?.batch_explorer_url);
+        if (!cancelled && status === "completed" && url) {
+          setBatchUrl(url);
+        }
+      } catch { /* keep chat quiet */ }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => { void poll(); }, 8000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [batchUrl, result.entryBatchResolverUrl]);
+
+  const batchHref = validateExplorerUrl(batchUrl);
+  if (!vanillaHref && !batchHref) return null;
+
+  return (
+    <PaymentExplorerLinks
+      directExplorerUrl={vanillaHref}
+      batchExplorerUrl={batchHref}
+    />
+  );
+}
+
 function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () => void }) {
   const [rationaleOpen, setRationaleOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -1701,6 +1764,7 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
           </div>
         )}
       </div>
+      <QuietPaymentLinks result={result} />
       {result.runId && (
         <div className="pl-result-links">
           <a href={`/dashboard?run=${result.runId}`}>View details</a>
