@@ -1318,6 +1318,40 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
     };
 
     try {
+      // ── DCW: bypass inline entirely, go straight to server-side run-paid ──
+      if (walletInfo.walletType === "circle_developer_controlled") {
+        setWalletState("approving");
+        setSigningPhase("Running via DCW (auto-pay)…");
+        const dcwResp = await fetch("/api/paylabs/dcw/run-paid", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            goal: body.goal || prompt,
+            routeTier: body.route_tier || "standard",
+          }),
+        });
+        const dcwResult = await dcwResp.json();
+        setSigningPhase(null);
+
+        if (!dcwResult.ok) {
+          const errMsg = dcwResult.error || "DCW payment failed.";
+          finishAssistant({ status: "error", error: errMsg });
+          setError(errMsg);
+          setWalletState("failed");
+          setStatus("error");
+          return;
+        }
+
+        const safeResult = toSafeRunResult(dcwResult.data || dcwResult);
+        setWalletState("paid");
+        finishAssistant({ status: "done", result: safeResult });
+        setResult(safeResult);
+        setStatus("done");
+        return;
+      }
+
+      // ── UCW / EOA: call inline first, handle 402 client-side ──
       const inlineStart = nowMs();
       const first = await fetch("/api/paylabs/discovery-runs/inline", {
         method: "POST",
@@ -1327,7 +1361,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       });
       if (ucwDebugEnabled) signDbg(`inline POST: status=${first.status} ${nowMs() - inlineStart}ms`);
 
-      // ── Handle 402: payment required ──
+      // ── Handle 402: payment required (UCW/EOA only) ──
       if (first.status === 402) {
         const paymentRequired = first.headers.get("PAYMENT-REQUIRED");
         if (!paymentRequired) {
@@ -1356,38 +1390,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         setSigningPhase("Preparing x402 approval…");
         let paymentSignature: string;
         try {
-          if (walletInfo.walletType === "circle_developer_controlled") {
-            // DCW: full server-side paid run — no client retry
-            setSigningPhase("Running via DCW (auto-pay)…");
-            const dcwResp = await fetch("/api/paylabs/dcw/run-paid", {
-              method: "POST",
-              credentials: "include",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                goal: body.goal || prompt,
-                routeTier: body.route_tier || "standard",
-              }),
-            });
-            const dcwResult = await dcwResp.json();
-            setSigningPhase(null);
-
-            if (!dcwResult.ok) {
-              const errMsg = dcwResult.error || "DCW payment failed.";
-              finishAssistant({ status: "error", error: errMsg });
-              setError(errMsg);
-              setWalletState("failed");
-              setStatus("error");
-              return;
-            }
-
-            // DCW returned final result — done, no client retry
-            const safeResult = toSafeRunResult(dcwResult.data || dcwResult);
-            setWalletState("paid");
-            finishAssistant({ status: "done", result: safeResult });
-            setResult(safeResult);
-            setStatus("done");
-            return;
-          } else if (walletInfo.walletType === "circle_user_controlled" && ucwSdkRef.current) {
+          if (walletInfo.walletType === "circle_user_controlled" && ucwSdkRef.current) {
             setSigningPhase("Opening Circle approval…");
             paymentSignature = await signWithUcw({
               challenge,

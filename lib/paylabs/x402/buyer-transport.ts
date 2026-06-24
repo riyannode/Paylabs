@@ -246,6 +246,16 @@ export async function callPaidSeller(
 
   // ── Step 2: Decode 402 challenge ─────────────────────────
 
+  // Parse 402 response body for retry metadata (discovery_run_id, retry_url)
+  let challengeBody: Record<string, unknown> = {};
+  try {
+    challengeBody = await initialResp.clone().json();
+  } catch {
+    // Body may not be JSON — that's fine, we only need the header
+  }
+  const retryRunId = (challengeBody.discovery_run_id as string) || undefined;
+  const retryUrl = (challengeBody.retry_url as string) || undefined;
+
   const paymentRequiredHeader =
     initialResp.headers.get("payment-required") ??
     initialResp.headers.get("PAYMENT-REQUIRED");
@@ -400,15 +410,23 @@ export async function callPaidSeller(
 
   // ── Step 7: Retry with payment ───────────────────────────
 
+  // Use retry_url if provided (e.g. inline route returns a URL with ?runId=...)
+  // Otherwise fall back to original sellerUrl.
+  // Always include discovery_run_id in body for row reuse.
+  const finalRetryUrl = retryUrl || sellerUrl;
+  const retryBody = retryRunId
+    ? { ...(body as Record<string, unknown>), discovery_run_id: retryRunId }
+    : body;
+
   let retryResp: Response;
   try {
-    retryResp = await fetch(sellerUrl, {
+    retryResp = await fetch(finalRetryUrl, {
       method,
       headers: {
         ...initialHeaders,
         "PAYMENT-SIGNATURE": paymentSignatureValue,
       },
-      body: body ? JSON.stringify(body) : undefined,
+      body: retryBody ? JSON.stringify(retryBody) : undefined,
       signal: AbortSignal.timeout(30000),
     });
   } catch (e: unknown) {

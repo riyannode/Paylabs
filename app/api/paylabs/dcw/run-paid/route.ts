@@ -47,6 +47,9 @@ function getAllowedSellerUrl(path: string): string | null {
 // Server-side budget cap. Client cannot exceed this.
 const MAX_BUDGET_USDC = "1.0"; // 1 USDC max per run
 
+// ─── Allowed route tiers ─────────────────────────────────────
+const ALLOWED_ROUTE_TIERS = new Set(["standard", "auto", "easy", "normal", "advanced"]);
+
 export async function POST(req: NextRequest) {
   try {
     // 1. Auth required
@@ -94,10 +97,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: `Seller path not allowed: ${sellerPath}` }, { status: 400 });
     }
 
-    // 5. Server-side budget enforcement
-    const maxAmountUsdc = MAX_BUDGET_USDC; // Always use server cap, ignore client
+    // 5. Validate route tier server-side
+    const routeTier = body.routeTier || "standard";
+    if (!ALLOWED_ROUTE_TIERS.has(routeTier)) {
+      return NextResponse.json({ ok: false, error: `Invalid route tier: ${routeTier}` }, { status: 400 });
+    }
 
-    // 6. Execute full paid request via DCW
+    // 6. Server-side budget enforcement (always use server cap, ignore client)
+    const maxAmountUsdc = MAX_BUDGET_USDC;
+
+    // 7. Execute full paid request via DCW (fail closed: requirePayment = true)
     const dcwSigner = createDcwSigner();
 
     const result = await callPaidSeller(dcwSigner, {
@@ -105,15 +114,16 @@ export async function POST(req: NextRequest) {
       method: "POST",
       body: {
         goal,
-        route_tier: body.routeTier || "standard",
+        route_tier: routeTier,
         user_wallet: wallet.wallet_address,
-        user_budget_usdc: maxAmountUsdc,
+        budget_usdc: maxAmountUsdc,
       },
       headers: {},
       buyerWalletId: wallet.wallet_id,
       buyerAgentName: "paylabs-dcw-user",
       sellerServiceName: "discovery",
       maxAmountUsdc,
+      requirePayment: true,
     });
 
     // 7. Return final result (no client retry needed)

@@ -53,14 +53,16 @@ export async function POST(req: NextRequest) {
       const options = await generateAuthenticationOptions({
         rpID: RP_ID,
         allowCredentials: [{ id: user.passkey_credential_id }],
-        userVerification: "preferred",
+        userVerification: "required",
       });
 
       // Store challenge
       await supabaseAdmin().from("paylabs_webauthn_challenges").insert({
         user_id: user.id,
+        email,
         challenge: options.challenge,
         type: "authentication",
+        expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
       });
 
       return NextResponse.json({ ok: true, options });
@@ -90,8 +92,9 @@ export async function POST(req: NextRequest) {
       const { data: challengeRow } = await supabaseAdmin()
         .from("paylabs_webauthn_challenges")
         .select("challenge")
-        .eq("user_id", user.id)
+        .eq("email", email)
         .eq("type", "authentication")
+        .gt("expires_at", new Date().toISOString())
         .order("created_at", { ascending: false })
         .limit(1)
         .single();
@@ -135,7 +138,7 @@ export async function POST(req: NextRequest) {
       await supabaseAdmin()
         .from("paylabs_webauthn_challenges")
         .delete()
-        .eq("user_id", user.id)
+        .eq("email", email)
         .eq("type", "authentication");
 
       // Create session

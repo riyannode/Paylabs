@@ -65,15 +65,17 @@ export async function POST(req: NextRequest) {
         attestationType: "none",
         authenticatorSelection: {
           residentKey: "preferred",
-          userVerification: "preferred",
+          userVerification: "required",
         },
       });
 
       // Store challenge for verification
       await supabaseAdmin().from("paylabs_webauthn_challenges").insert({
         user_id: userId,
+        email,
         challenge: options.challenge,
         type: "registration",
+        expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
       });
 
       return NextResponse.json({ ok: true, options });
@@ -90,7 +92,9 @@ export async function POST(req: NextRequest) {
       const { data: challengeRow } = await supabaseAdmin()
         .from("paylabs_webauthn_challenges")
         .select("user_id, challenge")
+        .eq("email", email)
         .eq("type", "registration")
+        .gt("expires_at", new Date().toISOString())
         .order("created_at", { ascending: false })
         .limit(1)
         .single();
@@ -147,8 +151,8 @@ export async function POST(req: NextRequest) {
         await supabaseAdmin().from("paylabs_dcw_wallets").insert({
           id: userId,
           email,
-          wallet_id: "",
-          wallet_address: "",
+          wallet_id: null,
+          wallet_address: null,
           passkey_credential_id: regCredential.id,
           passkey_public_key: publicKey,
           passkey_counter: regCredential.counter,
@@ -161,7 +165,7 @@ export async function POST(req: NextRequest) {
       await supabaseAdmin()
         .from("paylabs_webauthn_challenges")
         .delete()
-        .eq("user_id", userId)
+        .eq("email", email)
         .eq("type", "registration");
 
       // Create session
