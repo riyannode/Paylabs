@@ -111,16 +111,27 @@ function extractGithubOwnerRepo(
   terms: string[],
   query: string
 ): { owner: string; repo: string } | null {
-  // Check query for owner/repo pattern
+  // 1. Parse explicit github.com URL first (most reliable)
+  const githubUrlMatch = query.match(/https?:\/\/github\.com\/([^/\s?#]+)\/([^/\s?#]+)/i);
+  if (githubUrlMatch) {
+    const owner = githubUrlMatch[1];
+    const repo = githubUrlMatch[2].replace(/\.git$/, "");
+    if (owner.length > 1 && repo.length > 1) {
+      return { owner, repo };
+    }
+  }
+
+  // 2. Check query for owner/repo pattern (with dot rejection on owner)
   const match = query.match(
     /([a-zA-Z0-9._-]+)\/([a-zA-Z0-9._-]+)/
   );
   if (match) {
     const owner = match[1];
     const repo = match[2];
-    // Validate: not a URL path, not a file path
+    // Validate: not a URL path, not a file path, owner has no dots
     if (
       !owner.startsWith("http") &&
+      !owner.includes(".") && // reject github.com, www.github.com etc
       !repo.includes(".") &&
       owner.length > 1 &&
       repo.length > 1
@@ -129,7 +140,7 @@ function extractGithubOwnerRepo(
     }
   }
 
-  // Check if two consecutive entity terms look like owner/repo
+  // 3. Check if two consecutive entity terms look like owner/repo
   for (let i = 0; i < terms.length - 1; i++) {
     const a = terms[i];
     const b = terms[i + 1];
@@ -138,6 +149,8 @@ function extractGithubOwnerRepo(
       b.length > 1 &&
       !STOP_WORDS.has(a.toLowerCase()) &&
       !STOP_WORDS.has(b.toLowerCase()) &&
+      !a.includes(".") && // reject domain-like terms
+      !b.includes(".") &&
       /^[a-zA-Z0-9._-]+$/.test(a) &&
       /^[a-zA-Z0-9._-]+$/.test(b)
     ) {
@@ -296,9 +309,21 @@ function resolveSingleRoute(
 
   // Generic param resolution from entity terms
   // Try to fill params from entity terms in order
-  const filteredEntities = entityTerms.filter(
-    (e) => !STOP_WORDS.has(e.toLowerCase()) && e.length > 1
-  );
+  // Exclude internal planner constraint tags and entities not in original query
+  const INTERNAL_ENTITY_TAGS = new Set([
+    "recency_priority", "trust_required", "source_required",
+    "citation_required", "freshness_required", "payment_required",
+    "budget_required", "quality_priority", "free_only",
+  ]);
+  const filteredEntities = entityTerms.filter((e) => {
+    const lower = e.toLowerCase().trim();
+    return (
+      !INTERNAL_ENTITY_TAGS.has(lower) &&
+      !STOP_WORDS.has(lower) &&
+      e.length > 1 &&
+      queryLower.includes(lower) // must appear in original query
+    );
+  });
 
   if (filteredEntities.length >= params.length) {
     let resolved = fullPath;

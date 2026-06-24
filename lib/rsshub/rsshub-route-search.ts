@@ -111,12 +111,18 @@ function scoreRoute(
     }
   }
 
-  // 4. Heat tie-breaker (small)
-  if (route.heat > 50) score += 2;
-  else if (route.heat > 10) score += 1;
+  // 4. Heat tie-breaker (ONLY if real match exists)
+  const hasRealMatch = matched.length > 0 || reasons.some((r) =>
+    r.startsWith("name") || r.startsWith("path") || r.startsWith("desc") ||
+    r.startsWith("nsurl") || r.startsWith("example") || r.startsWith("category")
+  );
+  if (hasRealMatch) {
+    if (route.heat > 50) score += 2;
+    else if (route.heat > 10) score += 1;
+  }
 
-  // 5. Has usable example (small boost)
-  if (route.example && score > 0) score += 1;
+  // 5. Has usable example (small boost, only if real match)
+  if (route.example && hasRealMatch) score += 1;
 
   // 6. Dynamic params penalty if no entity resolved
   const hasDynamicParams = /:[a-zA-Z]/.test(route.routePath);
@@ -125,8 +131,9 @@ function scoreRoute(
     reasons.push("dynamic_no_entity");
   }
 
-  // 7. Penalize generic category-only match with no entity
-  if (score > 0 && score <= 3 && entityTerms.length > 0 && matched.length === 0) {
+  // 7. If no real match at all, force score to 0
+  //    Prevents heat/category-only noise from becoming candidates
+  if (!hasRealMatch) {
     score = 0;
     reasons.length = 0;
   }

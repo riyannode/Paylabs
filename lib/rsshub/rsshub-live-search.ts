@@ -339,7 +339,8 @@ export async function liveSearchRsshub(input: {
           matched_terms: scoring.matchedTerms,
           reason: route.safeReason,
           fetch_status: "ok",
-        });
+          _score: scoring.score, // preserve original score for sorting
+        } as LiveRsshubSource & { _score: number });
       }
     }
 
@@ -352,24 +353,24 @@ export async function liveSearchRsshub(input: {
       return true;
     });
 
-    // 7. Sort by relevance score
+    // 7. Sort by ORIGINAL scoreItem score (not recomputed)
     deduped.sort((a, b) => {
-      // Compute score inline since we stored raw score earlier
-      const aScore = computeFinalScore(a, entityTerms, expandedQueries);
-      const bScore = computeFinalScore(b, entityTerms, expandedQueries);
+      const aScore = (a as LiveRsshubSource & { _score: number })._score ?? 0;
+      const bScore = (b as LiveRsshubSource & { _score: number })._score ?? 0;
       return bScore - aScore;
     });
 
     // 8. Assign ranks and normalize scores
     const topSources = deduped.slice(0, maxSources);
-    const maxScore = topSources.length > 0 ? computeFinalScore(topSources[0], entityTerms, expandedQueries) : 1;
+    const topScores = topSources.map((s) => (s as LiveRsshubSource & { _score: number })._score ?? 0);
+    const maxScore = Math.max(topScores[0] ?? 1, 1);
 
     topSources.forEach((s, i) => {
+      const rawScore = (s as LiveRsshubSource & { _score: number })._score ?? 0;
       s.rank = i + 1;
-      s.relevance_score = Math.min(
-        computeFinalScore(s, entityTerms, expandedQueries) / Math.max(maxScore, 1),
-        1
-      );
+      s.relevance_score = Math.min(rawScore / maxScore, 1);
+      // Strip internal _score field before returning
+      delete (s as unknown as Record<string, unknown>)._score;
     });
 
     return {
