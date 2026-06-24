@@ -46,6 +46,10 @@ export async function writePayLabsVisibility(
     x402_version: number | null;
     tx_hash: string | null;
     explorer_url: string | null;
+    settlement_id: string | null;
+    settlement_url: string | null;
+    batch_tx_hash: string | null;
+    batch_explorer_url: string | null;
     error: string | null;
     safe_summary: string;
     sequence: number;
@@ -72,6 +76,10 @@ export async function writePayLabsVisibility(
     x402_version: null,
     tx_hash: null,
     explorer_url: null,
+    settlement_id: null,
+    settlement_url: null,
+    batch_tx_hash: null,
+    batch_explorer_url: null,
     error: null,
     safe_summary: `Run started: tier=${routeTier}`,
     sequence: 0,
@@ -99,6 +107,10 @@ export async function writePayLabsVisibility(
       x402_version: 2,
       tx_hash: edge.txHash ?? null,
       explorer_url: edge.explorerUrl ?? null,
+      settlement_id: edge.settlementId ?? null,
+      settlement_url: edge.settlementUrl ?? null,
+      batch_tx_hash: edge.batchTxHash ?? null,
+      batch_explorer_url: edge.batchExplorerUrl ?? null,
       error: edge.error ?? null,
       safe_summary: `${edge.buyer} → ${edge.seller}: ${edge.status}`,
       sequence: i + 1,
@@ -126,6 +138,10 @@ export async function writePayLabsVisibility(
     x402_version: null,
     tx_hash: null,
     explorer_url: null,
+    settlement_id: null,
+    settlement_url: null,
+    batch_tx_hash: null,
+    batch_explorer_url: null,
     error: result.error ?? null,
     safe_summary:
       result.status === "completed"
@@ -155,6 +171,10 @@ export async function writePayLabsVisibility(
     x402_version: 2,
     tx_hash: edge.txHash ?? null,
     explorer_url: edge.explorerUrl ?? null,
+    settlement_id: edge.settlementId ?? null,
+    settlement_url: edge.settlementUrl ?? null,
+    batch_tx_hash: edge.batchTxHash ?? null,
+    batch_explorer_url: edge.batchExplorerUrl ?? null,
     error: edge.error ?? null,
     safe_summary: `${edge.buyer} → ${edge.seller}: ${edge.status}`,
     created_at: now,
@@ -163,6 +183,7 @@ export async function writePayLabsVisibility(
   const actualSettledUsdc = sumPaidUsdc(paymentGraph);
   const lastTxHash = lastPaidTx(paymentGraph);
   const paidCount = paidEdges(paymentGraph).length;
+  const lastPaid = paidEdges(paymentGraph).slice(-1)[0] ?? null;
 
   // ── Receipt ──
   const receipt = {
@@ -177,6 +198,11 @@ export async function writePayLabsVisibility(
     creator_reserve_usdc: 0,
     payment_count: paidCount,
     last_tx_hash: lastTxHash,
+    last_explorer_url: lastPaid?.explorerUrl ?? null,
+    last_settlement_id: lastPaid?.settlementId ?? null,
+    last_settlement_url: lastPaid?.settlementUrl ?? null,
+    last_batch_tx_hash: lastPaid?.batchTxHash ?? null,
+    last_batch_explorer_url: lastPaid?.batchExplorerUrl ?? null,
     last_payment_at: paidCount > 0 ? now : null,
     safe_receipt_summary:
       `PayLabs ${routeTier} run: ${paidCount}/${paymentGraph.length} payment edges paid, ` +

@@ -90,6 +90,11 @@ export interface ServiceEvaluation {
     x402Version: number;
     txHash?: string | null;
     explorerUrl?: string | null;
+    settlementId?: string | null;
+    settlementUrl?: string | null;
+    batchTxHash?: string | null;
+    batchExplorerUrl?: string | null;
+    batchResolverUrl?: string | null;
   };
 }
 
@@ -122,6 +127,16 @@ export interface PaymentGraphEdge {
   txHash?: string | null;
   /** Block explorer URL (if txHash available) */
   explorerUrl?: string | null;
+  /** Circle settlement UUID — do not show raw in chat UI */
+  settlementId?: string | null;
+  /** Backend settlement resolver URL */
+  settlementUrl?: string | null;
+  /** Batch settlement tx hash — null until batch settles */
+  batchTxHash?: string | null;
+  /** Batch settlement explorer URL — null until batch settles */
+  batchExplorerUrl?: string | null;
+  /** Backend batch resolver URL */
+  batchResolverUrl?: string | null;
   /** Error message for failed edges */
   error?: string | null;
   /** Execution mode (audit_only or x402) */
