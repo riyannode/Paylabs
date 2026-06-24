@@ -123,29 +123,27 @@ DO $$ BEGIN
 END $$;
 
 -- ─── paylabs_webauthn_challenges ─────────────────────────────
-ALTER TABLE public.paylabs_webauthn_challenges ENABLE ROW LEVEL SECURITY;
+-- Guarded: table may not exist yet on fresh DB (created in migration 17).
+-- On existing DBs that already have the table, this applies RLS immediately.
+DO $$ BEGIN
+  IF to_regclass('public.paylabs_webauthn_challenges') IS NOT NULL THEN
+    ALTER TABLE public.paylabs_webauthn_challenges ENABLE ROW LEVEL SECURITY;
 
-REVOKE ALL ON TABLE public.paylabs_webauthn_challenges FROM anon;
-REVOKE ALL ON TABLE public.paylabs_webauthn_challenges FROM authenticated;
+    REVOKE ALL ON TABLE public.paylabs_webauthn_challenges FROM anon;
+    REVOKE ALL ON TABLE public.paylabs_webauthn_challenges FROM authenticated;
 
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'deny anon authenticated select' AND tablename = 'paylabs_webauthn_challenges') THEN
-    CREATE POLICY "deny anon authenticated select" ON public.paylabs_webauthn_challenges FOR SELECT TO anon, authenticated USING (false);
-  END IF;
-END $$;
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'deny anon authenticated insert' AND tablename = 'paylabs_webauthn_challenges') THEN
-    CREATE POLICY "deny anon authenticated insert" ON public.paylabs_webauthn_challenges FOR INSERT TO anon, authenticated WITH CHECK (false);
-  END IF;
-END $$;
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'deny anon authenticated update' AND tablename = 'paylabs_webauthn_challenges') THEN
-    CREATE POLICY "deny anon authenticated update" ON public.paylabs_webauthn_challenges FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
-  END IF;
-END $$;
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'deny anon authenticated delete' AND tablename = 'paylabs_webauthn_challenges') THEN
-    CREATE POLICY "deny anon authenticated delete" ON public.paylabs_webauthn_challenges FOR DELETE TO anon, authenticated USING (false);
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'deny anon authenticated select' AND tablename = 'paylabs_webauthn_challenges') THEN
+      CREATE POLICY "deny anon authenticated select" ON public.paylabs_webauthn_challenges FOR SELECT TO anon, authenticated USING (false);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'deny anon authenticated insert' AND tablename = 'paylabs_webauthn_challenges') THEN
+      CREATE POLICY "deny anon authenticated insert" ON public.paylabs_webauthn_challenges FOR INSERT TO anon, authenticated WITH CHECK (false);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'deny anon authenticated update' AND tablename = 'paylabs_webauthn_challenges') THEN
+      CREATE POLICY "deny anon authenticated update" ON public.paylabs_webauthn_challenges FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'deny anon authenticated delete' AND tablename = 'paylabs_webauthn_challenges') THEN
+      CREATE POLICY "deny anon authenticated delete" ON public.paylabs_webauthn_challenges FOR DELETE TO anon, authenticated USING (false);
+    END IF;
   END IF;
 END $$;
 

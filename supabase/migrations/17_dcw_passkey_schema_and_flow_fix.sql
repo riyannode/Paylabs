@@ -27,11 +27,35 @@ CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_user_type
 CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_expires
   ON public.paylabs_webauthn_challenges (expires_at);
 
--- Auto-delete expired challenges (runs on every insert via trigger is overkill;
--- a periodic cleanup or SELECT ... WHERE expires_at > now() is sufficient,
--- but we add a partial index to make the query fast).
+CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_email_type
+  ON public.paylabs_webauthn_challenges (email, type, expires_at);
+
+-- RLS: deny all access from anon/authenticated (service role only)
+ALTER TABLE public.paylabs_webauthn_challenges ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE public.paylabs_webauthn_challenges FROM anon;
+REVOKE ALL ON TABLE public.paylabs_webauthn_challenges FROM authenticated;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'deny anon authenticated select' AND tablename = 'paylabs_webauthn_challenges') THEN
+    CREATE POLICY "deny anon authenticated select" ON public.paylabs_webauthn_challenges FOR SELECT TO anon, authenticated USING (false);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'deny anon authenticated insert' AND tablename = 'paylabs_webauthn_challenges') THEN
+    CREATE POLICY "deny anon authenticated insert" ON public.paylabs_webauthn_challenges FOR INSERT TO anon, authenticated WITH CHECK (false);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'deny anon authenticated update' AND tablename = 'paylabs_webauthn_challenges') THEN
+    CREATE POLICY "deny anon authenticated update" ON public.paylabs_webauthn_challenges FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'deny anon authenticated delete' AND tablename = 'paylabs_webauthn_challenges') THEN
+    CREATE POLICY "deny anon authenticated delete" ON public.paylabs_webauthn_challenges FOR DELETE TO anon, authenticated USING (false);
+  END IF;
+END $$;
 
 -- ─── 2. Add passkey columns to paylabs_dcw_wallets ──────────
+
+-- email column may be missing if table was created by an earlier migration 17 draft
+ALTER TABLE public.paylabs_webauthn_challenges
+  ADD COLUMN IF NOT EXISTS email text NOT NULL DEFAULT '';
 
 ALTER TABLE public.paylabs_dcw_wallets
   ADD COLUMN IF NOT EXISTS passkey_credential_id text,
