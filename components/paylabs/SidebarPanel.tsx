@@ -25,9 +25,7 @@ export default function SidebarPanel({ analytics }: Props) {
       <nav className="pl-nav">
         <a className="active" href="/">Chat</a>
         <a href="/dashboard">Explorer</a>
-        <a href="/sources">Sources</a>
         <a href="/creator">Creator</a>
-        <a href="/receipts">Receipts</a>
       </nav>
 
       {/* User Analytics */}
