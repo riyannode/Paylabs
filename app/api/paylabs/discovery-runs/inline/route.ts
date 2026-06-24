@@ -212,6 +212,21 @@ async function runX402Orchestration(params: {
       userWallet,
     });
 
+    // ── Safe diagnostics: Brain planner result (no raw LLM, no secrets) ──
+    const VALID_TIER_SET = new Set(["easy", "normal", "advanced"]);
+    const diagHint = planResult.brainPlanning?.route_tier_hint;
+    const diagHintStr: string | undefined = diagHint;
+    const diagHintValid = diagHintStr !== undefined && VALID_TIER_SET.has(diagHintStr);
+    console.log("[inline] Brain planner diagnostics", {
+      planResult_ok: planResult.ok,
+      hasBrainPlanning: !!planResult.brainPlanning,
+      planResult_error: planResult.error ? planResult.error.slice(0, 160) : null,
+      route_tier_hint_present: diagHintStr !== undefined && diagHintStr !== null,
+      route_tier_hint_value: diagHintValid ? diagHintStr : (diagHintStr === null ? "null" : diagHintStr === undefined ? "none" : "invalid"),
+      selected_macro_nodes_count: planResult.brainPlanning?.selected_macro_nodes?.length ?? 0,
+      selected_services_count: planResult.brainPlanning?.selected_services?.length ?? 0,
+    });
+
     if (planResult.ok && planResult.brainPlanning) {
       const bp = planResult.brainPlanning;
       fullBrainPlanning = {

@@ -128,6 +128,25 @@ Decision rules:
 - Do not choose ADVANCED unless paid access, creator claim, payment routing, receipt, or settlement behavior is explicit.
 - Over-routing to ADVANCED is a planning error.
 
+AUTO TIER RULE
+
+If the input Route tier is "auto", you MUST still output a concrete route_tier_hint.
+Allowed values are exactly:
+- "easy"
+- "normal"
+- "advanced"
+
+Forbidden values:
+- "auto"
+- "none"
+- null
+- ""
+- omitted
+
+If the user asks for a simple latest/search/source query, choose "easy".
+If the user asks to compare, verify, validate, assess trust, or decide which is better, choose "normal".
+If the user explicitly asks for paid access, creator payment, source payment, receipt, settlement, or payment routing, choose "advanced".
+
 SEARCH PLANNING RULES
 
 Build query variants for signal_scout.
@@ -317,6 +336,17 @@ Analyze this goal and produce a structured execution plan.`,
       max_registry_checks: number;
       max_source_accesses: number;
     };
+
+    // ── Post-LLM validation guard: route_tier_hint MUST be easy|normal|advanced ──
+    const VALID_TIERS = new Set(["easy", "normal", "advanced"]);
+    if (!VALID_TIERS.has(data.route_tier_hint)) {
+      return {
+        error: `Brain planning invalid route_tier_hint: got "${data.route_tier_hint}"`,
+        progressSummaries: [
+          `Brain planning failed — invalid route_tier_hint: "${data.route_tier_hint}"`,
+        ],
+      };
+    }
 
     return {
       normalizedGoal: data.normalized_goal,
