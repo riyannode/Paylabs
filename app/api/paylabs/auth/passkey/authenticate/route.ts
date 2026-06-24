@@ -21,7 +21,12 @@ import type { AuthenticationResponseJSON } from "@simplewebauthn/types";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { createSession, sessionCookieOptions } from "@/lib/paylabs/auth/session";
 
-const RP_ID = process.env.NEXT_PUBLIC_APP_HOST || "localhost";
+function getRpId(req: NextRequest): string {
+  return process.env.NEXT_PUBLIC_APP_HOST || req.nextUrl.hostname || "localhost";
+}
+function getExpectedOrigin(req: NextRequest): string {
+  return process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin || "http://localhost:3000";
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -51,7 +56,7 @@ export async function POST(req: NextRequest) {
       }
 
       const options = await generateAuthenticationOptions({
-        rpID: RP_ID,
+        rpID: getRpId(req),
         allowCredentials: [{ id: user.passkey_credential_id }],
         userVerification: "required",
       });
@@ -109,8 +114,8 @@ export async function POST(req: NextRequest) {
         verification = await verifyAuthenticationResponse({
           response: credential,
           expectedChallenge: challengeRow.challenge,
-          expectedOrigin: process.env.NEXT_PUBLIC_APP_URL || `http://localhost:3000`,
-          expectedRPID: RP_ID,
+          expectedOrigin: getExpectedOrigin(req),
+          expectedRPID: getRpId(req),
           credential: {
             id: user.passkey_credential_id,
             publicKey: Buffer.from(user.passkey_public_key, "base64"),

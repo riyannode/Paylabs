@@ -24,7 +24,12 @@ import { createSession, sessionCookieOptions } from "@/lib/paylabs/auth/session"
 import { randomUUID } from "node:crypto";
 
 const RP_NAME = "PayLabs";
-const RP_ID = process.env.NEXT_PUBLIC_APP_HOST || "localhost";
+function getRpId(req: NextRequest): string {
+  return process.env.NEXT_PUBLIC_APP_HOST || req.nextUrl.hostname || "localhost";
+}
+function getExpectedOrigin(req: NextRequest): string {
+  return process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin || "http://localhost:3000";
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -58,7 +63,7 @@ export async function POST(req: NextRequest) {
       // Generate WebAuthn registration options
       const options = await generateRegistrationOptions({
         rpName: RP_NAME,
-        rpID: RP_ID,
+        rpID: getRpId(req),
         userID: Buffer.from(userId),
         userName: email,
         userDisplayName: email.split("@")[0],
@@ -109,8 +114,8 @@ export async function POST(req: NextRequest) {
         verification = await verifyRegistrationResponse({
           response: credential,
           expectedChallenge: challengeRow.challenge,
-          expectedOrigin: process.env.NEXT_PUBLIC_APP_URL || `http://localhost:3000`,
-          expectedRPID: RP_ID,
+          expectedOrigin: getExpectedOrigin(req),
+          expectedRPID: getRpId(req),
         });
       } catch (e: unknown) {
         return NextResponse.json(
