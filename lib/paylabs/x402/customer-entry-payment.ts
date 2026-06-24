@@ -46,6 +46,11 @@ export interface CustomerEntryPaymentResult {
     x402Version: number;
     txHash: string | null;
     explorerUrl: string | null;
+    settlementId: string | null;
+    settlementUrl: string | null;
+    batchTxHash: string | null;
+    batchExplorerUrl: string | null;
+    batchResolverUrl: string | null;
   };
   payer?: string;
   error?: string;
@@ -60,6 +65,10 @@ export interface CustomerEntryPaymentData {
   entry_payment_settlement_id?: string | null;
   entry_payment_tx_hash?: string | null;
   entry_payment_explorer_url?: string | null;
+  entry_payment_settlement_url?: string | null;
+  entry_payment_batch_tx_hash?: string | null;
+  entry_payment_batch_explorer_url?: string | null;
+  entry_payment_batch_resolver_url?: string | null;
   selected_tier: string;
   quote_planned_cost_usdc: number;
   quote_expected_payment_edges: number;
@@ -153,8 +162,13 @@ export function buildCustomerEntryPaymentData(
     customer_wallet_type: walletType,
     entry_payment_status: result.settled ? "paid" : "failed",
     entry_payment_amount_usdc: quote.plannedCostUsdc,
+    entry_payment_settlement_id: result.paymentMeta?.settlementId ?? null,
     entry_payment_tx_hash: result.paymentMeta?.txHash ?? null,
     entry_payment_explorer_url: result.paymentMeta?.explorerUrl ?? null,
+    entry_payment_settlement_url: result.paymentMeta?.settlementUrl ?? null,
+    entry_payment_batch_tx_hash: result.paymentMeta?.batchTxHash ?? null,
+    entry_payment_batch_explorer_url: result.paymentMeta?.batchExplorerUrl ?? null,
+    entry_payment_batch_resolver_url: result.paymentMeta?.batchResolverUrl ?? null,
     selected_tier: quote.routeTier,
     quote_planned_cost_usdc: quote.plannedCostUsdc,
     quote_expected_payment_edges: quote.expectedPaymentEdges,
