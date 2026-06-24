@@ -1597,54 +1597,6 @@ a:hover { text-decoration: none; }
   box-shadow: 0 24px 64px rgba(0,0,0,.18);
 }
 
-.pl-picker-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.pl-picker-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  padding: 16px;
-  border: 2px solid var(--border, #e5e7eb);
-  border-radius: 12px;
-  background: var(--surface, #fff);
-  cursor: pointer;
-  text-align: left;
-  transition: border-color .15s, box-shadow .15s;
-}
-.pl-picker-card:hover {
-  border-color: var(--accent, #6366f1);
-  box-shadow: 0 0 0 3px rgba(99,102,241,.12);
-}
-
-.pl-picker-icon {
-  font-size: 28px;
-  flex-shrink: 0;
-  width: 44px;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg, #f8fafc);
-  border-radius: 10px;
-}
-
-.pl-picker-info { flex: 1; }
-.pl-picker-info b { font-size: 15px; display: block; }
-
-.pl-picker-tag {
-  display: inline-block;
-  margin-top: 8px;
-  padding: 2px 8px;
-  border-radius: 6px;
-  background: var(--accent-bg, rgba(99,102,241,.08));
-  color: var(--accent, #6366f1);
-  font-size: 11px;
-  font-weight: 600;
-}
 
 /* ─── DCW Modal ───────────────────────────────────────────── */
 
@@ -1729,36 +1681,6 @@ a:hover { text-decoration: none; }
 }
 
 
-/* ── Wallet Picker ── */
-.pl-picker-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-.pl-picker-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 20px 12px;
-  border-radius: 12px;
-  border: 1.5px solid #e5e7eb;
-  background: #fff;
-  cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-.pl-picker-card:hover {
-  border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
-}
-.pl-picker-card-accent {
-  border-color: #6366f1;
-  background: linear-gradient(135deg, #eef2ff 0%, #faf5ff 100%);
-}
-.pl-picker-icon { font-size: 28px; }
-.pl-picker-title { font-size: 16px; font-weight: 700; }
-.pl-picker-desc { font-size: 12px; font-weight: 600; color: #6366f1; }
-.pl-picker-detail { font-size: 11px; color: #6b7280; }
 
 /* ── DCW Modal ── */
 .pl-dcw-card {
@@ -1791,4 +1713,177 @@ a:hover { text-decoration: none; }
   font-size: 20px;
   font-weight: 700;
   color: #111827;
+}
+
+/* ── Wallet Picker v2 ─────────────────────────────────────── */
+
+.pl-picker-shell {
+  width: 400px;
+  padding: 24px;
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 24px 64px rgba(0,0,0,.16);
+  position: relative;
+}
+
+.pl-picker-head {
+  padding: 0 36px 18px 0;
+}
+
+.pl-picker-head h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 4px;
+}
+
+.pl-picker-head p {
+  font-size: 13px;
+  color: #64748b;
+  margin: 0;
+  line-height: 1.45;
+}
+
+.pl-picker-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pl-picker-card {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 13px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1.5px solid #e2e8f0;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.pl-picker-card:hover {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+}
+
+.pl-picker-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f0fdf4;
+  color: #16a34a;
+  flex-shrink: 0;
+}
+
+.pl-picker-icon-blue {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.pl-picker-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pl-picker-title-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.pl-picker-title-row b {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: #0f172a;
+  white-space: nowrap;
+}
+
+.pl-picker-title-row em {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+}
+
+.pl-picker-copy > span:last-child {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.pl-picker-chevron {
+  justify-self: end;
+  color: #94a3b8;
+  transition: color 0.16s ease, transform 0.16s ease;
+}
+
+.pl-picker-card:hover .pl-picker-chevron {
+  color: #2563eb;
+  transform: translateX(2px);
+}
+
+@media (max-width: 520px) {
+  .pl-picker-shell {
+    width: min(92vw, 380px);
+    padding: 20px;
+    border-radius: 20px;
+  }
+
+  .pl-picker-head {
+    padding: 0 36px 16px 0;
+  }
+
+  .pl-picker-head h2 {
+    font-size: 17px;
+  }
+
+  .pl-picker-head p {
+    font-size: 12.5px;
+  }
+
+  .pl-picker-card {
+    min-height: 74px;
+    grid-template-columns: 40px minmax(0, 1fr) 18px;
+    gap: 11px;
+    padding: 13px;
+    border-radius: 15px;
+  }
+
+  .pl-picker-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 13px;
+  }
+
+  .pl-picker-title-row {
+    gap: 6px;
+  }
+
+  .pl-picker-title-row b {
+    font-size: 13px;
+  }
+
+  .pl-picker-title-row em {
+    font-size: 10px;
+    padding: 2px 6px;
+  }
+
+  .pl-picker-copy > span:last-child {
+    font-size: 11.5px;
+  }
 }

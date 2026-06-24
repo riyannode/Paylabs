@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { ChevronRight, ShieldCheck, Zap } from "lucide-react";
 
 /* ── Wallet picker shown when user clicks "Connect wallet" ── */
 
@@ -16,31 +16,50 @@ export default function WalletPicker({ open, onClose, onSelectUcw, onSelectDcw }
 
   return (
     <div className="pl-wallet-overlay-v3" onClick={onClose}>
-      <div className="pl-wallet-modal-v3" onClick={(e) => e.stopPropagation()}>
-        <button className="pl-wallet-x-v3" onClick={onClose} aria-label="Close">×</button>
+      <div
+        className="pl-wallet-modal-v3 pl-picker-shell"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button className="pl-wallet-x-v3" onClick={onClose} aria-label="Close">
+          ×
+        </button>
 
-        <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Connect Wallet</h2>
-          <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>
-            Choose how you want to connect
-          </p>
+        <div className="pl-picker-head">
+          <h2>Connect wallet</h2>
+          <p>Choose how PayLabs should authorize payments.</p>
         </div>
 
         <div className="pl-picker-grid">
           <button className="pl-picker-card" onClick={onSelectUcw}>
-            <div className="pl-picker-icon">🔐</div>
-            <div className="pl-picker-title">UCW</div>
-            <div className="pl-picker-desc">Self-Custody</div>
-            <div className="pl-picker-detail">Social / Email / PIN</div>
-            <div className="pl-picker-detail">You hold your keys</div>
+            <span className="pl-picker-icon" aria-hidden="true">
+              <ShieldCheck size={21} strokeWidth={2.2} />
+            </span>
+
+            <span className="pl-picker-copy">
+              <span className="pl-picker-title-row">
+                <b>User-Controlled Wallet</b>
+                <em>Self-custody</em>
+              </span>
+              <span>You approve payments with Circle auth.</span>
+            </span>
+
+            <ChevronRight className="pl-picker-chevron" size={18} strokeWidth={2.2} />
           </button>
 
-          <button className="pl-picker-card pl-picker-card-accent" onClick={onSelectDcw}>
-            <div className="pl-picker-icon">⚡</div>
-            <div className="pl-picker-title">DCW</div>
-            <div className="pl-picker-desc">Auto-Pay</div>
-            <div className="pl-picker-detail">Zero signing</div>
-            <div className="pl-picker-detail">Seamless x402</div>
+          <button className="pl-picker-card" onClick={onSelectDcw}>
+            <span className="pl-picker-icon pl-picker-icon-blue" aria-hidden="true">
+              <Zap size={21} strokeWidth={2.2} />
+            </span>
+
+            <span className="pl-picker-copy">
+              <span className="pl-picker-title-row">
+                <b>Developer-Controlled Wallet</b>
+                <em>Auto-pay</em>
+              </span>
+              <span>PayLabs signs x402 payments server-side.</span>
+            </span>
+
+            <ChevronRight className="pl-picker-chevron" size={18} strokeWidth={2.2} />
           </button>
         </div>
       </div>
