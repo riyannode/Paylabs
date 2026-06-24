@@ -92,13 +92,14 @@ const BRAIN_SELLER_ENV = "PAYLABS_BRAIN_SELLER_WALLET_ADDRESS";
  */
 export function buildCustomerEntryChallenge(
   plannedCostUsdc: number,
-  resourceUrl?: string
+  resourceUrl?: string,
+  bodyHash?: string
 ): { challenge: ReturnType<typeof buildX402Challenge>; headerValue: string } {
   const sellerAddress = resolveEntrySellerAddress();
   // Convert USDC to atomic units (6 decimals)
   const amountAtomic = Math.round(plannedCostUsdc * 1_000_000).toString();
 
-  const challenge = buildX402Challenge(sellerAddress, amountAtomic, resourceUrl);
+  const challenge = buildX402Challenge(sellerAddress, amountAtomic, resourceUrl, bodyHash);
   const headerValue = encodeChallengeHeader(challenge);
 
   return { challenge, headerValue };

@@ -15,10 +15,12 @@ import {
   getBrainConfig,
   resolveNodeSellerWallet,
 } from "@/lib/paylabs/delegated-runtime/node-registry";
+
 import {
   buildX402Challenge,
   encodeChallengeHeader,
   verifyAndSettlePayment,
+  computeBodyHash,
   type X402ChallengeRequirements,
 } from "@/lib/paylabs/x402/seller-challenge";
 import { isDelegatedRuntimeEnabled } from "@/lib/paylabs/feature-flags";
@@ -81,8 +83,11 @@ export async function POST(req: NextRequest) {
 
   const amountAtomic = Math.round(brainConfig.fixedBrainFeeUsdc * 1_000_000).toString();
 
+  // Compute bodyHash for POST body binding
+  const bodyHash = computeBodyHash(body);
+
   if (!paymentHeader) {
-    const challenge = buildX402Challenge(sellerAddress, amountAtomic, req.url);
+    const challenge = buildX402Challenge(sellerAddress, amountAtomic, req.url, bodyHash);
     const encoded = encodeChallengeHeader(challenge);
     const response = NextResponse.json(
       { ok: false, error: "Payment required", x402: true, node: "brain", amount_usdc: brainConfig.fixedBrainFeeUsdc.toString() },
@@ -103,6 +108,7 @@ export async function POST(req: NextRequest) {
       name: "GatewayWalletBatched",
       version: "1",
       verifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+      ...(bodyHash ? { bodyHash } : {}),
     },
   };
 
@@ -113,6 +119,24 @@ export async function POST(req: NextRequest) {
       { ok: false, error: settleResult.error || "Payment failed", settled: false },
       { status: 402 }
     );
+  }
+
+  // Verify bodyHash: extract from signed payment payload, compare with current body
+  // The buyer signed this bodyHash in EIP-712 — if body was tampered, hash won't match
+  try {
+    const decoded = JSON.parse(Buffer.from(paymentHeader, "base64").toString("utf-8"));
+    const signedBodyHash = decoded?.accepted?.extra?.bodyHash;
+    if (signedBodyHash) {
+      const currentBodyHash = computeBodyHash(body);
+      if (currentBodyHash !== signedBodyHash) {
+        return NextResponse.json(
+          { ok: false, error: "Body hash mismatch: request body differs from signed payment" },
+          { status: 402 }
+        );
+      }
+    }
+  } catch {
+    // If we can't decode the payment header, proceed (verify+settle already passed)
   }
 
   return NextResponse.json({
