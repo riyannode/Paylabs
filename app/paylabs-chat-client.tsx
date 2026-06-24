@@ -13,7 +13,6 @@ type Analytics = {
   uniqueUsers: number;
   active24h: number;
   active7d: number;
-  topWallet?: { address: string; runs: number } | null;
 };
 
 type Props = {
@@ -1782,7 +1781,7 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
       )}
       {result.runId && (
         <div className="pl-result-links">
-          <a href={`/dashboard?run=${result.runId}`}>View details</a>
+          <a href={`/explorer?run=${result.runId}`}>View details</a>
           <button onClick={onReset} className="pl-new-run">New run</button>
         </div>
       )}

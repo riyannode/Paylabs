@@ -4,18 +4,11 @@ type Analytics = {
   uniqueUsers: number;
   active24h: number;
   active7d: number;
-  topWallet?: { address: string; runs: number } | null;
 };
 
 type Props = {
   analytics: Analytics;
 };
-
-function short(value?: string | null, chars = 6): string {
-  if (!value) return "—";
-  if (value.length <= chars * 2 + 3) return value;
-  return `${value.slice(0, chars)}…${value.slice(-chars)}`;
-}
 
 export default function SidebarPanel({ analytics }: Props) {
   return (
@@ -24,8 +17,10 @@ export default function SidebarPanel({ analytics }: Props) {
 
       <nav className="pl-nav">
         <a className="active" href="/">Chat</a>
-        <a href="/dashboard">Explorer</a>
-        <a href="/creator">Creator</a>
+        <a href="/explorer">Explorer</a>
+        <a href="/source">Sources</a>
+        <a href="/creator-dashboard">Creator Dashboard</a>
+        <a href="/creator-profile">Creator Profile</a>
       </nav>
 
       {/* User Analytics */}
@@ -45,12 +40,6 @@ export default function SidebarPanel({ analytics }: Props) {
             <span>7d</span>
           </div>
         </div>
-        {analytics.topWallet ? (
-          <div className="pl-top-wallet">
-            <span className="data-mono">{short(analytics.topWallet.address)}</span>
-            <span>{analytics.topWallet.runs} runs</span>
-          </div>
-        ) : null}
       </section>
     </aside>
   );
