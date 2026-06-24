@@ -1940,3 +1940,17 @@ a:hover { text-decoration: none; }
     max-height: calc(100vh - 88px);
   }
 }
+
+/* ── Ask PayLabs hero → chat composer spacing ─────────────── */
+/* Chat box lives inside .pl-hero, so we push the <p> tag down */
+/* to create room between subtitle and composer.               */
+
+.pl-hero > p {
+  margin-bottom: 48px !important;
+}
+
+@media (max-width: 640px) {
+  .pl-hero > p {
+    margin-bottom: 52px !important;
+  }
+}
