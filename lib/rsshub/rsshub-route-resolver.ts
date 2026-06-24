@@ -213,10 +213,15 @@ function resolveSingleRoute(
     const pkg = extractNpmPackage(entityTerms, query);
     if (pkg) {
       let resolved = fullPath;
+      // For scoped packages (@scope/name), preserve @ and / in path
+      // For regular packages, encode normally
+      const encodedPkg = pkg.startsWith("@")
+        ? pkg  // @langchain/core stays as-is (RSSHub expects literal @scope/name in path)
+        : encodeURIComponent(pkg);
       // Replace :name{regex} or :name with the package
       resolved = resolved.replace(
         /:name(\{[^}]*\})?/,
-        encodeURIComponent(pkg)
+        encodedPkg
       );
       // Replace other params if any
       for (const p of params) {

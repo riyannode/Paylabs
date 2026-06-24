@@ -1102,13 +1102,22 @@ async function runX402Path(
       });
     }
 
-    // ── V3: Store source_context snapshot in agent_trace ──
+    // ── V3: Store source_context snapshot in agent_trace (MERGE, not overwrite) ──
     if (exitOutput.sources_used && exitOutput.sources_used.length > 0) {
       try {
+        // Read existing agent_trace to preserve brain_planning, payment_graph, etc.
+        const { data: existingRun } = await supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .select("agent_trace")
+          .eq("id", discoveryRunId)
+          .single();
+        const existingTrace = (existingRun?.agent_trace as Record<string, unknown>) || {};
+
         await supabaseAdmin()
           .from("paylabs_discovery_runs")
           .update({
             agent_trace: {
+              ...existingTrace,
               source_context: {
                 source_count: exitOutput.source_count || 0,
                 source_confidence: exitOutput.source_confidence || 0,
