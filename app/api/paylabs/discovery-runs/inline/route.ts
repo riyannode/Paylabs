@@ -957,6 +957,7 @@ async function runX402Path(
         entry_payment_amount_usdc: entryPaymentData.entry_payment_amount_usdc,
         entry_payment_tx_hash: entryPaymentData.entry_payment_tx_hash,
         entry_payment_explorer_url: entryPaymentData.entry_payment_explorer_url,
+        entry_payment_settlement_id: entryPaymentData.entry_payment_settlement_id ?? null,
         entry_payment_batch_tx_hash: entryPaymentData.entry_payment_batch_tx_hash ?? null,
         entry_payment_batch_explorer_url: entryPaymentData.entry_payment_batch_explorer_url ?? null,
         agent_trace: {
