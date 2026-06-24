@@ -115,11 +115,26 @@ export default function WalletConnectModal({
     return "Connected";
   }, [isConnected, walletState, gatewayReady]);
 
+  const showAsConnectedPopover =
+    !!walletInfo?.address &&
+    (
+      walletState === "connected" ||
+      walletState === "ready_to_approve" ||
+      walletState === "needs_gateway_deposit" ||
+      walletState === "paid"
+    );
+
   if (!open) return null;
 
   return (
-    <div className="pl-wallet-overlay-v3" onClick={onClose}>
-      <div className="pl-wallet-modal-v3" onClick={(e) => e.stopPropagation()}>
+    <div
+      className={`pl-wallet-overlay-v3 ${showAsConnectedPopover ? "pl-wallet-overlay-popover" : ""}`}
+      onClick={onClose}
+    >
+      <div
+        className={`pl-wallet-modal-v3 ${showAsConnectedPopover ? "pl-wallet-modal-popover" : ""}`}
+        onClick={(e) => e.stopPropagation()}
+      >
         <button className="pl-wallet-x-v3" onClick={onClose} aria-label="Close">
           ×
         </button>
