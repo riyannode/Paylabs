@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 
 export type WalletState =
   | "not_connected"
@@ -95,6 +95,13 @@ export default function WalletConnectModal({
   const [depositAmount, setDepositAmount] = useState("");
   const [showEmailInput, setShowEmailInput] = useState(defaultShowEmailInput);
   const [emailValue, setEmailValue] = useState("");
+
+  useEffect(() => {
+    if (defaultShowEmailInput) {
+      setTab("login");
+      setShowEmailInput(true);
+    }
+  }, [defaultShowEmailInput]);
 
   const isConnected = !!walletInfo?.address;
   const gatewayBalance = asNumber(ucwBalance?.gateway);

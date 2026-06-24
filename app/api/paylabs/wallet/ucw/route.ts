@@ -253,9 +253,23 @@ export async function POST(req: NextRequest) {
         // 2. Custom header required — browsers don't send custom headers cross-origin (CSRF protection)
         // 3. Cache: no-store — never cache auth tokens
         // 4. Tokens are behind httpOnly cookie — only reachable from same-origin with valid session
-        const origin = req.headers.get("origin") || req.headers.get("referer");
         const appUrl = process.env.PAYLABS_APP_URL || process.env.NEXT_PUBLIC_PAYLABS_APP_URL;
-        if (appUrl && origin && !origin.startsWith(appUrl)) {
+        if (!appUrl) {
+          return NextResponse.json({ error: "App URL not configured" }, { status: 500 });
+        }
+        const requestOriginRaw = req.headers.get("origin") || req.headers.get("referer");
+        if (!requestOriginRaw) {
+          return NextResponse.json({ error: "Missing origin" }, { status: 403 });
+        }
+        let requestOrigin: string;
+        let allowedOrigin: string;
+        try {
+          requestOrigin = new URL(requestOriginRaw).origin;
+          allowedOrigin = new URL(appUrl).origin;
+        } catch {
+          return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
+        }
+        if (requestOrigin !== allowedOrigin) {
           return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
         // Require X-Requested-With header (simple CSRF: cross-origin JS can't set custom headers)

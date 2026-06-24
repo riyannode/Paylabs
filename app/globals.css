@@ -1204,6 +1204,26 @@ a:hover { text-decoration: none; }
   background: #f3f6fb;
 }
 
+.pl-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6366f1;
+  background: #eef2ff;
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+  margin-bottom: 8px;
+}
+
+.pl-back-btn:hover {
+  background: #e0e7ff;
+  color: #4338ca;
+}
+
 .pl-email-input-row {
   display: flex;
   gap: 6px;

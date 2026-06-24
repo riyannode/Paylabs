@@ -196,10 +196,10 @@ export default async function DashboardPage() {
   return (
     <div style={{ display: "grid", gap: 24 }}>
       <div>
-        <a href="/" style={{ fontSize: 13, color: "var(--muted)", fontWeight: 500 }}>← Chat</a>
-        <h1 className="page-title">Dashboard</h1>
+        <a href="/" className="pl-back-btn">← Back to Chat</a>
+        <h1 className="page-title">Explorer</h1>
         <p className="muted" style={{ marginTop: 8 }}>
-          RSSHub-first source feed activity.
+          Transaction activity
         </p>
       </div>
 
