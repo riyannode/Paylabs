@@ -115,6 +115,52 @@ export interface X402BuyerCallResult {
   challengeStatus?: number;
 }
 
+// ─── SSRF Protection ──────────────────────────────────────────
+
+const BLOCKED_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "0.0.0.0",
+  "::1",
+  "metadata.google.internal",
+  "169.254.169.254",
+]);
+
+/**
+ * Validate seller URL against SSRF.
+ * Blocks private/internal IPs, metadata endpoints, and non-HTTP schemes.
+ * Returns error string if invalid, null if safe.
+ */
+function validateSellerUrl(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return `Invalid seller URL: ${url}`;
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return `Seller URL must use http or https protocol, got: ${parsed.protocol}`;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+
+  if (BLOCKED_HOSTS.has(hostname)) {
+    return `Seller URL hostname is blocked: ${hostname}`;
+  }
+
+  // Block private IP ranges (10.x, 172.16-31.x, 192.168.x)
+  if (
+    /^10\./.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
+    /^192\.168\./.test(hostname)
+  ) {
+    return `Seller URL points to private network: ${hostname}`;
+  }
+
+  return null;
+}
+
 // ─── Core Buyer Transport ────────────────────────────────────
 
 /**
@@ -146,6 +192,12 @@ export async function callPaidSeller(
     maxAmountUsdc,
     requirePayment = false,
   } = input;
+
+  // ── SSRF guard: validate seller URL ─────────────────────
+  const urlError = validateSellerUrl(sellerUrl);
+  if (urlError) {
+    return { ok: false, error: urlError };
+  }
 
   // ── Step 1: Initial request (no payment) ─────────────────
 
