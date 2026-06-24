@@ -106,7 +106,10 @@ export async function POST(req: NextRequest) {
     // 6. Server-side budget enforcement (always use server cap, ignore client)
     const maxAmountUsdc = MAX_BUDGET_USDC;
 
-    // 7. Execute full paid request via DCW (fail closed: requirePayment = true)
+    // 7. Execute full paid request via DCW
+    //    requirePayment=true only for paid tiers (normal/advanced).
+    //    Free tiers (easy/standard/auto) may return 200 without 402.
+    const PAID_TIERS = new Set(["normal", "advanced"]);
     const dcwSigner = createDcwSigner();
 
     const result = await callPaidSeller(dcwSigner, {
@@ -123,7 +126,7 @@ export async function POST(req: NextRequest) {
       buyerAgentName: "paylabs-dcw-user",
       sellerServiceName: "discovery",
       maxAmountUsdc,
-      requirePayment: true,
+      requirePayment: PAID_TIERS.has(routeTier),
     });
 
     // 7. Return final result (no client retry needed)
