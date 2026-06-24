@@ -45,40 +45,15 @@ import {
 } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import type { DelegatedRunQuote } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import { randomUUID } from "node:crypto";
+import { resolvePaylabsAppUrl } from "@/lib/paylabs/runtime/resolve-app-url";
 
 // ─── x402 Orchestration via callPaidSeller ──────────────────
 // Each endpoint handles its own x402 settlement.
 // callPaidSeller handles: send → 402 challenge → sign → retry.
 
 async function resolveAppUrl(): Promise<string> {
-  // Priority: PAYLABS_INTERNAL_APP_URL > VERCEL_URL > PAYLABS_APP_URL
-  // PAYLABS_INTERNAL_APP_URL is a dedicated override for serverless self-calls
-  // when VERCEL_URL auto-detection is unreliable.
-  const raw =
-    process.env.PAYLABS_INTERNAL_APP_URL
-    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "")
-    || process.env.PAYLABS_APP_URL
-    || "";
-  if (!raw) throw new Error("config_error: No PAYLABS_INTERNAL_APP_URL, VERCEL_URL, or PAYLABS_APP_URL");
-
-  // Normalize: add https:// if missing, strip trailing slash
-  let base = raw.trim();
-  if (!/^https?:\/\//.test(base)) base = `https://${base}`;
-  base = base.replace(/\/+$/, "");
-
-  // Validate: must parse as URL with non-empty hostname
-  try {
-    const parsed = new URL(base);
-    if (!parsed.hostname) throw new Error("empty hostname");
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      throw new Error(`invalid protocol: ${parsed.protocol}`);
-    }
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(`config_error: invalid resolved app URL: ${msg}`);
-  }
-
-  return base;
+  const { baseUrl } = resolvePaylabsAppUrl();
+  return baseUrl;
 }
 
 type X402CallResult = {
@@ -98,20 +73,9 @@ async function callBrainX402(dcwSigner: import("@/lib/paylabs/x402/buyer-transpo
 
   const base = await resolveAppUrl();
 
-  // ── Safe diagnostics: log self-call target (no secrets) ──
-  let selectedBaseSource = "unknown";
-  if (process.env.VERCEL_URL) selectedBaseSource = "VERCEL_URL";
-  else if (process.env.PAYLABS_INTERNAL_APP_URL) selectedBaseSource = "PAYLABS_INTERNAL_APP_URL";
-  else if (process.env.PAYLABS_APP_URL) selectedBaseSource = "PAYLABS_APP_URL";
-
-  const sellerUrl = `${base}/api/paylabs/brain/run`;
-  let sellerHostname = "";
-  let sellerPath = "/api/paylabs/brain/run";
-  try {
-    const parsed = new URL(sellerUrl);
-    sellerHostname = parsed.hostname;
-    sellerPath = parsed.pathname;
-  } catch { /* ignore parse error */ }
+  // ── Safe diagnostics: use shared resolver source (no secrets) ──
+  const { source: selectedBaseSource, hostname: sellerHostname } = resolvePaylabsAppUrl();
+  const sellerPath = "/api/paylabs/brain/run";
 
   console.log("[x402_self_call_debug] sellerService=brain", {
     selectedBaseSource,

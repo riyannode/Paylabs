@@ -10,30 +10,15 @@
  */
 
 import { NextResponse } from "next/server";
-
-async function resolveAppUrl(): Promise<string> {
-  const base =
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
-    process.env.PAYLABS_INTERNAL_APP_URL ||
-    process.env.PAYLABS_APP_URL ||
-    "";
-  if (!base) throw new Error("config_error: No VERCEL_URL or PAYLABS_APP_URL");
-  return base.replace(/\/+$/, "");
-}
+import { resolvePaylabsAppUrl } from "@/lib/paylabs/runtime/resolve-app-url";
 
 export async function GET() {
   try {
-    const base = await resolveAppUrl();
-    const sellerUrl = `${base}/api/paylabs/brain/run`;
+    const { baseUrl, source: selectedBaseSource, hostname: sellerHostname } =
+      resolvePaylabsAppUrl();
 
-    // Determine which source was selected (safe — no value exposed)
-    let selectedBaseSource = "unknown";
-    if (process.env.VERCEL_URL) selectedBaseSource = "VERCEL_URL";
-    else if (process.env.PAYLABS_INTERNAL_APP_URL)
-      selectedBaseSource = "PAYLABS_INTERNAL_APP_URL";
-    else if (process.env.PAYLABS_APP_URL) selectedBaseSource = "PAYLABS_APP_URL";
-
-    const parsed = new URL(sellerUrl);
+    const sellerUrl = `${baseUrl}/api/paylabs/brain/run`;
+    const sellerPath = "/api/paylabs/brain/run";
 
     // POST to brain endpoint without payment header
     const resp = await fetch(sellerUrl, {
@@ -74,8 +59,8 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       selectedBaseSource,
-      sellerHostname: parsed.hostname,
-      sellerPath: parsed.pathname,
+      sellerHostname,
+      sellerPath,
       status: resp.status,
       hasPaymentRequiredHeader,
       safeErrorClass,
