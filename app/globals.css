@@ -1585,6 +1585,81 @@ a:hover { text-decoration: none; }
   white-space: nowrap;
 }
 
+/* ─── Wallet Picker Modal ─────────────────────────────────── */
+
+.pl-picker-modal {
+  background: var(--surface, #fff);
+  border-radius: 16px;
+  padding: 28px 24px;
+  max-width: 440px;
+  width: 90vw;
+  position: relative;
+  box-shadow: 0 24px 64px rgba(0,0,0,.18);
+}
+
+
+/* ─── DCW Modal ───────────────────────────────────────────── */
+
+.pl-dcw-modal {
+  background: var(--surface, #fff);
+  border-radius: 16px;
+  padding: 28px 24px;
+  max-width: 420px;
+  width: 90vw;
+  position: relative;
+  box-shadow: 0 24px 64px rgba(0,0,0,.18);
+}
+
+.pl-dcw-header { text-align: center; margin-bottom: 20px; }
+.pl-dcw-header h3 { margin: 8px 0 4px; font-size: 18px; }
+
+.pl-dcw-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .5px;
+}
+
+.pl-dcw-step { display: flex; flex-direction: column; gap: 12px; }
+.pl-dcw-label { font-size: 13px; font-weight: 600; color: var(--muted, #64748b); }
+
+.pl-dcw-wallet-card {
+  background: var(--bg, #f8fafc);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pl-dcw-wallet-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+
+.pl-dcw-deposit-info { margin-top: 8px; }
+
+.pl-dcw-address-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg, #f8fafc);
+  border: 1px dashed var(--border, #d1d5db);
+  border-radius: 8px;
+  font-family: monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+.pl-dcw-address-box code { flex: 1; }
+
 @media (max-width: 640px) {
   .pl-compact-root { padding-top: var(--pl-space-sm); padding-bottom: var(--pl-space-lg); }
   .container { padding: 0 var(--pl-space-sm); }
@@ -1605,3 +1680,300 @@ a:hover { text-decoration: none; }
   .pl-result-links { justify-content: space-between; }
 }
 
+
+
+/* ── DCW Modal ── */
+.pl-dcw-card {
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+.pl-dcw-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.pl-dcw-addr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.pl-dcw-hint {
+  font-size: 11px;
+  color: #9ca3af;
+  margin-top: 4px;
+}
+.pl-dcw-balance {
+  font-size: 20px;
+  font-weight: 700;
+  color: #111827;
+}
+
+/* ── Wallet Picker v2 ─────────────────────────────────────── */
+
+.pl-picker-shell {
+  width: 400px;
+  padding: 24px;
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 24px 64px rgba(0,0,0,.16);
+  position: relative;
+}
+
+.pl-picker-head {
+  padding: 0 36px 18px 0;
+}
+
+.pl-picker-head h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 4px;
+}
+
+.pl-picker-head p {
+  font-size: 13px;
+  color: #64748b;
+  margin: 0;
+  line-height: 1.45;
+}
+
+.pl-picker-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pl-picker-card {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 13px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1.5px solid #e2e8f0;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.pl-picker-card:hover {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+}
+
+.pl-picker-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f0fdf4;
+  color: #16a34a;
+  flex-shrink: 0;
+}
+
+.pl-picker-icon-blue {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.pl-picker-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pl-picker-title-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.pl-picker-title-row b {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: #0f172a;
+  white-space: nowrap;
+}
+
+.pl-picker-title-row em {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+}
+
+.pl-picker-copy > span:last-child {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.pl-picker-chevron {
+  justify-self: end;
+  color: #94a3b8;
+  transition: color 0.16s ease, transform 0.16s ease;
+}
+
+.pl-picker-card:hover .pl-picker-chevron {
+  color: #2563eb;
+  transform: translateX(2px);
+}
+
+@media (max-width: 520px) {
+  .pl-picker-shell {
+    width: min(92vw, 380px);
+    padding: 20px;
+    border-radius: 20px;
+  }
+
+  .pl-picker-head {
+    padding: 0 36px 16px 0;
+  }
+
+  .pl-picker-head h2 {
+    font-size: 17px;
+  }
+
+  .pl-picker-head p {
+    font-size: 12.5px;
+  }
+
+  .pl-picker-card {
+    min-height: 74px;
+    grid-template-columns: 40px minmax(0, 1fr) 18px;
+    gap: 11px;
+    padding: 13px;
+    border-radius: 15px;
+  }
+
+  .pl-picker-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 13px;
+  }
+
+  .pl-picker-title-row {
+    gap: 6px;
+  }
+
+  .pl-picker-title-row b {
+    font-size: 13px;
+  }
+
+  .pl-picker-title-row em {
+    font-size: 10px;
+    padding: 2px 6px;
+  }
+
+  .pl-picker-copy > span:last-child {
+    font-size: 11.5px;
+  }
+}
+
+/* ── Connected wallet popover (right-anchored, not center modal) ── */
+
+.pl-wallet-overlay-v3.pl-wallet-overlay-popover {
+  display: block;
+  padding: 0;
+  background: transparent;
+  backdrop-filter: none;
+  pointer-events: none;
+}
+
+.pl-wallet-modal-v3.pl-wallet-modal-popover {
+  position: fixed;
+  top: 72px;
+  right: 18px;
+  width: min(360px, calc(100vw - 28px));
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  padding: 18px;
+  border-radius: 20px;
+  pointer-events: auto;
+  box-shadow:
+    0 22px 70px rgba(15, 23, 42, 0.18),
+    0 1px 0 rgba(255, 255, 255, 0.8) inset;
+}
+
+.pl-wallet-modal-popover .pl-wallet-x-v3 {
+  top: 12px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  font-size: 32px;
+  line-height: 24px;
+}
+
+@media (max-width: 640px) {
+  .pl-wallet-modal-v3.pl-wallet-modal-popover {
+    top: 74px;
+    right: 12px;
+    left: auto;
+    width: min(360px, calc(100vw - 24px));
+    max-height: calc(100vh - 110px);
+    border-radius: 18px;
+    padding: 16px;
+  }
+}
+
+@media (max-height: 680px) {
+  .pl-wallet-modal-v3.pl-wallet-modal-popover {
+    top: 62px;
+    max-height: calc(100vh - 88px);
+  }
+}
+
+/* ── Ask PayLabs hero → chat composer spacing ─────────────── */
+/* Chat box lives inside .pl-hero, so we push the <p> tag down */
+/* to create room between subtitle and composer.               */
+
+.pl-hero > p {
+  margin-bottom: 48px !important;
+}
+
+@media (max-width: 640px) {
+  .pl-hero > p {
+    margin-bottom: 52px !important;
+  }
+}
+
+/* ── Email OTP auth divider ────────────────────────────────── */
+.pl-auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 12px;
+}
+.pl-auth-divider::before,
+.pl-auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.pl-otp-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

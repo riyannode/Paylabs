@@ -37,10 +37,11 @@ const intentMatcherNode = createServiceNode(
     const s = asDecisionState(state);
     return {
       normalized_goal: s.userGoal,
-      candidates: (s.sourceCards || []).slice(0, 10).map((c) => ({
+      candidates: (s.sourceCards || []).slice(0, 10).map((c, i) => ({
         feed_item_id: c.feed_item_id,
         title: c.title,
         publisher: c.publisher,
+        rank: (i + 1),
       })),
       routeTier: s.routeTier,
     };

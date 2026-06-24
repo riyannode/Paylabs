@@ -97,11 +97,9 @@ export default async function DashboardPage() {
     feedItems,
     sourcePayments,
     totalSourcePaymentUsdc,
-    discoveryRuns,
     routeRows,
     feedItemRows,
     sourcePaymentRows,
-    discoveryRunRows,
     x402PaymentRows,
     receiptRows,
     servicePaymentCount,
@@ -117,7 +115,6 @@ export default async function DashboardPage() {
     safeSum("paylabs_source_payments", "amount_usdc", (q: any) =>
       q.eq("status", "completed")
     ),
-    safeCount("paylabs_discovery_runs"),
     safeQuery(() =>
       supabaseAdmin()
         .from("paylabs_rsshub_routes")
@@ -141,13 +138,6 @@ export default async function DashboardPage() {
         .from("paylabs_source_payments")
         .select("*")
         .eq("status", "completed")
-        .order("created_at", { ascending: false })
-        .limit(25)
-    ),
-    safeQuery(() =>
-      supabaseAdmin()
-        .from("paylabs_discovery_runs")
-        .select("id, user_wallet, goal, route_tier, status, candidate_count, eligible_source_count, unclaimed_source_count, created_at, agent_trace")
         .order("created_at", { ascending: false })
         .limit(25)
     ),
@@ -209,7 +199,6 @@ export default async function DashboardPage() {
           { label: "Unique Users", value: totalUsers },
           { label: "Users (24h)", value: recentUsers24h },
           { label: "Users (7d)", value: recentUsers7d },
-          { label: "Discovery Runs", value: discoveryRuns },
           { label: "RSSHub Routes", value: rsshubRoutes },
           { label: "Feed Items", value: feedItems },
           { label: "Source Payments", value: sourcePayments },
@@ -403,66 +392,6 @@ export default async function DashboardPage() {
                         {r.status}
                       </span>
                     </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* ─── Discovery Runs Table ──────────────────────────── */}
-      <section className="card">
-        <h2 className="section-title">Discovery Runs</h2>
-        <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
-          PayLabs charges a discovery fee for AI-powered source routing. If a source is not yet claimed by a creator, the fee covers agent compute, indexing, and attribution tracking. Creator payouts only begin after ownership is verified.
-        </p>
-        {discoveryRunRows.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
-            No discovery runs yet.
-          </div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>User</th>
-                  <th>Goal</th>
-                  <th>Tier</th>
-                  <th>Status</th>
-                  <th>Candidates</th>
-                  <th>Eligible</th>
-                  <th>Unclaimed</th>
-                </tr>
-              </thead>
-              <tbody>
-                {discoveryRunRows.map((r: any) => (
-                  <tr key={r.id}>
-                    <td className="muted">{timeAgo(r.created_at)}</td>
-                    <td className="data-mono">{short(r.user_wallet)}</td>
-                    <td style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {r.goal}
-                    </td>
-                    <td>{r.route_tier}</td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          r.status === "paid_path_available"
-                            ? "badge-success"
-                            : r.status === "completed"
-                            ? "badge-success"
-                            : r.status === "discovery_only"
-                            ? "badge-warning"
-                            : "badge-danger"
-                        }`}
-                      >
-                        {r.status}
-                      </span>
-                    </td>
-                    <td className="data-mono">{r.candidate_count}</td>
-                    <td className="data-mono">{r.eligible_source_count}</td>
-                    <td className="data-mono">{r.unclaimed_source_count}</td>
                   </tr>
                 ))}
               </tbody>
