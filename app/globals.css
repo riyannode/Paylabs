@@ -1605,3 +1605,67 @@ a:hover { text-decoration: none; }
   .pl-result-links { justify-content: space-between; }
 }
 
+
+/* ── Wallet Picker ── */
+.pl-picker-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.pl-picker-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 20px 12px;
+  border-radius: 12px;
+  border: 1.5px solid #e5e7eb;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.pl-picker-card:hover {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+}
+.pl-picker-card-accent {
+  border-color: #6366f1;
+  background: linear-gradient(135deg, #eef2ff 0%, #faf5ff 100%);
+}
+.pl-picker-icon { font-size: 28px; }
+.pl-picker-title { font-size: 16px; font-weight: 700; }
+.pl-picker-desc { font-size: 12px; font-weight: 600; color: #6366f1; }
+.pl-picker-detail { font-size: 11px; color: #6b7280; }
+
+/* ── DCW Modal ── */
+.pl-dcw-card {
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+.pl-dcw-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.pl-dcw-addr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.pl-dcw-hint {
+  font-size: 11px;
+  color: #9ca3af;
+  margin-top: 4px;
+}
+.pl-dcw-balance {
+  font-size: 20px;
+  font-weight: 700;
+  color: #111827;
+}

@@ -4,6 +4,8 @@ import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import SidebarPanel from "@/components/paylabs/SidebarPanel";
 import WalletConnectModal from "@/components/paylabs/WalletConnectModal";
 import type { WalletState, WalletInfo, UcwBalance } from "@/components/paylabs/WalletConnectModal";
+import WalletPicker from "@/components/paylabs/WalletPicker";
+import DcwModal from "@/components/paylabs/DcwModal";
 import PaymentExplorerLinks from "@/components/paylabs/PaymentExplorerLinks";
 import { safeExplorerUrl as validateExplorerUrl } from "@/lib/paylabs/x402/payment-links";
 
@@ -583,6 +585,8 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
   // Wallet state
   const [walletOpen, setWalletOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [dcwOpen, setDcwOpen] = useState(false);
   const [walletState, setWalletState] = useState<WalletState>("not_connected");
   const [walletInfo, setWalletInfo] = useState<WalletInfo | null>(null);
   const [walletError, setWalletError] = useState<string | null>(null);
@@ -1266,7 +1270,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
     // Run gating: must have wallet
     if (!walletInfo?.address) {
-      setWalletOpen(true);
+      setPickerOpen(true);
       return;
     }
 
@@ -1500,7 +1504,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           <button
             type="button"
             className={`pl-wallet-pill ${walletInfo?.address ? "connected" : ""}`}
-            onClick={() => setWalletOpen(true)}
+            onClick={() => walletInfo?.address ? setWalletOpen(true) : setPickerOpen(true)}
             title={walletInfo?.address || "Connect wallet"}
           >
             {walletInfo?.address ? (
@@ -1646,6 +1650,24 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           </div>
         </section>
       </main>
+
+      <WalletPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onSelectUcw={() => { setPickerOpen(false); setWalletOpen(true); }}
+        onSelectDcw={() => { setPickerOpen(false); setDcwOpen(true); }}
+      />
+
+      <DcwModal
+        open={dcwOpen}
+        onClose={() => setDcwOpen(false)}
+        walletAddress={null}
+        gatewayBalance="0.00"
+        onConnectEmail={() => {}}
+        onDisconnect={() => {}}
+        connecting={false}
+        error={null}
+      />
 
       <WalletConnectModal
         open={walletOpen}

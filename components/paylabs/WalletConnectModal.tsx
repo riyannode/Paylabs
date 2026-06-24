@@ -91,14 +91,12 @@ export default function WalletConnectModal({
   debugLog,
   defaultShowEmailInput = false,
 }: Props) {
-  const [tab, setTab] = useState<"login" | "gateway">("login");
   const [depositAmount, setDepositAmount] = useState("");
   const [showEmailInput, setShowEmailInput] = useState(defaultShowEmailInput);
   const [emailValue, setEmailValue] = useState("");
 
   useEffect(() => {
     if (defaultShowEmailInput) {
-      setTab("login");
       setShowEmailInput(true);
     }
   }, [defaultShowEmailInput]);
@@ -127,21 +125,10 @@ export default function WalletConnectModal({
         </button>
 
         <div className="pl-wallet-tabs-v3">
-          <button
-            className={tab === "login" ? "active" : ""}
-            onClick={() => setTab("login")}
-          >
-            Login
-          </button>
-          <button
-            className={tab === "gateway" ? "active" : ""}
-            onClick={() => setTab("gateway")}
-          >
-            Gateway
-          </button>
+          <button className="active">Wallet</button>
         </div>
 
-        {tab === "login" && (
+        {(
           <div className="pl-wallet-content-v3">
             {!isConnected ? (
               <div className="pl-login-stack-v3">
@@ -229,76 +216,11 @@ export default function WalletConnectModal({
 
             <button
               className="pl-primary-v3"
-              onClick={() => {
-                if (!isConnected) return;
-                setTab("gateway");
-              }}
+              onClick={onApprove}
               disabled={!isConnected}
             >
-              Continue
+              {isConnected ? "Run with x402" : "Connect first"}
             </button>
-          </div>
-        )}
-
-        {tab === "gateway" && (
-          <div className="pl-wallet-content-v3">
-            <WalletRunSummary
-              walletInfo={walletInfo}
-              ucwBalance={ucwBalance}
-              budget={budget}
-              plannedCost={plannedCost}
-              gatewayReady={gatewayReady}
-            />
-
-            {!isConnected && (
-              <button className="pl-primary-v3" onClick={() => setTab("login")}>
-                Login first
-              </button>
-            )}
-
-            {isConnected && (
-              <>
-                <input
-                  className="pl-deposit-input-v3"
-                  type="number"
-                  min="0"
-                  step="0.000001"
-                  placeholder="Amount in USDC"
-                  value={depositAmount}
-                  onChange={(e) => setDepositAmount(e.target.value)}
-                />
-                <button
-                  className="pl-primary-v3"
-                  onClick={() => {
-                    const parsed = parseFloat(depositAmount);
-                    if (isNaN(parsed) || parsed <= 0) return; // require explicit amount
-                    const atomic = Math.round(parsed * 1_000_000).toString();
-                    onDepositGateway(atomic);
-                  }}
-                  disabled={!depositAmount || parseFloat(depositAmount) <= 0}
-                >
-                  {gatewayReady ? "Deposit more" : "Deposit to Gateway"}
-                </button>
-                {depositStatus && (
-                  <div className="pl-deposit-status">
-                    {depositStatus.includes("Step") && <span className="pl-deposit-step-icon">⏳</span>}
-                    {depositStatus}
-                  </div>
-                )}
-              </>
-            )}
-
-            {isConnected && needsReconnectToSign && (
-              <button className="pl-primary-v3" onClick={onReconnect}>
-                {authMethod ? `Reconnect via ${authMethod} to sign` : "Reconnect to sign"}
-              </button>
-            )}
-
-            {isConnected && gatewayReady && !needsReconnectToSign && (
-              <button className="pl-primary-v3" onClick={onApprove}>
-                Run with x402
-              </button>
-            )}
           </div>
         )}
 
@@ -342,13 +264,6 @@ function WalletRunSummary({
         icon={<CoinsIcon />}
         label="Wallet USDC"
         value={`${ucwBalance?.usdc ?? "0.00"} USDC`}
-      />
-
-      <InfoRow
-        icon={<GatewayIcon />}
-        label="Gateway"
-        value={`${ucwBalance?.gateway ?? "0.00"} USDC`}
-        danger={isConnected && !gatewayReady}
       />
 
       <InfoRow icon={<PieIcon />} label="Budget" value={`${budget} USDC`} />
