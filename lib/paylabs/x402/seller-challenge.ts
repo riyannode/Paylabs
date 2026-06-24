@@ -21,7 +21,6 @@ import {
   buildBatchResolverUrl,
   buildSettlementUrl,
   buildTxExplorerUrl,
-  isEvmTxHash as isEvmTxHashFromLinks,
   isUuid,
 } from "./payment-links";
 

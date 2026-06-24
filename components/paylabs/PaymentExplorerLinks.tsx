@@ -30,7 +30,7 @@ export default function PaymentExplorerLinks({
   if (!directHref && !batchHref) return null;
 
   return (
-    <div className={className ?? "pl-result-links"}>
+    <div className={className ?? "pl-payment-links-inline"}>
       {directHref && (
         <a href={directHref} target="_blank" rel="noopener noreferrer">
           x402 payment ↗
