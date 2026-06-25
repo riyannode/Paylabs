@@ -754,8 +754,7 @@ export async function POST(req: NextRequest) {
 
   // ── x402 orchestration: Brain + macro-node endpoints ────
   // Fail closed: x402 must be enabled for production
-  const testMode = body.test_mode === true;
-  return runX402Path(req, discoveryRunId, goal, userWallet, budgetUsdc, routeTier, testMode);
+  return runX402Path(req, discoveryRunId, goal, userWallet, budgetUsdc, routeTier);
 }
 
 // ─── x402 Path ──────────────────────────────────────────────
@@ -767,7 +766,6 @@ async function runX402Path(
   userWallet: string,
   budgetUsdc: number,
   routeTier: ExternalRouteTier,
-  testMode: boolean = false,
 ): Promise<NextResponse> {
   try {
     // Initialize DCW signer for x402 payment signing
@@ -811,60 +809,6 @@ async function runX402Path(
     // Discovery planner buyer wallet (for child service payments)
     if (!process.env.PAYLABS_NODE_DISCOVERY_PLANNER_BUYER_WALLET_ID) {
       throw new Error("config_error: missing PAYLABS_NODE_DISCOVERY_PLANNER_BUYER_WALLET_ID");
-    }
-
-    // ── Test mode bypass: skip entry payment for automated testing ──
-    // Gated behind PAYLABS_TEST_MODE=true env var (server-side only)
-    // Requires test_mode=true in request body (both must be true)
-    const testModeEnabled = process.env.PAYLABS_TEST_MODE === "true";
-
-    if (testModeEnabled && testMode) {
-      console.warn("[test-mode] PAYLABS_TEST_MODE active — skipping entry payment", {
-        discoveryRunId,
-        goal: goal.slice(0, 80),
-        routeTier,
-        budgetUsdc,
-      });
-
-      const result = await runX402Orchestration({
-        discoveryRunId,
-        userGoal: goal,
-        userWallet,
-        userBudgetUsdc: budgetUsdc,
-        routeTier: routeTier as DelegatedRouteTier,
-        dcwSigner,
-      });
-
-      return NextResponse.json({
-        ok: result.status === "completed",
-        discovery_run_id: discoveryRunId,
-        status: result.status,
-        route_tier: result.routeTier,
-        test_mode: true,
-        phases_completed: result.phasesCompleted,
-        service_evaluations: result.paymentGraph
-          .filter((e) => e.nodeType === "service")
-          .map((e) => ({
-            serviceName: e.seller,
-            status: e.status === "paid" ? "completed" : e.status === "skipped" ? "skipped" : "failed",
-            settled: e.status === "paid",
-            mode: e.mode ?? "x402",
-            costUsdc: e.amountUsdc,
-            error: e.error ?? null,
-            safeSummary: `${e.buyer} → ${e.seller}: ${e.status}`,
-          })),
-        payment_graph: result.paymentGraph.map((e) => ({
-          buyer: e.buyer,
-          seller: e.seller,
-          amount_usdc: e.amountUsdc,
-          status: e.status,
-          node_type: e.nodeType,
-          error: e.error ?? null,
-          mode: e.mode ?? null,
-        })),
-        safe_progress_summaries: result.safeProgressSummaries,
-        error: result.error,
-      });
     }
 
     // ── Preflight quote: deterministic budget guardrail ──────
