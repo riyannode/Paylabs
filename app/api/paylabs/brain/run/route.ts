@@ -16,10 +16,10 @@ import {
   resolveNodeSellerWallet,
 } from "@/lib/paylabs/delegated-runtime/node-registry";
 import {
+  buildPaymentRequirements,
   buildX402Challenge,
   encodeChallengeHeader,
   verifyAndSettlePayment,
-  type X402ChallengeRequirements,
 } from "@/lib/paylabs/x402/seller-challenge";
 import { isDelegatedRuntimeEnabled } from "@/lib/paylabs/feature-flags";
 
@@ -92,19 +92,7 @@ export async function POST(req: NextRequest) {
     return response;
   }
 
-  const requirements: X402ChallengeRequirements = {
-    scheme: "exact",
-    network: "eip155:5042002",
-    asset: "0x3600000000000000000000000000000000000000",
-    amount: amountAtomic,
-    payTo: sellerAddress,
-    maxTimeoutSeconds: 604800,
-    extra: {
-      name: "GatewayWalletBatched",
-      version: "1",
-      verifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
-    },
-  };
+  const requirements = buildPaymentRequirements(sellerAddress, amountAtomic);
 
   const settleResult = await verifyAndSettlePayment(paymentHeader, requirements);
 

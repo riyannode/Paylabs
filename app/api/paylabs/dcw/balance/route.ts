@@ -41,6 +41,10 @@ export async function GET() {
       walletId: wallet.wallet_id,
       address: wallet.wallet_address,
       chain: wallet.chain,
+      wallet: {
+        usdc: null,       // DCW on-chain wallet balance not fetched yet
+        usdcAtomic: null,
+      },
       gateway: {
         balanceUsdc: gwBalance.balanceUsdc || "0",
         balanceAtomic: gwBalance.balanceAtomic || "0",

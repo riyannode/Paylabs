@@ -106,6 +106,20 @@ export interface X402BuyerCallResult {
     txHash?: string | null;
     /** Block explorer URL if txHash available */
     explorerUrl?: string | null;
+    /** Circle x402 transfer/settlement UUID */
+    settlementId?: string | null;
+    /** Backend settlement resolver URL */
+    settlementUrl?: string | null;
+    /** Batch settlement tx hash — null until batch settles */
+    batchTxHash?: string | null;
+    /** Batch settlement explorer URL — null until batch settles */
+    batchExplorerUrl?: string | null;
+    /** Backend batch resolver URL */
+    batchResolverUrl?: string | null;
+    /** Gateway accepted the payment */
+    gatewayAccepted?: boolean;
+    /** Circle transfer status */
+    transferStatus?: "received" | "batched" | "confirmed" | "completed" | "failed" | null;
   };
   /** Error message if failed */
   error?: string;
@@ -484,29 +498,89 @@ export async function callPaidSeller(
 
 // ─── Helpers ─────────────────────────────────────────────────
 
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function asBool(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function normalizeTransferStatus(
+  value: unknown,
+): "received" | "batched" | "confirmed" | "completed" | "failed" | null {
+  const v = asString(value);
+  return v === "received" ||
+    v === "batched" ||
+    v === "confirmed" ||
+    v === "completed" ||
+    v === "failed"
+    ? v
+    : null;
+}
+
 /**
  * Extract safe payment metadata for audit trail.
  * Never stores raw signatures or authorization payloads.
- * Preserves txHash and explorerUrl from seller response if returned.
+ *
+ * Reads from BOTH shapes:
+ * - sellerResponse.paymentMeta (UCW inline flow)
+ * - sellerResponse.entry_payment (DCW run-paid flow)
  */
 function extractPaymentMetadata(
   requirements: PaymentRequirementsLike,
   payload: { x402Version: number; payload: unknown },
-  sellerResponse?: unknown
+  sellerResponse?: unknown,
 ): X402BuyerCallResult["paymentMetadata"] {
-  // Extract txHash/explorerUrl from seller response if present
   const sellerData = sellerResponse as Record<string, unknown> | null | undefined;
   const sellerMeta = sellerData?.paymentMeta as Record<string, unknown> | undefined;
-  const txHash = sellerMeta?.txHash as string | null | undefined;
-  const explorerUrl = sellerMeta?.explorerUrl as string | null | undefined;
+  const entryPayment = sellerData?.entry_payment as Record<string, unknown> | undefined;
 
   return {
     amountAtomic: requirements.amount,
     payTo: requirements.payTo,
     network: requirements.network,
     x402Version: payload.x402Version,
-    txHash: txHash ?? null,
-    explorerUrl: explorerUrl ?? null,
+
+    txHash:
+      asString(sellerMeta?.txHash) ??
+      asString(entryPayment?.tx_hash),
+
+    explorerUrl:
+      asString(sellerMeta?.explorerUrl) ??
+      asString(entryPayment?.explorer_url) ??
+      asString(sellerData?.entry_payment_explorer_url),
+
+    settlementId:
+      asString(sellerMeta?.settlementId) ??
+      asString(entryPayment?.settlement_id),
+
+    settlementUrl:
+      asString(sellerMeta?.settlementUrl) ??
+      asString(entryPayment?.settlement_url),
+
+    batchTxHash:
+      asString(sellerMeta?.batchTxHash) ??
+      asString(entryPayment?.batch_tx_hash) ??
+      asString(sellerData?.entry_payment_batch_tx_hash),
+
+    batchExplorerUrl:
+      asString(sellerMeta?.batchExplorerUrl) ??
+      asString(entryPayment?.batch_explorer_url) ??
+      asString(sellerData?.entry_payment_batch_explorer_url),
+
+    batchResolverUrl:
+      asString(sellerMeta?.batchResolverUrl) ??
+      asString(entryPayment?.batch_resolver_url),
+
+    gatewayAccepted:
+      asBool(sellerMeta?.gatewayAccepted) ??
+      asBool(entryPayment?.gateway_accepted) ??
+      true,
+
+    transferStatus:
+      normalizeTransferStatus(sellerMeta?.transferStatus) ??
+      normalizeTransferStatus(entryPayment?.transfer_status),
   };
 }
 
