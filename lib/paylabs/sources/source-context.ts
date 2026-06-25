@@ -34,10 +34,18 @@ export async function buildSourceContextFromResult(
       rank: number;
       relevance_score: number;
     }>;
+    retrieval_mode?: string;
   };
 
   const rankedCandidates = signalData.ranked_candidates;
   if (!rankedCandidates || rankedCandidates.length === 0) return null;
+
+  // Extract retrieval_mode from signal_scout output
+  const retrievalMode = signalData.retrieval_mode as
+    | "rsshub_live"
+    | "db_fallback"
+    | "rsshub_live_empty"
+    | undefined;
 
   // Extract brain intent context
   const normalizedGoal =
@@ -52,7 +60,24 @@ export async function buildSourceContextFromResult(
     constraints,
   });
 
-  return resolverResult.ok ? resolverResult.sourceContext : null;
+  if (!resolverResult.ok) return null;
+
+  // Propagate retrieval_mode from signal_scout
+  return {
+    ...resolverResult.sourceContext,
+    retrieval_mode: retrievalMode || inferRetrievalMode(resolverResult.sourceContext),
+  };
+}
+
+/**
+ * Infer retrieval_mode from source context when signal_scout doesn't provide it.
+ */
+function inferRetrievalMode(
+  ctx: SourceContext
+): "rsshub_live" | "db_fallback" | "rsshub_live_empty" {
+  if (ctx.sources_used.length === 0) return "rsshub_live_empty";
+  const hasLive = ctx.sources_used.some((s) => s.source_kind === "rsshub_live");
+  return hasLive ? "rsshub_live" : "db_fallback";
 }
 
 // ─── Helpers ──────────────────────────────────────────────

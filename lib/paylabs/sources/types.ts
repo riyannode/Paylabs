@@ -34,6 +34,8 @@ export interface SourceContext {
   source_selection_summary: string;
   source_confidence: number;
   source_count: number;
+  /** How sources were retrieved: live RSSHub, DB fallback, or empty */
+  retrieval_mode?: "rsshub_live" | "db_fallback" | "rsshub_live_empty";
 }
 
 // ─── Source Resolver Input ─────────────────────────────────
