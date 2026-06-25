@@ -126,6 +126,7 @@ async function searchRsshubLive(
       negativeFilters,
       routeTier,
       maxSources: 20,
+      skipRerank: true,
     });
 
     if (!result.ok || result.sources.length === 0) return null;

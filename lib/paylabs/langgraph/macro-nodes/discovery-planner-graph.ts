@@ -20,6 +20,8 @@ import { createServiceNode } from "../services/service-node";
 import type { ServiceName } from "../../agent-services/types";
 import type { BudgetSnapshot, SafeSourceCard } from "../../delegated-runtime/types";
 
+import { TIER_SERVICE_PRESETS } from "@/lib/paylabs/delegated-runtime/quote-engine";
+
 // ─── Node: Intent Planner ───────────────────────────────────
 
 const intentPlannerNode = createServiceNode(
@@ -149,8 +151,9 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
 async function processSignalResult(state: DiscoveryPlannerStateType) {
   const evals = state.serviceEvaluations || [];
   // Look for either signal_scout (rich) or signal_scout_basics (easy tier)
-  const signalEval = evals.find((e: { serviceName: string }) =>
-    e.serviceName === "signal_scout" || e.serviceName === "signal_scout_basics"
+  // Prefer the one with actual output (completed), not a skipped entry
+  const signalEval = evals.find((e: { serviceName: string; output: unknown }) =>
+    (e.serviceName === "signal_scout" || e.serviceName === "signal_scout_basics") && e.output
   );
 
   if (!signalEval?.output) {
@@ -296,7 +299,9 @@ export async function runDiscoveryPlannerGraph(
       userGoal: input.userGoal,
       routeTier: input.routeTier,
       userBudgetUsdc: input.userBudgetUsdc,
-      selectedServices: input.selectedServices || [],
+      selectedServices: input.selectedServices?.length
+        ? input.selectedServices
+        : TIER_SERVICE_PRESETS[input.routeTier] || [],
       parentWalletId: input.parentWalletId,
       budgetSnapshot: initialBudget,
       // Brain planning pass-through

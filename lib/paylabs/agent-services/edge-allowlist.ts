@@ -27,6 +27,7 @@ const PAYMENT_GRAPH_EDGES: ReadonlyArray<readonly [string, string]> = [
   ["discovery_planner", "intent_planner"],
   ["discovery_planner", "query_builder"],
   ["discovery_planner", "signal_scout"],
+  ["discovery_planner", "signal_scout_basics"],
   // payment_decision → child services
   ["payment_decision", "intent_matcher"],
   ["payment_decision", "source_verifier"],

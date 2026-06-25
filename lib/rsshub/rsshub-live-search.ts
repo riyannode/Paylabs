@@ -263,6 +263,7 @@ export async function liveSearchRsshub(input: {
   sourcePreferences?: string[];
   routeTier?: string;
   maxSources?: number;
+  skipRerank?: boolean;
 }): Promise<LiveSearchResult> {
   const {
     userGoal,
@@ -271,6 +272,7 @@ export async function liveSearchRsshub(input: {
     negativeFilters = [],
     routeTier = "easy",
     maxSources = Number(process.env.PAYLABS_RSSHUB_LIVE_MAX_SOURCES) || 12,
+    skipRerank = false,
   } = input;
 
   const baseUrls = getRsshubBaseUrls();
@@ -330,8 +332,8 @@ export async function liveSearchRsshub(input: {
       };
     }
 
-    // 2b. Optional LLM rerank (if enabled)
-    const llmRerankEnabled = process.env.PAYLABS_RSSHUB_LLM_ROUTE_RERANK === "true";
+    // 2b. Optional LLM rerank (if enabled, unless skipped by caller)
+    const llmRerankEnabled = !skipRerank && process.env.PAYLABS_RSSHUB_LLM_ROUTE_RERANK === "true";
     if (llmRerankEnabled && candidates.length > maxRoutes) {
       try {
         const { rerankRouteCandidates } = await import("./rsshub-route-rerank");
