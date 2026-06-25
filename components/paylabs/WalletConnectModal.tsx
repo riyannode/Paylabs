@@ -19,8 +19,14 @@ export type WalletInfo = {
 };
 
 export type UcwBalance = {
-  usdc: string;
-  gateway: string;
+  /** Wallet token balance (on-chain USDC). For DCW, this may be null/0 if not fetched. */
+  walletUsdc: string;
+  /** Gateway balance (deposited USDC available for x402 payments) */
+  gatewayUsdc: string;
+  /** Pending batch settlement USDC */
+  pendingBatchUsdc?: string;
+  /** Which wallet type this balance belongs to */
+  source: "ucw" | "dcw" | "external_eoa";
 };
 
 type Props = {
@@ -102,7 +108,7 @@ export default function WalletConnectModal({
   }, [defaultShowEmailInput]);
 
   const isConnected = !!walletInfo?.address;
-  const gatewayBalance = asNumber(ucwBalance?.gateway);
+  const gatewayBalance = asNumber(ucwBalance?.gatewayUsdc);
   const currentRunCost = asNumber(plannedCost);
   const gatewayReady = isConnected && gatewayBalance >= currentRunCost;
 
@@ -277,9 +283,25 @@ function WalletRunSummary({
 
       <InfoRow
         icon={<CoinsIcon />}
-        label="Wallet USDC"
-        value={`${ucwBalance?.usdc ?? "0.00"} USDC`}
+        label={ucwBalance?.source === "dcw" ? "Gateway Balance" : "Wallet USDC"}
+        value={`${ucwBalance?.walletUsdc ?? "0.00"} USDC`}
       />
+
+      {ucwBalance?.source === "dcw" && (
+        <InfoRow
+          icon={<CoinsIcon />}
+          label="Gateway (available)"
+          value={`${ucwBalance?.gatewayUsdc ?? "0.00"} USDC`}
+        />
+      )}
+
+      {ucwBalance?.source === "ucw" && (
+        <InfoRow
+          icon={<CoinsIcon />}
+          label="Gateway Balance"
+          value={`${ucwBalance?.gatewayUsdc ?? "0.00"} USDC`}
+        />
+      )}
 
       <InfoRow icon={<PieIcon />} label="Budget" value={`${budget} USDC`} />
       <InfoRow icon={<TrendIcon />} label="Cost" value={`${plannedCost} USDC`} />
