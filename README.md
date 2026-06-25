@@ -32,7 +32,7 @@ Gateway       = settles x402 payments
 Receipts      = prove what happened
 ```
 
-The Brain plans the run, but it does not decide prices, wallets, payment refs, tx hashes, settlement mode, or budget bypasses.
+The Brain plans the run, and decides what path to user easy,normal,advance, not wallets, payment refs, tx hashes, settlement mode, or budget bypasses.
 
 ## x402 Agent Payment Architecture
 
