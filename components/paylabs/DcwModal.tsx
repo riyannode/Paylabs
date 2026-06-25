@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 type DcwStep = "auth" | "creating" | "wallet" | "deposit" | "error";
 
@@ -46,6 +46,8 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [activeTab, setActiveTab] = useState<"balances" | "topup">("balances");
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const googleBtnRef = useRef<HTMLDivElement>(null);
 
   const x402Balance = asDecimal(balance.gatewayUsdc);
   const plannedCostNum = asDecimal(plannedCost);
@@ -78,6 +80,101 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
       // No session — stay on auth step
     }
   }, [onWalletReady]);
+
+  // ── Google Sign-In ─────────────────────────────────────────
+  const handleGoogleSignIn = useCallback(async (idToken: string) => {
+    setIsGoogleLoading(true);
+    setError(null);
+
+    try {
+      const resp = await fetch("/api/paylabs/auth/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ idToken }),
+      });
+      const data = await resp.json();
+
+      if (!data.ok) {
+        setError(data.error || "Google Sign-In failed");
+        setStep("error");
+        return;
+      }
+
+      if (data.hasWallet && data.walletAddress) {
+        setWallet({ walletId: "", address: data.walletAddress, chain: "ARC-TESTNET" });
+        setStep("deposit");
+        refreshBalance();
+        onWalletReady?.({ walletId: "", address: data.walletAddress, chain: "ARC-TESTNET" });
+      } else {
+        setStep("creating");
+        createWallet();
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Google Sign-In failed");
+      setStep("error");
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  }, [onWalletReady]);
+
+  // ── Load Google Identity Services + render button ──────────
+  useEffect(() => {
+    if (!open) return;
+    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+    if (!clientId) return;
+
+    // Load GIS script if not already loaded
+    const existing = document.getElementById("google-identity-script");
+    if (!existing) {
+      const script = document.createElement("script");
+      script.id = "google-identity-script";
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    }
+
+    // Poll until google.accounts.id is available, then initialize
+    let attempts = 0;
+    const maxAttempts = 30; // 3 seconds max
+    const interval = setInterval(() => {
+      attempts++;
+      const g = (window as unknown as Record<string, unknown>).google as
+        | { accounts?: { id?: { initialize: Function; renderButton: Function } } }
+        | undefined;
+
+      if (g?.accounts?.id && googleBtnRef.current) {
+        clearInterval(interval);
+        try {
+          g.accounts.id.initialize({
+            client_id: clientId,
+            callback: (response: { credential: string }) => {
+              handleGoogleSignIn(response.credential);
+            },
+            auto_select: false,
+            cancel_on_tap_outside: true,
+          });
+
+          g.accounts.id.renderButton(googleBtnRef.current, {
+            theme: "outline",
+            size: "large",
+            width: "100%",
+            text: "continue_with",
+            shape: "rectangular",
+          });
+        } catch {
+          // GIS already initialized — ignore
+        }
+      }
+
+      if (attempts >= maxAttempts) {
+        clearInterval(interval);
+      }
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [open, handleGoogleSignIn]);
 
   // ── Passkey Registration ──────────────────────────────────
   const handlePasskeyRegister = useCallback(async () => {
@@ -323,6 +420,23 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
         {/* ── Step: Auth (Passkey) ──────────────────────── */}
         {step === "auth" && (
           <div className="pl-dcw-step">
+            {/* Google Sign-In — primary */}
+            <div ref={googleBtnRef} className="pl-google-dcw-btn" style={{
+              width: "100%",
+              minHeight: 40,
+              display: "flex",
+              justifyContent: "center",
+              marginBottom: 12,
+            }} />
+            {isGoogleLoading && (
+              <p className="muted" style={{ fontSize: 12, textAlign: "center", marginBottom: 8 }}>
+                Signing in with Google…
+              </p>
+            )}
+
+            <div className="pl-auth-divider"><span>or</span></div>
+
+            {/* Passkey + OTP — secondary */}
             <label className="pl-dcw-label">Your email</label>
             <input
               className="pl-email-otp-input"
@@ -333,7 +447,6 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
               onKeyDown={(e) => {
                 if (e.key === "Enter" && email.includes("@")) handlePasskeyRegister();
               }}
-              autoFocus
             />
             <button
               className="pl-primary-v3"
