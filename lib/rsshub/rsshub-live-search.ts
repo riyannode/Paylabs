@@ -11,7 +11,11 @@ import { createHash } from "node:crypto";
 import { getRsshubCatalog } from "./rsshub-catalog";
 import { searchRsshubRoutes } from "./rsshub-route-search";
 import { resolveRsshubRoutes } from "./rsshub-route-resolver";
-import { fetchRoute, type NormalizedFeedItem } from "./rsshub-client";
+import {
+  fetchRoute,
+  extractErrorClass,
+  type NormalizedFeedItem,
+} from "./rsshub-client";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -131,6 +135,88 @@ function scoreItem(
   return { score: Math.max(0, score), matchedTerms: matched };
 }
 
+// ─── Multi-Instance Helpers ──────────────────────────────────
+
+/**
+ * Get ordered list of RSSHub base URLs to try.
+ * Primary from PAYLABS_RSSHUB_BASE_URL, fallbacks from PAYLABS_RSSHUB_FALLBACK_BASE_URLS.
+ * Deduplicated, trailing slashes stripped, validated as http(s).
+ */
+function getRsshubBaseUrls(): string[] {
+  const primary =
+    process.env.PAYLABS_RSSHUB_BASE_URL || "https://rsshub.rssforever.com";
+  const fallbacks = (process.env.PAYLABS_RSSHUB_FALLBACK_BASE_URLS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const urls = [primary, ...fallbacks]
+    .map((u) => u.replace(/\/+$/, ""))
+    .filter((u) => /^https?:\/\//.test(u));
+  return [...new Set(urls)];
+}
+
+/**
+ * Try fetching a route from each RSSHub instance until one returns items.
+ * Returns the first successful result with the base URL that worked.
+ */
+async function fetchRouteWithFallback(
+  baseUrls: string[],
+  routePath: string,
+  maxItems: number
+): Promise<{
+  ok: boolean;
+  result: { ok: true; items: NormalizedFeedItem[]; feed_title: string | null; feed_url: string } | null;
+  baseUrlUsed: string | null;
+  attempts: Array<{ host: string; error_class: string }>;
+}> {
+  const attempts: Array<{ host: string; error_class: string }> = [];
+
+  for (const baseUrl of baseUrls) {
+    let result;
+    try {
+      result = await fetchRoute(baseUrl, routePath, maxItems);
+    } catch (err: unknown) {
+      const host = extractHost(baseUrl);
+      attempts.push({ host, error_class: extractErrorClass(err) });
+      continue;
+    }
+
+    const host = extractHost(baseUrl);
+
+    if (result.ok && result.items.length > 0) {
+      // Safe log: host, route, item count — no raw payload
+      console.log("[rsshub-live] route fetched", {
+        host,
+        route: routePath,
+        items: result.items.length,
+      });
+      return { ok: true, result, baseUrlUsed: baseUrl, attempts };
+    }
+
+    attempts.push({
+      host,
+      error_class: result.ok ? "empty_feed" : result.error.slice(0, 80),
+    });
+  }
+
+  // All instances failed — log safe summary
+  console.warn("[rsshub-live] all instances failed", {
+    route: routePath,
+    attempts,
+  });
+
+  return { ok: false, result: null, baseUrlUsed: null, attempts };
+}
+
+/** Extract hostname from URL for safe logging. */
+function extractHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "invalid";
+  }
+}
+
 // ─── Concurrency Helper ─────────────────────────────────────
 
 async function mapWithConcurrency<T, R>(
@@ -187,8 +273,8 @@ export async function liveSearchRsshub(input: {
     maxSources = Number(process.env.PAYLABS_RSSHUB_LIVE_MAX_SOURCES) || 12,
   } = input;
 
-  const baseUrl =
-    process.env.PAYLABS_RSSHUB_BASE_URL || "https://rsshub.app";
+  const baseUrls = getRsshubBaseUrls();
+  const primaryBaseUrl = baseUrls[0];
   const maxItemsPerRoute =
     Number(process.env.PAYLABS_RSSHUB_LIVE_MAX_ITEMS_PER_ROUTE) || 10;
   const concurrency =
@@ -274,7 +360,7 @@ export async function liveSearchRsshub(input: {
       candidates,
       query: userGoal,
       entityTerms,
-      baseUrl,
+      baseUrl: primaryBaseUrl,
       limit: maxRoutes,
     });
 
@@ -290,26 +376,33 @@ export async function liveSearchRsshub(input: {
       };
     }
 
-    // 4. Fetch routes concurrently
+    // 4. Fetch routes with multi-instance fallback
     const fetchResults = await mapWithConcurrency(
       resolved,
       async (route) => {
-        try {
-          const result = await fetchRoute(
-            baseUrl,
-            route.resolvedPath,
-            maxItemsPerRoute
-          );
-          return { route, result };
-        } catch (err: unknown) {
-          const errClass =
-            err instanceof Error ? err.message.slice(0, 80) : "unknown";
+        const fb = await fetchRouteWithFallback(
+          baseUrls,
+          route.resolvedPath,
+          maxItemsPerRoute
+        );
+
+        // Collect errors from all attempts
+        for (const attempt of fb.attempts) {
           errors.push({
             route_path: route.resolvedPath,
-            error_class: errClass,
+            error_class: attempt.error_class,
           });
-          return { route, result: null };
         }
+
+        if (fb.ok && fb.result && fb.baseUrlUsed) {
+          return {
+            route,
+            result: fb.result,
+            baseUrlUsed: fb.baseUrlUsed,
+          };
+        }
+
+        return { route, result: null, baseUrlUsed: null };
       },
       concurrency
     );
@@ -318,14 +411,8 @@ export async function liveSearchRsshub(input: {
     const allSources: LiveRsshubSource[] = [];
     let fetchedRoutes = 0;
 
-    for (const { route, result } of fetchResults) {
+    for (const { route, result, baseUrlUsed } of fetchResults) {
       if (!result || !result.ok) {
-        if (result && !result.ok && "error" in result) {
-          errors.push({
-            route_path: route.resolvedPath,
-            error_class: (result as { error: string }).error.slice(0, 80),
-          });
-        }
         continue;
       }
       fetchedRoutes++;
@@ -340,7 +427,7 @@ export async function liveSearchRsshub(input: {
           route.route.heat
         );
 
-        // Patch 2: Filter out low-score unrelated items from relevant routes
+        // Filter out low-score unrelated items from relevant routes
         const minItemScore = routeTier === "advanced" ? 2 : routeTier === "normal" ? 2 : 1;
         if (scoring.score < minItemScore) continue;
 
@@ -360,6 +447,11 @@ export async function liveSearchRsshub(input: {
 
         const feedItemId = `rsshub_live:${sha256(route.resolvedPath + "|" + sourceUrl).slice(0, 16)}`;
 
+        // rsshub_feed_url uses the ACTUAL working instance, not the primary
+        const actualFeedUrl = baseUrlUsed
+          ? sanitizeUrl(`${baseUrlUsed.replace(/\/+$/, "")}${route.resolvedPath}`)
+          : sanitizeUrl(route.rsshubFeedUrl);
+
         allSources.push({
           feed_item_id: feedItemId,
           source_kind: "rsshub_live",
@@ -373,7 +465,7 @@ export async function liveSearchRsshub(input: {
           published_at: item.published_at || null,
           tags: item.tags || [],
           route_path: route.resolvedPath,
-          rsshub_feed_url: sanitizeUrl(route.rsshubFeedUrl),
+          rsshub_feed_url: actualFeedUrl,
           docs_url: route.docsUrl,
           rank: 0, // set below
           relevance_score: 0, // set below
