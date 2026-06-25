@@ -52,6 +52,11 @@ type SafeRunResult = {
   sourcesUsed: SourceLink[];
   // Payment link fields — chat renders direct explorer link only, never settlement UUID
   entryExplorerUrl: string | null;
+  entrySettlementId: string | null;
+  entryTransferStatus: string | null;
+  entryGatewayAccepted: boolean;
+  entryBatchExplorerUrl: string | null;
+  entryBatchTxHash: string | null;
 };
 
 type ChatMessage =
@@ -160,6 +165,7 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
   const agentTrace = data?.agent_trace as Record<string, unknown> | undefined;
   const agentTraceEntry = agentTrace?.entry_payment as Record<string, unknown> | undefined;
   const resolvedEntry = entryPayment ?? agentTraceEntry;
+  const paymentMetadata = data?.paymentMetadata as Record<string, unknown> | undefined;
 
   return {
     ok: !!data?.ok,
@@ -181,7 +187,35 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     lockedServices: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_services as string[]) ?? [],
     tierDecisionReason: (brainPlanning?.tier_decision_reason as string) ?? null,
     sourcesUsed,
-    entryExplorerUrl: validateExplorerUrl(resolvedEntry?.explorer_url) ?? validateExplorerUrl(data?.entry_payment_explorer_url),
+    entryExplorerUrl:
+      validateExplorerUrl(resolvedEntry?.explorer_url) ??
+      validateExplorerUrl(data?.entry_payment_explorer_url) ??
+      validateExplorerUrl(paymentMetadata?.explorerUrl),
+
+    entrySettlementId:
+      (resolvedEntry?.settlement_id as string | null | undefined) ??
+      (paymentMetadata?.settlementId as string | null | undefined) ??
+      null,
+
+    entryTransferStatus:
+      (resolvedEntry?.transfer_status as string | null | undefined) ??
+      (paymentMetadata?.transferStatus as string | null | undefined) ??
+      null,
+
+    entryGatewayAccepted:
+      (resolvedEntry?.gateway_accepted as boolean | undefined) ??
+      (paymentMetadata?.gatewayAccepted as boolean | undefined) ??
+      false,
+
+    entryBatchExplorerUrl:
+      validateExplorerUrl(resolvedEntry?.batch_explorer_url) ??
+      validateExplorerUrl(data?.entry_payment_batch_explorer_url) ??
+      validateExplorerUrl(paymentMetadata?.batchExplorerUrl),
+
+    entryBatchTxHash:
+      (resolvedEntry?.batch_tx_hash as string | null | undefined) ??
+      (paymentMetadata?.batchTxHash as string | null | undefined) ??
+      null,
   };
 }
 
@@ -1330,7 +1364,8 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             goal: body.goal || prompt,
-            routeTier: body.route_tier || "standard",
+            routeTier: body.route_tier || "auto",
+            budgetUsdc: Number(budget),
           }),
         });
         const dcwResult = await dcwResp.json();
@@ -1345,7 +1380,26 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
           return;
         }
 
-        const safeResult = toSafeRunResult(dcwResult.data || dcwResult);
+        const dcwData =
+          dcwResult.data && typeof dcwResult.data === "object"
+            ? (dcwResult.data as Record<string, unknown>)
+            : {};
+
+        const safeResult = toSafeRunResult({
+          ...dcwData,
+          entry_payment: dcwResult.entry_payment ?? dcwData.entry_payment,
+          paymentMetadata: dcwResult.paymentMetadata ?? dcwData.paymentMetadata,
+          entry_payment_explorer_url:
+            dcwResult.entry_payment?.explorer_url ??
+            dcwResult.paymentMetadata?.explorerUrl ??
+            dcwData.entry_payment_explorer_url ??
+            null,
+          entry_payment_batch_explorer_url:
+            dcwResult.entry_payment?.batch_explorer_url ??
+            dcwResult.paymentMetadata?.batchExplorerUrl ??
+            dcwData.entry_payment_batch_explorer_url ??
+            null,
+        });
         setWalletState("paid");
         finishAssistant({ status: "done", result: safeResult });
         setResult(safeResult);
@@ -1844,11 +1898,19 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
           </div>
         )}
       </div>
-      {result.entryExplorerUrl && (
+      {(result.entryExplorerUrl || result.entryBatchExplorerUrl || result.entryBatchTxHash) && (
         <PaymentExplorerLinks
           directExplorerUrl={result.entryExplorerUrl}
+          batchExplorerUrl={result.entryBatchExplorerUrl}
+          batchTxHash={result.entryBatchTxHash}
           className="pl-payment-links-inline"
         />
+      )}
+
+      {result.entrySettlementId && !result.entryBatchExplorerUrl && !result.entryBatchTxHash && (
+        <div className="pl-payment-links-inline" style={{ fontSize: "0.85em", opacity: 0.7, marginTop: 4 }}>
+          ✓ Gateway accepted — queued for batch settlement
+        </div>
       )}
       {result.runId && (
         <div className="pl-result-links">

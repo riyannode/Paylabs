@@ -29,10 +29,10 @@ import { getInputSchema } from "@/lib/paylabs/agent-services/schemas";
 import type { ServiceHandlerInput, ServiceName } from "@/lib/paylabs/agent-services/types";
 import { isX402EnabledForService } from "@/lib/paylabs/feature-flags";
 import {
+  buildPaymentRequirements,
   buildX402Challenge,
   encodeChallengeHeader,
   verifyAndSettlePayment,
-  type X402ChallengeRequirements,
 } from "@/lib/paylabs/x402/seller-challenge";
 
 export async function POST(
@@ -287,19 +287,8 @@ function computeAmountAtomic(priceUsdc: number): string {
 
 /**
  * Build x402 payment requirements for the seller challenge.
+ * Uses shared helper for consistent maxTimeoutSeconds (604900).
  */
-function buildRequirements(sellerAddress: string, amountAtomic: string): X402ChallengeRequirements {
-  return {
-    scheme: "exact",
-    network: "eip155:5042002",
-    asset: "0x3600000000000000000000000000000000000000",
-    amount: amountAtomic,
-    payTo: sellerAddress.toLowerCase(),
-    maxTimeoutSeconds: 604800,
-    extra: {
-      name: "GatewayWalletBatched",
-      version: "1",
-      verifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
-    },
-  };
+function buildRequirements(sellerAddress: string, amountAtomic: string) {
+  return buildPaymentRequirements(sellerAddress, amountAtomic);
 }

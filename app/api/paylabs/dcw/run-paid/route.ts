@@ -46,10 +46,15 @@ function getAllowedSellerUrl(path: string): string | null {
 
 // ─── Budget constants ────────────────────────────────────────
 // Server-side budget cap. Client cannot exceed this.
-const MAX_BUDGET_USDC = "1.0"; // 1 USDC max per run
+const SERVER_MAX_BUDGET_USDC = 1.0;
 
 // ─── Allowed route tiers ─────────────────────────────────────
 const ALLOWED_ROUTE_TIERS = new Set(["standard", "auto", "easy", "normal", "advanced"]);
+
+function parseBudget(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -104,8 +109,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: `Invalid route tier: ${routeTier}` }, { status: 400 });
     }
 
-    // 6. Server-side budget enforcement (always use server cap, ignore client)
-    const maxAmountUsdc = MAX_BUDGET_USDC;
+    // 6. Budget: parse client budget, cap to server max
+    const requestedBudget = parseBudget(body.budgetUsdc ?? body.budget_usdc ?? body.budget);
+    const userBudgetUsdc = requestedBudget > 0 ? requestedBudget : 0.01;
+
+    if (userBudgetUsdc > SERVER_MAX_BUDGET_USDC) {
+      return NextResponse.json(
+        { ok: false, error: `Budget exceeds server cap ${SERVER_MAX_BUDGET_USDC} USDC` },
+        { status: 400 },
+      );
+    }
+
+    const maxAmountUsdc = userBudgetUsdc.toFixed(6);
 
     // 7. Execute full paid request via DCW
     //    requirePayment=true only for paid tiers (normal/advanced).
@@ -130,14 +145,74 @@ export async function POST(req: NextRequest) {
       requirePayment: PAID_TIERS.has(routeTier),
     });
 
-    // 7. Return final result (no client retry needed)
+    // 8. Build UCW-compatible entry_payment shape
+    //    so frontend uses the same toSafeRunResult + PaymentExplorerLinks path
+    const paymentMetadata = result.paymentMetadata ?? null;
+    const resultData = result.data as Record<string, unknown> | null | undefined;
+    const dataEntry = (resultData?.entry_payment as Record<string, unknown> | null | undefined) ?? null;
+
+    const entryPayment = {
+      status: result.ok ? "paid" : "failed",
+
+      tx_hash:
+        paymentMetadata?.txHash ??
+        (dataEntry?.tx_hash as string | null | undefined) ??
+        null,
+
+      explorer_url:
+        paymentMetadata?.explorerUrl ??
+        (dataEntry?.explorer_url as string | null | undefined) ??
+        null,
+
+      settlement_id:
+        paymentMetadata?.settlementId ??
+        (dataEntry?.settlement_id as string | null | undefined) ??
+        null,
+
+      settlement_url:
+        paymentMetadata?.settlementUrl ??
+        (dataEntry?.settlement_url as string | null | undefined) ??
+        null,
+
+      transfer_status:
+        paymentMetadata?.transferStatus ??
+        (dataEntry?.transfer_status as string | null | undefined) ??
+        null,
+
+      gateway_accepted:
+        paymentMetadata?.gatewayAccepted ??
+        (dataEntry?.gateway_accepted as boolean | undefined) ??
+        result.ok,
+
+      batch_tx_hash:
+        paymentMetadata?.batchTxHash ??
+        (dataEntry?.batch_tx_hash as string | null | undefined) ??
+        null,
+
+      batch_explorer_url:
+        paymentMetadata?.batchExplorerUrl ??
+        (dataEntry?.batch_explorer_url as string | null | undefined) ??
+        null,
+
+      batch_resolver_url:
+        paymentMetadata?.batchResolverUrl ??
+        (dataEntry?.batch_resolver_url as string | null | undefined) ??
+        null,
+
+      customer_wallet: wallet.wallet_address,
+      customer_wallet_type: "circle_developer_controlled" as const,
+    };
+
     return NextResponse.json({
       ok: result.ok,
       status: result.status,
       data: result.data,
       error: result.error,
-      paymentMetadata: result.paymentMetadata,
+      paymentMetadata,
       freeResponse: result.freeResponse,
+      entry_payment: entryPayment,
+      entry_payment_explorer_url: entryPayment.explorer_url,
+      entry_payment_batch_explorer_url: entryPayment.batch_explorer_url,
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

@@ -74,6 +74,13 @@ export interface CallDelegatedServiceOutput {
     x402Version: number;
     txHash?: string | null;
     explorerUrl?: string | null;
+    settlementId?: string | null;
+    settlementUrl?: string | null;
+    batchTxHash?: string | null;
+    batchExplorerUrl?: string | null;
+    batchResolverUrl?: string | null;
+    gatewayAccepted?: boolean;
+    transferStatus?: "received" | "batched" | "confirmed" | "completed" | "failed" | null;
   };
 }
 
@@ -452,8 +459,8 @@ async function executeX402Path(params: {
     serviceName: sellerServiceName,
     data: handlerData,
     safeSummary: sellerOk
-      ? `x402 settled: ${sellerServiceName} via ${buyerAgentName}`
-      : `x402 settled but seller returned HTTP ${callResult.status}`,
+      ? `x402 Gateway accepted: ${sellerServiceName} via ${buyerAgentName}`
+      : `x402 Gateway accepted but seller returned HTTP ${callResult.status}`,
     settled: true,
     mode: "x402",
     error: sellerOk ? null : `Seller returned HTTP ${callResult.status}`,
