@@ -842,15 +842,17 @@ async function runX402Path(
         route_tier: result.routeTier,
         test_mode: true,
         phases_completed: result.phasesCompleted,
-        service_evaluations: result.serviceEvaluations?.map((e) => ({
-          serviceName: e.serviceName,
-          status: e.status,
-          settled: e.settled,
-          mode: e.mode,
-          costUsdc: e.costUsdc,
-          error: e.error ?? null,
-          safeSummary: e.safeSummary,
-        })) ?? [],
+        service_evaluations: result.paymentGraph
+          .filter((e) => e.nodeType === "service")
+          .map((e) => ({
+            serviceName: e.seller,
+            status: e.status === "paid" ? "completed" : e.status === "skipped" ? "skipped" : "failed",
+            settled: e.status === "paid",
+            mode: e.mode ?? "x402",
+            costUsdc: e.amountUsdc,
+            error: e.error ?? null,
+            safeSummary: `${e.buyer} → ${e.seller}: ${e.status}`,
+          })),
         payment_graph: result.paymentGraph.map((e) => ({
           buyer: e.buyer,
           seller: e.seller,
