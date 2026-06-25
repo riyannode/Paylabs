@@ -550,7 +550,7 @@ A real PayLabs run should prove:
 
 ## Project Goal
 
-PayLabs aims to become an AI search interface where every paid action is budgeted, user-approved, Brain-planned, source-aware, and receipt-backed.
+PayLabs aims to become an AI search interface where every paid action is budgeted, Creator economy platform, Brain-planned, source-aware, and receipt-backed.
 
 The user should know:
 
