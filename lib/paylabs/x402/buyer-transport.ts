@@ -561,7 +561,8 @@ function extractPaymentMetadata(
 
     batchTxHash:
       asString(sellerMeta?.batchTxHash) ??
-      asString(entryPayment?.batch_tx_hash),
+      asString(entryPayment?.batch_tx_hash) ??
+      asString(sellerData?.entry_payment_batch_tx_hash),
 
     batchExplorerUrl:
       asString(sellerMeta?.batchExplorerUrl) ??
