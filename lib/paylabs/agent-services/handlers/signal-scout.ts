@@ -8,7 +8,10 @@
  *   - llm: LLM-powered relevance ranking
  *   - hybrid: deterministic ranking + LLM relevance explanation
  *
- * Discovers and ranks feed items by relevance to expanded queries.
+ * V3 CHANGE: Live-first discovery.
+ * 1. RSSHub live search (if enabled)
+ * 2. DB fallback (if live empty/failed)
+ * 3. Improved scoring: exact entity > title > domain > summary > recency
  */
 
 import { z } from "zod";
@@ -19,6 +22,18 @@ import { shouldRunServiceAsDeterministic } from "../execution-mode";
 const SignalScoutSchema = z.object({
   ranked_sources: z.array(z.object({
     feed_item_id: z.string(),
+    source_kind: z.string().optional(),
+    provider: z.string().optional(),
+    title: z.string(),
+    publisher: z.string(),
+    source_url: z.string().optional(),
+    domain: z.string().nullable().optional(),
+    summary: z.string().optional(),
+    author: z.string().optional(),
+    published_at: z.string().nullable().optional(),
+    route_path: z.string().optional(),
+    rsshub_feed_url: z.string().nullable().optional(),
+    docs_url: z.string().nullable().optional(),
     rank: z.number(),
     relevance_score: z.number(),
     reason: z.string(),
@@ -40,8 +55,19 @@ function scoreItemDeterministic(
   const summary = String(item.summary || "").toLowerCase();
   const publisher = String(item.publisher || "").toLowerCase();
   const authorName = String(item.author_name || "").toLowerCase();
+  const domain = String(item.domain || "").toLowerCase();
 
-  // Keyword overlap with queries
+  // 1. Exact entity match (strongest signal)
+  for (const entity of entityTerms) {
+    const lower = entity.toLowerCase();
+    if (!lower) continue;
+    if (title.includes(lower)) score += 10;
+    else if (summary.includes(lower)) score += 4;
+    else if (authorName.includes(lower)) score += 3;
+    else if (domain.includes(lower)) score += 2;
+  }
+
+  // 2. Keyword overlap with queries
   for (const query of expandedQueries) {
     const words = query.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
     for (const word of words) {
@@ -51,27 +77,21 @@ function scoreItemDeterministic(
     }
   }
 
-  // Entity term match
-  for (const entity of entityTerms) {
-    const lower = entity.toLowerCase();
-    if (title.includes(lower)) score += 5;
-    if (summary.includes(lower)) score += 2;
-    if (authorName.includes(lower)) score += 2;
+  // 3. Recency bonus (prefer newer items, but only if already relevant)
+  if (score > 0) {
+    const publishedAt = item.published_at ? new Date(item.published_at as string).getTime() : 0;
+    if (publishedAt > 0) {
+      const ageHours = (Date.now() - publishedAt) / (1000 * 60 * 60);
+      if (ageHours < 24) score += 3;
+      else if (ageHours < 72) score += 2;
+      else if (ageHours < 168) score += 1;
+    }
   }
 
-  // Recency bonus (prefer newer items)
-  const publishedAt = item.published_at ? new Date(item.published_at as string).getTime() : 0;
-  if (publishedAt > 0) {
-    const ageHours = (Date.now() - publishedAt) / (1000 * 60 * 60);
-    if (ageHours < 24) score += 3;
-    else if (ageHours < 72) score += 2;
-    else if (ageHours < 168) score += 1;
-  }
-
-  // Publisher diversity bonus
+  // 4. Publisher diversity bonus
   if (publisher && publisher.length > 0) score += 1;
 
-  // Negative filter penalty
+  // 5. Negative filter penalty
   for (const nf of negativeFilters) {
     const nfLower = nf.toLowerCase();
     if (title.includes(nfLower) || summary.includes(nfLower) || publisher.includes(nfLower)) {
@@ -79,7 +99,7 @@ function scoreItemDeterministic(
     }
   }
 
-  // Source preference boost
+  // 6. Source preference boost
   for (const sp of sourcePreferences) {
     const spLower = sp.toLowerCase();
     if (title.includes(spLower) || summary.includes(spLower) || publisher.includes(spLower)) {
@@ -101,6 +121,16 @@ function runDeterministicSignalScout(
   feed_item_id: string;
   title: string;
   publisher: string;
+  source_kind: string;
+  provider: string;
+  source_url: string;
+  domain: string | null;
+  summary: string;
+  author: string;
+  published_at: string | null;
+  route_path: string | null;
+  rsshub_feed_url: string | null;
+  docs_url: string | null;
   rank: number;
   relevance_score: number;
   reason: string;
@@ -126,12 +156,93 @@ function runDeterministicSignalScout(
     feed_item_id: String(entry.item.id || ""),
     title: String(entry.item.title || ""),
     publisher: String(entry.item.publisher || ""),
+    source_kind: "db_feed_item",
+    provider: "supabase",
+    source_url: String(entry.item.canonical_url || ""),
+    domain: entry.item.domain ? String(entry.item.domain) : null,
+    summary: String(entry.item.summary || "").slice(0, 300),
+    author: String(entry.item.author_name || ""),
+    published_at: entry.item.published_at ? String(entry.item.published_at) : null,
+    route_path: entry.item.route_path ? String(entry.item.route_path) : null,
+    rsshub_feed_url: null,
+    docs_url: null,
     rank: i + 1,
     relevance_score: Math.min(entry.score / maxScore, 1),
     reason: entry.score > 0
       ? `Keyword/entity match (score: ${entry.score})`
       : "Recency fallback",
   }));
+}
+
+// ─── Live RSSHub Search ─────────────────────────────────────
+
+async function runLiveSearch(
+  expandedQueries: string[],
+  entityTerms: string[],
+  negativeFilters: string[],
+  routeTier: string
+): Promise<Array<{
+  feed_item_id: string;
+  title: string;
+  publisher: string;
+  source_kind: string;
+  provider: string;
+  source_url: string;
+  domain: string | null;
+  summary: string;
+  author: string;
+  published_at: string | null;
+  route_path: string | null;
+  rsshub_feed_url: string | null;
+  docs_url: string | null;
+  rank: number;
+  relevance_score: number;
+  reason: string;
+}> | null> {
+  try {
+    const { liveSearchRsshub } = await import("@/lib/rsshub/rsshub-live-search");
+
+    // Finding 5: Build resolver query from ALL variants, not just the first one
+    // Route resolver needs to see all query variants to extract entities like openai/codex
+    const userGoal = expandedQueries.length > 0
+      ? expandedQueries.join(" ")
+      : entityTerms.join(" ") || "";
+
+    const result = await liveSearchRsshub({
+      userGoal,
+      expandedQueries,
+      entityTerms,
+      negativeFilters,
+      routeTier,
+      maxSources: 20,
+    });
+
+    if (!result.ok || result.sources.length === 0) return null;
+
+    return result.sources.map((s) => ({
+      feed_item_id: s.feed_item_id,
+      title: s.title,
+      publisher: s.publisher,
+      source_kind: s.source_kind,
+      provider: s.provider,
+      source_url: s.source_url,
+      domain: s.domain,
+      summary: s.summary,
+      author: s.author,
+      published_at: s.published_at,
+      route_path: s.route_path,
+      rsshub_feed_url: s.rsshub_feed_url,
+      docs_url: s.docs_url,
+      rank: s.rank,
+      relevance_score: s.relevance_score,
+      reason: s.reason,
+    }));
+  } catch (err: unknown) {
+    console.warn("[signal_scout] live RSSHub search failed", {
+      error: err instanceof Error ? err.message.slice(0, 100) : String(err).slice(0, 100),
+    });
+    return null;
+  }
 }
 
 // ─── Handler ────────────────────────────────────────────────
@@ -147,19 +258,66 @@ export const signalScoutHandler: ServiceHandler = async (
     routeTier?: DelegatedRouteTier;
   };
 
-  // Load discoverable feed items
-  const { listActiveFeedItems } = await import("@/lib/ai/tools");
-  const allActive = await listActiveFeedItems() as Record<string, unknown>[];
+  // ── Step 1: Try live RSSHub search first ──
+  const liveEnabled = process.env.PAYLABS_RSSHUB_LIVE_ENABLED !== "false";
+  let liveResults: Awaited<ReturnType<typeof runLiveSearch>> = null;
 
-  if (allActive.length === 0) {
+  if (liveEnabled) {
+    liveResults = await runLiveSearch(
+      expanded_queries || [],
+      entity_terms || [],
+      negative_filters || [],
+      routeTier || "easy"
+    );
+  }
+
+  // ── Step 2: If live search returned results, use them ──
+  if (liveResults && liveResults.length > 0) {
+    return {
+      ok: true,
+      serviceName: "signal_scout",
+      data: {
+        ranked_candidates: liveResults,
+        top_candidates: liveResults.slice(0, 3).map((r) => r.feed_item_id),
+        quick_relevance_notes: liveResults.slice(0, 5).map((r) => r.reason),
+        safe_signal_summary: `Live RSSHub: ${liveResults.length} sources found from ${liveResults.filter((s) => s.source_kind === "rsshub_live").length} routes.`,
+      },
+      safeSummary: `Live RSSHub: ${liveResults.length} sources found.`,
+      settled: false,
+      error: null,
+    };
+  }
+
+  // ── Step 3: Fallback to DB ──
+  const { listActiveFeedItems } = await import("@/lib/ai/tools");
+  const dbMaxItems = Number(process.env.PAYLABS_DB_FALLBACK_MAX_ITEMS) || 200;
+  const allActiveRaw = await listActiveFeedItems() as Record<string, unknown>[];
+
+  // Finding 6: Derive domain from canonical_url if not present
+  for (const item of allActiveRaw) {
+    if (!item.domain && item.canonical_url) {
+      try {
+        item.domain = new URL(String(item.canonical_url)).hostname;
+      } catch { /* invalid URL, skip */ }
+    }
+  }
+
+  // Finding 4: Score ALL items first, then cap output — don't slice before scoring
+  // (older exact matches must not be excluded by recency slicing)
+
+  if (allActiveRaw.length === 0) {
     return {
       ok: true,
       serviceName: "signal_scout",
       data: {
         ranked_candidates: [],
         top_candidates: [],
-        quick_relevance_notes: ["No active feed items found"],
-        safe_signal_summary: "No active feed items available for discovery.",
+        quick_relevance_notes: liveResults === null
+          ? ["Live RSSHub unavailable, no active DB feed items"]
+          : ["No relevant sources found from RSSHub or database"],
+        safe_signal_summary: liveResults === null
+          ? "Live RSSHub unavailable. No active feed items in database."
+          : "No relevant sources found from RSSHub live or database.",
       },
       safeSummary: "No active feed items available for discovery.",
       settled: false,
@@ -170,7 +328,7 @@ export const signalScoutHandler: ServiceHandler = async (
   // Deterministic mode (default)
   if (shouldRunServiceAsDeterministic("signal_scout")) {
     const ranked = runDeterministicSignalScout(
-      allActive,
+      allActiveRaw,
       expanded_queries || [],
       entity_terms || [],
       10,
@@ -184,9 +342,9 @@ export const signalScoutHandler: ServiceHandler = async (
         ranked_candidates: ranked,
         top_candidates: ranked.slice(0, 3).map((r) => r.feed_item_id),
         quick_relevance_notes: ranked.slice(0, 5).map((r) => r.reason),
-        safe_signal_summary: `Ranked ${ranked.length} items by keyword/entity match + recency. Deterministic scoring.`,
+        safe_signal_summary: `DB fallback: ${ranked.length} items ranked by keyword/entity match. Live RSSHub: ${liveResults === null ? "unavailable" : "no results"}.`,
       },
-      safeSummary: `Ranked ${ranked.length} items by keyword/entity match + recency. Deterministic scoring.`,
+      safeSummary: `DB fallback: ${ranked.length} items ranked. Deterministic scoring.`,
       settled: false,
       error: null,
     };
@@ -198,7 +356,7 @@ export const signalScoutHandler: ServiceHandler = async (
 
   // Pre-score all active items, keep top 20 for LLM reranking
   const deterministicCandidates = runDeterministicSignalScout(
-    allActive,
+    allActiveRaw,
     expanded_queries || [],
     entity_terms || [],
     20,
@@ -208,7 +366,7 @@ export const signalScoutHandler: ServiceHandler = async (
 
   // Build safe metadata from deterministic candidates only
   const candidateIds = new Set(deterministicCandidates.map((c) => c.feed_item_id));
-  const feedMeta = allActive
+  const feedMeta = allActiveRaw
     .filter((item) => candidateIds.has(String(item.id)))
     .map((item) => ({
       id: item.id,
@@ -256,7 +414,7 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
   if (!result.ok) {
     // Fallback: deterministic ranking
     const ranked = runDeterministicSignalScout(
-      allActive,
+      allActiveRaw,
       expanded_queries || [],
       entity_terms || [],
       10,
@@ -279,7 +437,7 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
   }
 
   const llmRanked = result.data.ranked_sources.filter((r) =>
-    allActive.some((f) => f.id === r.feed_item_id)
+    allActiveRaw.some((f) => f.id === r.feed_item_id)
   );
 
   return {
@@ -288,8 +446,18 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
     data: {
       ranked_candidates: llmRanked.map((r) => ({
         feed_item_id: r.feed_item_id,
-        title: String(allActive.find((f) => f.id === r.feed_item_id)?.title || ""),
-        publisher: String(allActive.find((f) => f.id === r.feed_item_id)?.publisher || ""),
+        title: String(allActiveRaw.find((f) => f.id === r.feed_item_id)?.title || ""),
+        publisher: String(allActiveRaw.find((f) => f.id === r.feed_item_id)?.publisher || ""),
+        source_kind: r.source_kind || "db_feed_item",
+        provider: r.provider || "supabase",
+        source_url: r.source_url || String((allActiveRaw.find((f) => f.id === r.feed_item_id) as Record<string, unknown>)?.canonical_url || ""),
+        domain: r.domain ?? null,
+        summary: r.summary || "",
+        author: r.author || "",
+        published_at: r.published_at ?? null,
+        route_path: r.route_path || null,
+        rsshub_feed_url: r.rsshub_feed_url ?? null,
+        docs_url: r.docs_url ?? null,
         rank: r.rank,
         relevance_score: r.relevance_score,
         reason: r.reason,

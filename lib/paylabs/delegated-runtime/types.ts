@@ -272,6 +272,8 @@ export interface SafeSourceCard {
   publisher: string;
   claim_status: string;
   creator_wallet: string | null;
+  source_kind?: string;
+  provider?: string;
 }
 
 // ─── Easy → Normal Handoff ───────────────────────────────

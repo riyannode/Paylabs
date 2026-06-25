@@ -30,61 +30,107 @@ async function enrichRankedCandidates(
 ): Promise<SourceItem[]> {
   if (rankedCandidates.length === 0) return [];
 
-  const feedItemIds = rankedCandidates.slice(0, maxSources).map((c) => c.feed_item_id);
+  const topCandidates = rankedCandidates.slice(0, maxSources);
 
-  const { data: items, error } = await supabaseAdmin()
-    .from("paylabs_feed_items")
-    .select(SAFE_FEED_ITEM_COLUMNS)
-    .in("id", feedItemIds)
-    .eq("is_active", true);
+  // Split: inline live candidates vs DB candidates
+  const liveCandidates: typeof topCandidates = [];
+  const dbCandidateIds: string[] = [];
 
-  if (error || !items) return [];
-
-  // Build lookup by id
-  const itemMap = new Map(items.map((item) => [item.id, item]));
-
-  // Preserve signal_scout ranking order, enrich with metadata
-  const enriched: SourceItem[] = [];
-  for (const candidate of rankedCandidates.slice(0, maxSources)) {
-    const item = itemMap.get(candidate.feed_item_id);
-    if (!item) continue;
-
-    // Extract domain from canonical_url if not set in DB
-    let domain = item.domain as string | null;
-    if (!domain && item.canonical_url) {
-      try {
-        domain = new URL(item.canonical_url).hostname;
-      } catch {
-        domain = null;
-      }
+  for (const c of topCandidates) {
+    const ext = c as Record<string, unknown>;
+    if (ext.source_kind === "rsshub_live" || ext.source_kind === "tavily_live") {
+      liveCandidates.push(c);
+    } else {
+      dbCandidateIds.push(c.feed_item_id);
     }
+  }
 
-    // Get route_path from join (if available)
-    let routePath: string | null = null;
-    if (item.rsshub_route_id) {
-      const { data: route } = await supabaseAdmin()
-        .from("paylabs_rsshub_routes")
-        .select("route_path")
-        .eq("id", item.rsshub_route_id)
-        .single();
-      routePath = (route?.route_path as string) ?? null;
+  const enriched: SourceItem[] = [];
+
+  // ── Inline live candidates: build SourceItem directly ──
+  for (const candidate of liveCandidates) {
+    const ext = candidate as Record<string, unknown>;
+    const sourceUrl = String(ext.source_url || "");
+    if (!sourceUrl || !/^https?:\/\//.test(sourceUrl)) continue;
+
+    let domain: string | null = typeof ext.domain === "string" ? ext.domain : null;
+    if (!domain) {
+      try { domain = new URL(sourceUrl).hostname; } catch { domain = null; }
     }
 
     enriched.push({
-      feed_item_id: String(item.id),
-      title: String(item.title || "(untitled)"),
-      url: String(item.canonical_url || ""),
+      feed_item_id: candidate.feed_item_id,
+      title: String(ext.title || "(untitled)"),
+      url: sourceUrl,
       domain,
-      summary: String(item.summary || "").slice(0, 500),
-      author: String(item.author_name || item.publisher || ""),
-      published_at: (item.published_at as string) ?? null,
-      route_path: routePath,
-      trust_status: String(item.trust_status || "unverified"),
-      claim_status: String(item.claim_status || "unclaimed"),
+      summary: String(ext.summary || "").slice(0, 500),
+      author: String(ext.author || ""),
+      published_at: ext.published_at ? String(ext.published_at) : null,
+      route_path: typeof ext.route_path === "string" ? ext.route_path : null,
+      trust_status: ext.source_kind === "rsshub_live" ? "rsshub_live" : "web_fallback",
+      claim_status: "unclaimed",
       rank: candidate.rank,
       relevance_score: candidate.relevance_score,
+      source_kind: ext.source_kind as SourceItem["source_kind"],
+      provider: ext.provider as SourceItem["provider"],
+      rsshub_feed_url: ext.rsshub_feed_url ? String(ext.rsshub_feed_url) : null,
+      docs_url: ext.docs_url ? String(ext.docs_url) : null,
+      reason: typeof ext.reason === "string" ? ext.reason : undefined,
     });
   }
+
+  // ── DB candidates: existing enrichment ──
+  if (dbCandidateIds.length > 0) {
+    const { data: items, error } = await supabaseAdmin()
+      .from("paylabs_feed_items")
+      .select(SAFE_FEED_ITEM_COLUMNS)
+      .in("id", dbCandidateIds)
+      .eq("is_active", true);
+
+    if (!error && items) {
+      const itemMap = new Map(items.map((item) => [item.id, item]));
+
+      for (const candidate of topCandidates.filter((c) => dbCandidateIds.includes(c.feed_item_id))) {
+        const item = itemMap.get(candidate.feed_item_id);
+        if (!item) continue;
+
+        let domain = item.domain as string | null;
+        if (!domain && item.canonical_url) {
+          try { domain = new URL(item.canonical_url).hostname; } catch { domain = null; }
+        }
+
+        let routePath: string | null = null;
+        if (item.rsshub_route_id) {
+          const { data: route } = await supabaseAdmin()
+            .from("paylabs_rsshub_routes")
+            .select("route_path")
+            .eq("id", item.rsshub_route_id)
+            .single();
+          routePath = (route?.route_path as string) ?? null;
+        }
+
+        enriched.push({
+          feed_item_id: String(item.id),
+          title: String(item.title || "(untitled)"),
+          url: String(item.canonical_url || ""),
+          domain,
+          summary: String(item.summary || "").slice(0, 500),
+          author: String(item.author_name || item.publisher || ""),
+          published_at: (item.published_at as string) ?? null,
+          route_path: routePath,
+          trust_status: String(item.trust_status || "unverified"),
+          claim_status: String(item.claim_status || "unclaimed"),
+          rank: candidate.rank,
+          relevance_score: candidate.relevance_score,
+          source_kind: "db_feed_item",
+          provider: "supabase",
+        });
+      }
+    }
+  }
+
+  // Sort by rank
+  enriched.sort((a, b) => a.rank - b.rank);
 
   return enriched;
 }

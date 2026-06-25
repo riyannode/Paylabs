@@ -81,6 +81,17 @@ export const DiscoveryPlannerState = Annotation.Root({
     feed_item_id: string;
     title: string;
     publisher: string;
+    source_kind?: string;
+    provider?: string;
+    source_url?: string;
+    domain?: string | null;
+    summary?: string;
+    author?: string;
+    published_at?: string | null;
+    route_path?: string;
+    rsshub_feed_url?: string | null;
+    docs_url?: string | null;
+    reason?: string;
     rank: number;
     relevance_score: number;
   }>>({
@@ -160,6 +171,8 @@ export const PaymentDecisionState = Annotation.Root({
     publisher: string;
     claim_status: string;
     creator_wallet: string | null;
+    source_kind?: string;
+    provider?: string;
   }>>({
     reducer: concatReducer,
     default: () => [],
@@ -225,6 +238,8 @@ export const PaymentDecisionState = Annotation.Root({
     publisher: string;
     creator_wallet: string | null;
     claim_status: string;
+    source_kind?: string;       // "rsshub_live" | "tavily_live" | undefined (DB)
+    is_live?: boolean;          // true for live sources (non-monetized, skip paid approval)
   }>>({
     reducer: concatReducer,
     default: () => [],

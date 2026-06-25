@@ -25,6 +25,7 @@ export interface FetchRouteResult {
   ok: true;
   items: NormalizedFeedItem[];
   feed_title: string | null;
+  feed_url: string;
 }
 
 export interface FetchRouteError {
@@ -96,6 +97,7 @@ export async function fetchRoute(
     ok: true,
     items,
     feed_title: feed.title ?? null,
+    feed_url: feedUrl,
   };
 }
 

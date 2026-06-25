@@ -30,6 +30,9 @@ export const QueryBuilderInput = z.object({
   normalized_goal: z.string().min(1),
   topics: z.array(z.string()),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
+  brain_query_variants: z.array(z.string()).optional(),
+  brain_discovery_strategy: z.string().optional(),
+  brain_normalized_goal: z.string().optional(),
 });
 export type QueryBuilderInput = z.infer<typeof QueryBuilderInput>;
 
@@ -57,6 +60,17 @@ export const SignalScoutOutput = z.object({
     publisher: z.string(),
     rank: z.number(),
     relevance_score: z.number(),
+    source_kind: z.string().optional(),
+    provider: z.string().optional(),
+    source_url: z.string().optional(),
+    domain: z.string().nullable().optional(),
+    summary: z.string().optional(),
+    author: z.string().optional(),
+    published_at: z.string().nullable().optional(),
+    route_path: z.string().optional(),
+    rsshub_feed_url: z.string().nullable().optional(),
+    docs_url: z.string().nullable().optional(),
+    reason: z.string().optional(),
   })),
   top_candidates: z.array(z.string()),
   quick_relevance_notes: z.array(z.string()),

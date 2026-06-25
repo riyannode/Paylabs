@@ -6,7 +6,7 @@
 import { Resend } from "resend";
 
 const ENV_KEY = "RESEND_API_KEY";
-const FROM_ADDRESS = "PayLabs <onboarding@resend.dev>";
+const FROM_ADDRESS = process.env.PAYLABS_EMAIL_FROM || "PayLabs <onboarding@resend.dev>";
 
 function getApiKey(): string {
   const key = process.env[ENV_KEY];
