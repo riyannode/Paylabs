@@ -95,6 +95,8 @@ export interface ServiceEvaluation {
     batchTxHash?: string | null;
     batchExplorerUrl?: string | null;
     batchResolverUrl?: string | null;
+    gatewayAccepted?: boolean;
+    transferStatus?: "received" | "batched" | "confirmed" | "completed" | "failed" | null;
   };
 }
 
@@ -137,6 +139,10 @@ export interface PaymentGraphEdge {
   batchExplorerUrl?: string | null;
   /** Backend batch resolver URL */
   batchResolverUrl?: string | null;
+  /** Gateway accepted the payment */
+  gatewayAccepted?: boolean;
+  /** Circle transfer status */
+  transferStatus?: "received" | "batched" | "confirmed" | "completed" | "failed" | null;
   /** Error message for failed edges */
   error?: string | null;
   /** Execution mode (audit_only or x402) */

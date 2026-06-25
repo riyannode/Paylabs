@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 type DcwStep = "auth" | "creating" | "wallet" | "deposit" | "error";
 
@@ -10,10 +10,17 @@ type DcwWalletInfo = {
   chain: string;
 };
 
+type DcwBalanceInfo = {
+  walletUsdc: string | null;   // on-chain USDC (null if not fetched)
+  gatewayUsdc: string;         // x402 Balance (Gateway)
+  pendingBatchUsdc?: string;
+};
+
 type Props = {
   open: boolean;
   onClose: () => void;
   onWalletReady?: (wallet: DcwWalletInfo) => void;
+  plannedCost?: string;
 };
 
 function shortAddr(addr?: string | null) {
@@ -21,11 +28,16 @@ function shortAddr(addr?: string | null) {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
-export default function DcwModal({ open, onClose, onWalletReady }: Props) {
+function asDecimal(value?: string | null): number {
+  const n = Number(value ?? "0");
+  return Number.isFinite(n) ? n : 0;
+}
+
+export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "0.000015" }: Props) {
   const [step, setStep] = useState<DcwStep>("auth");
   const [email, setEmail] = useState("");
   const [wallet, setWallet] = useState<DcwWalletInfo | null>(null);
-  const [gatewayBalance, setGatewayBalance] = useState("0");
+  const [balance, setBalance] = useState<DcwBalanceInfo>({ walletUsdc: null, gatewayUsdc: "0" });
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
@@ -33,6 +45,15 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
   const [otpCode, setOtpCode] = useState("");
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [activeTab, setActiveTab] = useState<"balances" | "topup">("balances");
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const googleInitialized = useRef(false);
+
+  const x402Balance = asDecimal(balance.gatewayUsdc);
+  const plannedCostNum = asDecimal(plannedCost);
+  const needsTopUp = x402Balance < plannedCostNum;
+  const recommendedTopUp = Math.max(plannedCostNum - x402Balance, plannedCostNum);
+  const recommendedStr = recommendedTopUp > 0 ? recommendedTopUp.toFixed(6) : "0.000001";
 
   // Check existing session on open
   useEffect(() => {
@@ -45,14 +66,12 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
       const resp = await fetch("/api/paylabs/auth/session");
       const data = await resp.json();
       if (data.ok && data.authenticated) {
-        // Already authenticated — check wallet
         if (data.hasWallet && data.walletAddress) {
           setWallet({ walletId: "", address: data.walletAddress, chain: "ARC-TESTNET" });
           setStep("deposit");
           refreshBalance();
           onWalletReady?.({ walletId: "", address: data.walletAddress, chain: "ARC-TESTNET" });
         } else {
-          // Authenticated but no wallet — create one
           setStep("creating");
           createWallet();
         }
@@ -62,6 +81,110 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
     }
   }, [onWalletReady]);
 
+  // ── Google Sign-In ─────────────────────────────────────────
+  const handleGoogleSignIn = useCallback(async (idToken: string) => {
+    setIsGoogleLoading(true);
+    setError(null);
+
+    try {
+      const resp = await fetch("/api/paylabs/auth/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ idToken }),
+      });
+      const data = await resp.json();
+
+      if (!data.ok) {
+        setError(data.error || "Google Sign-In failed");
+        setStep("error");
+        return;
+      }
+
+      if (data.hasWallet && data.walletAddress) {
+        setWallet({ walletId: "", address: data.walletAddress, chain: "ARC-TESTNET" });
+        setStep("deposit");
+        refreshBalance();
+        onWalletReady?.({ walletId: "", address: data.walletAddress, chain: "ARC-TESTNET" });
+      } else {
+        setStep("creating");
+        createWallet();
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Google Sign-In failed");
+      setStep("error");
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  }, [onWalletReady]);
+
+  // ── Load Google Identity Services ───────────────────────────
+  useEffect(() => {
+    if (!open) return;
+    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+    if (!clientId || googleInitialized.current) return;
+
+    // Load GIS script if not already loaded
+    const existing = document.getElementById("google-identity-script");
+    if (!existing) {
+      const script = document.createElement("script");
+      script.id = "google-identity-script";
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    }
+
+    // Poll until google.accounts.id is available, then initialize
+    let attempts = 0;
+    const maxAttempts = 30; // 3 seconds max
+    const interval = setInterval(() => {
+      attempts++;
+      const g = (window as unknown as Record<string, unknown>).google as
+        | { accounts?: { id?: { initialize: Function } } }
+        | undefined;
+
+      if (g?.accounts?.id) {
+        clearInterval(interval);
+        if (!googleInitialized.current) {
+          googleInitialized.current = true;
+          g.accounts.id.initialize({
+            client_id: clientId,
+            callback: (response: { credential: string }) => {
+              handleGoogleSignIn(response.credential);
+            },
+            auto_select: false,
+            cancel_on_tap_outside: true,
+          });
+        }
+      }
+
+      if (attempts >= maxAttempts) {
+        clearInterval(interval);
+      }
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [open, handleGoogleSignIn]);
+
+  /** Trigger Google One Tap / sign-in prompt */
+  const triggerGoogleSignIn = useCallback(() => {
+    setIsGoogleLoading(true);
+    setError(null);
+    const g = (window as unknown as Record<string, unknown>).google as
+      | { accounts?: { id?: { prompt: Function } } }
+      | undefined;
+    if (g?.accounts?.id) {
+      g.accounts.id.prompt(() => {
+        // Prompt dismissed or callback fired
+        setIsGoogleLoading(false);
+      });
+    } else {
+      setError("Google Sign-In not loaded. Please try again.");
+      setIsGoogleLoading(false);
+    }
+  }, []);
+
   // ── Passkey Registration ──────────────────────────────────
   const handlePasskeyRegister = useCallback(async () => {
     if (!email.includes("@")) return;
@@ -69,7 +192,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
     setError(null);
 
     try {
-      // Step 1: Get challenge
       const challengeResp = await fetch("/api/paylabs/auth/passkey/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -78,7 +200,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
       const challengeData = await challengeResp.json();
 
       if (!challengeData.ok) {
-        // If passkey already exists, try login instead
         if (challengeData.error?.includes("already registered")) {
           await handlePasskeyAuthenticate();
           return;
@@ -88,7 +209,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
         return;
       }
 
-      // Step 2: Create credential via browser
       const { startRegistration } = await import("@simplewebauthn/browser");
       let credential;
       try {
@@ -103,7 +223,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
         throw e;
       }
 
-      // Step 3: Verify attestation
       const verifyResp = await fetch("/api/paylabs/auth/passkey/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -117,7 +236,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
         return;
       }
 
-      // Auth complete — now create wallet
       setStep("creating");
       createWallet();
     } catch (e: unknown) {
@@ -134,7 +252,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
     setError(null);
 
     try {
-      // Step 1: Get challenge
       const challengeResp = await fetch("/api/paylabs/auth/passkey/authenticate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -147,7 +264,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
         return;
       }
 
-      // Step 2: Get assertion via browser
       const { startAuthentication } = await import("@simplewebauthn/browser");
       let credential;
       try {
@@ -161,7 +277,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
         throw e;
       }
 
-      // Step 3: Verify assertion
       const verifyResp = await fetch("/api/paylabs/auth/passkey/authenticate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -174,7 +289,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
         return;
       }
 
-      // Auth complete
       if (verifyData.hasWallet && verifyData.walletAddress) {
         setWallet({ walletId: "", address: verifyData.walletAddress, chain: "ARC-TESTNET" });
         setStep("deposit");
@@ -237,7 +351,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
         return;
       }
 
-      // Auth complete — now create wallet or show deposit
       if (data.hasWallet && data.walletAddress) {
         setWallet({ walletId: "", address: data.walletAddress, chain: "ARC-TESTNET" });
         setStep("deposit");
@@ -283,7 +396,11 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
       const resp = await fetch("/api/paylabs/dcw/balance");
       const data = await resp.json();
       if (data.ok) {
-        setGatewayBalance(data.gateway?.balanceUsdc || "0");
+        setBalance({
+          walletUsdc: data.wallet?.usdc ?? null,
+          gatewayUsdc: data.gateway?.balanceUsdc || "0",
+          pendingBatchUsdc: data.gateway?.pendingBatchUsdc || "0",
+        });
       }
     } catch {}
   }, []);
@@ -309,79 +426,69 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
           <p className="muted">No popups. No signing. Just works.</p>
         </div>
 
-        {/* ── Step: Auth (Passkey) ──────────────────────── */}
+        {/* ── Step: Auth (Google + Passkey) ─────────────── */}
         {step === "auth" && (
           <div className="pl-dcw-step">
-            <label className="pl-dcw-label">Your email</label>
-            <input
-              className="pl-email-otp-input"
-              type="email"
-              placeholder="you@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && email.includes("@")) handlePasskeyRegister();
-              }}
-              autoFocus
-            />
-            <button
-              className="pl-primary-v3"
-              onClick={handlePasskeyRegister}
-              disabled={!email.includes("@") || isRegistering}
-            >
-              {isRegistering ? "Creating passkey…" : "🔐 Register with Passkey"}
-            </button>
-            <button
-              className="pl-eoa-fallback-v3"
-              onClick={handlePasskeyAuthenticate}
-              disabled={!email.includes("@")}
-              style={{ marginTop: 4 }}
-            >
-              Already have a passkey? Sign in
-            </button>
-            <div className="pl-auth-divider"><span>or</span></div>
-            {!otpSent ? (
+            <div className="pl-login-stack-v3">
+              <button
+                className="pl-login-option-v3"
+                onClick={triggerGoogleSignIn}
+                disabled={isGoogleLoading}
+              >
+                <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
+                <b>{isGoogleLoading ? "Signing in…" : "Continue with Google"}</b>
+              </button>
+
+              <button
+                className="pl-login-option-v3"
+                onClick={() => {
+                  const el = document.querySelector(".pl-dcw-email-section");
+                  if (el) el.classList.toggle("visible");
+                }}
+              >
+                <span className="pl-login-icon-v3"><PasskeyIcon /></span>
+                <b>Passkey</b>
+              </button>
+            </div>
+
+            {error && (
+              <p className="muted" style={{ fontSize: 12, color: "var(--danger, #ef4444)", textAlign: "center", marginTop: 4 }}>
+                {error}
+              </p>
+            )}
+
+            {/* Passkey section (collapsed by default) */}
+            <div className="pl-dcw-email-section" style={{ marginTop: 8 }}>
+              <label className="pl-dcw-label">Your email</label>
+              <input
+                className="pl-email-otp-input"
+                type="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && email.includes("@")) handlePasskeyRegister();
+                }}
+              />
+              <button
+                className="pl-primary-v3"
+                onClick={handlePasskeyRegister}
+                disabled={!email.includes("@") || isRegistering}
+              >
+                {isRegistering ? "Creating passkey…" : "🔐 Register with Passkey"}
+              </button>
               <button
                 className="pl-eoa-fallback-v3"
-                onClick={handleSendOtp}
-                disabled={!email.includes("@") || isSendingOtp}
+                onClick={handlePasskeyAuthenticate}
+                disabled={!email.includes("@")}
+                style={{ marginTop: 4 }}
               >
-                {isSendingOtp ? "Sending…" : "📧 Send Code to Email"}
+                Already have a passkey? Sign in
               </button>
-            ) : (
-              <div className="pl-otp-input-group">
-                <input
-                  className="pl-email-otp-input"
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={6}
-                  placeholder="000000"
-                  value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && otpCode.length === 6) handleVerifyOtp();
-                  }}
-                  autoFocus
-                />
-                <button
-                  className="pl-primary-v3"
-                  onClick={handleVerifyOtp}
-                  disabled={otpCode.length !== 6 || isVerifyingOtp}
-                >
-                  {isVerifyingOtp ? "Verifying…" : "Verify Code"}
-                </button>
-                <button
-                  className="pl-eoa-fallback-v3"
-                  onClick={handleSendOtp}
-                  disabled={isSendingOtp}
-                  style={{ marginTop: 4 }}
-                >
-                  Resend code
-                </button>
-              </div>
-            )}
-            <p className="muted" style={{ fontSize: 11, marginTop: 8 }}>
-              Biometrics or email code. No passwords.
+            </div>
+
+            <p className="muted" style={{ fontSize: 11, marginTop: 4, textAlign: "center" }}>
+              Auto-pay wallet. No popups, no signing.
             </p>
           </div>
         )}
@@ -394,45 +501,177 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
           </div>
         )}
 
-        {/* ── Step: Deposit ─────────────────────────────── */}
+        {/* ── Step: Wallet connected — Balances / Top up tabs ── */}
         {step === "deposit" && wallet && (
           <div className="pl-dcw-step">
-            <div className="pl-dcw-wallet-card">
-              <div className="pl-dcw-wallet-row">
-                <span className="muted">Address</span>
-                <b className="data-mono">
-                  {shortAddr(wallet.address)}
-                  <button className="pl-copy-v3" onClick={handleCopy} aria-label="Copy">
-                    {copied ? "✓" : "⎘"}
+            {/* Tab bar */}
+            <div className="pl-wallet-tabs-v3" style={{ marginBottom: 12 }}>
+              <button
+                className={activeTab === "balances" ? "active" : ""}
+                onClick={() => setActiveTab("balances")}
+              >
+                Balances
+              </button>
+              <button
+                className={activeTab === "topup" ? "active" : ""}
+                onClick={() => setActiveTab("topup")}
+              >
+                Top up x402
+              </button>
+            </div>
+
+            {/* Tab 1: Balances */}
+            {activeTab === "balances" && (
+              <>
+                <div className="pl-dcw-wallet-card">
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">Address</span>
+                    <b className="data-mono">
+                      {shortAddr(wallet.address)}
+                      <button className="pl-copy-v3" onClick={handleCopy} aria-label="Copy">
+                        {copied ? "✓" : "⎘"}
+                      </button>
+                    </b>
+                  </div>
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">Type</span>
+                    <b>DCW</b>
+                  </div>
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">Network</span>
+                    <b>{wallet.chain}</b>
+                  </div>
+
+                  {balance.walletUsdc != null ? (
+                    <div className="pl-dcw-wallet-row">
+                      <span className="muted">Wallet USDC</span>
+                      <b>{balance.walletUsdc} USDC</b>
+                    </div>
+                  ) : (
+                    <div className="pl-dcw-wallet-row">
+                      <span className="muted">Wallet USDC</span>
+                      <b className="muted">not available</b>
+                    </div>
+                  )}
+
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">x402 Balance</span>
+                    <b style={{ color: x402Balance > 0 ? "var(--success, #22c55e)" : undefined }}>
+                      {x402Balance.toFixed(6)} USDC
+                    </b>
+                  </div>
+                  <span className="muted" style={{ fontSize: 10, marginLeft: 4 }}>Powered by Circle Gateway</span>
+
+                  {asDecimal(balance.pendingBatchUsdc) > 0 && (
+                    <div className="pl-dcw-wallet-row">
+                      <span className="muted">Pending Batch</span>
+                      <b>{asDecimal(balance.pendingBatchUsdc).toFixed(6)} USDC</b>
+                    </div>
+                  )}
+
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">Planned Cost</span>
+                    <b>{plannedCostNum.toFixed(6)} USDC</b>
+                  </div>
+                </div>
+
+                {/* Status */}
+                <div style={{ padding: "8px 0", fontSize: 13, fontWeight: 600 }}>
+                  {needsTopUp ? (
+                    <span style={{ color: "var(--warn, #f59e0b)" }}>⚠ Top up needed</span>
+                  ) : (
+                    <span style={{ color: "var(--success, #22c55e)" }}>✓ Ready to run</span>
+                  )}
+                </div>
+
+                {/* Actions */}
+                {needsTopUp ? (
+                  <button className="pl-primary-v3" onClick={() => setActiveTab("topup")}>
+                    Top up x402 Balance
                   </button>
-                </b>
-              </div>
-              <div className="pl-dcw-wallet-row">
-                <span className="muted">Chain</span>
-                <b>{wallet.chain}</b>
-              </div>
-              <div className="pl-dcw-wallet-row">
-                <span className="muted">Gateway Balance</span>
-                <b style={{ color: parseFloat(gatewayBalance) > 0 ? "var(--success, #22c55e)" : undefined }}>
-                  {gatewayBalance} USDC
-                </b>
-              </div>
-            </div>
+                ) : (
+                  <>
+                    <button className="pl-primary-v3" onClick={onClose}>
+                      Close
+                    </button>
+                    <button
+                      className="pl-eoa-fallback-v3"
+                      onClick={() => setActiveTab("topup")}
+                      style={{ marginTop: 4 }}
+                    >
+                      Add more x402 Balance
+                    </button>
+                  </>
+                )}
 
-            <div className="pl-dcw-deposit-info">
-              <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Deposit USDC to your wallet:</p>
-              <div className="pl-dcw-address-box">
-                <code>{wallet.address}</code>
-                <button className="pl-copy-v3" onClick={handleCopy}>{copied ? "Copied!" : "Copy"}</button>
-              </div>
-              <p className="muted" style={{ fontSize: 11, marginTop: 8 }}>
-                Send USDC on <b>Arc Testnet</b> to this address. Once deposited, payments are automatic.
-              </p>
-            </div>
+                <button className="pl-eoa-fallback-v3" onClick={refreshBalance} style={{ marginTop: 4 }}>
+                  Refresh Balance
+                </button>
+              </>
+            )}
 
-            <button className="pl-primary-v3" onClick={refreshBalance} style={{ marginTop: 12 }}>
-              Refresh Balance
-            </button>
+            {/* Tab 2: Top up x402 */}
+            {activeTab === "topup" && (
+              <>
+                <div className="pl-dcw-wallet-card">
+                  {balance.walletUsdc != null ? (
+                    <div className="pl-dcw-wallet-row">
+                      <span className="muted">Wallet USDC</span>
+                      <b>{balance.walletUsdc} USDC</b>
+                    </div>
+                  ) : (
+                    <div className="pl-dcw-wallet-row">
+                      <span className="muted">Wallet USDC</span>
+                      <b className="muted">not available</b>
+                    </div>
+                  )}
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">x402 Balance</span>
+                    <b>{x402Balance.toFixed(6)} USDC</b>
+                  </div>
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">Planned Cost</span>
+                    <b>{plannedCostNum.toFixed(6)} USDC</b>
+                  </div>
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">Recommended</span>
+                    <b>{recommendedStr} USDC</b>
+                  </div>
+                </div>
+
+                {/* DCW honest state: deposit not wired */}
+                <div style={{ marginTop: 12, padding: "12px", background: "var(--warn-bg, #fef3c7)", borderRadius: 6, border: "1px solid var(--warn-border, #f59e0b)" }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                    DCW x402 Balance is required for auto-pay.
+                  </p>
+                  <p className="muted" style={{ fontSize: 11 }}>
+                    DCW Gateway top-up is not wired yet in this build. Fund x402 Balance before auto-pay can run.
+                  </p>
+                </div>
+
+                {/* Wallet address for manual funding */}
+                <label className="pl-dcw-label" style={{ marginTop: 12 }}>Send USDC to:</label>
+                <div className="pl-dcw-address-box">
+                  <code>{wallet.address}</code>
+                  <button className="pl-copy-v3" onClick={handleCopy}>{copied ? "Copied!" : "Copy"}</button>
+                </div>
+                <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+                  Send USDC on <b>Arc Testnet</b> to this address.
+                </p>
+
+                <button className="pl-primary-v3" onClick={refreshBalance} style={{ marginTop: 12 }}>
+                  Refresh Balance
+                </button>
+
+                <button
+                  className="pl-eoa-fallback-v3"
+                  onClick={() => setActiveTab("balances")}
+                  style={{ marginTop: 4 }}
+                >
+                  ← Back to Balances
+                </button>
+              </>
+            )}
           </div>
         )}
 
@@ -448,4 +687,41 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
       </div>
     </div>
   );
+}
+
+function Svg({ children }: { children: React.ReactNode }) {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
+function GoogleIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.4-.4-3.5Z" />
+      <path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 16.2 4 9.5 8.5 6.3 14.7Z" />
+      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-7.9l-6.5 5C9.4 39.5 16.1 44 24 44Z" />
+      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.4-2.3 4.3-4.1 5.6l6.2 5.2C36.9 39.3 44 34 44 24c0-1.3-.1-2.4-.4-3.5Z" />
+    </svg>
+  );
+}
+
+function MailIcon() {
+  return <Svg><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></Svg>;
+}
+
+function PasskeyIcon() {
+  return <Svg><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></Svg>;
 }

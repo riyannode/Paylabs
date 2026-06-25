@@ -37,10 +37,10 @@ export default function WalletPicker({ open, onClose, onSelectUcw, onSelectDcw }
 
             <span className="pl-picker-copy">
               <span className="pl-picker-title-row">
-                <b>User-Controlled Wallet</b>
+                <b>Creator Wallet</b>
                 <em>Self-custody</em>
               </span>
-              <span>You approve payments with Circle auth.</span>
+              <span>Publish paid content and APIs with your own Circle wallet.</span>
             </span>
 
             <ChevronRight className="pl-picker-chevron" size={18} strokeWidth={2.2} />
@@ -53,10 +53,10 @@ export default function WalletPicker({ open, onClose, onSelectUcw, onSelectDcw }
 
             <span className="pl-picker-copy">
               <span className="pl-picker-title-row">
-                <b>Developer-Controlled Wallet</b>
-                <em>Auto-pay</em>
+                <b>User Wallet</b>
+                <em>Fast access</em>
               </span>
-              <span>PayLabs signs x402 payments server-side.</span>
+              <span>Use PayLabs with automatic payment authorization.</span>
             </span>
 
             <ChevronRight className="pl-picker-chevron" size={18} strokeWidth={2.2} />

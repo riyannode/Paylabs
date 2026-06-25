@@ -36,6 +36,25 @@ export interface FetchRouteError {
 export type FetchRouteResponse = FetchRouteResult | FetchRouteError;
 
 /**
+ * Extract a safe, loggable error class from a fetch error.
+ * Strips URLs, credentials, and raw response bodies.
+ */
+export function extractErrorClass(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  // HTTP status codes
+  const httpMatch = msg.match(/\b(4\d{2}|5\d{2})\b/);
+  if (httpMatch) return `http_${httpMatch[1]}`;
+  // Timeout
+  if (/timeout|timed?\s*out|ETIMEDOUT/i.test(msg)) return "timeout";
+  // Connection refused
+  if (/ECONNREFUSED|ECONNRESET|ENOTFOUND/i.test(msg)) return "connection_error";
+  // Abort
+  if (/abort/i.test(msg)) return "aborted";
+  // Generic
+  return "fetch_error";
+}
+
+/**
  * Validate URL is https (except localhost/dev).
  */
 export function isValidFeedUrl(url: string): boolean {

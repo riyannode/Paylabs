@@ -26,18 +26,23 @@
  */
 
 import {
+  buildPaymentRequirements,
   buildX402Challenge,
   encodeChallengeHeader,
   verifyAndSettlePayment,
   X402_VERSION,
 } from "./seller-challenge";
-import type { X402ChallengeRequirements } from "./seller-challenge";
 
 // ─── Types ────────────────────────────────────────────────────
 
 export interface CustomerEntryPaymentResult {
   ok: boolean;
+  /** Gateway accepted/queued — NOT final onchain settlement */
   settled: boolean;
+  /** Gateway accepted the payment */
+  gatewayAccepted?: boolean;
+  /** Circle transfer status — null until polled */
+  transferStatus?: import("./seller-challenge").X402TransferStatus | null;
   /** Safe payment metadata (no raw signatures, no EIP-712 data) */
   paymentMeta?: {
     amountAtomic: string;
@@ -51,6 +56,8 @@ export interface CustomerEntryPaymentResult {
     batchTxHash: string | null;
     batchExplorerUrl: string | null;
     batchResolverUrl: string | null;
+    gatewayAccepted: boolean;
+    transferStatus: import("./seller-challenge").X402TransferStatus | null;
   };
   payer?: string;
   error?: string;
@@ -120,25 +127,15 @@ export async function verifyAndSettleCustomerEntry(
   const sellerAddress = resolveEntrySellerAddress();
   const amountAtomic = Math.round(plannedCostUsdc * 1_000_000).toString();
 
-  const requirements: X402ChallengeRequirements = {
-    scheme: "exact",
-    network: "eip155:5042002", // Arc Testnet
-    asset: "0x3600000000000000000000000000000000000000", // USDC
-    amount: amountAtomic,
-    payTo: sellerAddress.toLowerCase(),
-    maxTimeoutSeconds: 604900, // MUST match GATEWAY_AUTH_VALIDITY_WINDOW_SECONDS
-    extra: {
-      name: "GatewayWalletBatched",
-      version: "1",
-      verifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
-    },
-  };
+  const requirements = buildPaymentRequirements(sellerAddress, amountAtomic);
 
   const result = await verifyAndSettlePayment(paymentSignatureBase64, requirements);
 
   return {
     ok: result.ok,
     settled: result.settled,
+    gatewayAccepted: result.gatewayAccepted,
+    transferStatus: result.transferStatus,
     paymentMeta: result.paymentMeta,
     payer: result.payer,
     error: result.error,

@@ -114,7 +114,11 @@ export async function writePayLabsVisibility(
       error: edge.error ?? null,
       safe_summary: `${edge.buyer} → ${edge.seller}: ${edge.status}`,
       sequence: i + 1,
-      metadata: {},
+      metadata: {
+        gateway_accepted: edge.gatewayAccepted ?? (edge.status === "paid"),
+        transfer_status: edge.transferStatus ?? null,
+        batch_resolver_url: edge.batchResolverUrl ?? null,
+      },
       created_at: now,
     });
   });

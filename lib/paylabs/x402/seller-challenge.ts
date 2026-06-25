@@ -69,10 +69,21 @@ export interface X402ChallengeResponse {
   };
 }
 
+export type X402TransferStatus =
+  | "received"
+  | "batched"
+  | "confirmed"
+  | "completed"
+  | "failed";
+
 export interface VerifyAndSettleResult {
   ok: boolean;
-  /** Whether the payment was verified and settled */
+  /** Gateway accepted/queued — NOT final onchain settlement */
   settled: boolean;
+  /** Gateway accepted the payment (settle success=true) */
+  gatewayAccepted?: boolean;
+  /** Circle transfer status — null until polled from /v1/x402/transfers/{id} */
+  transferStatus?: X402TransferStatus | null;
   /** Safe payment metadata (no raw signatures) */
   paymentMeta?: {
     amountAtomic: string;
@@ -93,6 +104,10 @@ export interface VerifyAndSettleResult {
     batchExplorerUrl: string | null;
     /** Backend batch resolver URL */
     batchResolverUrl: string | null;
+    /** Gateway accepted the payment */
+    gatewayAccepted: boolean;
+    /** Circle transfer status */
+    transferStatus: X402TransferStatus | null;
   };
   /** Payer address if verified */
   payer?: string;
@@ -251,24 +266,30 @@ function extractSettlementId(value: unknown): string | null {
 // ─── Verify + Settle ──────────────────────────────────────────
 
 /**
- * Verify and settle an x402 payment using BatchFacilitatorClient.
+ * Settle an x402 payment using BatchFacilitatorClient.
  *
- * Called when the seller receives a retry request with PAYMENT-SIGNATURE header.
- * The payment signature is base64-encoded JSON containing the signed payload.
+ * Per Circle official docs: use settle() directly rather than calling
+ * verify() then settle() in production. settle() verifies the signature
+ * internally before locking funds.
  *
- * Fails closed: if verification or settlement fails, returns ok:false.
+ * settle() success = Gateway accepted/queued, NOT final onchain settlement.
+ * Onchain settlement happens later via batch submitBatch tx.
+ *
+ * Fails closed: if settlement fails, returns ok:false.
  * Never exposes raw Gateway response — only safe metadata.
  */
 export async function verifyAndSettlePayment(
   paymentSignatureBase64: string,
-  requirements: X402ChallengeRequirements
+  requirements: X402ChallengeRequirements,
 ): Promise<VerifyAndSettleResult> {
   const FacilitatorClient = getBatchFacilitatorClient();
   if (!FacilitatorClient) {
     return {
       ok: false,
       settled: false,
-      error: "x402-batching SDK not available — cannot verify payment",
+      gatewayAccepted: false,
+      transferStatus: null,
+      error: "x402-batching SDK not available — cannot settle payment",
     };
   }
 
@@ -280,45 +301,48 @@ export async function verifyAndSettlePayment(
     return {
       ok: false,
       settled: false,
+      gatewayAccepted: false,
+      transferStatus: null,
       error: "Invalid PAYMENT-SIGNATURE header (not valid base64 JSON)",
     };
   }
 
   const facilitator = new FacilitatorClient({
-    url: "https://gateway-api-testnet.circle.com",
+    url:
+      process.env.CIRCLE_GATEWAY_BASE_URL ||
+      process.env.PAYLABS_GATEWAY_API_URL?.replace(/\/v1\/?$/, "") ||
+      "https://gateway-api-testnet.circle.com",
   });
 
-  // ── Verify ─────────────────────────────────────────────────
+  // ── Settle directly (no verify — per Circle official docs) ────
   try {
-    const verifyResult = await facilitator.verify(paymentPayload, requirements);
-    if (!verifyResult?.isValid) {
-      console.error("[seller-challenge] verify FAILED:", {
-        isValid: verifyResult?.isValid,
-        invalidReason: verifyResult?.invalidReason,
-        payer: verifyResult?.payer,
+    const settleResult = await facilitator.settle(paymentPayload, requirements);
+    const settleData = settleResult as Record<string, unknown>;
+
+    // Check success === true (Circle official: success boolean field)
+    if (settleData.success !== true) {
+      const reason =
+        typeof settleData.errorReason === "string"
+          ? settleData.errorReason
+          : "unknown_settlement_failure";
+
+      console.error("[seller-challenge] settle FAILED:", {
+        success: settleData.success,
+        errorReason: reason,
         amount: requirements.amount,
         network: requirements.network,
         payTo: requirements.payTo,
       });
+
       return {
         ok: false,
         settled: false,
-        error: "Payment signature verification failed",
+        gatewayAccepted: false,
+        transferStatus: null,
+        error: `Payment settlement failed: ${reason}`,
+        payer: typeof settleData.payer === "string" ? settleData.payer : undefined,
       };
     }
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return {
-      ok: false,
-      settled: false,
-      error: `Payment verification error: ${msg}`,
-    };
-  }
-
-  // ── Settle ─────────────────────────────────────────────────
-  try {
-    const settleResult = await facilitator.settle(paymentPayload, requirements);
-    const settleData = settleResult as Record<string, unknown>;
 
     // Extract txHash — check multiple possible locations in SDK response
     const txHash = extractTxHash(settleResult);
@@ -329,7 +353,7 @@ export async function verifyAndSettlePayment(
 
     // Safe log — booleans only, never raw payload or signature
     console.log("[x402-settle-proof]", {
-      settled: true,
+      gatewayAccepted: true,
       hasTxHash: !!txHash,
       hasSettlementId: !!settlementId,
       hasBatchResolverUrl: !!batchResolverUrl,
@@ -338,6 +362,8 @@ export async function verifyAndSettlePayment(
     return {
       ok: true,
       settled: true,
+      gatewayAccepted: true,
+      transferStatus: null, // not onchain yet — polled later
       paymentMeta: {
         amountAtomic: requirements.amount,
         payTo: requirements.payTo,
@@ -350,15 +376,18 @@ export async function verifyAndSettlePayment(
         batchTxHash: null,
         batchExplorerUrl: null,
         batchResolverUrl,
+        gatewayAccepted: true,
+        transferStatus: null,
       },
-      payer: settleData?.payer as string | undefined,
+      payer: typeof settleData.payer === "string" ? settleData.payer : undefined,
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    // Settlement failed after verification — log but don't expose internals
     return {
       ok: false,
       settled: false,
+      gatewayAccepted: false,
+      transferStatus: null,
       error: `Payment settlement failed: ${msg}`,
     };
   }
