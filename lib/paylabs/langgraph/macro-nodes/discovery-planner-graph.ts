@@ -226,8 +226,11 @@ const graph = new StateGraph(DiscoveryPlannerState)
   .addEdge("intent_planner", "process_intent")
   .addEdge("process_intent", "query_builder")
   .addEdge("query_builder", "process_query")
-  .addEdge("process_query", "signal_scout")
-  .addEdge("process_query", "signal_scout_basics")
+  .addConditionalEdges("process_query", (state: DiscoveryPlannerStateType) => {
+    const selected = state.selectedServices || [];
+    if (selected.includes("signal_scout_basics")) return "signal_scout_basics";
+    return "signal_scout";
+  }, ["signal_scout", "signal_scout_basics"])
   .addEdge("signal_scout", "process_signal")
   .addEdge("signal_scout_basics", "process_signal")
   .addEdge("process_signal", "build_summary")
