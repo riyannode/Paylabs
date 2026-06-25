@@ -426,10 +426,9 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
           <p className="muted">No popups. No signing. Just works.</p>
         </div>
 
-        {/* ── Step: Auth (Passkey) ──────────────────────── */}
+        {/* ── Step: Auth (Google + Passkey) ─────────────── */}
         {step === "auth" && (
           <div className="pl-dcw-step">
-            {/* Login options — same style as UCW */}
             <div className="pl-login-stack-v3">
               <button
                 className="pl-login-option-v3"
@@ -437,30 +436,29 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
                 disabled={isGoogleLoading}
               >
                 <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
-                <b>Google</b>
+                <b>{isGoogleLoading ? "Signing in…" : "Continue with Google"}</b>
               </button>
 
               <button
                 className="pl-login-option-v3"
                 onClick={() => {
-                  // Toggle email/passkey section
                   const el = document.querySelector(".pl-dcw-email-section");
                   if (el) el.classList.toggle("visible");
                 }}
               >
-                <span className="pl-login-icon-v3"><MailIcon /></span>
-                <b>Email / Passkey</b>
+                <span className="pl-login-icon-v3"><PasskeyIcon /></span>
+                <b>Passkey</b>
               </button>
             </div>
 
-            {isGoogleLoading && (
-              <p className="muted" style={{ fontSize: 12, textAlign: "center", marginTop: 8 }}>
-                Signing in with Google…
+            {error && (
+              <p className="muted" style={{ fontSize: 12, color: "var(--danger, #ef4444)", textAlign: "center", marginTop: 4 }}>
+                {error}
               </p>
             )}
 
-            {/* Email + Passkey section (collapsed by default) */}
-            <div className="pl-dcw-email-section" style={{ marginTop: 12 }}>
+            {/* Passkey section (collapsed by default) */}
+            <div className="pl-dcw-email-section" style={{ marginTop: 8 }}>
               <label className="pl-dcw-label">Your email</label>
               <input
                 className="pl-email-otp-input"
@@ -487,51 +485,10 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
               >
                 Already have a passkey? Sign in
               </button>
-              <div className="pl-auth-divider"><span>or</span></div>
-            </div> {/* end pl-dcw-email-section */}
+            </div>
 
-            {!otpSent ? (
-              <button
-                className="pl-eoa-fallback-v3"
-                onClick={handleSendOtp}
-                disabled={!email.includes("@") || isSendingOtp}
-              >
-                {isSendingOtp ? "Sending…" : "📧 Send Code to Email"}
-              </button>
-            ) : (
-              <div className="pl-otp-input-group">
-                <input
-                  className="pl-email-otp-input"
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={6}
-                  placeholder="000000"
-                  value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && otpCode.length === 6) handleVerifyOtp();
-                  }}
-                  autoFocus
-                />
-                <button
-                  className="pl-primary-v3"
-                  onClick={handleVerifyOtp}
-                  disabled={otpCode.length !== 6 || isVerifyingOtp}
-                >
-                  {isVerifyingOtp ? "Verifying…" : "Verify Code"}
-                </button>
-                <button
-                  className="pl-eoa-fallback-v3"
-                  onClick={handleSendOtp}
-                  disabled={isSendingOtp}
-                  style={{ marginTop: 4 }}
-                >
-                  Resend code
-                </button>
-              </div>
-            )}
-            <p className="muted" style={{ fontSize: 11, marginTop: 8 }}>
-              Biometrics or email code. No passwords.
+            <p className="muted" style={{ fontSize: 11, marginTop: 4, textAlign: "center" }}>
+              Auto-pay wallet. No popups, no signing.
             </p>
           </div>
         )}
@@ -763,4 +720,8 @@ function GoogleIcon() {
 
 function MailIcon() {
   return <Svg><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></Svg>;
+}
+
+function PasskeyIcon() {
+  return <Svg><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></Svg>;
 }
