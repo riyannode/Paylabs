@@ -62,8 +62,8 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     allowedBuyers: ["discovery_planner"],
     outputSchemaName: "SignalScoutBasicsOutput",
     isActive: true,
-    sellerWalletAddressEnv: "PAYLABS_SERVICE_SIGNAL_SCOUT_BASICS_SELLER_WALLET_ADDRESS",
-    buyerWalletIdEnv: "PAYLABS_SERVICE_SIGNAL_SCOUT_BASICS_BUYER_WALLET_ID",
+    sellerWalletAddressEnv: "PAYLABS_SERVICE_SIGNAL_SCOUT_SELLER_WALLET_ADDRESS",
+    buyerWalletIdEnv: "PAYLABS_SERVICE_SIGNAL_SCOUT_BUYER_WALLET_ID",
   },
   {
     serviceName: "intent_matcher",
