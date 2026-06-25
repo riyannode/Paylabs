@@ -150,7 +150,7 @@ function scoreCandidate(
 
   // Check buyer has negative delta covering amount
   const buyerEntry = entries.find(
-    (e) => e.address.toLowerCase() === buyerLower && e.delta < 0n,
+    (e) => e.address.toLowerCase() === buyerLower && e.delta < BigInt(0),
   );
   if (buyerEntry && (-buyerEntry.delta) >= amountAtomic) {
     score += SCORE_BUYER_DELTA;
@@ -159,7 +159,7 @@ function scoreCandidate(
 
   // Check seller has positive delta covering amount
   const sellerEntry = entries.find(
-    (e) => e.address.toLowerCase() === sellerLower && e.delta > 0n,
+    (e) => e.address.toLowerCase() === sellerLower && e.delta > BigInt(0),
   );
   if (sellerEntry && sellerEntry.delta >= amountAtomic) {
     score += SCORE_SELLER_DELTA;
@@ -291,7 +291,7 @@ export async function GET(
     };
 
     const settlementUpdatedAtMs = updatedAt ? new Date(updatedAt).getTime() : Date.now();
-    const amountAtomic = amount ? BigInt(amount) : 0n;
+    const amountAtomic = amount ? BigInt(amount) : BigInt(0);
 
     // Filter to submitBatch txs only
     const submitBatchTxs = items.filter(
@@ -323,7 +323,7 @@ export async function GET(
       if (diffMs > TWO_HOURS_MS) continue;
 
       let entries: BatchEntry[] | null = null;
-      if (fromAddress && toAddress && amountAtomic > 0n) {
+      if (fromAddress && toAddress && amountAtomic > BigInt(0)) {
         try {
           const fullTxResp = await fetch(
             `${ARC_EXPLORER}/api/v2/transactions/${tx.hash}`,
@@ -343,7 +343,7 @@ export async function GET(
       const isOnly = submitBatchTxs.length === 1;
       let scored: ScoredCandidate;
 
-      if (entries && fromAddress && toAddress && amountAtomic > 0n) {
+      if (entries && fromAddress && toAddress && amountAtomic > BigInt(0)) {
         scored = scoreCandidate(
           entries,
           fromAddress,
