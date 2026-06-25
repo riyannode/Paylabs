@@ -238,6 +238,8 @@ export const PaymentDecisionState = Annotation.Root({
     publisher: string;
     creator_wallet: string | null;
     claim_status: string;
+    source_kind?: string;       // "rsshub_live" | "tavily_live" | undefined (DB)
+    is_live?: boolean;          // true for live sources (non-monetized, skip paid approval)
   }>>({
     reducer: concatReducer,
     default: () => [],

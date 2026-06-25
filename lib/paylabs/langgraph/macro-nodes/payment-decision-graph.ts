@@ -81,6 +81,8 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
         publisher: card.publisher || "",
         creator_wallet: null,
         claim_status: "unclaimed",
+        source_kind: card.source_kind || (card.feed_item_id.startsWith("rsshub_live:") ? "rsshub_live" : "tavily_live"),
+        is_live: true,  // skip paid approval — no creator to pay
       });
       continue;
     }
@@ -302,10 +304,26 @@ async function processPaymentDeciderResult(state: PaymentDecisionStateType) {
     total_estimated_spend?: number;
   };
 
+  // Filter out live (non-monetized) sources from approved items — no creator to pay
+  const candidateMeta = state.candidateMeta || [];
+  const liveIds = new Set(
+    candidateMeta.filter((c) => c.is_live).map((c) => c.feed_item_id)
+  );
+
+  const rawApproved = data.approved_items || [];
+  const filteredApproved = rawApproved.filter((item) => !liveIds.has(item.feed_item_id));
+  const liveSkipped = rawApproved
+    .filter((item) => liveIds.has(item.feed_item_id))
+    .map((item) => ({
+      feed_item_id: item.feed_item_id,
+      source_url: item.source_url,
+      skip_reason: "Live source — non-monetized, no creator wallet",
+    }));
+
   return {
-    approvedItems: data.approved_items || [],
-    skippedItems: data.skipped_items || [],
-    totalEstimatedSpend: data.total_estimated_spend || 0,
+    approvedItems: filteredApproved,
+    skippedItems: [...(data.skipped_items || []), ...liveSkipped],
+    totalEstimatedSpend: filteredApproved.reduce((sum, i) => sum + (i.approved_price_usdc || 0), 0),
   };
 }
 

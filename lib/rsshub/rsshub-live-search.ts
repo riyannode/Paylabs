@@ -61,6 +61,18 @@ function extractDomain(url: string): string | null {
   }
 }
 
+/** Strip userinfo (user:pass@) from URL to prevent credential leakage. */
+function sanitizeUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.username = "";
+    parsed.password = "";
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 /**
  * Score a feed item against user intent.
  * Priority: exact entity in title > title keyword > domain > summary > recency.
@@ -332,7 +344,7 @@ export async function liveSearchRsshub(input: {
           published_at: item.published_at || null,
           tags: item.tags || [],
           route_path: route.resolvedPath,
-          rsshub_feed_url: route.rsshubFeedUrl,
+          rsshub_feed_url: sanitizeUrl(route.rsshubFeedUrl),
           docs_url: route.docsUrl,
           rank: 0, // set below
           relevance_score: 0, // set below

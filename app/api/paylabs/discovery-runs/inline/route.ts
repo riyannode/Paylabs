@@ -45,7 +45,7 @@ import {
 } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import type { DelegatedRunQuote } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import { randomUUID } from "node:crypto";
-import { resolvePaylabsAppUrl } from "@/lib/paylabs/runtime/resolve-app-url";
+import { resolvePaylabsAppUrl, resolvePublicAppUrl } from "@/lib/paylabs/runtime/resolve-app-url";
 
 // ─── x402 Orchestration via callPaidSeller ──────────────────
 // Each endpoint handles its own x402 settlement.
@@ -873,7 +873,9 @@ async function runX402Path(
 
     if (!customerPaymentSignature) {
       // Return HTTP 402 with x402 challenge for customer entry payment
-      const retryUrl = `${await resolveAppUrl()}/api/paylabs/discovery-runs/inline?runId=${discoveryRunId}&tier=${routeTier}`;
+      // Use PUBLIC URL — the browser/customer must be able to reach this host
+      const { baseUrl: publicBase } = resolvePublicAppUrl();
+      const retryUrl = `${publicBase}/api/paylabs/discovery-runs/inline?runId=${discoveryRunId}&tier=${routeTier}`;
       const { headerValue } = buildCustomerEntryChallenge(
         quote.plannedCostUsdc,
         retryUrl,

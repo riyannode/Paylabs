@@ -64,6 +64,8 @@ const STOP_WORDS = new Set([
   "latest", "update", "updates", "new", "news", "source", "article",
   "articles", "about", "what", "how", "find", "search", "discover",
   "show", "get", "fetch", "compare", "vs", "versus",
+  "version", "of", "vulnerability", "release", "notes", "package",
+  "install", "npm", "changelog", "changes", "recent", "stable",
 ]);
 
 /**
@@ -83,7 +85,7 @@ function extractNpmPackage(terms: string[], query: string): string | null {
     const afterNpm = query.slice(npmIndex + 3).trim();
     const words = afterNpm.split(/\s+/).filter((w) => w.length > 1);
     for (const w of words) {
-      if (!STOP_WORDS.has(w.toLowerCase()) && !/^(package|install|update|latest|new|the)$/i.test(w)) {
+      if (!STOP_WORDS.has(w.toLowerCase()) && !/^(package|install|update|latest|new|the|version|of|release|notes|npm|changelog|vulnerability)$/i.test(w)) {
         return w;
       }
     }
