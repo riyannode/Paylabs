@@ -1697,13 +1697,24 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
       <DcwModal
         open={dcwOpen}
         onClose={() => setDcwOpen(false)}
-        onWalletReady={(w) => {
+        onWalletReady={async (w) => {
           setWalletInfo({
             address: w.address,
             walletType: "circle_developer_controlled",
             network: w.chain,
           });
           setDcwOpen(false);
+          // Fetch DCW Gateway balance and map to ucwBalance for the pill display
+          try {
+            const balResp = await fetch("/api/paylabs/dcw/balance", { credentials: "include" });
+            const balData = await balResp.json();
+            if (balData.ok && balData.gateway) {
+              setUcwBalance({
+                usdc: balData.gateway.balanceUsdc ?? "0",
+                gateway: balData.gateway.balanceUsdc ?? "0",
+              });
+            }
+          } catch { /* balance fetch failed — pill stays at 0.00 */ }
         }}
       />
 
