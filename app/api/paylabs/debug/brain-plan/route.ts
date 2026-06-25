@@ -4,6 +4,8 @@
  * Diagnostic endpoint: runs Brain LLM planner directly (no x402, no payment).
  * Returns only safe fields — no raw LLM output, no chain-of-thought, no secrets.
  *
+ * REQUIRES: Authorization: Bearer <PAYLABS_INTERNAL_HEALTH_TOKEN>
+ *
  * Body: { "userGoal": "...", "routeTier": "auto" | "easy" | "normal" | "advanced" }
  */
 
@@ -11,6 +13,30 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
   try {
+    // --- Auth gate: require internal token + non-production env ---
+    if (process.env.NODE_ENV === "production" && !process.env.PAYLABS_DEBUG_ROUTES_ENABLED) {
+      return NextResponse.json(
+        { ok: false, error: "Debug routes disabled in production" },
+        { status: 403 },
+      );
+    }
+    const expectedToken = process.env.PAYLABS_INTERNAL_HEALTH_TOKEN;
+    if (!expectedToken) {
+      return NextResponse.json(
+        { ok: false, error: "Debug endpoint not configured" },
+        { status: 503 },
+      );
+    }
+    const authHeader = req.headers.get("authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "");
+    if (!token || token !== expectedToken) {
+      return NextResponse.json(
+        { ok: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+    // --- End auth gate ---
+
     const body = await req.json();
     const userGoal = typeof body?.userGoal === "string" ? body.userGoal.trim() : "";
     const routeTier = typeof body?.routeTier === "string" ? body.routeTier.trim() : "auto";

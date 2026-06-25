@@ -4,15 +4,41 @@
  * Safe diagnostic: tests server-side self-call to Brain endpoint.
  * No payment signing. No secrets exposed.
  *
+ * REQUIRES: Authorization: Bearer <PAYLABS_INTERNAL_HEALTH_TOKEN>
+ *
  * Returns only safe fields:
  * { ok, selectedBaseSource, sellerHostname, sellerPath,
  *   status, hasPaymentRequiredHeader, safeErrorClass }
  */
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { resolvePaylabsAppUrl } from "@/lib/paylabs/runtime/resolve-app-url";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // --- Auth gate: require internal token + non-production env ---
+  if (process.env.NODE_ENV === "production" && !process.env.PAYLABS_DEBUG_ROUTES_ENABLED) {
+    return NextResponse.json(
+      { ok: false, error: "Debug routes disabled in production" },
+      { status: 403 },
+    );
+  }
+  const expectedToken = process.env.PAYLABS_INTERNAL_HEALTH_TOKEN;
+  if (!expectedToken) {
+    return NextResponse.json(
+      { ok: false, error: "Debug endpoint not configured" },
+      { status: 503 },
+    );
+  }
+  const authHeader = req.headers.get("authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "");
+  if (!token || token !== expectedToken) {
+    return NextResponse.json(
+      { ok: false, error: "Unauthorized" },
+      { status: 401 },
+    );
+  }
+  // --- End auth gate ---
+
   try {
     const { baseUrl, source: selectedBaseSource, hostname: sellerHostname } =
       resolvePaylabsAppUrl();

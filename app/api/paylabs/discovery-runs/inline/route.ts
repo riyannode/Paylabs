@@ -77,12 +77,14 @@ async function callBrainX402(dcwSigner: import("@/lib/paylabs/x402/buyer-transpo
   const { source: selectedBaseSource, hostname: sellerHostname } = resolvePaylabsAppUrl();
   const sellerPath = "/api/paylabs/brain/run";
 
-  console.log("[x402_self_call_debug] sellerService=brain", {
-    selectedBaseSource,
-    sellerHostname,
-    sellerPath,
-    discoveryRunIdShort: body.discoveryRunId?.substring(0, 8),
-  });
+  if (process.env.NODE_ENV !== "production") {
+    console.debug("[x402_self_call_debug] sellerService=brain", {
+      selectedBaseSource,
+      sellerHostname,
+      sellerPath,
+      discoveryRunIdShort: body.discoveryRunId?.substring(0, 8),
+    });
+  }
 
   const result = await callPaidSeller(dcwSigner, {
     sellerUrl: `${base}/api/paylabs/brain/run`,
@@ -99,12 +101,14 @@ async function callBrainX402(dcwSigner: import("@/lib/paylabs/x402/buyer-transpo
   });
 
   // ── Safe diagnostics: log self-call result (no secrets) ──
-  console.log("[x402_self_call_debug] result sellerService=brain", {
-    ok: result.ok,
-    status: result.status ?? "n/a",
-    hasError: !!result.error,
-    errorClass: result.error?.substring(0, 80) || "none",
-  });
+  if (process.env.NODE_ENV !== "production") {
+    console.debug("[x402_self_call_debug] result sellerService=brain", {
+      ok: result.ok,
+      status: result.status ?? "n/a",
+      hasError: !!result.error,
+      errorClass: result.error?.substring(0, 80) || "none",
+    });
+  }
 
   return {
     ok: result.ok,
@@ -217,15 +221,17 @@ async function runX402Orchestration(params: {
     const diagHint = planResult.brainPlanning?.route_tier_hint;
     const diagHintStr: string | undefined = diagHint;
     const diagHintValid = diagHintStr !== undefined && VALID_TIER_SET.has(diagHintStr);
-    console.log("[inline] Brain planner diagnostics", {
-      planResult_ok: planResult.ok,
-      hasBrainPlanning: !!planResult.brainPlanning,
-      planResult_error: planResult.error ? planResult.error.slice(0, 160) : null,
-      route_tier_hint_present: diagHintStr !== undefined && diagHintStr !== null,
-      route_tier_hint_value: diagHintValid ? diagHintStr : (diagHintStr === null ? "null" : diagHintStr === undefined ? "none" : "invalid"),
-      selected_macro_nodes_count: planResult.brainPlanning?.selected_macro_nodes?.length ?? 0,
-      selected_services_count: planResult.brainPlanning?.selected_services?.length ?? 0,
-    });
+    if (process.env.NODE_ENV !== "production") {
+      console.debug("[inline] Brain planner diagnostics", {
+        planResult_ok: planResult.ok,
+        hasBrainPlanning: !!planResult.brainPlanning,
+        planResult_error: planResult.error ? planResult.error.slice(0, 160) : null,
+        route_tier_hint_present: diagHintStr !== undefined && diagHintStr !== null,
+        route_tier_hint_value: diagHintValid ? diagHintStr : (diagHintStr === null ? "null" : diagHintStr === undefined ? "none" : "invalid"),
+        selected_macro_nodes_count: planResult.brainPlanning?.selected_macro_nodes?.length ?? 0,
+        selected_services_count: planResult.brainPlanning?.selected_services?.length ?? 0,
+      });
+    }
 
     if (planResult.ok && planResult.brainPlanning) {
       const bp = planResult.brainPlanning;

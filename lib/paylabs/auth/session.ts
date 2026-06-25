@@ -16,6 +16,10 @@ const SESSION_MAX_AGE = 7 * 24 * 60 * 60; // 7 days
 function getSecret(): Uint8Array {
   const secret = process.env.DCW_SESSION_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!secret) throw new Error("DCW_SESSION_SECRET or SUPABASE_SERVICE_ROLE_KEY required");
+  // Warn in production if using SRK fallback (shared secret material)
+  if (!process.env.DCW_SESSION_SECRET && process.env.NODE_ENV === "production") {
+    console.warn("[session] DCW_SESSION_SECRET not set — falling back to SUPABASE_SERVICE_ROLE_KEY. Set a dedicated secret for production.");
+  }
   return new TextEncoder().encode(secret);
 }
 
