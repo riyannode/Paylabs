@@ -27,7 +27,64 @@ const ARC_EXPLORER =
 const GATEWAY_WALLET =
   process.env.ARC_GATEWAY_WALLET_ADDRESS ||
   "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
-const SETTLEMENT_WINDOW_MS = 10_000;
+const MAX_PAGES = 10;
+
+/**
+ * Scan Arc explorer pages for the nearest submitBatch tx.
+ * Flow: Gateway marks settlement "completed" FIRST, then Circle's relayer
+ * submits the batch on-chain LATER. So we look for the first submitBatch
+ * whose timestamp is >= settlement.updatedAt.
+ * We paginate up to MAX_PAGES because high-traffic wallets push submitBatch
+ * off the first page of recent deposit txs.
+ */
+async function findNearestSubmitBatch(
+  explorerBase: string,
+  gatewayWallet: string,
+  updatedAtMs: number,
+): Promise<string | null> {
+  let nextPage: Record<string, string> | null = null;
+  let bestHash: string | null = null;
+  let bestTimestamp = Infinity;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    let url: string;
+    if (nextPage) {
+      const qs = new URLSearchParams(nextPage).toString();
+      url = `${explorerBase}/api/v2/addresses/${gatewayWallet}/transactions?${qs}`;
+    } else {
+      url = `${explorerBase}/api/v2/addresses/${gatewayWallet}/transactions`;
+    }
+
+    let resp: Response;
+    try {
+      resp = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    } catch {
+      break;
+    }
+    if (!resp.ok) break;
+
+    const data = await resp.json() as {
+      items: { hash: string; timestamp: string; method: string | null }[];
+      next_page_params: Record<string, string> | null;
+    };
+
+    for (const tx of data.items) {
+      if (tx.method === "submitBatch" && isEvmTxHash(tx.hash)) {
+        const txMs = new Date(tx.timestamp).getTime();
+        // Batch is submitted AFTER settlement is marked completed
+        if (txMs >= updatedAtMs && txMs < bestTimestamp) {
+          bestHash = tx.hash;
+          bestTimestamp = txMs;
+        }
+      }
+    }
+
+    nextPage = data.next_page_params;
+    if (!nextPage) break;
+  }
+
+  return bestHash;
+}
 
 export async function GET(
   _req: NextRequest,
@@ -231,31 +288,20 @@ export async function GET(
     let batchTxHash: string | null = gatewayTxHash;
     let matchedBy = "gateway_txhash_field";
 
-    // If Gateway didn't expose txHash, scan Arc explorer
+    // If Gateway didn't expose txHash, scan Arc explorer (paginated)
     if (!batchTxHash) {
       try {
-        const explorerResp = await fetch(
-          `${ARC_EXPLORER}/api/v2/addresses/${GATEWAY_WALLET}/transactions?filter=to`,
-          { signal: AbortSignal.timeout(10_000) },
+        const updatedAtMs = gatewayUpdatedAt
+          ? new Date(gatewayUpdatedAt).getTime()
+          : Date.now();
+        const found = await findNearestSubmitBatch(
+          ARC_EXPLORER,
+          GATEWAY_WALLET,
+          updatedAtMs,
         );
-        if (explorerResp.ok) {
-          const { items } = (await explorerResp.json()) as {
-            items: { hash: string; timestamp: string; method: string | null }[];
-          };
-          const updatedAtMs = gatewayUpdatedAt
-            ? new Date(gatewayUpdatedAt).getTime()
-            : Date.now();
-          // Find nearest submitBatch tx before or around updatedAt
-          const candidate = items.find(
-            (t) =>
-              t.method === "submitBatch" &&
-              Math.abs(new Date(t.timestamp).getTime() - updatedAtMs) <
-                SETTLEMENT_WINDOW_MS,
-          );
-          if (candidate?.hash && isEvmTxHash(candidate.hash)) {
-            batchTxHash = candidate.hash;
-            matchedBy = "gateway_status_and_submitBatch_timestamp";
-          }
+        if (found) {
+          batchTxHash = found;
+          matchedBy = "gateway_status_and_submitBatch_timestamp";
         }
       } catch (e) {
         console.log("[batch-tx-resolver] explorer scan error", {
