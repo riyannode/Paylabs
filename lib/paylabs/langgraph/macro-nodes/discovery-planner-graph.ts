@@ -20,7 +20,17 @@ import { createServiceNode } from "../services/service-node";
 import type { ServiceName } from "../../agent-services/types";
 import type { BudgetSnapshot, SafeSourceCard } from "../../delegated-runtime/types";
 
-import { TIER_SERVICE_PRESETS } from "@/lib/paylabs/delegated-runtime/quote-engine";
+// ─── Local Discovery Planner Service Presets ────────────────
+// Single source of truth for discovery planner routing.
+// TIER_SERVICE_PRESETS from quote-engine includes macro-node-level services
+// (discovery_planner, payment_decision, settlement_memory) that are NOT
+// graph-internal child services. These presets are graph-internal only.
+
+const DISCOVERY_PLANNER_SERVICE_PRESETS: Record<string, ServiceName[]> = {
+  easy: ["intent_planner", "query_builder", "signal_scout_basics"],
+  normal: ["intent_planner", "query_builder", "signal_scout"],
+  advanced: ["intent_planner", "query_builder", "signal_scout"],
+};
 
 // ─── Node: Intent Planner ───────────────────────────────────
 
@@ -227,9 +237,22 @@ const graph = new StateGraph(DiscoveryPlannerState)
   .addEdge("process_intent", "query_builder")
   .addEdge("query_builder", "process_query")
   .addConditionalEdges("process_query", (state: DiscoveryPlannerStateType) => {
-    const selected = state.selectedServices || [];
-    if (selected.includes("signal_scout_basics")) return "signal_scout_basics";
-    return "signal_scout";
+    // Deterministic routing: use routeTier, NOT selectedServices
+    // selectedServices may be empty or corrupted by concatReducer in some code paths
+    const routeTier = (state.routeTier as string) || "easy";
+    const presets = DISCOVERY_PLANNER_SERVICE_PRESETS[routeTier] || DISCOVERY_PLANNER_SERVICE_PRESETS.easy;
+    const nextScoutNode: string = presets.includes("signal_scout_basics") ? "signal_scout_basics" : "signal_scout";
+
+    // Safe production diagnostic (no secrets)
+    console.log(JSON.stringify({
+      log: "[discovery-planner-route]",
+      discoveryRunId: state.discoveryRunId,
+      routeTier,
+      selectedServices: presets,
+      nextScoutNode,
+    }));
+
+    return nextScoutNode;
   }, ["signal_scout", "signal_scout_basics"])
   .addEdge("signal_scout", "process_signal")
   .addEdge("signal_scout_basics", "process_signal")
@@ -302,9 +325,10 @@ export async function runDiscoveryPlannerGraph(
       userGoal: input.userGoal,
       routeTier: input.routeTier,
       userBudgetUsdc: input.userBudgetUsdc,
-      selectedServices: input.selectedServices?.length
-        ? input.selectedServices
-        : TIER_SERVICE_PRESETS[input.routeTier] || [],
+      // Always use local discovery planner presets — never trust caller-selectedServices
+      // for internal graph routing. Caller-selectedServices may be empty, incomplete,
+      // or corrupted by concatReducer in upstream code paths.
+      selectedServices: DISCOVERY_PLANNER_SERVICE_PRESETS[input.routeTier] || DISCOVERY_PLANNER_SERVICE_PRESETS.easy,
       parentWalletId: input.parentWalletId,
       budgetSnapshot: initialBudget,
       // Brain planning pass-through

@@ -26,10 +26,16 @@ import type {
   BrainPlanningOutput,
 } from "../../delegated-runtime/types";
 
-// ─── Concat reducer for arrays ──────────────────────────────
+// ─── Reducers ───────────────────────────────────────────────
 
+/** Append new items to existing array (for data accumulators). */
 function concatReducer<T>(existing: T[], update: T[]): T[] {
   return [...existing, ...update];
+}
+
+/** Replace entire array (for routing/config fields like selectedServices). */
+function replaceReducer<T>(_existing: T[], update: T[]): T[] {
+  return [...update];
 }
 
 // ─── Discovery Planner State ────────────────────────────────
@@ -43,7 +49,7 @@ export const DiscoveryPlannerState = Annotation.Root({
 
   // Options
   selectedServices: Annotation<ServiceName[]>({
-    reducer: concatReducer<ServiceName>,
+    reducer: replaceReducer<ServiceName>,
     default: () => [],
   }),
   parentWalletId: Annotation<string | undefined>,
@@ -145,7 +151,7 @@ export const PaymentDecisionState = Annotation.Root({
 
   // Options
   selectedServices: Annotation<ServiceName[]>({
-    reducer: concatReducer<ServiceName>,
+    reducer: replaceReducer<ServiceName>,
     default: () => [],
   }),
   parentWalletId: Annotation<string | undefined>,
@@ -277,7 +283,7 @@ export const SettlementMemoryState = Annotation.Root({
 
   // Options
   selectedServices: Annotation<ServiceName[]>({
-    reducer: concatReducer<ServiceName>,
+    reducer: replaceReducer<ServiceName>,
     default: () => [],
   }),
   parentWalletId: Annotation<string | undefined>,
@@ -364,7 +370,7 @@ export const BrainPlannerState = Annotation.Root({
     default: () => [],
   }),
   selectedServices: Annotation<ServiceName[]>({
-    reducer: concatReducer<ServiceName>,
+    reducer: replaceReducer<ServiceName>,
     default: () => [],
   }),
   maxRegistryChecks: Annotation<number>,
