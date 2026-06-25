@@ -293,26 +293,33 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
 
     const maxScore = Math.max(scored[0]?.score || 1, 1);
 
-    const ranked: RankedCandidate[] = scored.slice(0, 10).map((entry, i) => ({
-      feed_item_id: String(entry.item.id || ""),
-      title: String(entry.item.title || ""),
-      publisher: String(entry.item.publisher || ""),
-      source_kind: "db_feed_item",
-      provider: "supabase",
-      source_url: String(entry.item.canonical_url || ""),
-      domain: entry.item.domain ? String(entry.item.domain) : null,
-      summary: String(entry.item.summary || "").slice(0, 300),
-      author: String(entry.item.author_name || ""),
-      published_at: entry.item.published_at ? String(entry.item.published_at) : null,
-      route_path: entry.item.route_path ? String(entry.item.route_path) : null,
-      rsshub_feed_url: null,
-      docs_url: null,
-      rank: i + 1,
-      relevance_score: Math.min(entry.score / maxScore, 1),
-      reason: entry.score > 0
-        ? `[basic] Keyword match (score: ${entry.score})`
-        : "[basic] Recency fallback",
-    }));
+    const ranked: RankedCandidate[] = scored.slice(0, 10).map((entry, i) => {
+      const canonicalUrl = String(entry.item.canonical_url || "");
+      let domain: string | null = entry.item.domain ? String(entry.item.domain) : null;
+      if (!domain && canonicalUrl) {
+        try { domain = new URL(canonicalUrl).hostname; } catch { domain = null; }
+      }
+      return {
+        feed_item_id: String(entry.item.id || ""),
+        title: String(entry.item.title || ""),
+        publisher: String(entry.item.publisher || ""),
+        source_kind: "db_feed_item",
+        provider: "supabase",
+        source_url: canonicalUrl,
+        domain,
+        summary: String(entry.item.summary || "").slice(0, 300),
+        author: String(entry.item.author_name || ""),
+        published_at: entry.item.published_at ? String(entry.item.published_at) : null,
+        route_path: entry.item.route_path ? String(entry.item.route_path) : null,
+        rsshub_feed_url: null,
+        docs_url: null,
+        rank: i + 1,
+        relevance_score: Math.min(entry.score / maxScore, 1),
+        reason: entry.score > 0
+          ? `[basic] Keyword match (score: ${entry.score})`
+          : "[basic] Recency fallback",
+      };
+    });
 
     return {
       ok: true,
@@ -329,13 +336,8 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
       error: null,
     };
   } catch (err: unknown) {
-    return {
-      ok: false,
-      serviceName: "signal_scout_basics",
-      data: null,
-      safeSummary: `[basic] Discovery failed: ${err instanceof Error ? err.message.slice(0, 100) : "unknown error"}`,
-      settled: false,
-      error: err instanceof Error ? err.message.slice(0, 200) : "unknown error",
-    };
+    const msg = err instanceof Error ? err.message.slice(0, 200) : "unknown error";
+    console.error("[signal_scout_basics] handler error", { error: msg });
+    throw new Error(`signal_scout_basics failed: ${msg}`);
   }
 };

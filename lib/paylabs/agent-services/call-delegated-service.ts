@@ -449,10 +449,18 @@ async function executeX402Path(params: {
   // x402 seller returns {ok, serviceName, data: handlerOutput, ...}
   // Unwrap to return just the handler output (matching audit-only path)
   const sellerResponse = callResult.data as Record<string, unknown> | null;
-  const sellerOk = callResult.ok && (callResult.status === 200 || callResult.status === 409);
+  const httpOk = callResult.ok && (callResult.status === 200 || callResult.status === 409);
+  // Honor seller body ok:false even when HTTP 200 (handler failure masked by transport)
+  const sellerBodyOk = sellerResponse && typeof sellerResponse === "object" && "ok" in sellerResponse
+    ? sellerResponse.ok !== false
+    : true;
+  const sellerOk = httpOk && sellerBodyOk;
   const handlerData = sellerResponse && typeof sellerResponse === "object" && "data" in sellerResponse
     ? (sellerResponse.data as Record<string, unknown> | null)
     : sellerResponse;
+  const sellerError = sellerResponse && typeof sellerResponse === "object" && "error" in sellerResponse
+    ? (sellerResponse.error as string | null)
+    : null;
 
   return {
     ok: sellerOk,
@@ -460,10 +468,12 @@ async function executeX402Path(params: {
     data: handlerData,
     safeSummary: sellerOk
       ? `x402 Gateway accepted: ${sellerServiceName} via ${buyerAgentName}`
-      : `x402 Gateway accepted but seller returned HTTP ${callResult.status}`,
+      : sellerError
+        ? `x402 settled but seller failed: ${sellerError.slice(0, 120)}`
+        : `x402 Gateway accepted but seller returned HTTP ${callResult.status}`,
     settled: true,
     mode: "x402",
-    error: sellerOk ? null : `Seller returned HTTP ${callResult.status}`,
+    error: sellerOk ? null : (sellerError || `Seller returned HTTP ${callResult.status}`),
     safeCallMeta: {
       buyer: buyerAgentName,
       seller: sellerServiceName,

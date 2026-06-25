@@ -15,6 +15,7 @@
 import { callDelegatedService } from "../../agent-services/call-delegated-service";
 import type { ServiceName } from "../../agent-services/types";
 import type { ServiceEvaluation, PaymentEdge } from "../../delegated-runtime/types";
+import { isX402EnabledForService } from "../../feature-flags";
 import { randomUUID } from "node:crypto";
 
 // ─── Types ──────────────────────────────────────────────────
@@ -108,15 +109,7 @@ export function createServiceNode(
     // Safe diagnostic for x402 child validation (no secrets)
     const isRequired = options?.required !== false && options?.paymentLayer === "macro_to_child";
     const skipIfNotSel = options?.skipIfNotSelected === true;
-    const x402EnabledForService = ((): boolean => {
-      try {
-        // Dynamic import to avoid circular deps — feature-flags is safe to call
-        const rawEnv = (process.env.PAYLABS_X402_ENABLED_SERVICE_NAMES || "").trim();
-        if (!rawEnv) return false;
-        const enabled = rawEnv.split(",").map((s: string) => s.trim().toLowerCase());
-        return enabled.includes(serviceName.toLowerCase());
-      } catch { return false; }
-    })();
+    const x402EnabledForService = isX402EnabledForService(serviceName);
     console.log(`[x402-child-required] ${JSON.stringify({
       discoveryRunId,
       macroNode,
