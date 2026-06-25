@@ -45,19 +45,15 @@ import {
 } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import type { DelegatedRunQuote } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import { randomUUID } from "node:crypto";
+import { resolvePaylabsAppUrl, resolvePublicAppUrl } from "@/lib/paylabs/runtime/resolve-app-url";
 
 // ─── x402 Orchestration via callPaidSeller ──────────────────
 // Each endpoint handles its own x402 settlement.
 // callPaidSeller handles: send → 402 challenge → sign → retry.
 
 async function resolveAppUrl(): Promise<string> {
-  // Prefer VERCEL_URL (auto-set by Vercel to current deployment hostname)
-  // to avoid chicken-and-egg: PAYLABS_APP_URL may point to old deployment
-  const base = (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "")
-    || process.env.PAYLABS_APP_URL
-    || "";
-  if (!base) throw new Error("config_error: No VERCEL_URL or PAYLABS_APP_URL");
-  return base.replace(/\/+$/, "");
+  const { baseUrl } = resolvePaylabsAppUrl();
+  return baseUrl;
 }
 
 type X402CallResult = {
@@ -76,6 +72,20 @@ async function callBrainX402(dcwSigner: import("@/lib/paylabs/x402/buyer-transpo
   const { callPaidSeller } = await import("@/lib/paylabs/x402/buyer-transport");
 
   const base = await resolveAppUrl();
+
+  // ── Safe diagnostics: use shared resolver source (no secrets) ──
+  const { source: selectedBaseSource, hostname: sellerHostname } = resolvePaylabsAppUrl();
+  const sellerPath = "/api/paylabs/brain/run";
+
+  if (process.env.NODE_ENV !== "production") {
+    console.debug("[x402_self_call_debug] sellerService=brain", {
+      selectedBaseSource,
+      sellerHostname,
+      sellerPath,
+      discoveryRunIdShort: body.discoveryRunId?.substring(0, 8),
+    });
+  }
+
   const result = await callPaidSeller(dcwSigner, {
     sellerUrl: `${base}/api/paylabs/brain/run`,
     method: "POST",
@@ -89,6 +99,16 @@ async function callBrainX402(dcwSigner: import("@/lib/paylabs/x402/buyer-transpo
     maxAmountUsdc: "0.001",
     requirePayment: true,
   });
+
+  // ── Safe diagnostics: log self-call result (no secrets) ──
+  if (process.env.NODE_ENV !== "production") {
+    console.debug("[x402_self_call_debug] result sellerService=brain", {
+      ok: result.ok,
+      status: result.status ?? "n/a",
+      hasError: !!result.error,
+      errorClass: result.error?.substring(0, 80) || "none",
+    });
+  }
 
   return {
     ok: result.ok,
@@ -195,6 +215,23 @@ async function runX402Orchestration(params: {
       userBudgetUsdc,
       userWallet,
     });
+
+    // ── Safe diagnostics: Brain planner result (no raw LLM, no secrets) ──
+    const VALID_TIER_SET = new Set(["easy", "normal", "advanced"]);
+    const diagHint = planResult.brainPlanning?.route_tier_hint;
+    const diagHintStr: string | undefined = diagHint;
+    const diagHintValid = diagHintStr !== undefined && VALID_TIER_SET.has(diagHintStr);
+    if (process.env.NODE_ENV !== "production") {
+      console.debug("[inline] Brain planner diagnostics", {
+        planResult_ok: planResult.ok,
+        hasBrainPlanning: !!planResult.brainPlanning,
+        planResult_error: planResult.error ? planResult.error.slice(0, 160) : null,
+        route_tier_hint_present: diagHintStr !== undefined && diagHintStr !== null,
+        route_tier_hint_value: diagHintValid ? diagHintStr : (diagHintStr === null ? "null" : diagHintStr === undefined ? "none" : "invalid"),
+        selected_macro_nodes_count: planResult.brainPlanning?.selected_macro_nodes?.length ?? 0,
+        selected_services_count: planResult.brainPlanning?.selected_services?.length ?? 0,
+      });
+    }
 
     if (planResult.ok && planResult.brainPlanning) {
       const bp = planResult.brainPlanning;
@@ -304,7 +341,18 @@ async function runX402Orchestration(params: {
   for (const node of macroNodes) {
     // Build payload: previous step's output feeds next step
     let payload: Record<string, unknown> = {};
-    if (node === "payment_decision") {
+    if (node === "discovery_planner") {
+      // V3: Pass Brain planning fields to discovery_planner for better query expansion
+      const bp = resolvedBrainData as Record<string, unknown> | null;
+      if (bp) {
+        payload = {
+          brain_normalized_goal: bp.normalized_goal || null,
+          brain_discovery_strategy: bp.discovery_strategy || null,
+          brain_suggested_query_variants: bp.suggested_query_variants || [],
+          brain_safe_summary: bp.safe_brain_summary || null,
+        };
+      }
+    } else if (node === "payment_decision") {
       const prev = macroNodeResults["discovery_planner"];
       if (prev) {
         const d = (prev.data as Record<string, unknown>) || prev;
@@ -825,7 +873,9 @@ async function runX402Path(
 
     if (!customerPaymentSignature) {
       // Return HTTP 402 with x402 challenge for customer entry payment
-      const retryUrl = `${await resolveAppUrl()}/api/paylabs/discovery-runs/inline?runId=${discoveryRunId}&tier=${routeTier}`;
+      // Use PUBLIC URL — the browser/customer must be able to reach this host
+      const { baseUrl: publicBase } = resolvePublicAppUrl();
+      const retryUrl = `${publicBase}/api/paylabs/discovery-runs/inline?runId=${discoveryRunId}&tier=${routeTier}`;
       const { headerValue } = buildCustomerEntryChallenge(
         quote.plannedCostUsdc,
         retryUrl,
@@ -1074,6 +1124,63 @@ async function runX402Path(
       console.error("[paylabs_source_context] build failed", { discoveryRunId, error: sourceContextError });
     }
 
+    // ── V3: Build source-grounded final_answer ──
+    let finalAnswer: string | null = null;
+    try {
+      const { buildSourceGroundedFinalAnswer } = await import("@/lib/paylabs/sources/source-final-answer");
+      const sourcesUsed = exitOutput.sources_used || [];
+      finalAnswer = buildSourceGroundedFinalAnswer({
+        goal,
+        sourcesUsed,
+        sourceConfidence: exitOutput.source_confidence || 0,
+        retrievalMode: sourcesUsed.some((s) => s.source_kind === "rsshub_live") ? "rsshub_live" : sourcesUsed.length > 0 ? "db_fallback" : "none",
+      });
+    } catch (e: unknown) {
+      console.error("[paylabs_final_answer] build failed", {
+        error: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
+      });
+    }
+
+    // ── V3: Store source_context snapshot in agent_trace (MERGE, not overwrite) ──
+    if (exitOutput.sources_used && exitOutput.sources_used.length > 0) {
+      try {
+        // Read existing agent_trace to preserve brain_planning, payment_graph, etc.
+        const { data: existingRun } = await supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .select("agent_trace")
+          .eq("id", discoveryRunId)
+          .single();
+        const existingTrace = (existingRun?.agent_trace as Record<string, unknown>) || {};
+
+        await supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .update({
+            agent_trace: {
+              ...existingTrace,
+              source_context: {
+                source_count: exitOutput.source_count || 0,
+                source_confidence: exitOutput.source_confidence || 0,
+                retrieval_mode: exitOutput.sources_used.some((s) => s.source_kind === "rsshub_live") ? "rsshub_live" : "db_fallback",
+                sources_used: exitOutput.sources_used.slice(0, 20).map((s) => ({
+                  title: s.title,
+                  url: s.url,
+                  domain: s.domain,
+                  rank: s.rank,
+                  source_kind: s.source_kind,
+                  provider: s.provider,
+                })),
+              },
+              final_answer: finalAnswer,
+            },
+          })
+          .eq("id", discoveryRunId);
+      } catch (e: unknown) {
+        console.error("[paylabs_source_snapshot] store failed", {
+          error: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
+        });
+      }
+    }
+
     // ── Write canonical x402 visibility (events + receipt) ──
     let visibilityError: string | null = null;
     try {
@@ -1094,6 +1201,7 @@ async function runX402Path(
 
     return NextResponse.json({
       ok: result.status === "completed",
+      final_answer: finalAnswer,
       discovery_run_id: discoveryRunId,
       status: result.status,
       requested_route_tier: routeTier,
