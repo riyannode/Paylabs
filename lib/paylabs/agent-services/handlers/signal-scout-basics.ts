@@ -4,6 +4,9 @@
  * Deterministic-only source discovery for EASY tier.
  * No LLM. No reranking. Pure keyword/entity scoring.
  *
+ * LIVE-ONLY: Never falls back to DB. If RSSHub returns no sources,
+ * returns empty candidates with live_diagnostics.
+ *
  * Flow:
  *   1. RSSHub live search (deterministic API call)
  *   2. Keyword/entity match scoring
@@ -91,19 +94,32 @@ type RankedCandidate = {
   feed_item_id: string;
   title: string;
   publisher: string;
-  source_kind: string;
-  provider: string;
+  source_kind: "rsshub_live";
+  provider: "rsshub";
   source_url: string;
   domain: string | null;
   summary: string;
   author: string;
   published_at: string | null;
-  route_path: string | null;
-  rsshub_feed_url: string | null;
-  docs_url: string | null;
+  route_path: string;
+  rsshub_feed_url: string;
+  docs_url: string;
   rank: number;
   relevance_score: number;
   reason: string;
+};
+
+type LiveDiagnostics = {
+  route_candidates: number;
+  resolved_routes: number;
+  fetched_routes: number;
+  errors: Array<{ route_path: string; error_class: string }>;
+  fallback_reason: string | null;
+};
+
+type LiveSearchOutput = {
+  candidates: RankedCandidate[];
+  diagnostics: LiveDiagnostics;
 };
 
 async function searchRsshubLive(
@@ -111,7 +127,15 @@ async function searchRsshubLive(
   entityTerms: string[],
   negativeFilters: string[],
   routeTier: string
-): Promise<RankedCandidate[] | null> {
+): Promise<LiveSearchOutput> {
+  const emptyDiagnostics: LiveDiagnostics = {
+    route_candidates: 0,
+    resolved_routes: 0,
+    fetched_routes: 0,
+    errors: [],
+    fallback_reason: null,
+  };
+
   try {
     const { liveSearchRsshub } = await import("@/lib/rsshub/rsshub-live-search");
 
@@ -129,31 +153,71 @@ async function searchRsshubLive(
       skipRerank: true,
     });
 
-    if (!result.ok || result.sources.length === 0) return null;
+    const diagnostics: LiveDiagnostics = {
+      route_candidates: result.routeCandidates,
+      resolved_routes: result.resolvedRoutes,
+      fetched_routes: result.fetchedRoutes,
+      errors: result.errors || [],
+      fallback_reason: result.fallbackReason || null,
+    };
 
-    return result.sources.map((s) => ({
-      feed_item_id: s.feed_item_id,
-      title: s.title,
-      publisher: s.publisher,
-      source_kind: s.source_kind,
-      provider: s.provider,
-      source_url: s.source_url,
-      domain: s.domain,
-      summary: s.summary,
-      author: s.author,
-      published_at: s.published_at,
-      route_path: s.route_path,
-      rsshub_feed_url: s.rsshub_feed_url,
-      docs_url: s.docs_url,
-      rank: s.rank,
-      relevance_score: s.relevance_score,
-      reason: s.reason,
+    // Safe diagnostic log — no raw payloads, no secrets
+    console.log(JSON.stringify({
+      log: "[signal_scout_basics] live_diagnostics",
+      route_candidates: diagnostics.route_candidates,
+      resolved_routes: diagnostics.resolved_routes,
+      fetched_routes: diagnostics.fetched_routes,
+      error_count: diagnostics.errors.length,
+      error_classes: diagnostics.errors.map((e) => e.error_class).slice(0, 5),
+      fallback_reason: diagnostics.fallback_reason,
+      source_count: result.sources.length,
     }));
+
+    if (!result.ok || result.sources.length === 0) {
+      return { candidates: [], diagnostics };
+    }
+
+    // Validate every live source has required fields
+    const candidates: RankedCandidate[] = result.sources
+      .filter((s) =>
+        s.source_kind === "rsshub_live" &&
+        s.provider === "rsshub" &&
+        !!s.route_path &&
+        !!s.rsshub_feed_url &&
+        /^https?:\/\//.test(s.source_url)
+      )
+      .map((s) => ({
+        feed_item_id: s.feed_item_id,
+        title: s.title,
+        publisher: s.publisher,
+        source_kind: "rsshub_live" as const,
+        provider: "rsshub" as const,
+        source_url: s.source_url,
+        domain: s.domain,
+        summary: s.summary,
+        author: s.author,
+        published_at: s.published_at,
+        route_path: s.route_path,
+        rsshub_feed_url: s.rsshub_feed_url,
+        docs_url: s.docs_url,
+        rank: s.rank,
+        relevance_score: s.relevance_score,
+        reason: s.reason,
+      }));
+
+    return { candidates, diagnostics };
   } catch (err: unknown) {
     console.warn("[signal_scout_basics] RSSHub live search failed", {
       error: err instanceof Error ? err.message.slice(0, 100) : String(err).slice(0, 100),
     });
-    return null;
+    return {
+      candidates: [],
+      diagnostics: {
+        ...emptyDiagnostics,
+        errors: [{ route_path: "*", error_class: err instanceof Error ? err.message.slice(0, 80) : "unknown" }],
+        fallback_reason: "Live RSSHub search threw an exception",
+      },
+    };
   }
 }
 
@@ -176,25 +240,42 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
     routeTier?: DelegatedRouteTier;
   };
 
-  // ── Step 1: RSSHub live search (deterministic API call) ──
+  // ── Step 1: RSSHub live search (always live-only, never DB fallback) ──
   const liveEnabled = process.env.PAYLABS_RSSHUB_LIVE_ENABLED !== "false";
-  const sourceDiscoveryMode = process.env.PAYLABS_SOURCE_DISCOVERY_MODE || "live_then_db";
-  const dbFallbackEnabled = process.env.PAYLABS_DB_FALLBACK_ENABLED !== "false";
-  const liveOnly = sourceDiscoveryMode === "live_only" || !dbFallbackEnabled;
 
-  let liveResults: RankedCandidate[] | null = null;
-
-  if (liveEnabled) {
-    liveResults = await searchRsshubLive(
-      expanded_queries || [],
-      entity_terms || [],
-      negative_filters || [],
-      routeTier || "easy"
-    );
+  if (!liveEnabled) {
+    return {
+      ok: true,
+      serviceName: "signal_scout_basics",
+      data: {
+        ranked_candidates: [],
+        top_candidates: [],
+        quick_relevance_notes: ["RSSHub live search is disabled."],
+        safe_signal_summary: "[basic] RSSHub live disabled by env.",
+        retrieval_mode: "rsshub_live_empty",
+        live_diagnostics: {
+          route_candidates: 0,
+          resolved_routes: 0,
+          fetched_routes: 0,
+          errors: [{ route_path: "*", error_class: "live_disabled" }],
+          fallback_reason: "PAYLABS_RSSHUB_LIVE_ENABLED is false",
+        },
+      },
+      safeSummary: "[basic] RSSHub live disabled.",
+      settled: false,
+      error: null,
+    };
   }
 
+  const { candidates: liveResults, diagnostics } = await searchRsshubLive(
+    expanded_queries || [],
+    entity_terms || [],
+    negative_filters || [],
+    routeTier || "easy"
+  );
+
   // ── Step 2: If live results found, rescore with deterministic keyword match ──
-  if (liveResults && liveResults.length > 0) {
+  if (liveResults.length > 0) {
     // Rescore with local deterministic scoring (overrides RSSHub relevance)
     const rescored = liveResults
       .map((item) => ({
@@ -225,6 +306,7 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
         quick_relevance_notes: rescored.slice(0, 5).map((r) => r.reason),
         safe_signal_summary: `[basic] Live RSSHub: ${rescored.length} source(s) found, rescored by keyword match.`,
         retrieval_mode: "rsshub_live",
+        live_diagnostics: diagnostics,
       },
       safeSummary: `[basic] Live RSSHub: ${rescored.length} source(s) found.`,
       settled: false,
@@ -232,112 +314,20 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
     };
   }
 
-  // ── Step 2b: Live-only mode — no DB fallback ──
-  if (liveOnly) {
-    return {
-      ok: true,
-      serviceName: "signal_scout_basics",
-      data: {
-        ranked_candidates: [],
-        top_candidates: [],
-        quick_relevance_notes: ["No matching live RSSHub sources found."],
-        safe_signal_summary: "[basic] No live RSSHub source matched this query.",
-        retrieval_mode: "rsshub_live_empty",
-      },
-      safeSummary: "[basic] No live RSSHub source matched this query.",
-      settled: false,
-      error: null,
-    };
-  }
-
-  // ── Step 3: DB fallback (live_then_db mode only) ──
-  try {
-    const { listActiveFeedItems } = await import("@/lib/ai/tools");
-    const allActive = (await listActiveFeedItems()) as Record<string, unknown>[];
-
-    if (!allActive || allActive.length === 0) {
-      return {
-        ok: true,
-        serviceName: "signal_scout_basics",
-        data: {
-          ranked_candidates: [],
-          top_candidates: [],
-          quick_relevance_notes: ["No feed items in database."],
-          safe_signal_summary: "[basic] No feed items available.",
-          retrieval_mode: "db_fallback",
-        },
-        safeSummary: "[basic] No feed items available.",
-        settled: false,
-        error: null,
-      };
-    }
-
-    // Deterministic keyword scoring on DB items
-    const scored = allActive.map((item) => ({
-      item,
-      score: scoreItem(
-        item,
-        expanded_queries || [],
-        entity_terms || [],
-        negative_filters || [],
-        source_preferences || []
-      ),
-    }));
-
-    scored.sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      const aTime = new Date(String(a.item.published_at || 0)).getTime();
-      const bTime = new Date(String(b.item.published_at || 0)).getTime();
-      return bTime - aTime;
-    });
-
-    const maxScore = Math.max(scored[0]?.score || 1, 1);
-
-    const ranked: RankedCandidate[] = scored.slice(0, 10).map((entry, i) => {
-      const canonicalUrl = String(entry.item.canonical_url || "");
-      let domain: string | null = entry.item.domain ? String(entry.item.domain) : null;
-      if (!domain && canonicalUrl) {
-        try { domain = new URL(canonicalUrl).hostname; } catch { domain = null; }
-      }
-      return {
-        feed_item_id: String(entry.item.id || ""),
-        title: String(entry.item.title || ""),
-        publisher: String(entry.item.publisher || ""),
-        source_kind: "db_feed_item",
-        provider: "supabase",
-        source_url: canonicalUrl,
-        domain,
-        summary: String(entry.item.summary || "").slice(0, 300),
-        author: String(entry.item.author_name || ""),
-        published_at: entry.item.published_at ? String(entry.item.published_at) : null,
-        route_path: entry.item.route_path ? String(entry.item.route_path) : null,
-        rsshub_feed_url: null,
-        docs_url: null,
-        rank: i + 1,
-        relevance_score: Math.min(entry.score / maxScore, 1),
-        reason: entry.score > 0
-          ? `[basic] Keyword match (score: ${entry.score})`
-          : "[basic] Recency fallback",
-      };
-    });
-
-    return {
-      ok: true,
-      serviceName: "signal_scout_basics",
-      data: {
-        ranked_candidates: ranked,
-        top_candidates: ranked.slice(0, 3).map((r) => r.feed_item_id),
-        quick_relevance_notes: ranked.slice(0, 5).map((r) => r.reason),
-        safe_signal_summary: `[basic] DB fallback: ${ranked.length} items ranked by keyword match.`,
-        retrieval_mode: "db_fallback",
-      },
-      safeSummary: `[basic] DB fallback: ${ranked.length} items ranked.`,
-      settled: false,
-      error: null,
-    };
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message.slice(0, 200) : "unknown error";
-    console.error("[signal_scout_basics] handler error", { error: msg });
-    throw new Error(`signal_scout_basics failed: ${msg}`);
-  }
+  // ── Step 3: No live results — return empty with diagnostics (NO DB fallback) ──
+  return {
+    ok: true,
+    serviceName: "signal_scout_basics",
+    data: {
+      ranked_candidates: [],
+      top_candidates: [],
+      quick_relevance_notes: ["No matching live RSSHub sources found."],
+      safe_signal_summary: "[basic] No live RSSHub source matched this query.",
+      retrieval_mode: "rsshub_live_empty",
+      live_diagnostics: diagnostics,
+    },
+    safeSummary: "[basic] No live RSSHub source matched this query.",
+    settled: false,
+    error: null,
+  };
 };
