@@ -588,18 +588,31 @@ async function finalizeWalletAfterLogin(
   cbs.setWalletState("connected");
   const balance = await fetchSessionBalance();
   cbs.setUcwBalance(balance);
-  cbs.setWalletState(parseFloat(balance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+  cbs.setWalletState(parseFloat(balance.gatewayUsdc) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
   return true;
 }
 
 // ─── UCW Balance Fetcher ────────────────────────────────────
 
-/** Fetch balance via server-side session (tokens stay server-side) */
+/** Fetch UCW balance via server-side session (tokens stay server-side) */
 async function fetchSessionBalance(): Promise<UcwBalance> {
   const resp = await fetch("/api/paylabs/wallet/ucw?action=session-balance", { method: "POST", credentials: "include" });
-  if (!resp.ok) return { usdc: "0", gateway: "0" };
+  if (!resp.ok) return { walletUsdc: "0", gatewayUsdc: "0", source: "ucw" };
   const data = (await resp.json()) as { usdc: string; gateway: string };
-  return { usdc: data.usdc ?? "0", gateway: data.gateway ?? "0" };
+  return { walletUsdc: data.usdc ?? "0", gatewayUsdc: data.gateway ?? "0", source: "ucw" };
+}
+
+/** Fetch DCW balance (Gateway only — DCW wallet token balance not exposed) */
+async function fetchDcwBalance(): Promise<UcwBalance> {
+  const resp = await fetch("/api/paylabs/dcw/balance", { credentials: "include" });
+  if (!resp.ok) return { walletUsdc: "0", gatewayUsdc: "0", source: "dcw" };
+  const data = await resp.json();
+  return {
+    walletUsdc: "0", // DCW wallet token balance not available via this endpoint
+    gatewayUsdc: data.gateway?.balanceUsdc ?? "0",
+    pendingBatchUsdc: data.gateway?.pendingBatchUsdc,
+    source: "dcw",
+  };
 }
 
 // ─── Main Component ─────────────────────────────────────────
@@ -708,9 +721,36 @@ export default function PayLabsChatClient({ analytics }: Props) {
     setDebugLog((prev) => [...prev.slice(-20), entry]);
   }, [ucwDebug]);
 
-  // TODO(#27): Replace with backend quote once inline route returns plannedCostUsdc.
-// For now, this is a frontend estimate used only for run gating (balance < cost → block).
-const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
+  // Backend-driven planned cost (replaces hardcoded TIER_COSTS)
+  const [plannedCostUsdc, setPlannedCostUsdc] = useState<number>(0.000015); // conservative default (advanced tier)
+  const [quoteRouteTier, setQuoteRouteTier] = useState<string>("advanced");
+
+  const planned = useMemo(() => plannedCostUsdc.toFixed(6), [plannedCostUsdc]);
+
+  // Fetch quote from backend when budget or tier changes
+  useEffect(() => {
+    const tier = /* routeTier state or */ "auto";
+    const budgetNum = parseFloat(budget) || 0.01;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const resp = await fetch("/api/paylabs/quote", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ route_tier: tier, budget_usdc: budgetNum }),
+        });
+        if (!resp.ok || cancelled) return;
+        const data = await resp.json();
+        if (data.ok && typeof data.plannedCostUsdc === "number") {
+          setPlannedCostUsdc(data.plannedCostUsdc);
+          setQuoteRouteTier(data.quote_route_tier || "advanced");
+        }
+      } catch { /* quote fetch failed — use default */ }
+    })();
+
+    return () => { cancelled = true; };
+  }, [budget]);
 
   // Auto-scroll chat thread
   useEffect(() => {
@@ -775,7 +815,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
           const balance = await fetchSessionBalance();
           setUcwBalance(balance);
-          if (parseFloat(balance.gateway) < parseFloat(planned)) {
+          if (parseFloat(balance.gatewayUsdc) < parseFloat(planned)) {
             setWalletState("needs_gateway_deposit");
           }
           return;
@@ -790,7 +830,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
             const fin = (await finResp.json()) as { walletId: string; walletAddress: string; usdc: string; gateway: string };
             setUcwWalletId(fin.walletId);
             setWalletInfo({ address: fin.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
-            setUcwBalance({ usdc: fin.usdc ?? "0", gateway: fin.gateway ?? "0" });
+            setUcwBalance({ walletUsdc: fin.usdc ?? "0", gatewayUsdc: fin.gateway ?? "0", source: "ucw" });
             setWalletState("connected");
             if (parseFloat(fin.gateway) < parseFloat(planned)) {
               setWalletState("needs_gateway_deposit");
@@ -1283,7 +1323,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         }
         if (!allowanceConfirmed) {
           setDepositStatus("Approval submitted. Allowance is not confirmed yet. Please try deposit again shortly.");
-          setWalletState(parseFloat((await fetchSessionBalance()).gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+          setWalletState(parseFloat((await fetchSessionBalance()).gatewayUsdc) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
           return;
         }
 
@@ -1321,14 +1361,14 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
       // Step 5: Poll for balance update
       setDepositStatus("Waiting for Gateway balance confirmation…");
-      const startBal = parseFloat((await fetchSessionBalance()).gateway);
+      const startBal = parseFloat((await fetchSessionBalance()).gatewayUsdc);
       const requiredBal = parseFloat(amountAtomic) / 1_000_000; // atomic → USDC
       let confirmed = false;
       for (let i = 0; i < 15; i++) { // 15 × 2s = 30s max
         await new Promise((r) => setTimeout(r, 2000));
         const balance = await fetchSessionBalance();
         setUcwBalance(balance);
-        const gwBal = parseFloat(balance.gateway);
+        const gwBal = parseFloat(balance.gatewayUsdc);
         if (gwBal > startBal || gwBal >= requiredBal) {
           confirmed = true;
           setDepositStatus(null);
@@ -1341,7 +1381,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
         setDepositStatus("Deposit submitted. Gateway balance has not updated yet. Please refresh balance shortly.");
         const finalBalance = await fetchSessionBalance();
         setUcwBalance(finalBalance);
-        setWalletState(parseFloat(finalBalance.gateway) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+        setWalletState(parseFloat(finalBalance.gatewayUsdc) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
       }
     } catch (e: unknown) {
       setWalletState("needs_gateway_deposit");
@@ -1369,7 +1409,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
     // Run gating: UCW must have sufficient Gateway balance
     if (walletInfo.walletType === "circle_user_controlled" && ucwBalance) {
-      if (parseFloat(ucwBalance.gateway) < parseFloat(planned)) {
+      if (parseFloat(ucwBalance.walletUsdc) < parseFloat(planned)) {
         setWalletState("needs_gateway_deposit");
         setWalletOpen(true);
         return;
@@ -1596,12 +1636,17 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
 
   // ── Disconnect wallet ──
   const disconnectWallet = useCallback(() => {
+    // Destroy UCW session if exists
     fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST", credentials: "include" }).catch(() => {});
+    // Destroy DCW session if exists
+    fetch("/api/paylabs/auth/session", { method: "DELETE", credentials: "include" }).catch(() => {});
+    // Clear all wallet state
     setUcwWalletId(null);
     setWalletInfo(null);
     setWalletState("not_connected");
     setUcwBalance(null);
     setWalletError(null);
+    ucwSdkRef.current = null;
   }, []);
 
   // Dev mode: show EOA fallback if ?eoa=1 in URL
@@ -1653,7 +1698,7 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
                 <span className="pl-wallet-pill-address">{short(walletInfo.address)}</span>
                 <span className="pl-wallet-pill-network">Arc</span>
                 <span className="pl-wallet-pill-balance">
-                  {ucwBalance?.usdc ?? "0.00"} USDC
+                  {ucwBalance?.gatewayUsdc ?? ucwBalance?.walletUsdc ?? "0.00"} USDC
                 </span>
                 <button
                   type="button"
@@ -1663,6 +1708,16 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
                   title="Copy wallet address"
                 >
                   {walletCopied ? "✓" : "⧉"}
+                </button>
+                <button
+                  type="button"
+                  className="pl-wallet-copy-btn"
+                  onClick={(e) => { e.stopPropagation(); disconnectWallet(); }}
+                  aria-label="Disconnect wallet"
+                  title="Disconnect wallet"
+                  style={{ marginLeft: 2, fontSize: 12 }}
+                >
+                  ✕
                 </button>
               </>
             ) : (
@@ -1737,7 +1792,22 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
                 <span className="pl-plan-auto">Plan: Auto</span>
                 <div className="pl-budget">
                   <span>Budget</span>
-                  <input value={budget} onChange={(e) => setBudget(e.target.value)} type="number" step="0.001" min="0" />
+                  <input
+                    value={budget}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      // Only allow valid number characters
+                      if (/^[\d.]*$/.test(v)) setBudget(v);
+                    }}
+                    onBlur={() => {
+                      // Format on blur to fix precision
+                      const n = parseFloat(budget);
+                      if (Number.isFinite(n) && n > 0) setBudget(n.toFixed(6));
+                      else setBudget("0.000100");
+                    }}
+                    type="text"
+                    inputMode="decimal"
+                  />
                   <small>USDC</small>
                 </div>
                 <button
@@ -1808,16 +1878,10 @@ const planned = useMemo(() => TIER_COSTS["easy"] || "0.000007", []);
             network: w.chain,
           });
           setDcwOpen(false);
-          // Fetch DCW Gateway balance and map to ucwBalance for the pill display
+          // Fetch DCW Gateway balance for pill display
           try {
-            const balResp = await fetch("/api/paylabs/dcw/balance", { credentials: "include" });
-            const balData = await balResp.json();
-            if (balData.ok && balData.gateway) {
-              setUcwBalance({
-                usdc: balData.gateway.balanceUsdc ?? "0",
-                gateway: balData.gateway.balanceUsdc ?? "0",
-              });
-            }
+            const dcwBal = await fetchDcwBalance();
+            setUcwBalance(dcwBal);
           } catch { /* balance fetch failed — pill stays at 0.00 */ }
         }}
       />

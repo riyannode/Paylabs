@@ -420,13 +420,16 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
             </div>
 
             <div className="pl-dcw-deposit-info">
-              <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Deposit USDC to your wallet:</p>
+              <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Step 1: Send USDC to your wallet</p>
               <div className="pl-dcw-address-box">
                 <code>{wallet.address}</code>
                 <button className="pl-copy-v3" onClick={handleCopy}>{copied ? "Copied!" : "Copy"}</button>
               </div>
               <p className="muted" style={{ fontSize: 11, marginTop: 8 }}>
-                Send USDC on <b>Arc Testnet</b> to this address. Once deposited, payments are automatic.
+                Send USDC on <b>Arc Testnet</b> to this address.
+              </p>
+              <p style={{ fontSize: 12, marginTop: 12, padding: "8px 12px", background: "var(--warn-bg, #fef3c7)", borderRadius: 6, border: "1px solid var(--warn-border, #f59e0b)" }}>
+                <b>Note:</b> Gateway deposit for DCW is automatic — once USDC arrives in your wallet, it will be available for x402 payments after Gateway indexing (30-120s). If balance doesn't update, click "Refresh Balance".
               </p>
             </div>
 
