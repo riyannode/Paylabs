@@ -59,59 +59,70 @@ export async function checkGatewayBalance(
   }
 
   const gatewayUrl = process.env.PAYLABS_GATEWAY_API_URL || GATEWAY_TESTNET_URL;
+  const maxRetries = 2;
 
-  try {
-    const resp = await fetch(`${gatewayUrl}/balances`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        token: "USDC",
-        sources: [{ domain, depositor: depositor.toLowerCase() }],
-      }),
-      signal: AbortSignal.timeout(10000),
-    });
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const resp = await fetch(`${gatewayUrl}/balances`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: "USDC",
+          sources: [{ domain, depositor: depositor.toLowerCase() }],
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
 
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      return {
-        ok: false,
-        error: `Gateway balance check failed: HTTP ${resp.status}`,
+      if (!resp.ok) {
+        // Non-retryable HTTP error
+        return {
+          ok: false,
+          error: `Gateway balance check failed: HTTP ${resp.status}`,
+        };
+      }
+
+      const data = await resp.json() as {
+        token?: string;
+        balances?: Array<{
+          domain: number;
+          depositor: string;
+          balance: string;
+          pendingBatch?: string;
+        }>;
       };
-    }
 
-    const data = await resp.json() as {
-      token?: string;
-      balances?: Array<{
-        domain: number;
-        depositor: string;
-        balance: string;
-        pendingBatch?: string;
-      }>;
-    };
+      const balanceEntry = data.balances?.[0];
+      if (!balanceEntry) {
+        return {
+          ok: true,
+          balanceUsdc: "0",
+          balanceAtomic: "0",
+          pendingBatchUsdc: "0",
+        };
+      }
 
-    const balanceEntry = data.balances?.[0];
-    if (!balanceEntry) {
       return {
         ok: true,
-        balanceUsdc: "0",
-        balanceAtomic: "0",
-        pendingBatchUsdc: "0",
+        balanceUsdc: balanceEntry.balance || "0",
+        balanceAtomic: toAtomic(balanceEntry.balance || "0"),
+        pendingBatchUsdc: balanceEntry.pendingBatch || "0",
+      };
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // Retry on timeout/abort, not on other errors
+      if (attempt < maxRetries && (msg.includes("abort") || msg.includes("timeout") || msg.includes("fetch failed"))) {
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      return {
+        ok: false,
+        error: `Gateway balance check failed: ${msg}`,
       };
     }
-
-    return {
-      ok: true,
-      balanceUsdc: balanceEntry.balance || "0",
-      balanceAtomic: toAtomic(balanceEntry.balance || "0"),
-      pendingBatchUsdc: balanceEntry.pendingBatch || "0",
-    };
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return {
-      ok: false,
-      error: `Gateway balance check failed: ${msg}`,
-    };
   }
+
+  // Should not reach here, but fail closed
+  return { ok: false, error: "Gateway balance check failed after retries" };
 }
 
 /**

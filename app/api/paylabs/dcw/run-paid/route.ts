@@ -88,7 +88,21 @@ export async function POST(req: NextRequest) {
     const { checkGatewayBalance } = await import("@/lib/paylabs/x402/gateway-balance");
     const gwBalance = await checkGatewayBalance({ depositor: wallet.wallet_address });
 
-    if (!gwBalance.ok || parseFloat(gwBalance.balanceUsdc || "0") <= 0) {
+    if (!gwBalance.ok) {
+      // Gateway API unreachable or errored — distinguish from zero balance
+      console.error("[dcw/run-paid] Gateway balance check failed", {
+        error: gwBalance.error?.slice(0, 120),
+        depositor: wallet.wallet_address?.slice(0, 10) + "...",
+      });
+      return NextResponse.json({
+        ok: false,
+        error: `Gateway balance check failed: ${gwBalance.error || "unknown"}. Retry in a moment.`,
+        balanceUsdc: gwBalance.balanceUsdc || "0",
+        gatewayError: true,
+      }, { status: 503 });
+    }
+
+    if (parseFloat(gwBalance.balanceUsdc || "0") <= 0) {
       return NextResponse.json({
         ok: false,
         error: "Insufficient Gateway balance. Deposit USDC to your wallet first.",
