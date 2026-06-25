@@ -170,6 +170,7 @@ export function getTutorModel(agentName?: string): ChatOpenAI | null {
     temperature: 0,
     maxTokens: cfg.maxTokens,
     timeout: cfg.timeoutMs,
+    streaming: true,
     ...(cfg.baseUrl
       ? { configuration: { baseURL: cfg.baseUrl } }
       : {}),
