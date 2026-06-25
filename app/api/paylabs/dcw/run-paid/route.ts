@@ -123,9 +123,8 @@ export async function POST(req: NextRequest) {
     const maxAmountUsdc = userBudgetUsdc.toFixed(6);
 
     // 7. Execute full paid request via DCW
-    //    requirePayment=true only for paid tiers (normal/advanced).
-    //    Free tiers (easy/standard/auto) may return 200 without 402.
-    const PAID_TIERS = new Set(["normal", "advanced"]);
+    //    requirePayment=true for ALL tiers (auto picks effective tier at runtime).
+    //    Auto always requires payment because the inline route will return 402 for paid services.
     const dcwSigner = createDcwSigner();
 
     const result = await callPaidSeller(dcwSigner, {
@@ -142,7 +141,7 @@ export async function POST(req: NextRequest) {
       buyerAgentName: "paylabs-dcw-user",
       sellerServiceName: "discovery",
       maxAmountUsdc,
-      requirePayment: PAID_TIERS.has(routeTier),
+      requirePayment: true,
     });
 
     // 8. Build UCW-compatible entry_payment shape

@@ -10,10 +10,17 @@ type DcwWalletInfo = {
   chain: string;
 };
 
+type DcwBalanceInfo = {
+  walletUsdc: string | null;   // on-chain USDC (null if not fetched)
+  gatewayUsdc: string;         // x402 Balance (Gateway)
+  pendingBatchUsdc?: string;
+};
+
 type Props = {
   open: boolean;
   onClose: () => void;
   onWalletReady?: (wallet: DcwWalletInfo) => void;
+  plannedCost?: string;
 };
 
 function shortAddr(addr?: string | null) {
@@ -21,11 +28,16 @@ function shortAddr(addr?: string | null) {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
-export default function DcwModal({ open, onClose, onWalletReady }: Props) {
+function asDecimal(value?: string | null): number {
+  const n = Number(value ?? "0");
+  return Number.isFinite(n) ? n : 0;
+}
+
+export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "0.000015" }: Props) {
   const [step, setStep] = useState<DcwStep>("auth");
   const [email, setEmail] = useState("");
   const [wallet, setWallet] = useState<DcwWalletInfo | null>(null);
-  const [gatewayBalance, setGatewayBalance] = useState("0");
+  const [balance, setBalance] = useState<DcwBalanceInfo>({ walletUsdc: null, gatewayUsdc: "0" });
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
@@ -33,6 +45,13 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
   const [otpCode, setOtpCode] = useState("");
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [activeTab, setActiveTab] = useState<"balances" | "topup">("balances");
+
+  const x402Balance = asDecimal(balance.gatewayUsdc);
+  const plannedCostNum = asDecimal(plannedCost);
+  const needsTopUp = x402Balance < plannedCostNum;
+  const recommendedTopUp = Math.max(plannedCostNum - x402Balance, plannedCostNum);
+  const recommendedStr = recommendedTopUp > 0 ? recommendedTopUp.toFixed(6) : "0.000001";
 
   // Check existing session on open
   useEffect(() => {
@@ -45,14 +64,12 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
       const resp = await fetch("/api/paylabs/auth/session");
       const data = await resp.json();
       if (data.ok && data.authenticated) {
-        // Already authenticated — check wallet
         if (data.hasWallet && data.walletAddress) {
           setWallet({ walletId: "", address: data.walletAddress, chain: "ARC-TESTNET" });
           setStep("deposit");
           refreshBalance();
           onWalletReady?.({ walletId: "", address: data.walletAddress, chain: "ARC-TESTNET" });
         } else {
-          // Authenticated but no wallet — create one
           setStep("creating");
           createWallet();
         }
@@ -69,7 +86,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
     setError(null);
 
     try {
-      // Step 1: Get challenge
       const challengeResp = await fetch("/api/paylabs/auth/passkey/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -78,7 +94,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
       const challengeData = await challengeResp.json();
 
       if (!challengeData.ok) {
-        // If passkey already exists, try login instead
         if (challengeData.error?.includes("already registered")) {
           await handlePasskeyAuthenticate();
           return;
@@ -88,7 +103,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
         return;
       }
 
-      // Step 2: Create credential via browser
       const { startRegistration } = await import("@simplewebauthn/browser");
       let credential;
       try {
@@ -103,7 +117,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
         throw e;
       }
 
-      // Step 3: Verify attestation
       const verifyResp = await fetch("/api/paylabs/auth/passkey/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -117,7 +130,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
         return;
       }
 
-      // Auth complete — now create wallet
       setStep("creating");
       createWallet();
     } catch (e: unknown) {
@@ -134,7 +146,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
     setError(null);
 
     try {
-      // Step 1: Get challenge
       const challengeResp = await fetch("/api/paylabs/auth/passkey/authenticate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -147,7 +158,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
         return;
       }
 
-      // Step 2: Get assertion via browser
       const { startAuthentication } = await import("@simplewebauthn/browser");
       let credential;
       try {
@@ -161,7 +171,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
         throw e;
       }
 
-      // Step 3: Verify assertion
       const verifyResp = await fetch("/api/paylabs/auth/passkey/authenticate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -174,7 +183,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
         return;
       }
 
-      // Auth complete
       if (verifyData.hasWallet && verifyData.walletAddress) {
         setWallet({ walletId: "", address: verifyData.walletAddress, chain: "ARC-TESTNET" });
         setStep("deposit");
@@ -237,7 +245,6 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
         return;
       }
 
-      // Auth complete — now create wallet or show deposit
       if (data.hasWallet && data.walletAddress) {
         setWallet({ walletId: "", address: data.walletAddress, chain: "ARC-TESTNET" });
         setStep("deposit");
@@ -283,7 +290,11 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
       const resp = await fetch("/api/paylabs/dcw/balance");
       const data = await resp.json();
       if (data.ok) {
-        setGatewayBalance(data.gateway?.balanceUsdc || "0");
+        setBalance({
+          walletUsdc: data.wallet?.usdc ?? null,
+          gatewayUsdc: data.gateway?.balanceUsdc || "0",
+          pendingBatchUsdc: data.gateway?.pendingBatchUsdc || "0",
+        });
       }
     } catch {}
   }, []);
@@ -394,48 +405,177 @@ export default function DcwModal({ open, onClose, onWalletReady }: Props) {
           </div>
         )}
 
-        {/* ── Step: Deposit ─────────────────────────────── */}
+        {/* ── Step: Wallet connected — Balances / Top up tabs ── */}
         {step === "deposit" && wallet && (
           <div className="pl-dcw-step">
-            <div className="pl-dcw-wallet-card">
-              <div className="pl-dcw-wallet-row">
-                <span className="muted">Address</span>
-                <b className="data-mono">
-                  {shortAddr(wallet.address)}
-                  <button className="pl-copy-v3" onClick={handleCopy} aria-label="Copy">
-                    {copied ? "✓" : "⎘"}
+            {/* Tab bar */}
+            <div className="pl-wallet-tabs-v3" style={{ marginBottom: 12 }}>
+              <button
+                className={activeTab === "balances" ? "active" : ""}
+                onClick={() => setActiveTab("balances")}
+              >
+                Balances
+              </button>
+              <button
+                className={activeTab === "topup" ? "active" : ""}
+                onClick={() => setActiveTab("topup")}
+              >
+                Top up x402
+              </button>
+            </div>
+
+            {/* Tab 1: Balances */}
+            {activeTab === "balances" && (
+              <>
+                <div className="pl-dcw-wallet-card">
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">Address</span>
+                    <b className="data-mono">
+                      {shortAddr(wallet.address)}
+                      <button className="pl-copy-v3" onClick={handleCopy} aria-label="Copy">
+                        {copied ? "✓" : "⎘"}
+                      </button>
+                    </b>
+                  </div>
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">Type</span>
+                    <b>DCW</b>
+                  </div>
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">Network</span>
+                    <b>{wallet.chain}</b>
+                  </div>
+
+                  {balance.walletUsdc != null ? (
+                    <div className="pl-dcw-wallet-row">
+                      <span className="muted">Wallet USDC</span>
+                      <b>{balance.walletUsdc} USDC</b>
+                    </div>
+                  ) : (
+                    <div className="pl-dcw-wallet-row">
+                      <span className="muted">Wallet USDC</span>
+                      <b className="muted">not available</b>
+                    </div>
+                  )}
+
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">x402 Balance</span>
+                    <b style={{ color: x402Balance > 0 ? "var(--success, #22c55e)" : undefined }}>
+                      {x402Balance.toFixed(6)} USDC
+                    </b>
+                  </div>
+                  <span className="muted" style={{ fontSize: 10, marginLeft: 4 }}>Powered by Circle Gateway</span>
+
+                  {asDecimal(balance.pendingBatchUsdc) > 0 && (
+                    <div className="pl-dcw-wallet-row">
+                      <span className="muted">Pending Batch</span>
+                      <b>{asDecimal(balance.pendingBatchUsdc).toFixed(6)} USDC</b>
+                    </div>
+                  )}
+
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">Planned Cost</span>
+                    <b>{plannedCostNum.toFixed(6)} USDC</b>
+                  </div>
+                </div>
+
+                {/* Status */}
+                <div style={{ padding: "8px 0", fontSize: 13, fontWeight: 600 }}>
+                  {needsTopUp ? (
+                    <span style={{ color: "var(--warn, #f59e0b)" }}>⚠ Top up needed</span>
+                  ) : (
+                    <span style={{ color: "var(--success, #22c55e)" }}>✓ Ready to run</span>
+                  )}
+                </div>
+
+                {/* Actions */}
+                {needsTopUp ? (
+                  <button className="pl-primary-v3" onClick={() => setActiveTab("topup")}>
+                    Top up x402 Balance
                   </button>
-                </b>
-              </div>
-              <div className="pl-dcw-wallet-row">
-                <span className="muted">Chain</span>
-                <b>{wallet.chain}</b>
-              </div>
-              <div className="pl-dcw-wallet-row">
-                <span className="muted">Gateway Balance</span>
-                <b style={{ color: parseFloat(gatewayBalance) > 0 ? "var(--success, #22c55e)" : undefined }}>
-                  {gatewayBalance} USDC
-                </b>
-              </div>
-            </div>
+                ) : (
+                  <>
+                    <button className="pl-primary-v3" onClick={onClose}>
+                      Close
+                    </button>
+                    <button
+                      className="pl-eoa-fallback-v3"
+                      onClick={() => setActiveTab("topup")}
+                      style={{ marginTop: 4 }}
+                    >
+                      Add more x402 Balance
+                    </button>
+                  </>
+                )}
 
-            <div className="pl-dcw-deposit-info">
-              <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Step 1: Send USDC to your wallet</p>
-              <div className="pl-dcw-address-box">
-                <code>{wallet.address}</code>
-                <button className="pl-copy-v3" onClick={handleCopy}>{copied ? "Copied!" : "Copy"}</button>
-              </div>
-              <p className="muted" style={{ fontSize: 11, marginTop: 8 }}>
-                Send USDC on <b>Arc Testnet</b> to this address.
-              </p>
-              <p style={{ fontSize: 12, marginTop: 12, padding: "8px 12px", background: "var(--warn-bg, #fef3c7)", borderRadius: 6, border: "1px solid var(--warn-border, #f59e0b)" }}>
-                <b>Note:</b> Gateway deposit for DCW is automatic — once USDC arrives in your wallet, it will be available for x402 payments after Gateway indexing (30-120s). If balance doesn't update, click "Refresh Balance".
-              </p>
-            </div>
+                <button className="pl-eoa-fallback-v3" onClick={refreshBalance} style={{ marginTop: 4 }}>
+                  Refresh Balance
+                </button>
+              </>
+            )}
 
-            <button className="pl-primary-v3" onClick={refreshBalance} style={{ marginTop: 12 }}>
-              Refresh Balance
-            </button>
+            {/* Tab 2: Top up x402 */}
+            {activeTab === "topup" && (
+              <>
+                <div className="pl-dcw-wallet-card">
+                  {balance.walletUsdc != null ? (
+                    <div className="pl-dcw-wallet-row">
+                      <span className="muted">Wallet USDC</span>
+                      <b>{balance.walletUsdc} USDC</b>
+                    </div>
+                  ) : (
+                    <div className="pl-dcw-wallet-row">
+                      <span className="muted">Wallet USDC</span>
+                      <b className="muted">not available</b>
+                    </div>
+                  )}
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">x402 Balance</span>
+                    <b>{x402Balance.toFixed(6)} USDC</b>
+                  </div>
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">Planned Cost</span>
+                    <b>{plannedCostNum.toFixed(6)} USDC</b>
+                  </div>
+                  <div className="pl-dcw-wallet-row">
+                    <span className="muted">Recommended</span>
+                    <b>{recommendedStr} USDC</b>
+                  </div>
+                </div>
+
+                {/* DCW honest state: deposit not wired */}
+                <div style={{ marginTop: 12, padding: "12px", background: "var(--warn-bg, #fef3c7)", borderRadius: 6, border: "1px solid var(--warn-border, #f59e0b)" }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                    DCW x402 Balance is required for auto-pay.
+                  </p>
+                  <p className="muted" style={{ fontSize: 11 }}>
+                    DCW Gateway top-up is not wired yet in this build. Fund x402 Balance before auto-pay can run.
+                  </p>
+                </div>
+
+                {/* Wallet address for manual funding */}
+                <label className="pl-dcw-label" style={{ marginTop: 12 }}>Send USDC to:</label>
+                <div className="pl-dcw-address-box">
+                  <code>{wallet.address}</code>
+                  <button className="pl-copy-v3" onClick={handleCopy}>{copied ? "Copied!" : "Copy"}</button>
+                </div>
+                <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+                  Send USDC on <b>Arc Testnet</b> to this address.
+                </p>
+
+                <button className="pl-primary-v3" onClick={refreshBalance} style={{ marginTop: 12 }}>
+                  Refresh Balance
+                </button>
+
+                <button
+                  className="pl-eoa-fallback-v3"
+                  onClick={() => setActiveTab("balances")}
+                  style={{ marginTop: 4 }}
+                >
+                  ← Back to Balances
+                </button>
+              </>
+            )}
           </div>
         )}
 

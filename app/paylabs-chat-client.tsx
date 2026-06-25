@@ -82,14 +82,7 @@ function short(value?: string | null, chars = 6): string {
   return `${value.slice(0, chars)}…${value.slice(-chars)}`;
 }
 
-// TODO(#27): plannedCost should come from backend quote/402 response, not frontend constants.
-// TIER_COSTS is a fallback estimate for run gating only. After Brain auto-selects tier,
-// the inline route should return { plannedCostUsdc, routeTier } which the frontend uses.
-const TIER_COSTS: Record<string, string> = {
-  easy: "0.000007",
-  normal: "0.000013",
-  advanced: "0.000015",
-};
+// Planned cost comes from backend /api/paylabs/quote. No frontend constants.
 
 // UCW session is Supabase-backed with httpOnly cookie (ucw_sid).
 // Sensitive tokens (userToken, encryptionKey, deviceToken) are stored
@@ -1401,20 +1394,28 @@ export default function PayLabsChatClient({ analytics }: Props) {
       return;
     }
 
+    // Run gating: must have sufficient x402 Balance (Gateway) for planned cost
+    // This applies to both UCW and DCW. x402 Balance = gatewayUsdc.
+    if (ucwBalance) {
+      const x402Bal = parseFloat(ucwBalance.gatewayUsdc ?? "0");
+      const costNum = parseFloat(planned);
+      if (x402Bal < costNum) {
+        // Insufficient x402 balance — open wallet modal with top-up tab
+        if (walletInfo.walletType === "circle_developer_controlled") {
+          setDcwOpen(true);
+        } else {
+          setWalletState("needs_gateway_deposit");
+          setWalletOpen(true);
+        }
+        return;
+      }
+    }
+
     // Run gating: UCW wallet must have live SDK/auth to sign
     if (walletInfo.walletType === "circle_user_controlled" && (!ucwSdkRef.current || !ucwAuthRef.current)) {
       setWalletError("Reconnect wallet to sign x402 payments.");
       setWalletOpen(true);
       return;
-    }
-
-    // Run gating: UCW must have sufficient Gateway balance
-    if (walletInfo.walletType === "circle_user_controlled" && ucwBalance) {
-      if (parseFloat(ucwBalance.walletUsdc) < parseFloat(planned)) {
-        setWalletState("needs_gateway_deposit");
-        setWalletOpen(true);
-        return;
-      }
     }
 
     const userMsg: ChatMessage = { id: makeChatId("user"), role: "user", content: prompt.trim(), createdAt: Date.now() };
@@ -1872,6 +1873,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
       <DcwModal
         open={dcwOpen}
         onClose={() => setDcwOpen(false)}
+        plannedCost={planned}
         onWalletReady={async (w) => {
           setWalletInfo({
             address: w.address,
