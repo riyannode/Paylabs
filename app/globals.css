@@ -629,16 +629,20 @@ a:hover { text-decoration: none; }
 
 .pl-run-btn {
   margin-left: auto;
+  width: 34px;
   height: 34px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 50%;
   background: var(--info);
   color: #fff;
-  padding: 0 16px;
-  font-weight: 700;
+  padding: 0;
   font-size: 13px;
   cursor: pointer;
   transition: opacity 0.12s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .pl-run-btn:disabled {
