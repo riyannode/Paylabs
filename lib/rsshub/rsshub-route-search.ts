@@ -111,10 +111,26 @@ function scoreRoute(
     }
   }
 
+  // 3b. Boost /github/repo_event/ over /github/repos/ for owner/repo queries
+  // Live validation: /github/repos/:user/:repo returns ALL user repos,
+  // while /github/repo_event/:owner/:repo returns repo-specific activity.
+  if (routePath.includes("/github/repo_event/")) {
+    const hasOwnerRepoHint = entityTerms.some((e) => e.includes("/")) ||
+      terms.some((t) => t.includes("/")) ||
+      /\b(github|repo|repo_event|commit|issue|pr|pull)\b/i.test(
+        entityTerms.join(" ") + " " + terms.join(" ")
+      );
+    if (hasOwnerRepoHint) {
+      score += 6;
+      reasons.push("repo_event_boost");
+    }
+  }
+
   // 4. Heat tie-breaker (ONLY if real match exists)
   const hasRealMatch = matched.length > 0 || reasons.some((r) =>
     r.startsWith("name") || r.startsWith("path") || r.startsWith("desc") ||
-    r.startsWith("nsurl") || r.startsWith("example") || r.startsWith("category")
+    r.startsWith("nsurl") || r.startsWith("example") || r.startsWith("category") ||
+    r === "repo_event_boost"
   );
   if (hasRealMatch) {
     if (route.heat > 50) score += 2;
