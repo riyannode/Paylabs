@@ -521,8 +521,22 @@ a:hover { text-decoration: none; }
 
 .pl-hero {
   max-width: 800px;
-  margin: 24px auto 12px;
+  margin: 0 auto;
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  gap: 0;
+  transition: min-height 0.3s ease;
+}
+
+/* When chat has messages, remove centering — let it scroll naturally */
+.pl-hero:has(.has-thread) {
+  min-height: auto;
+  justify-content: flex-start;
+  margin-top: 24px;
 }
 
 .pl-hero h1 {
@@ -1697,6 +1711,7 @@ a:hover { text-decoration: none; }
 @media (max-width: 640px) {
   .pl-compact-root { padding-top: var(--pl-space-sm); padding-bottom: var(--pl-space-lg); }
   .container { padding: 0 var(--pl-space-sm); }
+  .pl-hero { min-height: 50vh; }
   .pl-hero p { margin: 6px 0 14px; }
   .pl-chat-shell { border-radius: var(--pl-radius-lg); }
   .pl-chat-shell.has-thread { max-height: 74vh; }
@@ -1980,12 +1995,12 @@ a:hover { text-decoration: none; }
 /* to create room between subtitle and composer.               */
 
 .pl-hero > p {
-  margin-bottom: 48px !important;
+  margin-bottom: 24px !important;
 }
 
 @media (max-width: 640px) {
   .pl-hero > p {
-    margin-bottom: 52px !important;
+    margin-bottom: 20px !important;
   }
 }
 
