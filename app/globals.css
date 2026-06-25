@@ -1651,6 +1651,16 @@ a:hover { text-decoration: none; }
 .pl-dcw-step { display: flex; flex-direction: column; gap: 12px; }
 .pl-dcw-label { font-size: 13px; font-weight: 600; color: var(--muted, #64748b); }
 
+/* Email/Passkey section — collapsed by default, shown when .visible added */
+.pl-dcw-email-section {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+}
+.pl-dcw-email-section.visible {
+  display: flex;
+}
+
 .pl-dcw-wallet-card {
   background: var(--bg, #f8fafc);
   border: 1px solid var(--border, #e5e7eb);

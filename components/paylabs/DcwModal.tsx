@@ -47,7 +47,7 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [activeTab, setActiveTab] = useState<"balances" | "topup">("balances");
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
-  const googleBtnRef = useRef<HTMLDivElement>(null);
+  const googleInitialized = useRef(false);
 
   const x402Balance = asDecimal(balance.gatewayUsdc);
   const plannedCostNum = asDecimal(plannedCost);
@@ -118,11 +118,11 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
     }
   }, [onWalletReady]);
 
-  // ── Load Google Identity Services + render button ──────────
+  // ── Load Google Identity Services ───────────────────────────
   useEffect(() => {
     if (!open) return;
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    if (!clientId) return;
+    if (!clientId || googleInitialized.current) return;
 
     // Load GIS script if not already loaded
     const existing = document.getElementById("google-identity-script");
@@ -141,12 +141,13 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
     const interval = setInterval(() => {
       attempts++;
       const g = (window as unknown as Record<string, unknown>).google as
-        | { accounts?: { id?: { initialize: Function; renderButton: Function } } }
+        | { accounts?: { id?: { initialize: Function } } }
         | undefined;
 
-      if (g?.accounts?.id && googleBtnRef.current) {
+      if (g?.accounts?.id) {
         clearInterval(interval);
-        try {
+        if (!googleInitialized.current) {
+          googleInitialized.current = true;
           g.accounts.id.initialize({
             client_id: clientId,
             callback: (response: { credential: string }) => {
@@ -155,16 +156,6 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
             auto_select: false,
             cancel_on_tap_outside: true,
           });
-
-          g.accounts.id.renderButton(googleBtnRef.current, {
-            theme: "outline",
-            size: "large",
-            width: "100%",
-            text: "continue_with",
-            shape: "rectangular",
-          });
-        } catch {
-          // GIS already initialized — ignore
         }
       }
 
@@ -175,6 +166,24 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
 
     return () => clearInterval(interval);
   }, [open, handleGoogleSignIn]);
+
+  /** Trigger Google One Tap / sign-in prompt */
+  const triggerGoogleSignIn = useCallback(() => {
+    setIsGoogleLoading(true);
+    setError(null);
+    const g = (window as unknown as Record<string, unknown>).google as
+      | { accounts?: { id?: { prompt: Function } } }
+      | undefined;
+    if (g?.accounts?.id) {
+      g.accounts.id.prompt(() => {
+        // Prompt dismissed or callback fired
+        setIsGoogleLoading(false);
+      });
+    } else {
+      setError("Google Sign-In not loaded. Please try again.");
+      setIsGoogleLoading(false);
+    }
+  }, []);
 
   // ── Passkey Registration ──────────────────────────────────
   const handlePasskeyRegister = useCallback(async () => {
@@ -420,50 +429,67 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
         {/* ── Step: Auth (Passkey) ──────────────────────── */}
         {step === "auth" && (
           <div className="pl-dcw-step">
-            {/* Google Sign-In — primary */}
-            <div ref={googleBtnRef} className="pl-google-dcw-btn" style={{
-              width: "100%",
-              minHeight: 40,
-              display: "flex",
-              justifyContent: "center",
-              marginBottom: 12,
-            }} />
+            {/* Login options — same style as UCW */}
+            <div className="pl-login-stack-v3">
+              <button
+                className="pl-login-option-v3"
+                onClick={triggerGoogleSignIn}
+                disabled={isGoogleLoading}
+              >
+                <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
+                <b>Google</b>
+              </button>
+
+              <button
+                className="pl-login-option-v3"
+                onClick={() => {
+                  // Toggle email/passkey section
+                  const el = document.querySelector(".pl-dcw-email-section");
+                  if (el) el.classList.toggle("visible");
+                }}
+              >
+                <span className="pl-login-icon-v3"><MailIcon /></span>
+                <b>Email / Passkey</b>
+              </button>
+            </div>
+
             {isGoogleLoading && (
-              <p className="muted" style={{ fontSize: 12, textAlign: "center", marginBottom: 8 }}>
+              <p className="muted" style={{ fontSize: 12, textAlign: "center", marginTop: 8 }}>
                 Signing in with Google…
               </p>
             )}
 
-            <div className="pl-auth-divider"><span>or</span></div>
+            {/* Email + Passkey section (collapsed by default) */}
+            <div className="pl-dcw-email-section" style={{ marginTop: 12 }}>
+              <label className="pl-dcw-label">Your email</label>
+              <input
+                className="pl-email-otp-input"
+                type="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && email.includes("@")) handlePasskeyRegister();
+                }}
+              />
+              <button
+                className="pl-primary-v3"
+                onClick={handlePasskeyRegister}
+                disabled={!email.includes("@") || isRegistering}
+              >
+                {isRegistering ? "Creating passkey…" : "🔐 Register with Passkey"}
+              </button>
+              <button
+                className="pl-eoa-fallback-v3"
+                onClick={handlePasskeyAuthenticate}
+                disabled={!email.includes("@")}
+                style={{ marginTop: 4 }}
+              >
+                Already have a passkey? Sign in
+              </button>
+              <div className="pl-auth-divider"><span>or</span></div>
+            </div> {/* end pl-dcw-email-section */}
 
-            {/* Passkey + OTP — secondary */}
-            <label className="pl-dcw-label">Your email</label>
-            <input
-              className="pl-email-otp-input"
-              type="email"
-              placeholder="you@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && email.includes("@")) handlePasskeyRegister();
-              }}
-            />
-            <button
-              className="pl-primary-v3"
-              onClick={handlePasskeyRegister}
-              disabled={!email.includes("@") || isRegistering}
-            >
-              {isRegistering ? "Creating passkey…" : "🔐 Register with Passkey"}
-            </button>
-            <button
-              className="pl-eoa-fallback-v3"
-              onClick={handlePasskeyAuthenticate}
-              disabled={!email.includes("@")}
-              style={{ marginTop: 4 }}
-            >
-              Already have a passkey? Sign in
-            </button>
-            <div className="pl-auth-divider"><span>or</span></div>
             {!otpSent ? (
               <button
                 className="pl-eoa-fallback-v3"
@@ -704,4 +730,37 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
       </div>
     </div>
   );
+}
+
+function Svg({ children }: { children: React.ReactNode }) {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
+function GoogleIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.4-.4-3.5Z" />
+      <path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 16.2 4 9.5 8.5 6.3 14.7Z" />
+      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-7.9l-6.5 5C9.4 39.5 16.1 44 24 44Z" />
+      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.4-2.3 4.3-4.1 5.6l6.2 5.2C36.9 39.3 44 34 44 24c0-1.3-.1-2.4-.4-3.5Z" />
+    </svg>
+  );
+}
+
+function MailIcon() {
+  return <Svg><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></Svg>;
 }
