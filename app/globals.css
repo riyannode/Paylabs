@@ -729,6 +729,11 @@ a:hover { text-decoration: none; }
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
 }
 
+.pl-assistant-avatar-brain svg {
+  width: 20px;
+  height: 20px;
+}
+
 .pl-assistant-message-wrap {
   min-width: 0;
 }
@@ -849,6 +854,25 @@ a:hover { text-decoration: none; }
 }
 .pl-sources-inline a:hover {
   text-decoration: underline;
+}
+
+.pl-source-links-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.pl-source-links-row a {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 13px;
+  text-decoration: none;
+  color: #3b82f6;
+}
+.pl-source-links-row a:hover {
+  background: var(--info-soft);
+  text-decoration: none;
 }
 
 .pl-rationale-block {

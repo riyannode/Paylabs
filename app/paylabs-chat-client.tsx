@@ -82,6 +82,17 @@ function short(value?: string | null, chars = 6): string {
   return `${value.slice(0, chars)}…${value.slice(-chars)}`;
 }
 
+/** Detect deterministic source inventory answers that should be hidden from user */
+function isSourceInventoryAnswer(value?: string | null): boolean {
+  if (!value) return false;
+  return (
+    /Ditemukan\s+\d+\s+source\s+relevan/i.test(value) ||
+    /Sumber\s+dari:/i.test(value) ||
+    /Sumber\s+utama:/i.test(value) ||
+    /\(Mode:\s*(db_fallback|rsshub_live|tavily_live|none)\)/i.test(value)
+  );
+}
+
 // Planned cost comes from backend /api/paylabs/quote. No frontend constants.
 
 // UCW session is Supabase-backed with httpOnly cookie (ucw_sid).
@@ -104,13 +115,21 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
   const brainPlanning = data?.brain_planning as Record<string, unknown> | undefined;
   const agentTraceBrain = (data?.agent_trace as Record<string, unknown>)?.brain_planning as Record<string, unknown> | undefined;
 
-  const assistantResponse =
+  const rawFinalAnswer =
     (data?.final_answer as string) ??
     (exitOutput?.final_answer as string) ??
-    (exitOutput?.final_summary as string) ??
-    tieredSummaries?.final_summary ??
+    null;
+
+  const assistantResponse =
+    (brainPlanning?.user_visible_reasoning as string) ??
+    (agentTraceBrain?.user_visible_reasoning as string) ??
     (brainPlanning?.assistant_response as string) ??
     (agentTraceBrain?.assistant_response as string) ??
+    (brainPlanning?.plan_rationale as string) ??
+    (agentTraceBrain?.plan_rationale as string) ??
+    (!isSourceInventoryAnswer(rawFinalAnswer) ? rawFinalAnswer : null) ??
+    (exitOutput?.final_summary as string) ??
+    tieredSummaries?.final_summary ??
     "Run completed.";
   const userVisibleReasoning =
     (brainPlanning?.user_visible_reasoning as string) ??
@@ -1749,7 +1768,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
                     </div>
                   ) : (
                     <div key={msg.id} className="pl-assistant-message-row">
-                      <div className="pl-assistant-avatar">P</div>
+                      <div className="pl-assistant-avatar pl-assistant-avatar-brain"><BrainIcon /></div>
                       <div className="pl-assistant-message-wrap">
                         <div className="pl-assistant-meta">
                           <b>PayLabs</b>
@@ -1937,15 +1956,11 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
         <div className="pl-assistant-answer">{result.assistantResponse}</div>
       )}
       {result.sourcesUsed.length > 0 && (
-        <div className="pl-sources-inline">
-          Sources:{" "}
+        <div className="pl-source-links-row">
           {result.sourcesUsed.slice(0, 3).map((s, i) => (
-            <span key={s.url}>
-              {i > 0 && " · "}
-              <a href={s.url} target="_blank" rel="noopener noreferrer">
-                {s.title} ↗
-              </a>
-            </span>
+            <a key={s.url} href={s.url} target="_blank" rel="noopener noreferrer" title={s.title}>
+              Link {i + 1}
+            </a>
           ))}
         </div>
       )}
@@ -1955,10 +1970,7 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
             className="pl-rationale-toggle"
             onClick={() => setRationaleOpen(!rationaleOpen)}
           >
-            <span className="pl-rationale-title">
-              <BrainIcon />
-              Reasoning
-            </span>
+            <span className="pl-rationale-title">Reasoning</span>
             <span className="pl-rationale-caret">{rationaleOpen ? "▾" : "▸"}</span>
           </button>
           {rationaleOpen && (
