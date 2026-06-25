@@ -69,7 +69,7 @@ export const MACRO_NODES: Record<MacroNodePhase, MacroNodeConfig> = {
     buyerWalletIdEnv: "PAYLABS_NODE_DISCOVERY_PLANNER_BUYER_WALLET_ID",
     fixedNodeFeeUsdc: MACRO_NODE_FEE_USDC, // 0.000001 (base, allocation = base + children)
     endpointPath: "/api/paylabs/macro-nodes/discovery_planner/run",
-    childServices: ["intent_planner", "query_builder", "signal_scout"],
+    childServices: ["intent_planner", "query_builder", "signal_scout_basics"],
     tierLabel: "easy",
     brainPaymentMode: "circle_gateway_wallet_batched",
     childPaymentMode: "circle_gateway_wallet_batched_per_child_fallback",

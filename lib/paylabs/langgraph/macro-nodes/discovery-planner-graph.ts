@@ -65,7 +65,22 @@ const signalScoutNode = createServiceNode(
     source_preferences: (state as DiscoveryPlannerStateType).sourcePreferences || [],
     routeTier: state.routeTier,
   }),
-  { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: true, skipIfNotSelected: false }
+  { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: false, skipIfNotSelected: true }
+);
+
+// ─── Node: Signal Scout Basics (deterministic, easy tier) ──
+
+const signalScoutBasicsNode = createServiceNode(
+  "signal_scout_basics",
+  "discovery_planner",
+  (state) => ({
+    expanded_queries: (state as DiscoveryPlannerStateType).expandedQueries || [],
+    entity_terms: (state as DiscoveryPlannerStateType).entityTerms || [],
+    negative_filters: (state as DiscoveryPlannerStateType).negativeFilters || [],
+    source_preferences: (state as DiscoveryPlannerStateType).sourcePreferences || [],
+    routeTier: state.routeTier,
+  }),
+  { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: false, skipIfNotSelected: true }
 );
 
 // ─── Node: Process Intent Result ────────────────────────────
@@ -133,7 +148,10 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
 
 async function processSignalResult(state: DiscoveryPlannerStateType) {
   const evals = state.serviceEvaluations || [];
-  const signalEval = evals.find((e) => e.serviceName === "signal_scout");
+  // Look for either signal_scout (rich) or signal_scout_basics (easy tier)
+  const signalEval = evals.find((e: { serviceName: string }) =>
+    e.serviceName === "signal_scout" || e.serviceName === "signal_scout_basics"
+  );
 
   if (!signalEval?.output) {
     return {
@@ -197,6 +215,7 @@ const graph = new StateGraph(DiscoveryPlannerState)
   .addNode("query_builder", queryBuilderNode)
   .addNode("process_query", processQueryResult)
   .addNode("signal_scout", signalScoutNode)
+  .addNode("signal_scout_basics", signalScoutBasicsNode)
   .addNode("process_signal", processSignalResult)
   .addNode("build_summary", buildEasySummary)
   // Edges
@@ -205,7 +224,9 @@ const graph = new StateGraph(DiscoveryPlannerState)
   .addEdge("process_intent", "query_builder")
   .addEdge("query_builder", "process_query")
   .addEdge("process_query", "signal_scout")
+  .addEdge("process_query", "signal_scout_basics")
   .addEdge("signal_scout", "process_signal")
+  .addEdge("signal_scout_basics", "process_signal")
   .addEdge("process_signal", "build_summary")
   .addEdge("build_summary", END)
   .compile();
