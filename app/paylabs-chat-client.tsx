@@ -615,6 +615,56 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [signingPhase, setSigningPhase] = useState<string | null>(null);
   const [guideOpen, setGuideOpen] = useState(false);
 
+  // ── Batch link polling ──────────────────────────────────────
+  // When settlementId exists but batch link is missing, poll the
+  // batch resolver endpoint until the link appears or we give up.
+  const batchPollRef = useRef<{ attempts: number; timer: ReturnType<typeof setTimeout> | null }>({ attempts: 0, timer: null });
+
+  useEffect(() => {
+    const r = result;
+    if (!r?.entrySettlementId) return;
+    if (r.entryBatchExplorerUrl || r.entryBatchTxHash) return;
+    if (batchPollRef.current.timer) return; // already polling
+
+    const MAX_ATTEMPTS = 30;
+    const INTERVAL_MS = 10_000;
+
+    const poll = async () => {
+      if (batchPollRef.current.attempts >= MAX_ATTEMPTS) return;
+      batchPollRef.current.attempts++;
+
+      try {
+        const resp = await fetch(
+          `/api/paylabs/x402/batch-tx/${encodeURIComponent(r.entrySettlementId!)}`,
+          { credentials: "include" },
+        );
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data?.batchTxHash && data?.batchExplorerUrl) {
+          setResult((prev) => prev ? {
+            ...prev,
+            entryBatchTxHash: data.batchTxHash,
+            entryBatchExplorerUrl: data.batchExplorerUrl,
+          } : prev);
+          return; // stop polling
+        }
+      } catch {
+        // retry on next tick
+      }
+
+      batchPollRef.current.timer = setTimeout(poll, INTERVAL_MS);
+    };
+
+    batchPollRef.current.timer = setTimeout(poll, INTERVAL_MS);
+
+    return () => {
+      if (batchPollRef.current.timer) {
+        clearTimeout(batchPollRef.current.timer);
+        batchPollRef.current.timer = null;
+      }
+    };
+  }, [result?.entrySettlementId, result?.entryBatchExplorerUrl, result?.entryBatchTxHash]);
+
   // Chat message history
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const chatThreadRef = useRef<HTMLDivElement | null>(null);
