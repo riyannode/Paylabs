@@ -41,3 +41,6 @@ scripts/*.sh
 .env*
 _test_reason.cjs
 scripts/
+
+# Temp scripts (CodeQL sensitive data)
+.tmp_*

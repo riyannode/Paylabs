@@ -22,36 +22,41 @@ function uniqueWalletCount(rows: { user_wallet?: string | null }[]): number {
 }
 
 export default async function Page() {
-  const now = Date.now();
+  // Analytics are non-critical — don't block page render on slow DB
+  let analytics = { uniqueUsers: 0, active24h: 0, active7d: 0 };
+  try {
+    const now = Date.now();
+    const [userRowsAll, userRows24h, userRows7d] = await Promise.all([
+      safeQuery<{ user_wallet: string | null }>(() =>
+        supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .select("user_wallet")
+          .limit(5000)
+      ),
+      safeQuery<{ user_wallet: string | null }>(() =>
+        supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .select("user_wallet")
+          .gte("created_at", new Date(now - 86400000).toISOString())
+          .limit(5000)
+      ),
+      safeQuery<{ user_wallet: string | null }>(() =>
+        supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .select("user_wallet")
+          .gte("created_at", new Date(now - 7 * 86400000).toISOString())
+          .limit(5000)
+      ),
+    ]);
 
-  const [userRowsAll, userRows24h, userRows7d] = await Promise.all([
-    safeQuery<{ user_wallet: string | null }>(() =>
-      supabaseAdmin()
-        .from("paylabs_discovery_runs")
-        .select("user_wallet")
-        .limit(10000)
-    ),
-    safeQuery<{ user_wallet: string | null }>(() =>
-      supabaseAdmin()
-        .from("paylabs_discovery_runs")
-        .select("user_wallet")
-        .gte("created_at", new Date(now - 86400000).toISOString())
-        .limit(10000)
-    ),
-    safeQuery<{ user_wallet: string | null }>(() =>
-      supabaseAdmin()
-        .from("paylabs_discovery_runs")
-        .select("user_wallet")
-        .gte("created_at", new Date(now - 7 * 86400000).toISOString())
-        .limit(10000)
-    ),
-  ]);
-
-  const analytics = {
-    uniqueUsers: uniqueWalletCount(userRowsAll),
-    active24h: uniqueWalletCount(userRows24h),
-    active7d: uniqueWalletCount(userRows7d),
-  };
+    analytics = {
+      uniqueUsers: uniqueWalletCount(userRowsAll),
+      active24h: uniqueWalletCount(userRows24h),
+      active7d: uniqueWalletCount(userRows7d),
+    };
+  } catch {
+    // DB timeout — show zeros, don't crash the page
+  }
 
   return <PayLabsChatClient analytics={analytics} />;
 }

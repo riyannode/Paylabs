@@ -20,13 +20,14 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSession } from "@/lib/paylabs/auth/session";
 import { createDcwSigner } from "@/lib/paylabs/x402/dcw-signer-adapter";
 import { callPaidSeller } from "@/lib/paylabs/x402/buyer-transport";
+import { resolvePaylabsAppUrl } from "@/lib/paylabs/runtime/resolve-app-url";
 
 // ─── Allowlisted internal seller URLs ────────────────────────
 // Only these URLs can be called as x402 sellers.
 // Never accept arbitrary URLs from the client.
 
 function getAllowedSellerUrl(path: string): string | null {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.PAYLABS_APP_URL;
+  const { baseUrl } = resolvePaylabsAppUrl();
   if (!baseUrl) return null;
 
   const allowedPaths = [

@@ -62,13 +62,12 @@ export async function POST(req: NextRequest) {
       depositTxId: depositTx.id, depositStatus: depositTx.state || "INITIATED",
     });
   } catch (e: any) {
-    // Return full error detail for debugging
+    // Log full error server-side; return safe summary to client
+    console.error("[gateway-deposit] error:", e.message, e.response?.data);
     return NextResponse.json({
       ok: false,
       error: e.message || String(e),
-      code: e.code,
-      status: e.status,
-      response: e.response?.data,
+      ...(process.env.NODE_ENV !== "production" ? { code: e.code, status: e.status, response: e.response?.data } : {}),
     }, { status: 500 });
   }
 }

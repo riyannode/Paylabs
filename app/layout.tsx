@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import ErrorBoundary from "@/components/ErrorBoundary";
 
 export const metadata: Metadata = {
   title: "PayLabs — AI source-feed learning paths with creator citation tolls",
@@ -16,7 +17,9 @@ export default function RootLayout({
     <html lang="en">
       <body style={{ margin: 0, minHeight: "100vh" }}>
         <main className="container pl-compact-root">
-          {children}
+          <ErrorBoundary>
+            {children}
+          </ErrorBoundary>
         </main>
       </body>
     </html>
