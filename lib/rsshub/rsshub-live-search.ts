@@ -225,11 +225,11 @@ export async function liveSearchRsshub(input: {
     }
 
     // 2. Search routes
-    const candidates = await searchRsshubRoutes({
+    let candidates = await searchRsshubRoutes({
       userGoal,
       expandedQueries,
       entityTerms,
-      limit: maxRoutes * 3, // search wider, resolve narrower
+      limit: maxRoutes * 5, // search wider, resolve narrower
     });
 
     if (candidates.length === 0) {
@@ -242,6 +242,31 @@ export async function liveSearchRsshub(input: {
         errors,
         fallbackReason: "No matching RSSHub routes found",
       };
+    }
+
+    // 2b. Optional LLM rerank (if enabled)
+    const llmRerankEnabled = process.env.PAYLABS_RSSHUB_LLM_ROUTE_RERANK === "true";
+    if (llmRerankEnabled && candidates.length > maxRoutes) {
+      try {
+        const { rerankRouteCandidates } = await import("./rsshub-route-rerank");
+        const reranked = await rerankRouteCandidates({
+          candidates,
+          userGoal,
+          expandedQueries,
+          entityTerms,
+          routeTier,
+          maxRoutes,
+        });
+        if (reranked.selectedCandidates.length > 0) {
+          candidates = reranked.selectedCandidates;
+        }
+        // If rerank returned empty, fall through to deterministic candidates
+      } catch (err: unknown) {
+        console.warn("[rsshub-live] LLM route rerank failed, using deterministic", {
+          error: err instanceof Error ? err.message.slice(0, 80) : "unknown",
+        });
+        // Fall through to deterministic candidates
+      }
     }
 
     // 3. Resolve route params
@@ -314,6 +339,10 @@ export async function liveSearchRsshub(input: {
           expandedQueries,
           route.route.heat
         );
+
+        // Patch 2: Filter out low-score unrelated items from relevant routes
+        const minItemScore = routeTier === "advanced" ? 2 : routeTier === "normal" ? 2 : 1;
+        if (scoring.score < minItemScore) continue;
 
         const sourceUrl = item.canonical_url || "";
         if (!sourceUrl || !/^https?:\/\//.test(sourceUrl)) continue;

@@ -260,6 +260,10 @@ export const signalScoutHandler: ServiceHandler = async (
 
   // ── Step 1: Try live RSSHub search first ──
   const liveEnabled = process.env.PAYLABS_RSSHUB_LIVE_ENABLED !== "false";
+  const sourceDiscoveryMode = process.env.PAYLABS_SOURCE_DISCOVERY_MODE || "live_then_db";
+  const dbFallbackEnabled = process.env.PAYLABS_DB_FALLBACK_ENABLED !== "false";
+  const liveOnly = sourceDiscoveryMode === "live_only" || !dbFallbackEnabled;
+
   let liveResults: Awaited<ReturnType<typeof runLiveSearch>> = null;
 
   if (liveEnabled) {
@@ -280,15 +284,34 @@ export const signalScoutHandler: ServiceHandler = async (
         ranked_candidates: liveResults,
         top_candidates: liveResults.slice(0, 3).map((r) => r.feed_item_id),
         quick_relevance_notes: liveResults.slice(0, 5).map((r) => r.reason),
-        safe_signal_summary: `Live RSSHub: ${liveResults.length} sources found from ${liveResults.filter((s) => s.source_kind === "rsshub_live").length} routes.`,
+        safe_signal_summary: `Live RSSHub: ${liveResults.length} source(s) found from ${liveResults.filter((s) => s.source_kind === "rsshub_live").length} route(s).`,
+        retrieval_mode: "rsshub_live",
       },
-      safeSummary: `Live RSSHub: ${liveResults.length} sources found.`,
+      safeSummary: `Live RSSHub: ${liveResults.length} source(s) found.`,
       settled: false,
       error: null,
     };
   }
 
-  // ── Step 3: Fallback to DB ──
+  // ── Step 2b: If live-only mode, do NOT fallback to DB ──
+  if (liveOnly) {
+    return {
+      ok: true,
+      serviceName: "signal_scout",
+      data: {
+        ranked_candidates: [],
+        top_candidates: [],
+        quick_relevance_notes: ["No matching live RSSHub sources found."],
+        safe_signal_summary: "No live RSSHub source matched this query.",
+        retrieval_mode: "rsshub_live_empty",
+      },
+      safeSummary: "No live RSSHub source matched this query.",
+      settled: false,
+      error: null,
+    };
+  }
+
+  // ── Step 3: Fallback to DB (live_then_db mode only) ──
   const { listActiveFeedItems } = await import("@/lib/ai/tools");
   const dbMaxItems = Number(process.env.PAYLABS_DB_FALLBACK_MAX_ITEMS) || 200;
   const allActiveRaw = await listActiveFeedItems() as Record<string, unknown>[];
@@ -318,6 +341,7 @@ export const signalScoutHandler: ServiceHandler = async (
         safe_signal_summary: liveResults === null
           ? "Live RSSHub unavailable. No active feed items in database."
           : "No relevant sources found from RSSHub live or database.",
+        retrieval_mode: liveResults === null ? "rsshub_live_empty" : "db_fallback",
       },
       safeSummary: "No active feed items available for discovery.",
       settled: false,
@@ -343,6 +367,7 @@ export const signalScoutHandler: ServiceHandler = async (
         top_candidates: ranked.slice(0, 3).map((r) => r.feed_item_id),
         quick_relevance_notes: ranked.slice(0, 5).map((r) => r.reason),
         safe_signal_summary: `DB fallback: ${ranked.length} items ranked by keyword/entity match. Live RSSHub: ${liveResults === null ? "unavailable" : "no results"}.`,
+        retrieval_mode: "db_fallback",
       },
       safeSummary: `DB fallback: ${ranked.length} items ranked. Deterministic scoring.`,
       settled: false,
@@ -429,6 +454,7 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
         top_candidates: ranked.slice(0, 3).map((r) => r.feed_item_id),
         quick_relevance_notes: ranked.slice(0, 5).map((r) => r.reason),
         safe_signal_summary: `Fallback: ${ranked.length} items ranked deterministically (LLM unavailable).`,
+        retrieval_mode: "db_fallback",
       },
       safeSummary: `Fallback: ${ranked.length} items ranked deterministically (LLM unavailable).`,
       settled: false,
@@ -465,6 +491,7 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
       top_candidates: llmRanked.slice(0, 3).map((r) => r.feed_item_id),
       quick_relevance_notes: llmRanked.slice(0, 5).map((r) => r.reason),
       safe_signal_summary: result.data.safe_summary,
+      retrieval_mode: "db_fallback",
     },
     safeSummary: result.data.safe_summary,
     settled: false,
