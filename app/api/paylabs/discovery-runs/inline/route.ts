@@ -457,12 +457,17 @@ async function runX402Orchestration(params: {
 
   // ── Resolve source context from discovery_planner ranked candidates (PR #26) ──
   let sourceContext: import("@/lib/paylabs/sources/types").SourceContext | undefined;
+  let serviceRetrievalMode: string | undefined;
   const discoveryMacroResult = macroNodeResults["discovery_planner"];
   if (discoveryMacroResult) {
     const dData = (discoveryMacroResult.data as Record<string, unknown>) || discoveryMacroResult;
     const rankedCandidates = ((dData.rankedCandidates as Array<{ feed_item_id: string; rank: number; relevance_score: number }>)
       || (dData.ranked_candidates as Array<{ feed_item_id: string; rank: number; relevance_score: number }>)
       || []);
+
+    // Extract retrieval_mode from discovery_planner service output
+    serviceRetrievalMode = dData.retrieval_mode as string | undefined;
+
     if (rankedCandidates.length > 0) {
       try {
         const { resolveSources } = await import("@/lib/paylabs/sources/source-resolver");
@@ -475,6 +480,10 @@ async function runX402Orchestration(params: {
         });
         if (resolverResult.ok) {
           sourceContext = resolverResult.sourceContext;
+          // Propagate retrieval_mode from signal_scout_basics output
+          if (serviceRetrievalMode && !sourceContext.retrieval_mode) {
+            sourceContext.retrieval_mode = serviceRetrievalMode as import("@/lib/paylabs/sources/types").SourceContext["retrieval_mode"];
+          }
         }
       } catch (e: unknown) {
         console.error("[paylabs_source_context] x402 resolve failed", {
@@ -1142,7 +1151,9 @@ async function runX402Path(
         goal,
         sourcesUsed,
         sourceConfidence: exitOutput.source_confidence || 0,
-        retrievalMode: exitOutput.source_retrieval_mode || (sourcesUsed.length > 0 ? "db_fallback" : "none"),
+        retrievalMode: exitOutput.source_retrieval_mode || (sourcesUsed.length > 0
+          ? (sourcesUsed.some((s) => s.source_kind === "rsshub_live") ? "rsshub_live" : "db_fallback")
+          : "none"),
       });
     } catch (e: unknown) {
       console.error("[paylabs_final_answer] build failed", {
