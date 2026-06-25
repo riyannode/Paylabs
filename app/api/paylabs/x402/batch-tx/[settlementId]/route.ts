@@ -17,6 +17,12 @@ import {
   isUuid,
   isEvmTxHash,
 } from "@/lib/paylabs/x402/payment-links";
+import {
+  decodeBatchTx,
+  buyerInBatch,
+  sellerInBatch,
+  type DecodedBatch,
+} from "@/lib/paylabs/x402/decode-batch";
 
 // ─── Config ──────────────────────────────────────────────────
 
@@ -148,6 +154,37 @@ export async function GET(
 
     const batchExplorerUrl = buildTxExplorerUrl(finalHash);
 
+    // ── 4. Decode calldata to verify buyer/seller ──
+    let decoded: DecodedBatch | null = null;
+    let buyerVerified = false;
+    let sellerVerified = false;
+    let buyerEntry: { address: string; usdc: string } | null = null;
+    let sellerEntry: { address: string; usdc: string } | null = null;
+
+    if (finalHash) {
+      try {
+        decoded = await decodeBatchTx(finalHash);
+        if (decoded) {
+          if (fromAddress) {
+            const check = buyerInBatch(decoded, fromAddress);
+            buyerVerified = check.found;
+            if (check.entry) {
+              buyerEntry = { address: check.entry.address, usdc: check.entry.usdc };
+            }
+          }
+          if (toAddress) {
+            const check = sellerInBatch(decoded, toAddress);
+            sellerVerified = check.found;
+            if (check.entry) {
+              sellerEntry = { address: check.entry.address, usdc: check.entry.usdc };
+            }
+          }
+        }
+      } catch (e) {
+        console.error("[batch-tx-resolver] calldata decode error:", e instanceof Error ? e.message : e);
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       settlementId,
@@ -155,6 +192,16 @@ export async function GET(
       batchTxHash: finalHash,
       batchExplorerUrl,
       matchedBy,
+      // Calldata verification (Canteen-style)
+      calldata_decoded: !!decoded,
+      entries_count: decoded?.entries.length ?? 0,
+      net_transfers_count: decoded?.netTransfers.length ?? 0,
+      buyer_verified: buyerVerified,
+      buyer_entry: buyerEntry,
+      seller_verified: sellerVerified,
+      seller_entry: sellerEntry,
+      batch_domain: decoded?.domain ?? null,
+      batch_id: decoded?.batchId ?? null,
       updatedAt: new Date().toISOString(),
     });
   } catch (e: unknown) {

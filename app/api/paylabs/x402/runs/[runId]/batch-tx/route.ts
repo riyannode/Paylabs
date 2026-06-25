@@ -17,6 +17,12 @@ import {
   safeExplorerUrl,
   isEvmTxHash,
 } from "@/lib/paylabs/x402/payment-links";
+import {
+  decodeBatchTx,
+  buyerInBatch,
+  sellerInBatch,
+  type DecodedBatch,
+} from "@/lib/paylabs/x402/decode-batch";
 
 const GATEWAY_API =
   process.env.CIRCLE_GATEWAY_API_URL ||
@@ -313,7 +319,49 @@ export async function GET(
 
     const batchExplorerUrl = buildTxExplorerUrl(batchTxHash);
 
-    // ── 8. Persist to all dashboard-visible tables (fire-and-forget) ──
+    // ── 8. Decode calldata to verify buyer/seller ──
+    let decoded: DecodedBatch | null = null;
+    let buyerVerified = false;
+    let sellerVerified = false;
+    let buyerEntry: { address: string; usdc: string } | null = null;
+    let sellerEntry: { address: string; usdc: string } | null = null;
+
+    if (batchTxHash) {
+      try {
+        decoded = await decodeBatchTx(batchTxHash);
+        if (decoded) {
+          // Try to get buyer address from payment event or agent_trace
+          const buyerAddress = entryPaymentTrace?.buyer_address
+            || entryPaymentTrace?.from_address
+            || null;
+          const sellerAddress = entryPaymentTrace?.seller_address
+            || entryPaymentTrace?.to_address
+            || null;
+
+          if (buyerAddress) {
+            const check = buyerInBatch(decoded, buyerAddress);
+            buyerVerified = check.found;
+            if (check.entry) {
+              buyerEntry = { address: check.entry.address, usdc: check.entry.usdc };
+            }
+          }
+          if (sellerAddress) {
+            const check = sellerInBatch(decoded, sellerAddress);
+            sellerVerified = check.found;
+            if (check.entry) {
+              sellerEntry = { address: check.entry.address, usdc: check.entry.usdc };
+            }
+          }
+        }
+      } catch (e) {
+        console.log("[batch-tx-resolver] calldata decode error", {
+          hasError: true,
+          errorType: e instanceof Error ? e.message : "unknown",
+        });
+      }
+    }
+
+    // ── 9. Persist to all dashboard-visible tables (fire-and-forget) ──
     if (batchTxHash && batchExplorerUrl) {
       const db = supabaseAdmin();
 
@@ -390,6 +438,16 @@ export async function GET(
       batch_tx_hash: batchTxHash,
       batch_explorer_url: batchExplorerUrl,
       matched_by: batchTxHash ? matchedBy : null,
+      // Calldata verification (Canteen-style)
+      calldata_decoded: !!decoded,
+      entries_count: decoded?.entries.length ?? 0,
+      net_transfers_count: decoded?.netTransfers.length ?? 0,
+      buyer_verified: buyerVerified,
+      buyer_entry: buyerEntry,
+      seller_verified: sellerVerified,
+      seller_entry: sellerEntry,
+      batch_domain: decoded?.domain ?? null,
+      batch_id: decoded?.batchId ?? null,
       trace: {
         has_settlement_id: true,
         has_direct_tx: !!directTxHash,
