@@ -194,6 +194,7 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
 
     entrySettlementId:
       (resolvedEntry?.settlement_id as string | null | undefined) ??
+      (data?.entry_payment_settlement_id as string | null | undefined) ??
       (paymentMetadata?.settlementId as string | null | undefined) ??
       null,
 
