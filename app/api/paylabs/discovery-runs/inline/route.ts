@@ -1116,6 +1116,7 @@ async function runX402Path(
         exitOutput.source_selection_summary = result.sourceContext.source_selection_summary;
         exitOutput.source_confidence = result.sourceContext.source_confidence;
         exitOutput.source_count = result.sourceContext.source_count;
+        exitOutput.source_retrieval_mode = result.sourceContext.retrieval_mode;
       } else {
         const { buildSourceContextFromResult } = await import("@/lib/paylabs/sources/source-context");
         const sourceCtx = await buildSourceContextFromResult(result);
@@ -1124,6 +1125,7 @@ async function runX402Path(
           exitOutput.source_selection_summary = sourceCtx.source_selection_summary;
           exitOutput.source_confidence = sourceCtx.source_confidence;
           exitOutput.source_count = sourceCtx.source_count;
+          exitOutput.source_retrieval_mode = sourceCtx.retrieval_mode;
         }
       }
     } catch (e: unknown) {
@@ -1140,7 +1142,7 @@ async function runX402Path(
         goal,
         sourcesUsed,
         sourceConfidence: exitOutput.source_confidence || 0,
-        retrievalMode: sourcesUsed.some((s) => s.source_kind === "rsshub_live") ? "rsshub_live" : sourcesUsed.length > 0 ? "db_fallback" : "none",
+        retrievalMode: exitOutput.source_retrieval_mode || (sourcesUsed.length > 0 ? "db_fallback" : "none"),
       });
     } catch (e: unknown) {
       console.error("[paylabs_final_answer] build failed", {
@@ -1149,7 +1151,8 @@ async function runX402Path(
     }
 
     // ── V3: Store source_context snapshot in agent_trace (MERGE, not overwrite) ──
-    if (exitOutput.sources_used && exitOutput.sources_used.length > 0) {
+    // Always store if we have a retrieval_mode, even when sources are empty (rsshub_live_empty)
+    if (exitOutput.source_retrieval_mode || (exitOutput.sources_used && exitOutput.sources_used.length > 0)) {
       try {
         // Read existing agent_trace to preserve brain_planning, payment_graph, etc.
         const { data: existingRun } = await supabaseAdmin()
@@ -1167,8 +1170,8 @@ async function runX402Path(
               source_context: {
                 source_count: exitOutput.source_count || 0,
                 source_confidence: exitOutput.source_confidence || 0,
-                retrieval_mode: exitOutput.sources_used.some((s) => s.source_kind === "rsshub_live") ? "rsshub_live" : "db_fallback",
-                sources_used: exitOutput.sources_used.slice(0, 20).map((s) => ({
+                retrieval_mode: exitOutput.source_retrieval_mode || "rsshub_live_empty",
+                sources_used: (exitOutput.sources_used || []).slice(0, 20).map((s) => ({
                   title: s.title,
                   url: s.url,
                   domain: s.domain,
@@ -1275,6 +1278,7 @@ async function runX402Path(
         source_selection_summary: exitOutput.source_selection_summary,
         source_confidence: exitOutput.source_confidence,
         source_count: exitOutput.source_count,
+        retrieval_mode: exitOutput.source_retrieval_mode || null,
       } : null,
       source_context_error: sourceContextError,
       quote: {

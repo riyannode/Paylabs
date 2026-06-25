@@ -26,6 +26,7 @@ export type ExitOutput = {
   source_selection_summary?: string;
   source_confidence?: number;
   source_count?: number;
+  source_retrieval_mode?: "rsshub_live" | "db_fallback" | "rsshub_live_empty";
 };
 
 function sumPaid(edges: PaymentGraphEdge[]): number {
@@ -70,5 +71,6 @@ export function buildExitOutput(result: OrchestratorOutput): ExitOutput {
     source_selection_summary: result.sourceContext?.source_selection_summary,
     source_confidence: result.sourceContext?.source_confidence,
     source_count: result.sourceContext?.source_count,
+    source_retrieval_mode: result.sourceContext?.retrieval_mode,
   };
 }

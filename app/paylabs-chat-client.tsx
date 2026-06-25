@@ -121,8 +121,6 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     null;
 
   const assistantResponse =
-    (brainPlanning?.user_visible_reasoning as string) ??
-    (agentTraceBrain?.user_visible_reasoning as string) ??
     (brainPlanning?.assistant_response as string) ??
     (agentTraceBrain?.assistant_response as string) ??
     (brainPlanning?.plan_rationale as string) ??
