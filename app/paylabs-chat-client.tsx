@@ -1808,27 +1808,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
                 }}
               />
               <div className="pl-search-actions">
-                <span className="pl-plan-auto">Plan: Auto</span>
-                <div className="pl-budget">
-                  <span>Budget</span>
-                  <input
-                    value={budget}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      // Only allow valid number characters
-                      if (/^[\d.]*$/.test(v)) setBudget(v);
-                    }}
-                    onBlur={() => {
-                      // Format on blur to fix precision
-                      const n = parseFloat(budget);
-                      if (Number.isFinite(n) && n > 0) setBudget(n.toFixed(6));
-                      else setBudget("0.000100");
-                    }}
-                    type="text"
-                    inputMode="decimal"
-                  />
-                  <small>USDC</small>
-                </div>
+                <span className="pl-x402-badge">x402 protected</span>
                 <button
                   className="pl-run-btn"
                   onClick={submitChat}
