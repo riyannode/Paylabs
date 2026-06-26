@@ -120,7 +120,7 @@ ADVANCED macro nodes:
 ["discovery_planner", "payment_decision", "settlement_memory"]
 
 ADVANCED services:
-["intent_planner", "query_builder", "signal_scout", "intent_matcher", "source_verifier", "value_allocator", "trust_verifier", "payment_decider", "payment_router"]
+["intent_planner", "query_builder", "signal_scout", "intent_matcher", "source_verifier", "value_allocator", "trust_verifier", "payment_decider", "creator_attribution", "advanced_evidence_evaluator", "creator_payout_router"]
 
 Decision rules:
 - When unsure between EASY and NORMAL, choose NORMAL.
@@ -201,7 +201,9 @@ Use only these service names:
 - value_allocator
 - trust_verifier
 - payment_decider
-- payment_router
+- creator_attribution
+- advanced_evidence_evaluator
+- creator_payout_router
 
 BUDGET CEILING RULES
 

@@ -15,7 +15,6 @@
  *
  * Hard locks:
  *   - payment_decider → always deterministic (regardless of env)
- *   - payment_router → always deterministic (regardless of env)
  */
 
 import type { ServiceName } from "./types";
@@ -31,7 +30,6 @@ const DEFAULT_MODE: AgentServiceExecutionMode = "deterministic";
 
 const HARD_LOCKED_DETERMINISTIC: Set<string> = new Set([
   "payment_decider",
-  "payment_router",
 ]);
 
 // ─── LLM-capable services ───────────────────────────────────
@@ -57,7 +55,6 @@ const SERVICE_ENV_KEY_MAP: Record<string, string> = {
   value_allocator: "VALUE_ALLOCATOR",
   trust_verifier: "TRUST_VERIFIER",
   payment_decider: "PAYMENT_DECIDER",
-  payment_router: "PAYMENT_ROUTER",
 };
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -161,7 +158,7 @@ export function isAgentServiceLlmEnabled(): boolean {
 /**
  * Should this service run in deterministic mode?
  * True when:
- *   - service is hard-locked (payment_decider, payment_router), OR
+ *   - service is hard-locked (payment_decider), OR
  *   - service mode is "deterministic", OR
  *   - service LLM is disabled, OR
  *   - service is not LLM-capable
@@ -213,7 +210,6 @@ const ALL_SERVICES: ServiceName[] = [
   "value_allocator",
   "trust_verifier",
   "payment_decider",
-  "payment_router",
 ];
 
 /**
