@@ -94,11 +94,9 @@ function timeAgo(dateStr: string): string {
 export default async function DashboardPage() {
   const [
     rsshubRoutes,
-    feedItems,
     sourcePayments,
     totalSourcePaymentUsdc,
     routeRows,
-    feedItemRows,
     sourcePaymentRows,
     x402PaymentRows,
     receiptRows,
@@ -108,7 +106,6 @@ export default async function DashboardPage() {
     totalSettledUsdc,
   ] = await Promise.all([
     safeCount("paylabs_rsshub_routes", (q: any) => q.eq("is_active", true)),
-    safeCount("paylabs_feed_items", (q: any) => q.eq("is_active", true)),
     safeCount("paylabs_source_payments", (q: any) =>
       q.eq("status", "completed")
     ),
@@ -121,16 +118,6 @@ export default async function DashboardPage() {
         .select("*")
         .eq("is_active", true)
         .order("created_at", { ascending: false })
-        .limit(25)
-    ),
-    safeQuery(() =>
-      supabaseAdmin()
-        .from("paylabs_feed_items")
-        .select(
-          "id, title, summary, canonical_url, author_name, publisher, published_at, creator_wallet, is_monetized, price_per_citation_usdc, price_per_unlock_usdc, normalized_sha256, is_active"
-        )
-        .eq("is_active", true)
-        .order("published_at", { ascending: false, nullsFirst: false })
         .limit(25)
     ),
     safeQuery(() =>
@@ -200,7 +187,6 @@ export default async function DashboardPage() {
           { label: "Users (24h)", value: recentUsers24h },
           { label: "Users (7d)", value: recentUsers7d },
           { label: "RSSHub Routes", value: rsshubRoutes },
-          { label: "Feed Items", value: feedItems },
           { label: "Source Payments", value: sourcePayments },
           { label: "Source Payouts", value: usdc(totalSourcePaymentUsdc) },
           { label: "x402 Service Payments", value: servicePaymentCount },
@@ -269,65 +255,6 @@ export default async function DashboardPage() {
                       >
                         {r.is_active ? "active" : "inactive"}
                       </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* ─── Feed Items Table ──────────────────────────────── */}
-      <section className="card">
-        <h2 className="section-title">RSSHub Feed Items</h2>
-        {feedItemRows.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
-            No feed items yet. Run sync to import from RSSHub.
-          </div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Author</th>
-                  <th>Source URL</th>
-                  <th>Status</th>
-                  <th>Citation Price</th>
-                  <th>Hash</th>
-                  <th>Published</th>
-                </tr>
-              </thead>
-              <tbody>
-                {feedItemRows.map((f: any) => (
-                  <tr key={f.id}>
-                    <td style={{ fontWeight: 600 }}>
-                      {f.title || "(untitled)"}
-                    </td>
-                    <td>{f.author_name || f.publisher || "—"}</td>
-                    <td className="muted" style={{ fontSize: 11 }}>
-                      {f.canonical_url ? (
-                        <a href={f.canonical_url} target="_blank" rel="noopener noreferrer">
-                          {shortUrl(f.canonical_url, 35)}
-                        </a>
-                      ) : shortUrl(f.canonical_url, 35)}
-                    </td>
-                    <td>
-                      <span className={`badge ${f.is_monetized ? "badge-success" : ""}`} style={!f.is_monetized ? { fontSize: 10 } : undefined}>
-                        {f.is_monetized ? "Monetized" : "Sample"}
-                      </span>
-                    </td>
-                    <td className="data-mono">
-                      {f.is_monetized ? usdc(f.price_per_citation_usdc) : "Not monetized"}
-                    </td>
-                    <td className="data-mono" style={{ fontSize: 11 }}>
-                      {f.normalized_sha256
-                        ? short(f.normalized_sha256)
-                        : "—"}
-                    </td>
-                    <td className="muted">
-                      {f.published_at ? timeAgo(f.published_at) : "—"}
                     </td>
                   </tr>
                 ))}
