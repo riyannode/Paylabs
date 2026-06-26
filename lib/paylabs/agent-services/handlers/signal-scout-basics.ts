@@ -19,6 +19,18 @@
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 
+// ─── Stopwords — generic words that should never count as relevance signals ──
+const STOPWORDS = new Set([
+  "what", "when", "where", "which", "who", "whom", "how", "this", "that",
+  "these", "those", "with", "from", "into", "about", "between", "through",
+  "after", "before", "above", "below", "latest", "recent", "news", "update",
+  "updates", "article", "articles", "story", "stories", "report", "reports",
+  "blog", "post", "posts", "page", "pages", "find", "show", "search",
+  "look", "give", "tell", "want", "need", "know", "please", "could",
+  "would", "should", "valid", "ga", "check", "cek", "apa", "ada",
+  "yang", "dan", "atau", "untuk", "dari", "dengan", "ini", "itu",
+]);
+
 // ─── Deterministic Scoring ─────────────────────────────────
 
 function scoreItem(
@@ -27,8 +39,9 @@ function scoreItem(
   entityTerms: string[],
   negativeFilters: string[] = [],
   sourcePreferences: string[] = []
-): number {
+): { score: number; entityHit: boolean } {
   let score = 0;
+  let entityHit = false;
   const title = String(item.title || "").toLowerCase();
   const summary = String(item.summary || "").toLowerCase();
   const publisher = String(item.publisher || "").toLowerCase();
@@ -38,22 +51,24 @@ function scoreItem(
   const routePath = String(item.route_path || "").toLowerCase();
   const urlPath = (() => { try { return new URL(sourceUrl).pathname.toLowerCase(); } catch { return ""; } })();
 
-  // 1. Exact entity match (strongest signal)
+  // 1. Exact entity match (strongest signal) — weighted 2x
   for (const entity of entityTerms) {
     const lower = entity.toLowerCase();
     if (!lower) continue;
-    if (title.includes(lower)) score += 10;
-    else if (summary.includes(lower)) score += 4;
-    else if (sourceUrl.includes(lower)) score += 8; // URL contains entity
-    else if (routePath.includes(lower)) score += 7; // route_path contains entity
-    else if (urlPath.includes(lower)) score += 6; // URL path contains entity
-    else if (authorName.includes(lower)) score += 3;
-    else if (domain.includes(lower)) score += 2;
+    let matched = false;
+    if (title.includes(lower)) { score += 20; matched = true; }
+    else if (summary.includes(lower)) { score += 8; matched = true; }
+    else if (sourceUrl.includes(lower)) { score += 16; matched = true; }
+    else if (routePath.includes(lower)) { score += 14; matched = true; }
+    else if (urlPath.includes(lower)) { score += 12; matched = true; }
+    else if (authorName.includes(lower)) { score += 6; matched = true; }
+    else if (domain.includes(lower)) { score += 4; matched = true; }
+    if (matched) entityHit = true;
   }
 
-  // 2. Keyword overlap with queries
+  // 2. Keyword overlap with queries (skip stopwords and short words)
   for (const query of expandedQueries) {
-    const words = query.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
+    const words = query.toLowerCase().split(/\s+/).filter((w) => w.length > 3 && !STOPWORDS.has(w));
     for (const word of words) {
       if (title.includes(word)) score += 3;
       if (summary.includes(word)) score += 1;
@@ -91,7 +106,7 @@ function scoreItem(
     }
   }
 
-  return score;
+  return { score, entityHit };
 }
 
 // ─── Live RSSHub Search ─────────────────────────────────────
@@ -283,23 +298,27 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
   // ── Step 2: If live results found, rescore with deterministic keyword match ──
   if (liveResults.length > 0) {
     // Rescore with local deterministic scoring (overrides RSSHub relevance)
+    const MIN_SCORE = 3; // Minimum raw score to be considered relevant
+
     const rescored = liveResults
-      .map((item) => ({
-        ...item,
-        local_score: scoreItem(
+      .map((item) => {
+        const { score: local_score, entityHit } = scoreItem(
           item as unknown as Record<string, unknown>,
           expanded_queries || [],
           entity_terms || [],
           negative_filters || [],
           source_preferences || []
-        ),
-      }))
+        );
+        return { ...item, local_score, entityHit };
+      })
+      // Filter: must have entity match OR high keyword score
+      .filter((item) => item.entityHit || item.local_score >= MIN_SCORE)
       .sort((a, b) => b.local_score - a.local_score)
       .map((item, i) => ({
         ...item,
         rank: i + 1,
         relevance_score: item.local_score > 0
-          ? Math.min(item.local_score / 20, 1)
+          ? Math.min(item.local_score / 30, 1)
           : item.relevance_score,
       }));
 
