@@ -85,7 +85,8 @@ function scoreItem(
   item: NormalizedFeedItem,
   entityTerms: string[],
   expandedQueries: string[],
-  routeScore: number
+  routeScore: number,
+  routePath?: string
 ): { score: number; matchedTerms: string[] } {
   let score = 0;
   const matched: string[] = [];
@@ -93,6 +94,8 @@ function scoreItem(
   const title = (item.title || "").toLowerCase();
   const summary = (item.summary || "").toLowerCase();
   const domain = extractDomain(item.canonical_url || "")?.toLowerCase() || "";
+  const urlPath = (() => { try { return new URL(item.canonical_url || "").pathname.toLowerCase(); } catch { return ""; } })();
+  const rPath = (routePath || "").toLowerCase();
 
   // Exact entity match in title (strongest)
   for (const entity of entityTerms) {
@@ -106,6 +109,14 @@ function scoreItem(
       matched.push(entity);
     } else if (domain.includes(e)) {
       score += 5;
+      matched.push(entity);
+    } else if (urlPath.includes(e.replace(/\//g, "/"))) {
+      // Entity in source URL path (e.g. /riyannode/Paylabs in URL)
+      score += 12;
+      matched.push(entity);
+    } else if (rPath.includes(e.replace(/\//g, "/"))) {
+      // Entity in route path
+      score += 10;
       matched.push(entity);
     }
   }
@@ -426,11 +437,13 @@ export async function liveSearchRsshub(input: {
           item,
           entityTerms,
           expandedQueries,
-          route.route.heat
+          route.route.heat,
+          route.resolvedPath
         );
 
         // Filter out low-score unrelated items from relevant routes
-        const minItemScore = routeTier === "advanced" ? 2 : routeTier === "normal" ? 2 : 1;
+        // Minimum score 3 for Easy (was 1), 4 for Normal, 5 for Advanced
+        const minItemScore = routeTier === "advanced" ? 5 : routeTier === "normal" ? 4 : 3;
         if (scoring.score < minItemScore) continue;
 
         const sourceUrl = item.canonical_url || "";

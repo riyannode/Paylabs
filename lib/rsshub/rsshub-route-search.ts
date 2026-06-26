@@ -161,6 +161,114 @@ function scoreRoute(
   };
 }
 
+// ─── Intent Detection ──────────────────────────────────────
+
+interface RouteIntent {
+  scope: "github_repo" | "github_user" | "general";
+  owner?: string;
+  repo?: string;
+}
+
+/**
+ * Detect if the query is about a specific GitHub repo.
+ * Patterns: "owner/repo", "github.com/owner/repo", "repo owner/repo"
+ */
+function detectRouteIntent(
+  userGoal: string,
+  entityTerms: string[]
+): RouteIntent {
+  const allText = [userGoal, ...entityTerms].join(" ");
+
+  // Pattern 1: github.com/owner/repo
+  const ghUrlMatch = allText.match(/github\.com\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)/i);
+  if (ghUrlMatch) {
+    const owner = ghUrlMatch[1].toLowerCase();
+    const repo = ghUrlMatch[2].toLowerCase().replace(/\.git$/, "");
+    if (!["www", "com", "org", "io"].includes(owner) && repo.length >= 2) {
+      return { scope: "github_repo", owner, repo };
+    }
+  }
+
+  // Pattern 2: owner/repo in entity terms (strong signal)
+  for (const entity of entityTerms) {
+    const m = entity.match(/^([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)$/);
+    if (m) {
+      const owner = m[1].toLowerCase();
+      const repo = m[2].toLowerCase().replace(/\.git$/, "");
+      if (!["http", "https", "www", "com", "org", "io"].includes(owner) && repo.length >= 2) {
+        return { scope: "github_repo", owner, repo };
+      }
+    }
+  }
+
+  // Pattern 3: GitHub user activity (no repo)
+  if (/\bgithub\b/i.test(allText) && !/\bgithub\.com\//i.test(allText)) {
+    // Check for user-level hints
+    const userMatch = allText.match(/(?:github\s+(?:user|activity|profile)\s+(?:for\s+)?)?([a-zA-Z0-9_-]+)\b/i);
+    if (userMatch && entityTerms.some((e) => e.toLowerCase() === userMatch[1].toLowerCase())) {
+      return { scope: "github_user", owner: userMatch[1].toLowerCase() };
+    }
+  }
+
+  return { scope: "general" };
+}
+
+/** Boost/filter routes based on detected intent */
+function applyIntentFilter(
+  candidates: Array<{ route: RsshubCatalogRoute; score: number; matchedTerms: string[]; reason: string }>,
+  intent: RouteIntent
+): Array<{ route: RsshubCatalogRoute; score: number; matchedTerms: string[]; reason: string }> {
+  if (intent.scope === "general") return candidates;
+
+  return candidates.map((c) => {
+    const path = c.route.fullPath.toLowerCase();
+    let boost = 0;
+    let penalty = 0;
+
+    if (intent.scope === "github_repo") {
+      const owner = intent.owner || "";
+      const repo = intent.repo || "";
+
+      // Strong boost for repo-specific routes
+      if (path.includes("/github/repo_event/") && path.includes(`/${owner}/${repo}`)) {
+        boost += 20;
+      } else if (path.includes("/github/repo_event/") && path.includes(`/${owner}`)) {
+        boost += 15;
+      } else if (path.match(/\/github\/(issue|pull|pulse|branches|contributors|discussion|file|stars|wiki)\//)) {
+        // Other repo-specific GitHub routes
+        boost += 10;
+      } else if (path.includes("/github/activity/") || path.includes("/github/user_event/")) {
+        // User activity — acceptable fallback for repo queries
+        boost += 5;
+      } else if (path.includes("/github/")) {
+        // Other GitHub routes (search, trending, etc.) — less relevant
+        penalty -= 3;
+      }
+
+      // Penalize non-GitHub routes heavily for repo queries
+      if (!path.includes("/github/")) {
+        penalty -= 15;
+      }
+    }
+
+    if (intent.scope === "github_user") {
+      if (path.includes("/github/activity/") || path.includes("/github/user_event/")) {
+        boost += 15;
+      } else if (path.includes("/github/")) {
+        boost += 5;
+      } else {
+        penalty -= 10;
+      }
+    }
+
+    return {
+      ...c,
+      score: Math.max(0, c.score + boost + penalty),
+      reason: c.reason + (boost > 0 ? `,intent_boost:+${boost}` : "") + (penalty < 0 ? `,intent_penalty:${penalty}` : ""),
+    };
+  }).filter((c) => c.score > 0);
+}
+
 // ─── Public API ─────────────────────────────────────────────
 
 /**
@@ -219,5 +327,9 @@ export async function searchRsshubRoutes(input: {
     return b.route.heat - a.route.heat;
   });
 
-  return scored.slice(0, limit);
+  // Apply intent filter (GitHub repo scoping, etc.)
+  const intent = detectRouteIntent(userGoal, uniqueEntities);
+  const filtered = applyIntentFilter(scored, intent);
+
+  return filtered.slice(0, limit);
 }

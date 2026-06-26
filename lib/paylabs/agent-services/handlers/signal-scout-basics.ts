@@ -34,6 +34,9 @@ function scoreItem(
   const publisher = String(item.publisher || "").toLowerCase();
   const authorName = String(item.author_name || "").toLowerCase();
   const domain = String(item.domain || "").toLowerCase();
+  const sourceUrl = String(item.source_url || item.url || "").toLowerCase();
+  const routePath = String(item.route_path || "").toLowerCase();
+  const urlPath = (() => { try { return new URL(sourceUrl).pathname.toLowerCase(); } catch { return ""; } })();
 
   // 1. Exact entity match (strongest signal)
   for (const entity of entityTerms) {
@@ -41,6 +44,9 @@ function scoreItem(
     if (!lower) continue;
     if (title.includes(lower)) score += 10;
     else if (summary.includes(lower)) score += 4;
+    else if (sourceUrl.includes(lower)) score += 8; // URL contains entity
+    else if (routePath.includes(lower)) score += 7; // route_path contains entity
+    else if (urlPath.includes(lower)) score += 6; // URL path contains entity
     else if (authorName.includes(lower)) score += 3;
     else if (domain.includes(lower)) score += 2;
   }

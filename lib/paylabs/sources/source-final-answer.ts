@@ -2,12 +2,12 @@
  * Source-Grounded Final Answer Builder
  *
  * Generates a concise user-facing answer from source_context.
- * Deterministic — no LLM for v1.
+ * Deterministic for Easy tier — no LLM.
  *
  * Rules:
- * - Use only safe source fields: title, summary, domain, published_at, provider.
- * - If sources exist: answer what was found, mention links below.
- * - If no source: explicit "no relevant source found" message.
+ * - Use safe fields: title, summary, domain, published_at, url, route_path.
+ * - If sources exist: answer WHAT was found with titles + summaries.
+ * - If sources don't match the user's entity/intent: return no-match answer.
  * - No raw CoT. No raw RSS payload. No fabricated facts.
  */
 
@@ -23,11 +23,75 @@ export interface FinalAnswerInput {
   maxSourcesInAnswer?: number;
 }
 
+// ─── Helpers ────────────────────────────────────────────────
+
+/** Extract owner/repo pattern from goal string */
+function extractOwnerRepo(goal: string): { owner: string; repo: string } | null {
+  // Match "owner/repo" or "github.com/owner/repo"
+  const patterns = [
+    /github\.com\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)/i,
+    /\b([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)\b/,
+  ];
+  for (const p of patterns) {
+    const m = goal.match(p);
+    if (m) {
+      const owner = m[1].toLowerCase();
+      const repo = m[2].toLowerCase().replace(/\.git$/, "");
+      // Skip common false positives
+      if (["http", "https", "www", "com", "org", "io"].includes(owner)) continue;
+      if (repo.length < 2) continue;
+      return { owner, repo };
+    }
+  }
+  return null;
+}
+
+/** Check if a source matches the user's intent (entity in title/summary/url/route_path) */
+function sourceMatchesIntent(s: SourceItem, ownerRepo: { owner: string; repo: string } | null): boolean {
+  if (!ownerRepo) return true; // No entity to match against
+
+  const { owner, repo } = ownerRepo;
+  const title = (s.title || "").toLowerCase();
+  const summary = (s.summary || "").toLowerCase();
+  const url = (s.url || "").toLowerCase();
+  const routePath = (s.route_path || "").toLowerCase();
+  const domain = (s.domain || "").toLowerCase();
+
+  // Check owner/repo in various fields
+  const ownerRepoCombined = `${owner}/${repo}`;
+  if (title.includes(ownerRepoCombined) || title.includes(repo)) return true;
+  if (summary.includes(ownerRepoCombined) || summary.includes(repo)) return true;
+  if (url.includes(ownerRepoCombined)) return true;
+  if (routePath.includes(`/${owner}/${repo}`) || routePath.includes(`/${owner}`)) return true;
+  if (domain.includes(owner)) return true;
+
+  return false;
+}
+
+/** Format a single source as a concise bullet */
+function formatSourceBullet(s: SourceItem, index: number): string {
+  const title = s.title || "(untitled)";
+  const domain = s.domain ? ` (${s.domain})` : "";
+  const published = s.published_at
+    ? new Date(s.published_at).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })
+    : "";
+  const dateStr = published ? `, ${published}` : "";
+
+  // Include brief summary excerpt if available
+  const summaryExcerpt = s.summary
+    ? s.summary.replace(/\n+/g, " ").slice(0, 120).trim()
+    : "";
+  const summarySuffix = summaryExcerpt ? ` — ${summaryExcerpt}${summaryExcerpt.length >= 120 ? "..." : ""}` : "";
+
+  return `[${index}] ${title}${domain}${dateStr}${summarySuffix}`;
+}
+
 // ─── Public API ─────────────────────────────────────────────
 
 /**
  * Build a deterministic source-grounded final answer.
- * v1: template-based summary. v2 (PR C/D): LLM from excerpts.
+ * Easy tier: deterministic template with real source content.
+ * Normal/Advanced: same template (LLM re-ranking happens elsewhere).
  */
 export function buildSourceGroundedFinalAnswer(
   input: FinalAnswerInput
@@ -45,61 +109,47 @@ export function buildSourceGroundedFinalAnswer(
     return "Tidak menemukan source yang cukup relevan untuk menjawab pertanyaan ini. Coba dengan query yang lebih spesifik atau topik berbeda.";
   }
 
-  // Sources found — build answer
-  const topSources = sourcesUsed.slice(0, maxSourcesInAnswer);
-  const totalSources = sourcesUsed.length;
+  // Check entity intent match
+  const ownerRepo = extractOwnerRepo(goal);
+  const matchingSources = sourcesUsed.filter((s) => sourceMatchesIntent(s, ownerRepo));
 
-  // Group by provider
-  const providers = new Set(
-    topSources.map((s) => {
-      if (s.source_kind === "rsshub_live") return "RSSHub";
-      if (s.source_kind === "tavily_live") return "Web Search";
-      return "Database";
-    })
-  );
+  // If entity was specified but NO sources match it, treat as no-match
+  if (ownerRepo && matchingSources.length === 0) {
+    return `Tidak menemukan source yang relevan untuk ${ownerRepo.owner}/${ownerRepo.repo}. Source yang ditemukan tidak berkaitan dengan repository tersebut.`;
+  }
 
-  // Build domains list
-  const domains = new Set(
-    topSources.map((s) => s.domain).filter(Boolean)
-  );
+  // Use matching sources (or all if no entity filter)
+  const relevantSources = matchingSources.length > 0 ? matchingSources : sourcesUsed;
+  const topSources = relevantSources.slice(0, maxSourcesInAnswer);
+  const totalRelevant = relevantSources.length;
 
   // Build answer
   const parts: string[] = [];
 
-  // Opening
-  parts.push(
-    `Ditemukan ${totalSources} source relevan dari ${providers.size > 1 ? "beberapa provider" : [...providers][0] || "RSSHub"}.`
-  );
-
-  // Key findings from source titles
-  const uniqueDomains = [...domains].slice(0, 3);
-  if (uniqueDomains.length > 0) {
-    parts.push(
-      `Sumber dari: ${uniqueDomains.join(", ")}.`
-    );
+  // Opening — context-aware
+  if (ownerRepo) {
+    parts.push(`Aktivitas terbaru yang ditemukan untuk ${ownerRepo.owner}/${ownerRepo.repo}:`);
+  } else {
+    // Generic opening based on goal keywords
+    const goalLower = goal.toLowerCase();
+    if (goalLower.includes("news") || goalLower.includes("latest") || goalLower.includes("update")) {
+      parts.push(`Berikut ${totalRelevant} source terbaru yang ditemukan:`);
+    } else if (goalLower.includes("research") || goalLower.includes("paper") || goalLower.includes("analysis")) {
+      parts.push(`Ditemukan ${totalRelevant} source terkait riset/analisis:`);
+    } else {
+      parts.push(`Ditemukan ${totalRelevant} source relevan dari RSSHub:`);
+    }
   }
 
-  // Source-backed bullets (title-based only for v1)
-  if (topSources.length > 0) {
-    parts.push("Sumber utama:");
-    for (let i = 0; i < Math.min(topSources.length, 3); i++) {
-      const s = topSources[i];
-      const domain = s.domain ? ` (${s.domain})` : "";
-      parts.push(`[${i + 1}] ${s.title}${domain}`);
-    }
+  // Source bullets with real content
+  for (let i = 0; i < topSources.length; i++) {
+    parts.push(formatSourceBullet(topSources[i], i + 1));
   }
 
   // Confidence note if low
   if (sourceConfidence < 0.3) {
-    parts.push(
-      "Catatan: relevansi sumber masih terbatas. Hasil bisa kurang akurat."
-    );
+    parts.push("Catatan: relevansi sumber masih terbatas. Hasil bisa kurang akurat.");
   }
 
-  // Retrieval mode note
-  if (retrievalMode && retrievalMode !== "rsshub_live") {
-    parts.push(`(Mode: ${retrievalMode})`);
-  }
-
-  return parts.join(" ");
+  return parts.join("\n");
 }
