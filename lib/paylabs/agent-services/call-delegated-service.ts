@@ -33,6 +33,7 @@ import { isX402EnabledForService } from "../feature-flags";
 import { getDcwSigner } from "../x402/dcw-signer-adapter";
 import { callPaidSeller } from "../x402/buyer-transport";
 import { verifySufficientBalance } from "../x402/gateway-balance";
+import { resolvePaylabsAppUrl } from "../runtime/resolve-app-url";
 import type { ServiceName, ServiceHandlerInput, ServiceHandlerOutput } from "./types";
 
 // ─── Input ───────────────────────────────────────────────────
@@ -88,24 +89,11 @@ export interface CallDelegatedServiceOutput {
 
 /**
  * Resolve the absolute seller URL for a service endpoint.
+ * Uses shared resolvePaylabsAppUrl() to align with inline route URL resolution.
  * Fails closed if no base URL is configured (never silently builds relative URL).
  */
 function resolveSellerUrl(serviceEndpointPath: string): string {
-  // Prefer VERCEL_URL (auto-set by Vercel to current deployment hostname)
-  // to avoid chicken-and-egg: PAYLABS_APP_URL may point to old deployment
-  const vercelUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : undefined;
-  const baseUrl =
-    vercelUrl ||
-    process.env.PAYLABS_APP_URL ||
-    process.env.NEXT_PUBLIC_PAYLABS_APP_URL ||
-    "";
-  if (!baseUrl) {
-    throw new Error(
-      "config_error: PAYLABS_APP_URL or NEXT_PUBLIC_PAYLABS_APP_URL must be set for x402-enabled services"
-    );
-  }
+  const { baseUrl } = resolvePaylabsAppUrl();
   // Normalize: strip trailing slash from base, ensure leading slash on path
   const normalizedBase = baseUrl.replace(/\/+$/, "");
   const normalizedPath = serviceEndpointPath.startsWith("/")

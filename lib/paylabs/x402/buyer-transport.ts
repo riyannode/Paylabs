@@ -579,6 +579,47 @@ export async function callPaidSeller(
     }
   }
 
+  // Handle HTTP timeout responses (408, 504, 524) with recovery polling.
+  // fetch() succeeded but the hosting/proxy layer timed out after payment.
+  const isHttpTimeout = [408, 504, 524].includes(retryResp.status);
+  if (isHttpTimeout && retryRunId && recoverResultById) {
+    console.warn("[buyer-transport] seller returned HTTP timeout after payment, attempting recovery", {
+      status: retryResp.status,
+      retryRunId: retryRunId.slice(0, 8),
+    });
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const recovered = await recoverResultById(retryRunId);
+        if (recovered) {
+          const recoveredData = recovered as Record<string, unknown>;
+          const status = recoveredData?.status as string;
+          if (status === "completed" || status === "paid_path_available") {
+            console.info("[buyer-transport] HTTP timeout recovery succeeded", {
+              retryRunId: retryRunId.slice(0, 8),
+              attempt,
+              status,
+            });
+            return {
+              ok: true,
+              status: 200,
+              data: recovered,
+              paymentMetadata: extractPaymentMetadata(gatewayReq, paymentPayload),
+            };
+          }
+        }
+      } catch (recoveryErr) {
+        console.warn("[buyer-transport] HTTP timeout recovery attempt failed", {
+          attempt,
+          error: recoveryErr instanceof Error ? recoveryErr.message.slice(0, 100) : String(recoveryErr).slice(0, 100),
+        });
+      }
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+      }
+    }
+  }
+
   let retryData: unknown;
   try {
     retryData = await retryResp.json();

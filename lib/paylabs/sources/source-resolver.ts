@@ -212,8 +212,8 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string): Sourc
     entityTerms.push(ownerRepoMatch[2].toLowerCase());
   }
 
-  // Domain-specific intent
-  const isGitHubIntent = goalLower.includes("github") || goalLower.includes("repo") || !!ownerRepoMatch;
+  // Domain-specific intent — use word boundaries to avoid "report" matching "repo"
+  const isGitHubIntent = /\bgithub\b/i.test(goalLower) || /\brepo(s|sitory|sitories)?\b/i.test(goalLower) || !!ownerRepoMatch;
   const isNewsIntent = goalLower.includes("news") || goalLower.includes("latest") || goalLower.includes("update");
 
   const filtered = sources.filter((src) => {

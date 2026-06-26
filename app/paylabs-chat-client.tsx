@@ -82,14 +82,15 @@ function short(value?: string | null, chars = 6): string {
   return `${value.slice(0, chars)}…${value.slice(-chars)}`;
 }
 
-/** Detect deterministic source inventory answers that should be hidden from user */
+/** Detect deterministic source inventory answers that should be hidden from user.
+ *  NOTE: "Latest activity found for ..." is a real source-grounded answer from
+ *  buildSourceGroundedFinalAnswer() — do NOT suppress it. */
 function isSourceInventoryAnswer(value?: string | null): boolean {
   if (!value) return false;
   return (
     /Found\s+\d+\s+(relevant\s+)?sources/i.test(value) ||
     /Here are\s+\d+\s+latest sources/i.test(value) ||
     /No (sufficiently )?relevant sources found/i.test(value) ||
-    /Latest activity found for/i.test(value) ||
     /No relevant sources found for/i.test(value) ||
     /\(Mode:\s*(db_fallback|rsshub_live|tavily_live|none)\)/i.test(value)
   );
