@@ -15,6 +15,7 @@
 import { callDelegatedService } from "../../agent-services/call-delegated-service";
 import type { ServiceName } from "../../agent-services/types";
 import type { ServiceEvaluation, PaymentEdge } from "../../delegated-runtime/types";
+import { isX402EnabledForService } from "../../feature-flags";
 import { randomUUID } from "node:crypto";
 
 // ─── Types ──────────────────────────────────────────────────
@@ -59,25 +60,41 @@ export function createServiceNode(
     // Check if this service is in the selected services list
     // Only skip when skipIfNotSelected === true (default: false for macro graph children)
     const shouldApplySelectionGuard = options?.skipIfNotSelected === true;
+    console.log("[service-node-selection]", JSON.stringify({
+      discoveryRunId,
+      macroNode,
+      serviceName,
+      selectedServices: selectedServices || [],
+      skipIfNotSelected: options?.skipIfNotSelected === true,
+      willSkip: Boolean(
+        options?.skipIfNotSelected === true &&
+        selectedServices &&
+        selectedServices.length > 0 &&
+        !selectedServices.includes(serviceName)
+      ),
+    }));
     if (shouldApplySelectionGuard && selectedServices && selectedServices.length > 0 && !selectedServices.includes(serviceName)) {
       const summary = `${macroNode} → ${serviceName}: skipped (not in execution plan)`;
+      const skippedEval: ServiceEvaluation = {
+        serviceName,
+        macroNode: macroNode as ServiceEvaluation["macroNode"],
+        input: {},
+        output: null,
+        safeSummary: summary,
+        status: "skipped",
+        costUsdc: 0,
+        startedAt: null,
+        completedAt: null,
+        error: null,
+        settled: false,
+        mode: "audit_only",
+      };
       return {
+        serviceEvaluations: [skippedEval],
+        paymentEdges: [],
         progressSummaries: [summary],
         _serviceResult: {
-          serviceEvaluations: [{
-            serviceName,
-            macroNode: macroNode as ServiceEvaluation["macroNode"],
-            input: {},
-            output: null,
-            safeSummary: summary,
-            status: "skipped",
-            costUsdc: 0,
-            startedAt: null,
-            completedAt: null,
-            error: null,
-            settled: false,
-            mode: "audit_only",
-          }],
+          serviceEvaluations: [skippedEval],
           paymentEdges: [],
           progressSummaries: [summary],
           budgetDelta: { serviceName, costUsdc: 0, settled: false },
@@ -92,15 +109,7 @@ export function createServiceNode(
     // Safe diagnostic for x402 child validation (no secrets)
     const isRequired = options?.required !== false && options?.paymentLayer === "macro_to_child";
     const skipIfNotSel = options?.skipIfNotSelected === true;
-    const x402EnabledForService = ((): boolean => {
-      try {
-        // Dynamic import to avoid circular deps — feature-flags is safe to call
-        const rawEnv = (process.env.PAYLABS_X402_ENABLED_SERVICE_NAMES || "").trim();
-        if (!rawEnv) return false;
-        const enabled = rawEnv.split(",").map((s: string) => s.trim().toLowerCase());
-        return enabled.includes(serviceName.toLowerCase());
-      } catch { return false; }
-    })();
+    const x402EnabledForService = isX402EnabledForService(serviceName);
     console.log(`[x402-child-required] ${JSON.stringify({
       discoveryRunId,
       macroNode,
@@ -117,23 +126,26 @@ export function createServiceNode(
     // Do NOT silently downgrade to audit_only
     if (isRequired && !x402EnabledForService) {
       const summary = `${macroNode} → ${serviceName}: FAILED (required x402 child not enabled)`;
+      const failedEval: ServiceEvaluation = {
+        serviceName,
+        macroNode: macroNode as ServiceEvaluation["macroNode"],
+        input: {},
+        output: null,
+        safeSummary: summary,
+        status: "failed",
+        costUsdc: 0,
+        startedAt: null,
+        completedAt: null,
+        error: "required x402 child not enabled in PAYLABS_X402_ENABLED_SERVICE_NAMES",
+        settled: false,
+        mode: "x402",
+      };
       return {
+        serviceEvaluations: [failedEval],
+        paymentEdges: [],
         progressSummaries: [summary],
         _serviceResult: {
-          serviceEvaluations: [{
-            serviceName,
-            macroNode: macroNode as ServiceEvaluation["macroNode"],
-            input: {},
-            output: null,
-            safeSummary: summary,
-            status: "failed",
-            costUsdc: 0,
-            startedAt: null,
-            completedAt: null,
-            error: "required x402 child not enabled in PAYLABS_X402_ENABLED_SERVICE_NAMES",
-            settled: false,
-            mode: "x402",
-          }],
+          serviceEvaluations: [failedEval],
           paymentEdges: [],
           progressSummaries: [summary],
           budgetDelta: { serviceName, costUsdc: 0, settled: false },

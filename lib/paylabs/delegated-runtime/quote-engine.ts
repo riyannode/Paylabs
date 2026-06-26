@@ -62,7 +62,7 @@ export const TIER_PHASE_MAP: Record<DelegatedRouteTier, MacroNodePhase[]> = {
 // ─── Tier → Service Presets (canonical bundles) ──────────────
 
 export const TIER_SERVICE_PRESETS: Record<DelegatedRouteTier, ServiceName[]> = {
-  easy: ["intent_planner", "query_builder", "signal_scout"],
+  easy: ["intent_planner", "query_builder", "signal_scout_basics"],
   normal: [
     "intent_planner", "query_builder", "signal_scout",
     "intent_matcher", "source_verifier", "value_allocator",
@@ -82,6 +82,7 @@ export const SERVICE_MACRO_MAP: Record<ServiceName, MacroNodePhase> = {
   intent_planner: "discovery_planner",
   query_builder: "discovery_planner",
   signal_scout: "discovery_planner",
+  signal_scout_basics: "discovery_planner",
   intent_matcher: "payment_decision",
   source_verifier: "payment_decision",
   value_allocator: "payment_decision",

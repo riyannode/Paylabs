@@ -88,6 +88,13 @@ export interface X402BuyerCallInput {
    * Default: false (non-402 treated as free response).
    */
   requirePayment?: boolean;
+  /**
+   * Optional callback to recover a stored result after paid retry timeout.
+   * Called with the discoveryRunId. Returns the stored result if available,
+   * or null if not yet ready. Allows the caller (dcw/run-paid) to query
+   * Supabase directly without coupling buyer-transport to the DB.
+   */
+  recoverResultById?: (runId: string) => Promise<unknown | null>;
 }
 
 export interface X402BuyerCallResult {
@@ -205,6 +212,7 @@ export async function callPaidSeller(
     sellerServiceName,
     maxAmountUsdc,
     requirePayment = false,
+    recoverResultById,
   } = input;
 
   // ── SSRF guard: validate seller URL ─────────────────────
@@ -309,6 +317,46 @@ export async function callPaidSeller(
       error: "No Circle Gateway batching option in 402 challenge",
       challengeStatus: 402,
     };
+  }
+
+  // ── Step 2.5: Pre-payment seller health check ───────────
+  // Before committing payment, verify the seller endpoint is alive.
+  // Derive health URL from sellerUrl (e.g. /api/paylabs/brain/run → /api/paylabs/health)
+  // If health check fails, abort before spending USDC.
+  {
+    const sellerParsed = new URL(sellerUrl);
+    const healthUrl = `${sellerParsed.origin}/api/paylabs/health`;
+    try {
+      const healthResp = await fetch(healthUrl, {
+        method: "GET",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!healthResp.ok) {
+        return {
+          ok: false,
+          error: `Seller health check failed (HTTP ${healthResp.status}) before payment. Aborting to prevent lost payment.`,
+          challengeStatus: 402,
+        };
+      }
+      const healthData = await healthResp.json().catch(() => ({})) as Record<string, unknown>;
+      if (healthData.ok !== true) {
+        return {
+          ok: false,
+          error: `Seller health check returned unhealthy: ${JSON.stringify(healthData).slice(0, 200)}. Aborting to prevent lost payment.`,
+          challengeStatus: 402,
+        };
+      }
+      if (process.env.NODE_ENV !== "production") {
+        console.debug("[buyer-transport] pre-payment health check passed", { healthUrl });
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return {
+        ok: false,
+        error: `Seller health check unreachable (${msg}) before payment. Aborting to prevent lost payment.`,
+        challengeStatus: 402,
+      };
+    }
   }
 
   // ── Step 3: Validate amount ──────────────────────────────
@@ -435,6 +483,10 @@ export async function callPaidSeller(
     : body;
 
   let retryResp: Response;
+  // Env-configurable retry timeout: seller may need cold RSSHub catalog + Brain LLM
+  const rawRetryTimeout = Number(process.env.PAYLABS_X402_BUYER_RETRY_TIMEOUT_MS) || 250_000;
+  const retryTimeoutMs = Math.max(30_000, Math.min(270_000, rawRetryTimeout));
+
   try {
     retryResp = await fetch(finalRetryUrl, {
       method,
@@ -443,14 +495,68 @@ export async function callPaidSeller(
         "PAYMENT-SIGNATURE": paymentSignatureValue,
       },
       body: retryBody ? JSON.stringify(retryBody) : undefined,
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(retryTimeoutMs),
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
+    const isTimeout = msg.includes("timeout") || msg.includes("aborted") || msg.includes("AbortError");
+    const paymentMetadata = extractPaymentMetadata(gatewayReq, paymentPayload);
+
+    if (isTimeout && retryRunId && recoverResultById) {
+      // ── Post-payment recovery: poll caller's result store ──
+      console.warn("[buyer-transport] seller retry timed out after payment, attempting recovery", {
+        retryRunId: retryRunId.slice(0, 8),
+        retryTimeoutMs,
+      });
+
+      // Poll up to 3 times with 5s delay
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const recovered = await recoverResultById(retryRunId);
+          if (recovered) {
+            const recoveredData = recovered as Record<string, unknown>;
+            const status = recoveredData?.status as string;
+            if (status === "completed" || status === "paid_path_available") {
+              console.info("[buyer-transport] recovery succeeded", {
+                retryRunId: retryRunId.slice(0, 8),
+                attempt,
+                status,
+              });
+              return {
+                ok: true,
+                status: 200,
+                data: recovered,
+                paymentMetadata,
+              };
+            }
+            // Result exists but not yet complete
+            if (attempt === 3) {
+              return {
+                ok: false,
+                error: `seller_retry_timeout_after_payment: result still pending (status=${status}). Run ID: ${retryRunId.slice(0, 8)}`,
+                paymentMetadata,
+              };
+            }
+          }
+        } catch (recoveryErr) {
+          console.warn("[buyer-transport] recovery attempt failed", {
+            attempt,
+            error: recoveryErr instanceof Error ? recoveryErr.message.slice(0, 100) : String(recoveryErr).slice(0, 100),
+          });
+        }
+        // Wait before next poll (skip on last attempt)
+        if (attempt < 3) {
+          await new Promise((resolve) => setTimeout(resolve, 5_000));
+        }
+      }
+    }
+
     return {
       ok: false,
-      error: `Seller endpoint unreachable after payment: ${msg}`,
-      paymentMetadata: extractPaymentMetadata(gatewayReq, paymentPayload),
+      error: isTimeout
+        ? `seller_retry_timeout_after_payment: ${msg}`
+        : `Seller endpoint unreachable after payment: ${msg}`,
+      paymentMetadata,
     };
   }
 
@@ -470,6 +576,47 @@ export async function callPaidSeller(
         data,
         paymentMetadata: extractPaymentMetadata(gatewayReq, paymentPayload),
       };
+    }
+  }
+
+  // Handle HTTP timeout responses (408, 504, 524) with recovery polling.
+  // fetch() succeeded but the hosting/proxy layer timed out after payment.
+  const isHttpTimeout = [408, 504, 524].includes(retryResp.status);
+  if (isHttpTimeout && retryRunId && recoverResultById) {
+    console.warn("[buyer-transport] seller returned HTTP timeout after payment, attempting recovery", {
+      status: retryResp.status,
+      retryRunId: retryRunId.slice(0, 8),
+    });
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const recovered = await recoverResultById(retryRunId);
+        if (recovered) {
+          const recoveredData = recovered as Record<string, unknown>;
+          const status = recoveredData?.status as string;
+          if (status === "completed" || status === "paid_path_available") {
+            console.info("[buyer-transport] HTTP timeout recovery succeeded", {
+              retryRunId: retryRunId.slice(0, 8),
+              attempt,
+              status,
+            });
+            return {
+              ok: true,
+              status: 200,
+              data: recovered,
+              paymentMetadata: extractPaymentMetadata(gatewayReq, paymentPayload),
+            };
+          }
+        }
+      } catch (recoveryErr) {
+        console.warn("[buyer-transport] HTTP timeout recovery attempt failed", {
+          attempt,
+          error: recoveryErr instanceof Error ? recoveryErr.message.slice(0, 100) : String(recoveryErr).slice(0, 100),
+        });
+      }
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+      }
     }
   }
 

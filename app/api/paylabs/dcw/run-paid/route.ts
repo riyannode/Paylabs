@@ -88,7 +88,21 @@ export async function POST(req: NextRequest) {
     const { checkGatewayBalance } = await import("@/lib/paylabs/x402/gateway-balance");
     const gwBalance = await checkGatewayBalance({ depositor: wallet.wallet_address });
 
-    if (!gwBalance.ok || parseFloat(gwBalance.balanceUsdc || "0") <= 0) {
+    if (!gwBalance.ok) {
+      // Gateway API unreachable or errored — distinguish from zero balance
+      console.error("[dcw/run-paid] Gateway balance check failed", {
+        error: gwBalance.error?.slice(0, 120),
+        depositor: wallet.wallet_address?.slice(0, 10) + "...",
+      });
+      return NextResponse.json({
+        ok: false,
+        error: `Gateway balance check failed: ${gwBalance.error || "unknown"}. Retry in a moment.`,
+        balanceUsdc: gwBalance.balanceUsdc || "0",
+        gatewayError: true,
+      }, { status: 503 });
+    }
+
+    if (parseFloat(gwBalance.balanceUsdc || "0") <= 0) {
       return NextResponse.json({
         ok: false,
         error: "Insufficient Gateway balance. Deposit USDC to your wallet first.",
@@ -142,6 +156,37 @@ export async function POST(req: NextRequest) {
       sellerServiceName: "discovery",
       maxAmountUsdc,
       requirePayment: true,
+      // Post-payment recovery callback: query Supabase for stored result
+      recoverResultById: async (runId: string) => {
+        const { data: run } = await supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .select("id, status, final_answer, route_tier, effective_route_tier, brain_route_tier_hint, agent_trace, source_snapshot, error_summary")
+          .eq("id", runId)
+          .single();
+
+        if (!run) return null;
+        if (run.status !== "completed" && run.status !== "paid_path_available") return null;
+
+        // Reconstruct safe result from stored data.
+        // Inline route stores final_answer/source_context in agent_trace,
+        // not in source_snapshot or the final_answer column.
+        const sourceSnapshot = (run.source_snapshot as Record<string, unknown>) || {};
+        const agentTrace = (run.agent_trace as Record<string, unknown>) || {};
+
+        return {
+          ok: true,
+          status: "completed",
+          final_answer: run.final_answer || sourceSnapshot.final_answer || agentTrace.final_answer || null,
+          effective_route_tier: run.effective_route_tier || run.route_tier,
+          brain_route_tier_hint: run.brain_route_tier_hint,
+          source_context: sourceSnapshot.source_context || agentTrace.source_context || null,
+          payment_graph: agentTrace.payment_graph || null,
+          quote: agentTrace.quote || null,
+          exit_output: agentTrace.exit_output || null,
+          _recovered: true,
+          _recovery_source: "supabase_poll",
+        };
+      },
     });
 
     // 8. Build UCW-compatible entry_payment shape
