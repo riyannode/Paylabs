@@ -30,19 +30,6 @@ function shortAddr(addr?: string | null) {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
-function isMobileBrowser(): boolean {
-  return typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label}_timeout`)), ms)
-    ),
-  ]);
-}
-
 function asDecimal(value?: string | null): number {
   const n = Number(value ?? "0");
   return Number.isFinite(n) ? n : 0;
@@ -205,41 +192,12 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
     return () => clearInterval(interval);
   }, [open, handleGoogleSignIn]);
 
-  /** Trigger Google One Tap / sign-in prompt — FedCM-first, GSI fallback */
+  /** Trigger Google sign-in prompt — direct GSI, no FedCM */
   const triggerGoogleSignIn = useCallback(async () => {
     setIsGoogleLoading(true);
     setError(null);
 
     try {
-      const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-      const isMobile = isMobileBrowser();
-
-      // ── Skip FedCM on mobile (hangs in Android Chrome / custom tab) ──
-      if (!isMobile && clientId && "IdentityProvider" in globalThis) {
-        try {
-          const cred = await withTimeout(
-            navigator.credentials.get({
-              identity: {
-                providers: [{
-                  configURL: "https://accounts.google.com/gi/fedcm.json",
-                  clientId,
-                }],
-              },
-            } as CredentialRequestOptions),
-            8000,
-            "fedcm"
-          );
-
-          if (cred && "token" in cred && typeof (cred as { token: unknown }).token === "string") {
-            await handleGoogleSignIn((cred as { token: string }).token);
-            return;
-          }
-        } catch {
-          // FedCM failed (timeout, rejection, or error) — fall through to legacy GSI
-        }
-      }
-
-      // ── Fallback: legacy GSI One Tap prompt ──
       const g = (window as unknown as Record<string, unknown>).google as
         | { accounts?: { id?: { prompt: Function } } }
         | undefined;
@@ -248,15 +206,21 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
         throw new Error("Google Sign-In not loaded. Please try OTP or Passkey.");
       }
 
-      await withTimeout(
-        new Promise<void>((resolve) => {
-          g.accounts!.id!.prompt(() => resolve());
-        }),
-        8000,
-        "google_prompt"
-      );
+      // prompt() callback fires when popup is dismissed (user picks account OR closes).
+      // Do NOT timeout — let the user interact at their own pace.
+      await new Promise<void>((resolve) => {
+        g.accounts!.id!.prompt((notification: { isNotDisplayed: () => boolean; isSkippedMoment: () => boolean; getDismissedReason: () => string; getMomentType: () => string }) => {
+          if (notification.isNotDisplayed()) {
+            const reason = notification.getDismissedReason?.() || "unknown";
+            setError(`Google prompt not shown (${reason}). Try OTP or Passkey.`);
+          } else if (notification.isSkippedMoment()) {
+            // Auto-sign-in skipped — user needs to click manually, don't error
+          }
+          resolve();
+        });
+      });
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Google Sign-In timed out. Try OTP or Passkey.");
+      setError(e instanceof Error ? e.message : "Google Sign-In failed. Try OTP or Passkey.");
     } finally {
       setIsGoogleLoading(false);
     }
