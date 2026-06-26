@@ -443,7 +443,8 @@ export async function callPaidSeller(
         "PAYMENT-SIGNATURE": paymentSignatureValue,
       },
       body: retryBody ? JSON.stringify(retryBody) : undefined,
-      signal: AbortSignal.timeout(30000),
+      // 120s timeout for retry: seller may need cold RSSHub catalog fetch + pipeline
+      signal: AbortSignal.timeout(120_000),
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

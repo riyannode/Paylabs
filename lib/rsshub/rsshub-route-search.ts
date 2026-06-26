@@ -220,53 +220,51 @@ function applyIntentFilter(
 ): Array<{ route: RsshubCatalogRoute; score: number; matchedTerms: string[]; reason: string }> {
   if (intent.scope === "general") return candidates;
 
-  return candidates.map((c) => {
-    const path = c.route.fullPath.toLowerCase();
-    let boost = 0;
-    let penalty = 0;
+  return candidates
+    .map((c) => {
+      const path = c.route.fullPath.toLowerCase();
+      let boost = 0;
 
-    if (intent.scope === "github_repo") {
-      const owner = intent.owner || "";
-      const repo = intent.repo || "";
+      if (intent.scope === "github_repo") {
+        const owner = intent.owner || "";
+        const repo = intent.repo || "";
 
-      // Strong boost for repo-specific routes
-      if (path.includes("/github/repo_event/") && path.includes(`/${owner}/${repo}`)) {
-        boost += 20;
-      } else if (path.includes("/github/repo_event/") && path.includes(`/${owner}`)) {
-        boost += 15;
-      } else if (path.match(/\/github\/(issue|pull|pulse|branches|contributors|discussion|file|stars|wiki)\//)) {
-        // Other repo-specific GitHub routes
-        boost += 10;
-      } else if (path.includes("/github/activity/") || path.includes("/github/user_event/")) {
-        // User activity — acceptable fallback for repo queries
-        boost += 5;
-      } else if (path.includes("/github/")) {
-        // Other GitHub routes (search, trending, etc.) — less relevant
-        penalty -= 3;
+        // Hard drop: non-GitHub routes for repo queries
+        if (!path.includes("/github/")) {
+          return { ...c, score: 0 };
+        }
+
+        // Strong boost for repo-specific routes
+        if (path.includes("/github/repo_event/") && path.includes(`/${owner}/${repo}`)) {
+          boost += 20;
+        } else if (path.includes("/github/repo_event/") && path.includes(`/${owner}`)) {
+          boost += 15;
+        } else if (path.match(/\/github\/(issue|pull|pulse|branches|contributors|discussion|file|stars|wiki)\//)) {
+          boost += 10;
+        } else if (path.includes("/github/activity/") || path.includes("/github/user_event/")) {
+          boost += 5;
+        }
+        // Other GitHub routes (search, trending, etc.) — no boost, no penalty
       }
 
-      // Penalize non-GitHub routes heavily for repo queries
-      if (!path.includes("/github/")) {
-        penalty -= 15;
+      if (intent.scope === "github_user") {
+        if (path.includes("/github/activity/") || path.includes("/github/user_event/")) {
+          boost += 15;
+        } else if (path.includes("/github/")) {
+          boost += 5;
+        } else {
+          // Hard drop non-GitHub for user queries too
+          return { ...c, score: 0 };
+        }
       }
-    }
 
-    if (intent.scope === "github_user") {
-      if (path.includes("/github/activity/") || path.includes("/github/user_event/")) {
-        boost += 15;
-      } else if (path.includes("/github/")) {
-        boost += 5;
-      } else {
-        penalty -= 10;
-      }
-    }
-
-    return {
-      ...c,
-      score: Math.max(0, c.score + boost + penalty),
-      reason: c.reason + (boost > 0 ? `,intent_boost:+${boost}` : "") + (penalty < 0 ? `,intent_penalty:${penalty}` : ""),
-    };
-  }).filter((c) => c.score > 0);
+      return {
+        ...c,
+        score: c.score + boost,
+        reason: c.reason + (boost > 0 ? `,intent_boost:+${boost}` : ""),
+      };
+    })
+    .filter((c) => c.score > 0);
 }
 
 // ─── Public API ─────────────────────────────────────────────
