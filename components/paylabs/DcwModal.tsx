@@ -216,22 +216,26 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
 
       // ── Skip FedCM on mobile (hangs in Android Chrome / custom tab) ──
       if (!isMobile && clientId && "IdentityProvider" in globalThis) {
-        const cred = await withTimeout(
-          navigator.credentials.get({
-            identity: {
-              providers: [{
-                configURL: "https://accounts.google.com/gi/fedcm.json",
-                clientId,
-              }],
-            },
-          } as CredentialRequestOptions),
-          8000,
-          "fedcm"
-        );
+        try {
+          const cred = await withTimeout(
+            navigator.credentials.get({
+              identity: {
+                providers: [{
+                  configURL: "https://accounts.google.com/gi/fedcm.json",
+                  clientId,
+                }],
+              },
+            } as CredentialRequestOptions),
+            8000,
+            "fedcm"
+          );
 
-        if (cred && "token" in cred && typeof (cred as { token: unknown }).token === "string") {
-          await handleGoogleSignIn((cred as { token: string }).token);
-          return;
+          if (cred && "token" in cred && typeof (cred as { token: unknown }).token === "string") {
+            await handleGoogleSignIn((cred as { token: string }).token);
+            return;
+          }
+        } catch {
+          // FedCM failed (timeout, rejection, or error) — fall through to legacy GSI
         }
       }
 
