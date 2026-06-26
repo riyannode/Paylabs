@@ -68,6 +68,8 @@ const AGENT_KEY_MAP: Record<string, string> = {
   value_allocator: "VALUE_ALLOCATOR",
   trust_verifier: "TRUST_VERIFIER",
   // payment_decider and payment_router are NOT LLM agents
+  // ── Creator distribution agents ──
+  advanced_evidence_evaluator: "ADVANCED_EVIDENCE_EVALUATOR",
 };
 
 // ─── Per-config cache ──────────────────────────────────────────
