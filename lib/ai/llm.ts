@@ -67,7 +67,7 @@ const AGENT_KEY_MAP: Record<string, string> = {
   source_verifier: "SOURCE_VERIFIER",
   value_allocator: "VALUE_ALLOCATOR",
   trust_verifier: "TRUST_VERIFIER",
-  // payment_decider and payment_router are NOT LLM agents
+  // payment_decider is NOT an LLM agent
   // ── Creator distribution agents ──
   advanced_evidence_evaluator: "ADVANCED_EVIDENCE_EVALUATOR",
 };

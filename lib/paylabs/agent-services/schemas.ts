@@ -204,57 +204,6 @@ export const PaymentDeciderOutput = z.object({
 });
 export type PaymentDeciderOutput = z.infer<typeof PaymentDeciderOutput>;
 
-// ─── Payment Router ──────────────────────────────────────────
-export const PaymentRouterInput = z.object({
-  approved_items: z.array(z.object({
-    feed_item_id: z.string(),
-    source_url: z.string(),
-    source_title: z.string(),
-    approved_price_usdc: z.number(),
-    creator_wallet: z.string().nullable(),
-  })),
-  discovery_run_id: z.string(),
-  routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
-});
-export type PaymentRouterInput = z.infer<typeof PaymentRouterInput>;
-
-export const PaymentRouterOutput = z.object({
-  paid_items: z.array(z.object({
-    feed_item_id: z.string(),
-    source_url: z.string(),
-    payment_ref: z.string().nullable(),
-    settlement_ref: z.string().nullable(),
-    amount_usdc: z.number(),
-  })),
-  failed_payments: z.array(z.object({
-    feed_item_id: z.string(),
-    source_url: z.string(),
-    error: z.string(),
-  })),
-  payment_refs: z.array(z.string()),
-  settlement_refs: z.array(z.string()),
-  safe_payment_summary: z.string(),
-});
-export type PaymentRouterOutput = z.infer<typeof PaymentRouterOutput>;
-// ─── Payment Router (audit-mode output) ─────────────────────
-export const PaymentRouterAuditOutput = z.object({
-  routed_items: z.array(z.object({
-    feed_item_id: z.string(),
-    source_url: z.string(),
-    amount_usdc: z.number(),
-    status: z.literal("planned"),
-  })),
-  failed_items: z.array(z.object({
-    feed_item_id: z.string(),
-    source_url: z.string(),
-    error: z.string(),
-  })),
-  mode: z.literal("audit_only"),
-  settled: z.literal(false),
-  safe_payment_summary: z.string(),
-});
-export type PaymentRouterAuditOutput = z.infer<typeof PaymentRouterAuditOutput>;
-
 // ─── Creator Attribution ──────────────────────────────────────
 export const CreatorAttributionInput = z.object({
   approved_items: z.array(z.object({
@@ -510,7 +459,7 @@ const INPUT_SCHEMA_MAP: Partial<Record<ServiceName, z.ZodType<unknown>>> = {
   value_allocator: BatchValueAllocatorInput,
   trust_verifier: BatchTrustVerifierInput,
   payment_decider: PaymentDeciderInput,
-  payment_router: PaymentRouterInput,
+
   creator_attribution: CreatorAttributionInput,
   advanced_evidence_evaluator: AdvancedEvidenceEvaluatorInput,
   creator_payout_router: CreatorPayoutRouterInput,

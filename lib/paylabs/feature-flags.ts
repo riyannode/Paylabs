@@ -15,7 +15,6 @@ const ALL_X402_SERVICES: readonly string[] = [
   "value_allocator",
   "trust_verifier",
   "payment_decider",
-  "payment_router",
 ];
 
 /**

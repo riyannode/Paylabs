@@ -130,19 +130,7 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     sellerWalletAddressEnv: "PAYLABS_SERVICE_PAYMENT_DECIDER_SELLER_WALLET_ADDRESS",
     buyerWalletIdEnv: "PAYLABS_SERVICE_PAYMENT_DECIDER_BUYER_WALLET_ID",
   },
-  {
-    serviceName: "payment_router",
-    macroNode: "settlement_memory",
-    reusedAgents: ["payment_quote", "payment_executor"],
-    requiresLlm: false,
-    priceUsdc: 0.000001,
-    endpointPath: "/api/paylabs/agent-services/payment_router/run",
-    allowedBuyers: ["settlement_memory"],
-    outputSchemaName: "PaymentRouterOutput",
-    isActive: true,
-    sellerWalletAddressEnv: "PAYLABS_SERVICE_PAYMENT_ROUTER_SELLER_WALLET_ADDRESS",
-    buyerWalletIdEnv: "PAYLABS_SERVICE_PAYMENT_ROUTER_BUYER_WALLET_ID",
-  },
+
   {
     serviceName: "creator_attribution",
     macroNode: "settlement_memory",

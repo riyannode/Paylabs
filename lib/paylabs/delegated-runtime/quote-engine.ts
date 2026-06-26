@@ -112,7 +112,6 @@ export const SERVICE_MACRO_MAP: Record<ServiceName, MacroNodePhase> = {
   value_allocator: "payment_decision",
   trust_verifier: "payment_decision",
   payment_decider: "payment_decision",
-  payment_router: "settlement_memory",
   creator_attribution: "settlement_memory",
   advanced_evidence_evaluator: "settlement_memory",
   creator_payout_router: "settlement_memory",

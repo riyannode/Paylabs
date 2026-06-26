@@ -526,11 +526,11 @@ function buildTieredSummaries(state: ReturnType<typeof createOrchestratorState>)
   // ── Advanced summary: settlement ──
   const settlementEvals = state.serviceEvaluations.filter((e) => e.macroNode === "settlement_memory");
   if (settlementEvals.length > 0) {
-    const routerEval = settlementEvals.find((e) => e.serviceName === "payment_router");
+    const routerEval = settlementEvals.find((e) => e.serviceName === "creator_payout_router");
     if (routerEval?.output) {
       const r = routerEval.output as Record<string, unknown>;
-      const routed = (r.routed_items as unknown[])?.length || 0;
-      summaries.advanced_summary = `Settlement: ${routed} items routed.`;
+      const payoutResults = (r.creator_payout_results as unknown[])?.length || 0;
+      summaries.advanced_summary = `Settlement: ${payoutResults} creator payouts processed.`;
     }
   }
 
