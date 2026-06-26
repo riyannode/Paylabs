@@ -11,6 +11,7 @@
 import type { MacroNodePhase } from "./types";
 import type { ServiceName } from "../agent-services/types";
 import { FIXED_FEES_USDC } from "./quote-engine";
+import { getMacroNodeServicesForTier } from "./tier-service-bundles";
 
 // ─── Constants ───────────────────────────────────────────────
 
@@ -98,7 +99,7 @@ export const MACRO_NODES: Record<MacroNodePhase, MacroNodeConfig> = {
     buyerWalletIdEnv: "PAYLABS_NODE_SETTLEMENT_MEMORY_BUYER_WALLET_ID",
     fixedNodeFeeUsdc: MACRO_NODE_FEE_USDC, // 0.000001 (base)
     endpointPath: "/api/paylabs/macro-nodes/settlement_memory/run",
-    childServices: ["payment_router"],
+    childServices: ["creator_attribution", "advanced_evidence_evaluator", "creator_payout_router"],
     tierLabel: "advanced",
     brainPaymentMode: "circle_gateway_wallet_batched",
     childPaymentMode: "circle_gateway_wallet_batched_per_child_fallback",
@@ -129,13 +130,32 @@ export function getMacroNodeChildBudgetUsdc(nodeName: MacroNodePhase): number {
 }
 
 /**
+ * Get tier-aware child services for a macro-node.
+ * Normal settlement_memory: 2 children (creator_attribution + creator_payout_router)
+ * Advanced settlement_memory: 3 children (+ advanced_evidence_evaluator)
+ */
+export function getMacroNodeChildServicesForTier(
+  nodeName: MacroNodePhase,
+  routeTier: "easy" | "normal" | "advanced",
+): ServiceName[] {
+  return [...getMacroNodeServicesForTier(nodeName, routeTier)];
+}
+
+/**
+ * Get tier-aware allocation for a macro-node.
+ * Uses actual child service count for the given tier.
+ */
+export function getMacroNodeAllocationUsdcForTier(
+  nodeName: MacroNodePhase,
+  routeTier: "easy" | "normal" | "advanced",
+): number {
+  const children = getMacroNodeChildServicesForTier(nodeName, routeTier);
+  return MACRO_NODE_FEE_USDC + children.length * CHILD_SERVICE_FEE_USDC;
+}
+
+/**
  * Get total allocation for a macro-node (base fee + child budget).
- *
- * Formula: MACRO_NODE_FEE_USDC + childCount * CHILD_SERVICE_FEE_USDC
- *
- * discovery_planner: 0.000001 + 3 * 0.000001 = 0.000004
- * payment_decision:  0.000001 + 5 * 0.000001 = 0.000006
- * settlement_memory: 0.000001 + 1 * 0.000001 = 0.000002
+ * Uses static childServices count — prefer getMacroNodeAllocationUsdcForTier for billing.
  */
 export function getMacroNodeAllocationUsdc(nodeName: MacroNodePhase): number {
   const config = MACRO_NODES[nodeName];
@@ -152,14 +172,14 @@ export function getTierMacroAllocations(routeTier: "easy" | "normal" | "advanced
 } {
   const tierPhaseMap: Record<"easy" | "normal" | "advanced", MacroNodePhase[]> = {
     easy: ["discovery_planner"],
-    normal: ["discovery_planner", "payment_decision"],
+    normal: ["discovery_planner", "payment_decision", "settlement_memory"],
     advanced: ["discovery_planner", "payment_decision", "settlement_memory"],
   };
   const macroNodes = tierPhaseMap[routeTier];
   const allocations: Partial<Record<MacroNodePhase, number>> = {};
   let total = 0;
   for (const node of macroNodes) {
-    const alloc = getMacroNodeAllocationUsdc(node);
+    const alloc = getMacroNodeAllocationUsdcForTier(node, routeTier);
     allocations[node] = alloc;
     total += alloc;
   }

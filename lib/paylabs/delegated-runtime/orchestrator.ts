@@ -236,6 +236,20 @@ export async function executeDelegatedDiscoveryRun(
       state.paymentEdges.push(pe);
     }
 
+    // Store creator distribution data for output — use split plan fields from settlement graph
+    ((state as unknown) as Record<string, unknown>)._creatorDistribution = {
+      payoutSummary: settlementResult.creatorPayoutSummary || null,
+      payoutResults: settlementResult.creatorPayoutResults || [],
+      evaluatorOutput: settlementResult.advancedEvaluatorOutput || null,
+      pendingReserveAtomic: settlementResult.pendingCreatorReserveAtomic ?? null,
+      actualCreatorPaidAtomic: settlementResult.actualCreatorPaidAtomic ?? null,
+      actualCreatorPaidUsdc: settlementResult.actualCreatorPaidUsdc ?? null,
+      creatorSplitPlan: settlementResult.creatorSplitPlan ?? null,
+      plannedCreatorPoolAtomic: settlementResult.plannedCreatorPoolAtomic ?? null,
+      plannedCreatorPayoutCount: settlementResult.plannedCreatorPayoutCount ?? null,
+      advancedEvaluatorStatus: settlementResult.advancedEvaluatorStatus ?? null,
+    };
+
     setMacroPhaseStatus(state, "settlement_memory", "completed");
     addProgressSummary(
       state,
@@ -298,6 +312,7 @@ function buildOutput(state: ReturnType<typeof createOrchestratorState>): Orchest
     paymentGraph: state.paymentGraph,
     tieredSummaries: buildTieredSummaries(state),
     easyToNormalHandoff: state.easyToNormalHandoff,
+    creatorDistribution: ((state as unknown) as Record<string, unknown>)._creatorDistribution as OrchestratorOutput["creatorDistribution"],
     error: state.error,
   };
 }
@@ -511,11 +526,11 @@ function buildTieredSummaries(state: ReturnType<typeof createOrchestratorState>)
   // ── Advanced summary: settlement ──
   const settlementEvals = state.serviceEvaluations.filter((e) => e.macroNode === "settlement_memory");
   if (settlementEvals.length > 0) {
-    const routerEval = settlementEvals.find((e) => e.serviceName === "payment_router");
+    const routerEval = settlementEvals.find((e) => e.serviceName === "creator_payout_router");
     if (routerEval?.output) {
       const r = routerEval.output as Record<string, unknown>;
-      const routed = (r.routed_items as unknown[])?.length || 0;
-      summaries.advanced_summary = `Settlement: ${routed} items routed.`;
+      const payoutResults = (r.creator_payout_results as unknown[])?.length || 0;
+      summaries.advanced_summary = `Settlement: ${payoutResults} creator payouts processed.`;
     }
   }
 
