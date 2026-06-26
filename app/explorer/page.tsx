@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { short, shortUrl, usdc } from "@/lib/utils";
+import { short, usdc } from "@/lib/utils";
 import BatchResolverLink from "@/components/paylabs/BatchResolverLink";
 
 async function getRecentX402Payments(limit = 50) {
@@ -93,13 +93,6 @@ function timeAgo(dateStr: string): string {
 
 export default async function DashboardPage() {
   const [
-    rsshubRoutes,
-    feedItems,
-    sourcePayments,
-    totalSourcePaymentUsdc,
-    routeRows,
-    feedItemRows,
-    sourcePaymentRows,
     x402PaymentRows,
     receiptRows,
     servicePaymentCount,
@@ -107,40 +100,6 @@ export default async function DashboardPage() {
     lastTxRow,
     totalSettledUsdc,
   ] = await Promise.all([
-    safeCount("paylabs_rsshub_routes", (q: any) => q.eq("is_active", true)),
-    safeCount("paylabs_feed_items", (q: any) => q.eq("is_active", true)),
-    safeCount("paylabs_source_payments", (q: any) =>
-      q.eq("status", "completed")
-    ),
-    safeSum("paylabs_source_payments", "amount_usdc", (q: any) =>
-      q.eq("status", "completed")
-    ),
-    safeQuery(() =>
-      supabaseAdmin()
-        .from("paylabs_rsshub_routes")
-        .select("*")
-        .eq("is_active", true)
-        .order("created_at", { ascending: false })
-        .limit(25)
-    ),
-    safeQuery(() =>
-      supabaseAdmin()
-        .from("paylabs_feed_items")
-        .select(
-          "id, title, summary, canonical_url, author_name, publisher, published_at, creator_wallet, is_monetized, price_per_citation_usdc, price_per_unlock_usdc, normalized_sha256, is_active"
-        )
-        .eq("is_active", true)
-        .order("published_at", { ascending: false, nullsFirst: false })
-        .limit(25)
-    ),
-    safeQuery(() =>
-      supabaseAdmin()
-        .from("paylabs_source_payments")
-        .select("*")
-        .eq("status", "completed")
-        .order("created_at", { ascending: false })
-        .limit(25)
-    ),
     // x402 Service Payments
     getRecentX402Payments(50),
     // Receipts
@@ -199,10 +158,6 @@ export default async function DashboardPage() {
           { label: "Unique Users", value: totalUsers },
           { label: "Users (24h)", value: recentUsers24h },
           { label: "Users (7d)", value: recentUsers7d },
-          { label: "RSSHub Routes", value: rsshubRoutes },
-          { label: "Feed Items", value: feedItems },
-          { label: "Source Payments", value: sourcePayments },
-          { label: "Source Payouts", value: usdc(totalSourcePaymentUsdc) },
           { label: "x402 Service Payments", value: servicePaymentCount },
           { label: "Receipts", value: receiptCount },
           { label: "Settled USDC", value: usdc(totalSettledUsdc) },
@@ -220,185 +175,6 @@ export default async function DashboardPage() {
       </div>
 
 
-
-      {/* ─── RSSHub Routes Table ───────────────────────────── */}
-      <section className="card">
-        <h2 className="section-title">RSSHub Routes</h2>
-        {routeRows.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
-            No RSSHub routes configured.
-          </div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Route Path</th>
-                  <th>Base URL</th>
-                  <th>Status</th>
-                  <th>Citation Price</th>
-                  <th>Last Synced</th>
-                  <th>Active</th>
-                </tr>
-              </thead>
-              <tbody>
-                {routeRows.map((r: any) => (
-                  <tr key={r.id}>
-                    <td style={{ fontWeight: 600 }}>{r.title}</td>
-                    <td className="data-mono">{r.route_path}</td>
-                    <td className="muted">
-                      {shortUrl(r.rsshub_base_url, 30)}
-                    </td>
-                    <td>
-                      <span className={`badge ${r.is_monetized ? "badge-success" : ""}`} style={!r.is_monetized ? { fontSize: 10 } : undefined}>
-                        {r.is_monetized ? "Monetized" : "Sample"}
-                      </span>
-                    </td>
-                    <td className="data-mono">
-                      {r.is_monetized ? usdc(r.default_price_per_citation_usdc) : "Not monetized"}
-                    </td>
-                    <td className="muted">
-                      {r.last_synced_at ? timeAgo(r.last_synced_at) : "never"}
-                    </td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          r.is_active ? "badge-success" : "badge-warning"
-                        }`}
-                      >
-                        {r.is_active ? "active" : "inactive"}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* ─── Feed Items Table ──────────────────────────────── */}
-      <section className="card">
-        <h2 className="section-title">RSSHub Feed Items</h2>
-        {feedItemRows.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
-            No feed items yet. Run sync to import from RSSHub.
-          </div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Author</th>
-                  <th>Source URL</th>
-                  <th>Status</th>
-                  <th>Citation Price</th>
-                  <th>Hash</th>
-                  <th>Published</th>
-                </tr>
-              </thead>
-              <tbody>
-                {feedItemRows.map((f: any) => (
-                  <tr key={f.id}>
-                    <td style={{ fontWeight: 600 }}>
-                      {f.title || "(untitled)"}
-                    </td>
-                    <td>{f.author_name || f.publisher || "—"}</td>
-                    <td className="muted" style={{ fontSize: 11 }}>
-                      {f.canonical_url ? (
-                        <a href={f.canonical_url} target="_blank" rel="noopener noreferrer">
-                          {shortUrl(f.canonical_url, 35)}
-                        </a>
-                      ) : shortUrl(f.canonical_url, 35)}
-                    </td>
-                    <td>
-                      <span className={`badge ${f.is_monetized ? "badge-success" : ""}`} style={!f.is_monetized ? { fontSize: 10 } : undefined}>
-                        {f.is_monetized ? "Monetized" : "Sample"}
-                      </span>
-                    </td>
-                    <td className="data-mono">
-                      {f.is_monetized ? usdc(f.price_per_citation_usdc) : "Not monetized"}
-                    </td>
-                    <td className="data-mono" style={{ fontSize: 11 }}>
-                      {f.normalized_sha256
-                        ? short(f.normalized_sha256)
-                        : "—"}
-                    </td>
-                    <td className="muted">
-                      {f.published_at ? timeAgo(f.published_at) : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* ─── Source Payments Table ──────────────────────────── */}
-      <section className="card">
-        <h2 className="section-title">Source Payments</h2>
-        {sourcePaymentRows.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
-            No source payments yet.
-          </div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>User</th>
-                  <th>Source URL</th>
-                  <th>Recipient</th>
-                  <th>Amount</th>
-                  <th>Kind</th>
-                  <th>Payment</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sourcePaymentRows.map((r: any) => (
-                  <tr key={r.id}>
-                    <td className="muted">{timeAgo(r.created_at)}</td>
-                    <td className="data-mono">{short(r.user_wallet)}</td>
-                    <td className="muted" style={{ fontSize: 11 }}>
-                      {r.source_url ? (
-                        <a href={r.source_url} target="_blank" rel="noopener noreferrer">
-                          {shortUrl(r.source_url, 35)}
-                        </a>
-                      ) : shortUrl(r.source_url, 35)}
-                    </td>
-                    <td>
-                      <span className="badge" style={{ fontSize: 10 }}>
-                        {r.creator_wallet ? "Creator" : "Treasury"}
-                      </span>
-                    </td>
-                    <td className="data-mono">{usdc(r.amount_usdc)}</td>
-                    <td>{r.payment_kind}</td>
-                    <td className="data-mono">{short(r.payment_id)}</td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          r.status === "completed"
-                            ? "badge-success"
-                            : r.status === "failed"
-                            ? "badge-danger"
-                            : "badge-warning"
-                        }`}
-                      >
-                        {r.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
 
       {/* ─── x402 Service Payments Table ───────────────────── */}
       <section className="card">

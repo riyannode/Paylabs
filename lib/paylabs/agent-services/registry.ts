@@ -1,7 +1,7 @@
 /**
  * Agent Service Registry
  *
- * Static registry of 9 delegated service agents.
+ * Static registry of 12 delegated service agents.
  * Each service maps to a macro-node phase and reuses existing agents.
  *
  * This is the NEW delegated service registry — separate from the existing
@@ -130,18 +130,45 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     sellerWalletAddressEnv: "PAYLABS_SERVICE_PAYMENT_DECIDER_SELLER_WALLET_ADDRESS",
     buyerWalletIdEnv: "PAYLABS_SERVICE_PAYMENT_DECIDER_BUYER_WALLET_ID",
   },
+
   {
-    serviceName: "payment_router",
+    serviceName: "creator_attribution",
     macroNode: "settlement_memory",
-    reusedAgents: ["payment_quote", "payment_executor"],
+    reusedAgents: [],
     requiresLlm: false,
     priceUsdc: 0.000001,
-    endpointPath: "/api/paylabs/agent-services/payment_router/run",
+    endpointPath: "/api/paylabs/agent-services/creator_attribution/run",
     allowedBuyers: ["settlement_memory"],
-    outputSchemaName: "PaymentRouterOutput",
+    outputSchemaName: "CreatorAttributionOutput",
     isActive: true,
-    sellerWalletAddressEnv: "PAYLABS_SERVICE_PAYMENT_ROUTER_SELLER_WALLET_ADDRESS",
-    buyerWalletIdEnv: "PAYLABS_SERVICE_PAYMENT_ROUTER_BUYER_WALLET_ID",
+    sellerWalletAddressEnv: "PAYLABS_SERVICE_CREATOR_ATTRIBUTION_SELLER_WALLET_ADDRESS",
+    buyerWalletIdEnv: "PAYLABS_SERVICE_CREATOR_ATTRIBUTION_BUYER_WALLET_ID",
+  },
+  {
+    serviceName: "advanced_evidence_evaluator",
+    macroNode: "settlement_memory",
+    reusedAgents: ["deep_evidence_evaluator"],
+    requiresLlm: true,
+    priceUsdc: 0.000001,
+    endpointPath: "/api/paylabs/agent-services/advanced_evidence_evaluator/run",
+    allowedBuyers: ["settlement_memory"],
+    outputSchemaName: "AdvancedEvidenceEvaluatorOutput",
+    isActive: true,
+    sellerWalletAddressEnv: "PAYLABS_SERVICE_ADVANCED_EVIDENCE_EVALUATOR_SELLER_WALLET_ADDRESS",
+    buyerWalletIdEnv: "PAYLABS_SERVICE_ADVANCED_EVIDENCE_EVALUATOR_BUYER_WALLET_ID",
+  },
+  {
+    serviceName: "creator_payout_router",
+    macroNode: "settlement_memory",
+    reusedAgents: ["payment_executor"],
+    requiresLlm: false,
+    priceUsdc: 0.000001,
+    endpointPath: "/api/paylabs/agent-services/creator_payout_router/run",
+    allowedBuyers: ["settlement_memory"],
+    outputSchemaName: "CreatorPayoutRouterOutput",
+    isActive: true,
+    sellerWalletAddressEnv: "PAYLABS_SERVICE_CREATOR_PAYOUT_ROUTER_SELLER_WALLET_ADDRESS",
+    buyerWalletIdEnv: "PAYLABS_SERVICE_CREATOR_PAYOUT_ROUTER_BUYER_WALLET_ID",
   },
 ] as const;
 

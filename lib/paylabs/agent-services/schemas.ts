@@ -204,56 +204,213 @@ export const PaymentDeciderOutput = z.object({
 });
 export type PaymentDeciderOutput = z.infer<typeof PaymentDeciderOutput>;
 
-// ─── Payment Router ──────────────────────────────────────────
-export const PaymentRouterInput = z.object({
+// ─── Creator Attribution ──────────────────────────────────────
+export const CreatorAttributionInput = z.object({
   approved_items: z.array(z.object({
     feed_item_id: z.string(),
     source_url: z.string(),
     source_title: z.string(),
     approved_price_usdc: z.number(),
+    final_score: z.number(),
+    risk_score: z.number(),
     creator_wallet: z.string().nullable(),
+    claim_status: z.string().optional(),
+    quality_score: z.number().optional(),
+    value_score: z.number().optional(),
+    publisher: z.string().optional(),
+    domain: z.string().nullable().optional(),
   })),
-  discovery_run_id: z.string(),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
 });
-export type PaymentRouterInput = z.infer<typeof PaymentRouterInput>;
+export type CreatorAttributionInput = z.infer<typeof CreatorAttributionInput>;
 
-export const PaymentRouterOutput = z.object({
-  paid_items: z.array(z.object({
+export const CreatorAttributionOutput = z.object({
+  creator_attributions: z.array(z.object({
     feed_item_id: z.string(),
     source_url: z.string(),
-    payment_ref: z.string().nullable(),
-    settlement_ref: z.string().nullable(),
-    amount_usdc: z.number(),
+    source_title: z.string(),
+    creator_wallet: z.string().nullable(),
+    claim_status: z.string(),
+    eligibility_status: z.string(),
+    reason: z.string(),
+    final_score: z.number(),
+    risk_score: z.number(),
   })),
-  failed_payments: z.array(z.object({
+  eligible_creator_items: z.array(z.object({
     feed_item_id: z.string(),
     source_url: z.string(),
-    error: z.string(),
+    source_title: z.string(),
+    creator_wallet: z.string().nullable(),
+    claim_status: z.string(),
+    eligibility_status: z.string(),
+    reason: z.string(),
+    final_score: z.number(),
+    risk_score: z.number(),
   })),
-  payment_refs: z.array(z.string()),
-  settlement_refs: z.array(z.string()),
-  safe_payment_summary: z.string(),
+  pending_claim_items: z.array(z.object({
+    feed_item_id: z.string(),
+    source_url: z.string(),
+    source_title: z.string(),
+    creator_wallet: z.string().nullable(),
+    claim_status: z.string(),
+    eligibility_status: z.string(),
+    reason: z.string(),
+    final_score: z.number(),
+    risk_score: z.number(),
+  })),
+  failed_closed_items: z.array(z.object({
+    feed_item_id: z.string(),
+    source_url: z.string(),
+    source_title: z.string(),
+    creator_wallet: z.string().nullable(),
+    claim_status: z.string(),
+    eligibility_status: z.string(),
+    reason: z.string(),
+    final_score: z.number(),
+    risk_score: z.number(),
+  })),
+  safe_summary: z.string(),
 });
-export type PaymentRouterOutput = z.infer<typeof PaymentRouterOutput>;
-// ─── Payment Router (audit-mode output) ─────────────────────
-export const PaymentRouterAuditOutput = z.object({
-  routed_items: z.array(z.object({
+export type CreatorAttributionOutput = z.infer<typeof CreatorAttributionOutput>;
+
+// ─── Advanced Evidence Evaluator ──────────────────────────────
+export const AdvancedEvidenceEvaluatorInput = z.object({
+  user_goal: z.string(),
+  selected_creator_items: z.array(z.object({
     feed_item_id: z.string(),
     source_url: z.string(),
-    amount_usdc: z.number(),
-    status: z.literal("planned"),
+    source_title: z.string(),
+    creator_wallet: z.string().nullable(),
+    claim_status: z.string(),
+    eligibility_status: z.string(),
+    reason: z.string(),
+    final_score: z.number(),
+    risk_score: z.number(),
   })),
-  failed_items: z.array(z.object({
+  approved_items: z.array(z.object({
     feed_item_id: z.string(),
     source_url: z.string(),
-    error: z.string(),
+    source_title: z.string(),
+    final_score: z.number(),
+    risk_score: z.number(),
+    quality_score: z.number().optional(),
+    value_score: z.number().optional(),
+    creator_wallet: z.string().nullable(),
   })),
-  mode: z.literal("audit_only"),
-  settled: z.literal(false),
-  safe_payment_summary: z.string(),
+  creator_attributions: z.array(z.object({
+    feed_item_id: z.string(),
+    source_url: z.string(),
+    source_title: z.string(),
+    creator_wallet: z.string().nullable(),
+    claim_status: z.string(),
+    eligibility_status: z.string(),
+    reason: z.string(),
+    final_score: z.number(),
+    risk_score: z.number(),
+  })),
+  routeTier: z.enum(["advanced"]).optional(),
 });
-export type PaymentRouterAuditOutput = z.infer<typeof PaymentRouterAuditOutput>;
+export type AdvancedEvidenceEvaluatorInput = z.infer<typeof AdvancedEvidenceEvaluatorInput>;
+
+export const AdvancedEvidenceEvaluatorOutputSchema = z.object({
+  ok: z.boolean(),
+  evaluator_version: z.literal("advanced_evidence_deep_agent_v1"),
+  selected_source_ids: z.array(z.string()),
+  evidence_matrix: z.array(z.object({
+    feed_item_id: z.string(),
+    source_url: z.string(),
+    creator_wallet: z.string().nullable(),
+    contribution_type: z.enum(["primary_answer", "verification", "contrast", "missing_context", "freshness", "source_authority"]),
+    contribution_summary: z.string(),
+    materiality_score: z.number(),
+    duplicate_risk: z.number(),
+    memory_signal: z.string().optional(),
+  })),
+  why_two_sources_needed: z.string(),
+  user_facing_rationale: z.string(),
+  evaluator_confidence: z.number(),
+  warnings: z.array(z.string()),
+  safe_memory_update: z.object({
+    source_reliability_notes: z.array(z.string()),
+    creator_usage_notes: z.array(z.string()),
+    evaluator_summary: z.string(),
+  }),
+  error: z.string().nullable(),
+});
+
+// ─── Creator Payout Router ────────────────────────────────────
+export const CreatorPayoutRouterInput = z.object({
+  creator_attributions: z.array(z.object({
+    feed_item_id: z.string(),
+    source_url: z.string(),
+    source_title: z.string(),
+    creator_wallet: z.string().nullable(),
+    claim_status: z.string(),
+    eligibility_status: z.string(),
+    reason: z.string(),
+    final_score: z.number(),
+    risk_score: z.number(),
+  })),
+  selected_creator_items: z.array(z.object({
+    feed_item_id: z.string(),
+    source_url: z.string(),
+    source_title: z.string(),
+    creator_wallet: z.string().nullable(),
+    claim_status: z.string(),
+    eligibility_status: z.string(),
+    reason: z.string(),
+    final_score: z.number(),
+    risk_score: z.number(),
+  })),
+  advanced_evaluator_output: z.object({
+    ok: z.boolean(),
+    evaluator_version: z.string(),
+    evaluator_confidence: z.number(),
+    user_facing_rationale: z.string(),
+    warnings: z.array(z.string()),
+  }).nullable().optional(),
+  routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
+  bot_wallet: z.string().optional(),
+  service_wallet: z.string().optional(),
+});
+export type CreatorPayoutRouterInput = z.infer<typeof CreatorPayoutRouterInput>;
+
+export const CreatorPayoutRouterOutputSchema = z.object({
+  creator_payout_results: z.array(z.object({
+    feed_item_id: z.string(),
+    source_url: z.string(),
+    creator_wallet: z.string(),
+    amount_atomic: z.string(),
+    amount_usdc: z.number(),
+    status: z.string(),
+    settlement_id: z.string().nullable(),
+    settlement_url: z.string().nullable(),
+    tx_hash: z.string().nullable(),
+    explorer_url: z.string().nullable(),
+    batch_tx_hash: z.string().nullable(),
+    batch_explorer_url: z.string().nullable(),
+    error: z.string().nullable(),
+  })),
+  bot_share_result: z.object({
+    status: z.string(),
+    amount_atomic: z.string(),
+    amount_usdc: z.number(),
+  }),
+  service_share_result: z.object({
+    status: z.string(),
+    amount_atomic: z.string(),
+    amount_usdc: z.number(),
+  }),
+  split_plan: z.object({
+    route_tier: z.string(),
+    payout_limit: z.number(),
+    planned_creator_pool_atomic: z.string(),
+    actual_creator_pool_atomic: z.string(),
+    pending_creator_reserve_atomic: z.string(),
+  }),
+  pending_creator_reserve: z.number(),
+  safe_summary: z.string(),
+});
 
 // ─── Batch Input Schemas (for Payment Decision phase) ────────
 
@@ -302,7 +459,10 @@ const INPUT_SCHEMA_MAP: Partial<Record<ServiceName, z.ZodType<unknown>>> = {
   value_allocator: BatchValueAllocatorInput,
   trust_verifier: BatchTrustVerifierInput,
   payment_decider: PaymentDeciderInput,
-  payment_router: PaymentRouterInput,
+
+  creator_attribution: CreatorAttributionInput,
+  advanced_evidence_evaluator: AdvancedEvidenceEvaluatorInput,
+  creator_payout_router: CreatorPayoutRouterInput,
 };
 
 /**

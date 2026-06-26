@@ -64,6 +64,8 @@ export interface BudgetSnapshot {
   childPaymentVolumeUsdc?: number;
   /** Gross payment volume (userBudgetUsed + childPaymentVolume) */
   grossPaymentVolumeUsdc?: number;
+  /** Full execution fee (brain + macro + service + registry + source), excluding creator pool */
+  executionFeeUsdc?: number;
 }
 
 // ─── Service Evaluation ──────────────────────────────────────
@@ -327,6 +329,17 @@ export interface BudgetRefundReconciliation {
   summary: string;
 }
 
+// ─── Platform Share Result (bot/service share from creator_payout_router) ──
+export interface PlatformShareResult {
+  status: string;
+  amount_usdc: number;
+  amount_atomic?: string;
+  tx_hash?: string | null;
+  explorer_url?: string | null;
+  settlement_id?: string | null;
+  error?: string | null;
+}
+
 // ─── Orchestrator Output ─────────────────────────────────────
 export interface OrchestratorOutput {
   discoveryRunId: string;
@@ -348,5 +361,37 @@ export interface OrchestratorOutput {
   sourceContext?: SourceContext;
   /** Budget refund reconciliation (backend-computed, Brain-advisory) */
   budgetRefundReconciliation?: BudgetRefundReconciliation;
+  /** Creator distribution summary (settlement_memory output) */
+  creatorDistribution?: {
+    payoutSummary: string | null;
+    payoutResults: Array<{
+      feed_item_id: string;
+      source_url: string;
+      creator_wallet: string;
+      amount_atomic: string;
+      amount_usdc: number;
+      status: string;
+      settlement_id: string | null;
+      tx_hash: string | null;
+      explorer_url: string | null;
+      error: string | null;
+    }>;
+    evaluatorOutput: Record<string, unknown> | null;
+    pendingReserveAtomic: string | null;
+    actualCreatorPaidAtomic: string | null;
+    actualCreatorPaidUsdc: number | null;
+    /** Deterministic split plan from payout router */
+    creatorSplitPlan?: Record<string, unknown> | null;
+    /** Planned creator pool in atomic units (string) */
+    plannedCreatorPoolAtomic?: string | null;
+    /** Planned creator payout count from tier limit */
+    plannedCreatorPayoutCount?: number | null;
+    /** Advanced evaluator status: "completed" | "failed" | "not_run" | null */
+    advancedEvaluatorStatus?: string | null;
+    /** Bot platform share result from creator_payout_router */
+    botShareResult?: PlatformShareResult | null;
+    /** Service provider share result from creator_payout_router */
+    serviceShareResult?: PlatformShareResult | null;
+  };
   error: string | null;
 }

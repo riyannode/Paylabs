@@ -19,7 +19,7 @@ import {
   isValidMacroNodeName,
   resolveNodeSellerWallet,
   resolveNodeBuyerWalletId,
-  getMacroNodeAllocationUsdc,
+  getMacroNodeAllocationUsdcForTier,
 } from "@/lib/paylabs/delegated-runtime/node-registry";
 import {
   buildPaymentRequirements,
@@ -29,6 +29,7 @@ import {
 } from "@/lib/paylabs/x402/seller-challenge";
 import { isDelegatedRuntimeEnabled } from "@/lib/paylabs/feature-flags";
 import { TIER_SERVICE_PRESETS } from "@/lib/paylabs/delegated-runtime/quote-engine";
+import { getMacroNodeServicesForTier } from "@/lib/paylabs/delegated-runtime/tier-service-bundles";
 import { createOrchestratorState, addProgressSummary, addServiceEvaluation } from "@/lib/paylabs/delegated-runtime/state";
 import type { MacroNodePhase, OrchestratorInput } from "@/lib/paylabs/delegated-runtime/types";
 
@@ -79,6 +80,25 @@ export async function POST(
     );
   }
 
+  const VALID_TIERS = new Set(["easy", "normal", "advanced"]);
+  if (!VALID_TIERS.has(routeTier)) {
+    return NextResponse.json(
+      { ok: false, error: `Invalid routeTier: ${routeTier}. Must be easy, normal, or advanced.` },
+      { status: 400 }
+    );
+  }
+
+  // Reject incompatible node/tier combinations (e.g. payment_decision + easy)
+  const { getMacroNodeServicesForTier } = await import("@/lib/paylabs/delegated-runtime/tier-service-bundles");
+  const typedRouteTier = routeTier as "easy" | "normal" | "advanced";
+  const tierServices = getMacroNodeServicesForTier(nodeName, typedRouteTier);
+  if (tierServices.length === 0) {
+    return NextResponse.json(
+      { ok: false, error: `Macro-node ${nodeName} has no services for tier ${routeTier}. Use a valid tier for this node.` },
+      { status: 400 }
+    );
+  }
+
   if (process.env.PAYLABS_NODE_X402_ENABLED !== "true") {
     return NextResponse.json(
       {
@@ -104,8 +124,8 @@ export async function POST(
     req.headers.get("x-payment") ??
     req.headers.get("X-Payment");
 
-  // Use full macro allocation (base fee + child budget), not just base fee
-  const macroAllocationUsdc = getMacroNodeAllocationUsdc(nodeName as MacroNodePhase);
+  // Use full macro allocation (base fee + child budget) for the given tier
+  const macroAllocationUsdc = getMacroNodeAllocationUsdcForTier(nodeName as MacroNodePhase, typedRouteTier);
   const amountAtomic = Math.round(macroAllocationUsdc * 1_000_000).toString();
 
   if (!paymentHeader) {
@@ -167,10 +187,8 @@ async function executeMacroNode(
     );
   }
 
-  // Use tier-based service selection for discovery_planner, static for others
-  const selectedServices = nodeName === "discovery_planner"
-    ? TIER_SERVICE_PRESETS[input.routeTier as keyof typeof TIER_SERVICE_PRESETS] || nodeConfig.childServices
-    : nodeConfig.childServices;
+  // Use tier-based service selection via tier-service-bundles
+  const selectedServices = getMacroNodeServicesForTier(nodeName, input.routeTier as "easy" | "normal" | "advanced");
 
   try {
     let result: unknown;
@@ -251,11 +269,30 @@ async function executeMacroNode(
       for (const pe of graphResult.paymentEdges) {
         state.paymentEdges.push(pe);
       }
-      result = { ok: graphResult.ok, routedItems: graphResult.routedItems, failedItems: graphResult.failedItems, advancedSummary: graphResult.advancedSummary };
+      result = {
+        ok: graphResult.ok,
+        routedItems: graphResult.routedItems,
+        failedItems: graphResult.failedItems,
+        advancedSummary: graphResult.advancedSummary,
+        creatorDistribution: {
+          payoutSummary: graphResult.creatorPayoutSummary ?? null,
+          payoutResults: graphResult.creatorPayoutResults ?? [],
+          evaluatorOutput: graphResult.advancedEvaluatorOutput ?? null,
+          pendingReserveAtomic: graphResult.pendingCreatorReserveAtomic ?? null,
+          actualCreatorPaidAtomic: graphResult.actualCreatorPaidAtomic ?? null,
+          actualCreatorPaidUsdc: graphResult.actualCreatorPaidUsdc ?? null,
+          creatorSplitPlan: graphResult.creatorSplitPlan ?? null,
+          plannedCreatorPoolAtomic: graphResult.plannedCreatorPoolAtomic ?? null,
+          plannedCreatorPayoutCount: graphResult.plannedCreatorPayoutCount ?? null,
+          advancedEvaluatorStatus: graphResult.advancedEvaluatorStatus ?? null,
+          botShareResult: graphResult.botShareResult ?? null,
+          serviceShareResult: graphResult.serviceShareResult ?? null,
+        },
+      };
     }
 
     return NextResponse.json({
-      ok: true,
+      ok: (result as Record<string, unknown>)?.ok !== false,
       nodeType: "macro_node",
       nodeName,
       mode: "x402",

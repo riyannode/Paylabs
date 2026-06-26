@@ -14,6 +14,19 @@ function stripTags(html: string): string {
   return out.trim();
 }
 
+function timeAgo(dateStr: string): string {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH}h ago`;
+  const diffD = Math.floor(diffH / 24);
+  return `${diffD}d ago`;
+}
+
 export const dynamic = "force-dynamic";
 
 async function safeQuery<T>(
@@ -29,16 +42,26 @@ async function safeQuery<T>(
 }
 
 export default async function SourcesPage() {
-  const items = await safeQuery<any>(() =>
-    supabaseAdmin()
-      .from("paylabs_feed_items")
-      .select(
-        "id, title, summary, canonical_url, author_name, publisher, published_at, creator_wallet, is_monetized, price_per_citation_usdc, price_per_unlock_usdc, normalized_sha256, is_active"
-      )
-      .eq("is_active", true)
-      .order("published_at", { ascending: false, nullsFirst: false })
-      .limit(200)
-  );
+  const [items, sourcePaymentRows] = await Promise.all([
+    safeQuery<any>(() =>
+      supabaseAdmin()
+        .from("paylabs_feed_items")
+        .select(
+          "id, title, summary, canonical_url, author_name, publisher, published_at, creator_wallet, is_monetized, price_per_citation_usdc, price_per_unlock_usdc, normalized_sha256, is_active"
+        )
+        .eq("is_active", true)
+        .order("published_at", { ascending: false, nullsFirst: false })
+        .limit(200)
+    ),
+    safeQuery<any>(() =>
+      supabaseAdmin()
+        .from("paylabs_source_payments")
+        .select("*")
+        .eq("status", "completed")
+        .order("created_at", { ascending: false })
+        .limit(50)
+    ),
+  ]);
 
   return (
     <div style={{ display: "grid", gap: 24 }}>
@@ -167,6 +190,69 @@ export default async function SourcesPage() {
           ))}
         </div>
       )}
+
+      {/* ─── Source Payments Table ──────────────────────────── */}
+      <section className="card">
+        <h2 className="section-title">Source Payments</h2>
+        {sourcePaymentRows.length === 0 ? (
+          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
+            No source payments yet.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>User</th>
+                  <th>Source URL</th>
+                  <th>Recipient</th>
+                  <th>Amount</th>
+                  <th>Kind</th>
+                  <th>Payment</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sourcePaymentRows.map((r: any) => (
+                  <tr key={r.id}>
+                    <td className="muted">{timeAgo(r.created_at)}</td>
+                    <td className="data-mono">{short(r.user_wallet)}</td>
+                    <td className="muted" style={{ fontSize: 11 }}>
+                      {r.source_url ? (
+                        <a href={r.source_url} target="_blank" rel="noopener noreferrer">
+                          {shortUrl(r.source_url, 35)}
+                        </a>
+                      ) : shortUrl(r.source_url, 35)}
+                    </td>
+                    <td>
+                      <span className="badge" style={{ fontSize: 10 }}>
+                        {r.creator_wallet ? "Creator" : "Treasury"}
+                      </span>
+                    </td>
+                    <td className="data-mono">{usdc(r.amount_usdc)}</td>
+                    <td>{r.payment_kind}</td>
+                    <td className="data-mono">{short(r.payment_id)}</td>
+                    <td>
+                      <span
+                        className={`badge ${
+                          r.status === "completed"
+                            ? "badge-success"
+                            : r.status === "failed"
+                            ? "badge-danger"
+                            : "badge-warning"
+                        }`}
+                      >
+                        {r.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

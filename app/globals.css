@@ -1158,6 +1158,17 @@ a:hover { text-decoration: none; }
   backdrop-filter: blur(14px);
 }
 
+@media (max-width: 640px) {
+  .pl-wallet-overlay-v3 {
+    backdrop-filter: none;
+    background: rgba(15, 23, 42, 0.42);
+  }
+
+  .pl-dcw-modal {
+    box-shadow: 0 12px 32px rgba(0,0,0,.16);
+  }
+}
+
 .pl-wallet-modal-v3 {
   position: relative;
   width: min(92vw, 520px);

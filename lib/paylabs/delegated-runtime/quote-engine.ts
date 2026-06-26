@@ -4,10 +4,10 @@
  * Single source of truth for deterministic pricing and budget validation.
  * Brain chooses logic. Quote engine chooses cost.
  *
- * Brain may decide: route tier, macro-node plan, service plan, query strategy,
- *   max registry checks, max source accesses, safe summary.
- * Brain must NOT decide: prices, final cost, wallets, payment endpoint,
- *   settlement mode, payment refs, tx hashes, budget bypass.
+ * Creator Distribution V1:
+ * - Easy: discovery only, no creator payout
+ * - Normal: +payment decision +settlement memory, 1 creator payout
+ * - Advanced: +payment decision +settlement memory +deep agent, 2 creator payouts
  */
 
 import type { MacroNodePhase, ServiceName } from "@/lib/paylabs/delegated-runtime/types";
@@ -34,6 +34,16 @@ export type DelegatedRunQuote = {
   serviceEdgeFeesUsdc: number;
   registryCheckFeesUsdc: number;
   sourceAccessFeesUsdc: number;
+  executionFeeUsdc: number;
+  plannedCreatorPoolUsdc: number;
+  totalPlannedCostUsdc: number;
+  creatorPayoutLimit: number;
+  plannedCreatorPoolAtomic: bigint;
+  expectedCreatorPayoutCount: number;
+  plannedBotShareUsdc: number;
+  plannedServiceShareUsdc: number;
+  pricingVersion: "creator_split_v1";
+  // Legacy fields (backward compat)
   plannedCostUsdc: number;
   userBudgetUsdc: number;
   remainingPlannedBudgetUsdc: number;
@@ -51,15 +61,28 @@ export const FIXED_FEES_USDC = {
   sourceAccess: 0.000001,
 } as const;
 
+// ─── Creator Payout Constants ─────────────────────────────────
+
+export const CREATOR_PAYOUT_UNIT_USDC = 0.000020;
+export const CREATOR_PAYOUT_UNIT_ATOMIC = BigInt(20);
+
+export const CREATOR_PAYOUT_LIMIT: Record<DelegatedRouteTier, number> = {
+  easy: 0,
+  normal: 1,
+  advanced: 2,
+};
+
 // ─── Tier → Phase Mapping ────────────────────────────────────
+// Normal now includes settlement_memory for creator payout
 
 export const TIER_PHASE_MAP: Record<DelegatedRouteTier, MacroNodePhase[]> = {
   easy: ["discovery_planner"],
-  normal: ["discovery_planner", "payment_decision"],
+  normal: ["discovery_planner", "payment_decision", "settlement_memory"],
   advanced: ["discovery_planner", "payment_decision", "settlement_memory"],
 };
 
 // ─── Tier → Service Presets (canonical bundles) ──────────────
+// Includes creator distribution services for Normal/Advanced
 
 export const TIER_SERVICE_PRESETS: Record<DelegatedRouteTier, ServiceName[]> = {
   easy: ["intent_planner", "query_builder", "signal_scout_basics"],
@@ -67,12 +90,13 @@ export const TIER_SERVICE_PRESETS: Record<DelegatedRouteTier, ServiceName[]> = {
     "intent_planner", "query_builder", "signal_scout",
     "intent_matcher", "source_verifier", "value_allocator",
     "trust_verifier", "payment_decider",
+    "creator_attribution", "creator_payout_router",
   ],
   advanced: [
     "intent_planner", "query_builder", "signal_scout",
     "intent_matcher", "source_verifier", "value_allocator",
     "trust_verifier", "payment_decider",
-    "payment_router",
+    "creator_attribution", "advanced_evidence_evaluator", "creator_payout_router",
   ],
 };
 
@@ -88,7 +112,9 @@ export const SERVICE_MACRO_MAP: Record<ServiceName, MacroNodePhase> = {
   value_allocator: "payment_decision",
   trust_verifier: "payment_decision",
   payment_decider: "payment_decision",
-  payment_router: "settlement_memory",
+  creator_attribution: "settlement_memory",
+  advanced_evidence_evaluator: "settlement_memory",
+  creator_payout_router: "settlement_memory",
 };
 
 // ─── Edge Count ──────────────────────────────────────────────
@@ -102,8 +128,8 @@ export const SERVICE_MACRO_MAP: Record<ServiceName, MacroNodePhase> = {
  *   each macro-node → child services = services.length
  *
  * easy:     1 + 1 + 3 = 5
- * normal:   1 + 2 + 8 = 11
- * advanced: 1 + 3 + 9 = 13
+ * normal:   1 + 3 + 10 = 14
+ * advanced: 1 + 3 + 11 = 15
  */
 export function getExpectedPaymentEdgeCount(tier: DelegatedRouteTier): number {
   const macroNodes = TIER_PHASE_MAP[tier];
@@ -140,14 +166,27 @@ export function quoteDelegatedRun(input: QuoteInput): DelegatedRunQuote {
   const registryCheckFeesUsdc = maxRegistryChecks * FIXED_FEES_USDC.registryCheck;
   const sourceAccessFeesUsdc = maxSourceAccesses * FIXED_FEES_USDC.sourceAccess;
 
-  const plannedCostUsdc =
+  // Execution fee = brain + macro nodes + service edges + registry + source
+  const executionFeeUsdc =
     FIXED_FEES_USDC.brainTreasury +
     macroNodeFeesUsdc +
     serviceEdgeFeesUsdc +
     registryCheckFeesUsdc +
     sourceAccessFeesUsdc;
 
-  const remainingPlannedBudgetUsdc = input.userBudgetUsdc - plannedCostUsdc;
+  // Creator pool
+  const creatorLimit = CREATOR_PAYOUT_LIMIT[routeTier];
+  const plannedCreatorPoolAtomic = BigInt(creatorLimit) * CREATOR_PAYOUT_UNIT_ATOMIC;
+  const plannedCreatorPoolUsdc = creatorLimit * CREATOR_PAYOUT_UNIT_USDC;
+
+  // Bot/service share (per creator slot: bot=2, service=1 atomic)
+  const plannedBotShareUsdc = creatorLimit * (2 / 1e6);
+  const plannedServiceShareUsdc = creatorLimit * (1 / 1e6);
+
+  // Total = execution fee + creator pool
+  const totalPlannedCostUsdc = executionFeeUsdc + plannedCreatorPoolUsdc;
+
+  const remainingPlannedBudgetUsdc = input.userBudgetUsdc - totalPlannedCostUsdc;
 
   return {
     routeTier,
@@ -159,7 +198,17 @@ export function quoteDelegatedRun(input: QuoteInput): DelegatedRunQuote {
     serviceEdgeFeesUsdc,
     registryCheckFeesUsdc,
     sourceAccessFeesUsdc,
-    plannedCostUsdc,
+    executionFeeUsdc,
+    plannedCreatorPoolUsdc,
+    totalPlannedCostUsdc,
+    creatorPayoutLimit: creatorLimit,
+    plannedCreatorPoolAtomic,
+    expectedCreatorPayoutCount: creatorLimit,
+    plannedBotShareUsdc,
+    plannedServiceShareUsdc,
+    pricingVersion: "creator_split_v1",
+    // Legacy compat
+    plannedCostUsdc: totalPlannedCostUsdc,
     userBudgetUsdc: input.userBudgetUsdc,
     remainingPlannedBudgetUsdc,
     budgetStatus: remainingPlannedBudgetUsdc >= 0 ? "ok" : "over_budget",
@@ -176,7 +225,7 @@ export function quoteDelegatedRun(input: QuoteInput): DelegatedRunQuote {
 export function assertBudgetOrThrow(quote: DelegatedRunQuote): void {
   if (quote.budgetStatus === "over_budget") {
     throw new Error(
-      `budget_exceeded: planned cost ${quote.plannedCostUsdc.toFixed(6)} USDC exceeds user budget ${quote.userBudgetUsdc.toFixed(6)} USDC`
+      `budget_exceeded: planned cost ${quote.totalPlannedCostUsdc.toFixed(6)} USDC exceeds user budget ${quote.userBudgetUsdc.toFixed(6)} USDC`
     );
   }
 }
