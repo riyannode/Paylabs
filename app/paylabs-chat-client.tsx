@@ -319,15 +319,15 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [walletCopied, setWalletCopied] = useState(false);
 
   // Debug log — gated behind env var, stripped from production
-  const ucwDebug = process.env.NEXT_PUBLIC_PAYLABS_UCW_DEBUG === "1";
+  const dcwDebug = process.env.NEXT_PUBLIC_PAYLABS_UCW_DEBUG === "1";
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const dbg = useCallback((msg: string) => {
-    if (!ucwDebug) return;
+    if (!dcwDebug) return;
     const ts = new Date().toISOString().slice(11, 23);
     const entry = `[${ts}] ${msg}`;
-    console.log("[UCW]", entry);
+    console.log("[DCW]", entry);
     setDebugLog((prev) => [...prev.slice(-20), entry]);
-  }, [ucwDebug]);
+  }, [dcwDebug]);
 
   // Backend-driven planned cost (replaces hardcoded TIER_COSTS)
   const [plannedCostUsdc, setPlannedCostUsdc] = useState<number>(0.000015); // conservative default (advanced tier)
@@ -387,7 +387,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
             setUcwBalance(dcwBal);
             const x402Bal = parseFloat(dcwBal.gatewayUsdc ?? "0");
             setWalletState(x402Bal > 0 ? "ready_to_approve" : "needs_gateway_deposit");
-            return; // DCW session restored, skip UCW restore
+            return; // DCW session restored
           }
         }
       } catch { /* no DCW session */ }
