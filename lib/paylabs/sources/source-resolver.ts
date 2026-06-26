@@ -182,6 +182,22 @@ function buildSelectionSummary(
 }
 
 // ─── Relevance filter: reject sources that don't match the query ───
+
+/** Check if a domain string is exactly baseDomain or a subdomain of it */
+function isDomainOrSubdomain(input: string, baseDomain: string): boolean {
+  const raw = (input || "").trim().toLowerCase();
+  if (!raw) return false;
+  const normalizedBase = baseDomain.toLowerCase();
+  let hostname = raw;
+  try {
+    hostname = raw.includes("://") ? new URL(raw).hostname.toLowerCase() : raw;
+  } catch {
+    // keep raw as hostname candidate
+  }
+  hostname = hostname.split(":")[0];
+  return hostname === normalizedBase || hostname.endsWith(`.${normalizedBase}`);
+}
+
 function filterByRelevance(sources: SourceItem[], normalizedGoal: string): SourceItem[] {
   if (sources.length === 0) return sources;
 
@@ -214,9 +230,9 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string): Sourc
       if (!hasEntity) return false;
     }
 
-    // GitHub intent: must be from github.com or have repo-related content
+    // GitHub intent: must be from github.com (or subdomain) or have repo-related content
     if (isGitHubIntent) {
-      const isGitHubDomain = domain.includes("github.com") || domain.includes("github.");
+      const isGitHubDomain = isDomainOrSubdomain(domain, "github.com");
       const hasRepoContent = combined.includes("commit") || combined.includes("pull request") ||
         combined.includes("repository") || combined.includes("release") || combined.includes("merge") ||
         combined.includes("issue") || combined.includes("branch") || combined.includes("fork");
