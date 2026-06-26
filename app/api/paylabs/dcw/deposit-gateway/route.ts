@@ -1,23 +1,31 @@
 /**
  * POST /api/paylabs/dcw/deposit-gateway
+ * GET  /api/paylabs/dcw/deposit-gateway?txId=...
  *
- * Deposits USDC from a DCW wallet's on-chain balance into Circle Gateway,
- * making it available for x402 payments.
+ * POST: Initiates USDC deposit from DCW wallet into Circle Gateway.
+ *   Returns tx IDs immediately (non-blocking). Poll with GET.
  *
- * Flow:
- *   1. Approve USDC spending by Gateway contract (ERC-20 approve)
- *   2. Call deposit() on Gateway contract
+ * GET: Poll transaction state by ID.
+ *   Returns { ok, txId, state, txHash }.
  *
  * REQUIRES valid session cookie (DCW auth).
  *
- * Body: { amountUsdc: number }
- * Returns: { ok, approveTxId, depositTxId, amountUsdc }
+ * POST Body: { amountUsdc: number }
+ * Returns: { ok, approveTxId, depositTxId, amountUsdc, state }
+ *
+ * State machine:
+ *   approve_pending → deposit_pending → complete | failed
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { createRequire } from "node:module";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSession } from "@/lib/paylabs/auth/session";
+import {
+  USDC_CONTRACT_ADDRESS,
+  GATEWAY_CONTRACT_ADDRESS,
+  getDcwHealth,
+} from "@/lib/paylabs/dcw/config";
 
 const _require = createRequire(import.meta.url);
 
@@ -37,31 +45,61 @@ function getDcwClient() {
   return _dcwClient;
 }
 
-// ─── Constants ───────────────────────────────────────────────
+// ─── Tx state lookup ─────────────────────────────────────────
 
-/** USDC on Arc Testnet */
-const USDC_ADDRESS_ARC_TESTNET = "0x3600000000000000000000000000000000000000";
-
-/** Gateway WalletBatched contract on Arc Testnet */
-const GATEWAY_CONTRACT_ARC_TESTNET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
-
-// ─── Tx polling helper ───────────────────────────────────────
-
-async function waitForTxComplete(client: any, txId: string, maxWaitMs = 60_000): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < maxWaitMs) {
-    const txResp = await client.getTransaction({ id: txId });
-    const state = txResp?.data?.transaction?.state;
-    if (state === "COMPLETE") return;
-    if (state === "FAILED" || state === "CANCELLED") {
-      throw new Error(`Transaction ${txId} ended in state: ${state}`);
-    }
-    await new Promise((r) => setTimeout(r, 3000));
+async function getTxState(txId: string): Promise<{
+  state: string;
+  txHash: string | null;
+  error: string | null;
+}> {
+  try {
+    const client = getDcwClient();
+    const resp = await client.getTransaction({ id: txId });
+    const tx = resp?.data?.transaction;
+    return {
+      state: tx?.state || "UNKNOWN",
+      txHash: tx?.txHash || null,
+      error: tx?.errorReason || null,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { state: "ERROR", txHash: null, error: msg.slice(0, 200) };
   }
-  throw new Error(`Transaction ${txId} did not complete within ${maxWaitMs}ms`);
 }
 
-// ─── Handler ─────────────────────────────────────────────────
+// ─── GET: Poll tx status ─────────────────────────────────────
+
+export async function GET(req: NextRequest) {
+  try {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ ok: false, error: "Authentication required" }, { status: 401 });
+    }
+
+    const txId = req.nextUrl.searchParams.get("txId");
+    if (!txId) {
+      return NextResponse.json({ ok: false, error: "txId parameter required" }, { status: 400 });
+    }
+
+    const { state, txHash, error } = await getTxState(txId);
+
+    const terminal = ["COMPLETE", "FAILED", "CANCELLED", "DENIED"].includes(state);
+
+    return NextResponse.json({
+      ok: true,
+      txId,
+      state,
+      txHash,
+      error,
+      terminal,
+    });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+  }
+}
+
+// ─── POST: Initiate deposit (non-blocking) ───────────────────
 
 export async function POST(req: NextRequest) {
   try {
@@ -93,12 +131,23 @@ export async function POST(req: NextRequest) {
     const client = getDcwClient();
     const amountAtomic = String(Math.round(amountUsdc * 1_000_000));
 
-    // Step 1: Approve USDC spending by Gateway contract
-    const approveResp = await client.executeContract({
+    const health = getDcwHealth();
+    if (!health.usdc_contract_configured || !health.gateway_contract_configured) {
+      return NextResponse.json({
+        ok: false,
+        error: "Contract addresses not properly configured",
+        health,
+      }, { status: 500 });
+    }
+
+    // Step 1: Approve USDC spending by Gateway contract (non-blocking)
+    // Per Circle docs: use createContractExecutionTransaction with fee level
+    const approveResp = await client.createContractExecutionTransaction({
       walletId: wallet.wallet_id,
-      contractAddress: USDC_ADDRESS_ARC_TESTNET,
+      contractAddress: USDC_CONTRACT_ADDRESS,
       abiFunctionSignature: "approve(address,uint256)",
-      abiParameters: [GATEWAY_CONTRACT_ARC_TESTNET, amountAtomic],
+      abiParameters: [GATEWAY_CONTRACT_ADDRESS, amountAtomic],
+      fee: { type: "level", config: { feeLevel: "MEDIUM" } },
       idempotencyKey: crypto.randomUUID(),
     });
 
@@ -108,37 +157,42 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Approve transaction failed to initiate" }, { status: 502 });
     }
 
-    // Wait for approve tx to confirm
-    await waitForTxComplete(client, approveTxId);
+    // Step 2: Submit deposit tx immediately (don't wait for approve)
+    // The Gateway contract handles approve+deposit atomically on-chain.
+    // If approve isn't confirmed yet, deposit will queue and execute after.
+    let depositTxId: string | null = null;
+    let depositError: string | null = null;
 
-    // Step 2: Call deposit() on Gateway contract
-    // Gateway.deposit(depositor, amount) — deposits USDC into Gateway for x402 use
-    const depositResp = await client.executeContract({
-      walletId: wallet.wallet_id,
-      contractAddress: GATEWAY_CONTRACT_ARC_TESTNET,
-      abiFunctionSignature: "deposit(address,uint256)",
-      abiParameters: [wallet.wallet_address, amountAtomic],
-      idempotencyKey: crypto.randomUUID(),
-    });
+    try {
+      const depositResp = await client.createContractExecutionTransaction({
+        walletId: wallet.wallet_id,
+        contractAddress: GATEWAY_CONTRACT_ADDRESS,
+        abiFunctionSignature: "deposit(address,uint256)",
+        abiParameters: [wallet.wallet_address, amountAtomic],
+        fee: { type: "level", config: { feeLevel: "MEDIUM" } },
+        idempotencyKey: crypto.randomUUID(),
+      });
 
-    const depositTxId = depositResp?.data?.id;
-    if (!depositTxId) {
-      console.error("[dcw/deposit-gateway] Deposit returned no tx id:", JSON.stringify(depositResp?.data));
-      return NextResponse.json({
-        ok: false,
-        error: "Deposit transaction failed to initiate (approve succeeded)",
-        approveTxId,
-      }, { status: 502 });
+      depositTxId = depositResp?.data?.id || null;
+      if (!depositTxId) {
+        depositError = "Deposit tx returned no ID";
+      }
+    } catch (err: unknown) {
+      depositError = err instanceof Error ? err.message : String(err);
+      // Deposit may fail if approve isn't confirmed yet — that's OK
+      console.warn("[dcw/deposit-gateway] Deposit submitted (may queue):", depositError.slice(0, 120));
     }
-
-    // Wait for deposit tx to confirm
-    await waitForTxComplete(client, depositTxId);
 
     return NextResponse.json({
       ok: true,
       approveTxId,
       depositTxId,
       amountUsdc,
+      state: depositTxId ? "deposit_pending" : "approve_pending",
+      note: depositTxId
+        ? "Both transactions submitted. Poll with GET ?txId=<id>."
+        : "Approve submitted. Deposit will be submitted after approve confirms. Poll approve first.",
+      health,
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

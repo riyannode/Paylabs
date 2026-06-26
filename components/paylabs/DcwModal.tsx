@@ -11,7 +11,8 @@ type DcwWalletInfo = {
 };
 
 type DcwBalanceInfo = {
-  walletUsdc: string | null;   // on-chain USDC (null if not fetched)
+  walletUsdc: string | null;   // on-chain USDC (null if fetch failed)
+  walletBalanceStatus?: "ok" | "unavailable"; // from Circle SDK
   gatewayUsdc: string;         // x402 Balance (Gateway)
   pendingBatchUsdc?: string;
 };
@@ -404,6 +405,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
       if (data.ok) {
         const newBalance: DcwBalanceInfo = {
           walletUsdc: data.wallet?.usdc ?? null,
+          walletBalanceStatus: data.wallet?.walletBalanceStatus ?? "unavailable",
           gatewayUsdc: data.gateway?.balanceUsdc || "0",
           pendingBatchUsdc: data.gateway?.pendingBatchUsdc || "0",
         };
@@ -414,6 +416,9 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   }, [onBalanceUpdate]);
 
   // ── Deposit to Gateway ────────────────────────────────────
+  const [depositTxId, setDepositTxId] = useState<string | null>(null);
+  const [depositState, setDepositState] = useState<string | null>(null);
+
   const handleDeposit = useCallback(async () => {
     const amount = parseFloat(depositAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -422,6 +427,8 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
     }
     setIsDepositing(true);
     setDepositError(null);
+    setDepositTxId(null);
+    setDepositState(null);
     try {
       const resp = await fetch("/api/paylabs/dcw/deposit-gateway", {
         method: "POST",
@@ -435,8 +442,29 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
         return;
       }
       setDepositAmount("");
-      // Refresh balance after successful deposit
-      await refreshBalance();
+      setDepositTxId(data.depositTxId || data.approveTxId);
+      setDepositState(data.state || "submitted");
+
+      // Poll tx status until terminal
+      const txToPoll = data.depositTxId || data.approveTxId;
+      if (txToPoll) {
+        const pollInterval = setInterval(async () => {
+          try {
+            const statusResp = await fetch(`/api/paylabs/dcw/deposit-gateway?txId=${txToPoll}`, { credentials: "include" });
+            const statusData = await statusResp.json();
+            setDepositState(statusData.state || "pending");
+            if (statusData.terminal) {
+              clearInterval(pollInterval);
+              setDepositState(statusData.state === "COMPLETE" ? "complete" : "failed");
+              if (statusData.state === "COMPLETE") {
+                await refreshBalance();
+              }
+              // Clear state after 5s
+              setTimeout(() => { setDepositTxId(null); setDepositState(null); }, 5000);
+            }
+          } catch { /* poll failed — will retry */ }
+        }, 5000); // poll every 5s
+      }
     } catch (e: unknown) {
       setDepositError(e instanceof Error ? e.message : "Deposit failed");
     } finally {
@@ -586,10 +614,15 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                       <span className="muted">Wallet USDC</span>
                       <b>{balance.walletUsdc} USDC</b>
                     </div>
+                  ) : balance.walletBalanceStatus === "unavailable" ? (
+                    <div className="pl-dcw-wallet-row">
+                      <span className="muted">Wallet USDC</span>
+                      <b className="muted">Syncing…</b>
+                    </div>
                   ) : (
                     <div className="pl-dcw-wallet-row">
                       <span className="muted">Wallet USDC</span>
-                      <b className="muted">not available</b>
+                      <b className="muted">0.00 USDC</b>
                     </div>
                   )}
 
@@ -658,10 +691,15 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                       <span className="muted">Wallet USDC</span>
                       <b>{balance.walletUsdc} USDC</b>
                     </div>
+                  ) : balance.walletBalanceStatus === "unavailable" ? (
+                    <div className="pl-dcw-wallet-row">
+                      <span className="muted">Wallet USDC</span>
+                      <b className="muted">Syncing…</b>
+                    </div>
                   ) : (
                     <div className="pl-dcw-wallet-row">
                       <span className="muted">Wallet USDC</span>
-                      <b className="muted">not available</b>
+                      <b className="muted">0.00 USDC</b>
                     </div>
                   )}
                   <div className="pl-dcw-wallet-row">
@@ -717,6 +755,18 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                   </div>
                   {depositError && (
                     <p style={{ color: "var(--error, #ef4444)", fontSize: 11, marginTop: 6 }}>{depositError}</p>
+                  )}
+                  {depositTxId && depositState && (
+                    <p style={{
+                      color: depositState === "complete" ? "var(--success, #22c55e)" : "var(--info, #3b82f6)",
+                      fontSize: 11, marginTop: 6,
+                    }}>
+                      {depositState === "approve_pending" && "⏳ Approve submitted… waiting for confirmation"}
+                      {depositState === "deposit_pending" && "⏳ Deposit submitted… waiting for confirmation"}
+                      {depositState === "complete" && "✓ Deposit complete! Balance updated."}
+                      {depositState === "failed" && "✗ Deposit failed. Check explorer for details."}
+                      {!["approve_pending", "deposit_pending", "complete", "failed"].includes(depositState) && `⏳ ${depositState}…`}
+                    </p>
                   )}
                   {recommendedTopUp > 0 && (
                     <button

@@ -1,16 +1,87 @@
 /**
  * GET /api/paylabs/dcw/balance
  *
- * Returns DCW wallet info + Gateway balance for the authenticated user.
+ * Returns DCW wallet info + on-chain USDC balance + Gateway balance.
  * REQUIRES valid session cookie.
  *
- * Returns: { ok, walletId, address, gateway }
+ * On-chain balance via Circle DCW SDK getWalletTokenBalance().
+ * Gateway balance via permissionless Gateway REST API.
+ *
+ * Returns: { ok, walletId, address, wallet, gateway, health }
  */
 
 import { NextResponse } from "next/server";
+import { createRequire } from "node:module";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSession } from "@/lib/paylabs/auth/session";
 import { checkGatewayBalance } from "@/lib/paylabs/x402/gateway-balance";
+import { getDcwHealth } from "@/lib/paylabs/dcw/config";
+
+const _require = createRequire(import.meta.url);
+
+// ─── Lazy DCW client init ────────────────────────────────────
+
+let _dcwClient: any = null;
+
+function getDcwClient() {
+  if (_dcwClient) return _dcwClient;
+  const apiKey = process.env.CIRCLE_API_KEY;
+  const entitySecret = process.env.CIRCLE_ENTITY_SECRET;
+  if (!apiKey || !entitySecret) {
+    throw new Error("CIRCLE_API_KEY and CIRCLE_ENTITY_SECRET required");
+  }
+  const mod = _require("@circle-fin/developer-controlled-wallets");
+  _dcwClient = mod.initiateDeveloperControlledWalletsClient({ apiKey, entitySecret });
+  return _dcwClient;
+}
+
+// ─── On-chain Balance Fetch ──────────────────────────────────
+
+/**
+ * Fetch on-chain USDC balance for a DCW wallet.
+ * Per Circle docs: use getWalletTokenBalance(), NOT getWallet().
+ * Returns null values with status if fetch fails.
+ */
+async function fetchOnChainBalance(walletId: string): Promise<{
+  usdc: string | null;
+  usdcAtomic: string | null;
+  walletBalanceStatus: "ok" | "unavailable";
+}> {
+  try {
+    const client = getDcwClient();
+    const balanceResp = await client.getWalletTokenBalance({ id: walletId });
+    const tokenBalances = balanceResp?.data?.tokenBalances ?? [];
+
+    // Find USDC token balance
+    const usdcEntry = tokenBalances.find(
+      (t: any) =>
+        t.token?.symbol === "USDC" ||
+        t.token?.name?.toLowerCase().includes("usdc")
+    );
+
+    if (usdcEntry) {
+      const amount = usdcEntry.amount || "0";
+      // amount is in human-readable format from Circle SDK
+      const amountNum = parseFloat(amount);
+      return {
+        usdc: Number.isFinite(amountNum) ? amountNum.toFixed(6) : "0",
+        usdcAtomic: Number.isFinite(amountNum)
+          ? Math.round(amountNum * 1_000_000).toString()
+          : "0",
+        walletBalanceStatus: "ok",
+      };
+    }
+
+    // No USDC token found — wallet may have 0 USDC or token not recognized
+    return { usdc: "0", usdcAtomic: "0", walletBalanceStatus: "ok" };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn("[dcw/balance] On-chain balance fetch failed:", msg.slice(0, 120));
+    return { usdc: null, usdcAtomic: null, walletBalanceStatus: "unavailable" };
+  }
+}
+
+// ─── Handler ─────────────────────────────────────────────────
 
 export async function GET() {
   try {
@@ -33,8 +104,13 @@ export async function GET() {
       return NextResponse.json({ ok: false, error: "No DCW wallet found" }, { status: 404 });
     }
 
-    // Check Gateway balance
-    const gwBalance = await checkGatewayBalance({ depositor: wallet.wallet_address });
+    // Fetch on-chain balance + Gateway balance in parallel
+    const [onChain, gwBalance] = await Promise.all([
+      fetchOnChainBalance(wallet.wallet_id),
+      checkGatewayBalance({ depositor: wallet.wallet_address }),
+    ]);
+
+    const health = getDcwHealth();
 
     return NextResponse.json({
       ok: true,
@@ -42,15 +118,18 @@ export async function GET() {
       address: wallet.wallet_address,
       chain: wallet.chain,
       wallet: {
-        usdc: null,       // DCW on-chain wallet balance not fetched yet
-        usdcAtomic: null,
+        usdc: onChain.usdc,
+        usdcAtomic: onChain.usdcAtomic,
+        walletBalanceStatus: onChain.walletBalanceStatus,
       },
       gateway: {
-        balanceUsdc: gwBalance.balanceUsdc || "0",
-        balanceAtomic: gwBalance.balanceAtomic || "0",
+        balanceUsdc: gwBalance.ok ? (gwBalance.balanceUsdc || "0") : "0",
+        balanceAtomic: gwBalance.ok ? (gwBalance.balanceAtomic || "0") : "0",
         pendingBatchUsdc: gwBalance.pendingBatchUsdc || "0",
         ok: gwBalance.ok,
+        error: gwBalance.error || null,
       },
+      health,
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

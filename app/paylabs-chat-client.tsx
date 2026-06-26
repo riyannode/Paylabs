@@ -616,13 +616,13 @@ async function fetchSessionBalance(): Promise<UcwBalance> {
   return { walletUsdc: data.usdc ?? "0", gatewayUsdc: data.gateway ?? "0", source: "ucw" };
 }
 
-/** Fetch DCW balance (Gateway only — DCW wallet token balance not exposed) */
+/** Fetch DCW balance — on-chain wallet USDC + Gateway x402 balance */
 async function fetchDcwBalance(): Promise<UcwBalance> {
   const resp = await fetch("/api/paylabs/dcw/balance", { credentials: "include" });
   if (!resp.ok) return { walletUsdc: "0", gatewayUsdc: "0", source: "dcw" };
   const data = await resp.json();
   return {
-    walletUsdc: "0", // DCW wallet token balance not available via this endpoint
+    walletUsdc: data.wallet?.usdc ?? "0",
     gatewayUsdc: data.gateway?.balanceUsdc ?? "0",
     pendingBatchUsdc: data.gateway?.pendingBatchUsdc,
     source: "dcw",

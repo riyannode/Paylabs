@@ -32,6 +32,12 @@ const STOPWORDS = new Set([
   "yang", "dan", "atau", "untuk", "dari", "dengan", "ini", "itu",
 ]);
 
+// ─── Meaningful short tokens — never filtered by length ─────
+const MEANINGFUL_SHORT_TOKENS = new Set([
+  "ai", "ml", "llm", "btc", "eth", "sol", "nft", "dao", "dex",
+  "api", "usdc", "x402", "evm", "l2", "cefi", "gpt", "cv",
+]);
+
 // ─── Deterministic Scoring ─────────────────────────────────
 
 function scoreItem(
@@ -69,7 +75,7 @@ function scoreItem(
 
   // 2. Keyword overlap with queries (skip stopwords and short words)
   for (const query of expandedQueries) {
-    const words = query.toLowerCase().split(/\s+/).filter((w) => w.length > 3 && !STOPWORDS.has(w));
+    const words = query.toLowerCase().split(/\s+/).filter((w) => (w.length > 3 || MEANINGFUL_SHORT_TOKENS.has(w)) && !STOPWORDS.has(w));
     for (const word of words) {
       if (title.includes(word)) score += 3;
       if (summary.includes(word)) score += 1;
@@ -550,7 +556,9 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
         top_candidates: rescored.slice(0, 3).map((r) => r.feed_item_id),
         quick_relevance_notes: rescored.slice(0, 5).map((r) => r.reason),
         safe_signal_summary: `[basic] Live RSSHub: ${rescored.length} source(s) found${topicCandidates.length > 0 ? `, ${topicCandidates.length} from topic routes` : ""}.`,
-        retrieval_mode: topicCandidates.length > 0 ? "rsshub_live+topic" : "rsshub_live",
+        retrieval_mode: "rsshub_live",
+        source_strategy: topicCandidates.length > 0 ? "topic_routes" : "catalog",
+        topic_routes_count: topicCandidates.length,
         live_diagnostics: diagnostics,
       },
       safeSummary: `[basic] Live RSSHub: ${rescored.length} source(s) found.`,
