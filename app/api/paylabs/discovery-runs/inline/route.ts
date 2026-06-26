@@ -803,13 +803,23 @@ async function runX402Path(
       "PAYLABS_AGENT_NANOPAYMENTS_ENABLED",
       "PAYLABS_BRAIN_X402_ENABLED",
       "PAYLABS_NODE_X402_ENABLED",
-      "PAYLABS_APP_URL",
+      // PAYLABS_APP_URL removed — resolvePaylabsAppUrl() prefers
+      // PAYLABS_INTERNAL_APP_URL or VERCEL_URL (auto-set by Vercel).
+      // We verify URL resolution works below instead of hardcoding one key.
       "PAYLABS_BRAIN_SELLER_WALLET_ADDRESS",
       "PAYLABS_NODE_DISCOVERY_PLANNER_SELLER_WALLET_ADDRESS",
     ];
     const missingEnvs = requiredEnvs.filter((k) => !process.env[k]);
     if (missingEnvs.length > 0) {
       throw new Error(`config_error: missing required x402 envs: ${missingEnvs.join(", ")}`);
+    }
+
+    // Verify URL resolution works (PAYLABS_INTERNAL_APP_URL or VERCEL_URL)
+    try {
+      resolvePaylabsAppUrl();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`config_error: cannot resolve app URL: ${msg}. Set PAYLABS_INTERNAL_APP_URL or ensure VERCEL_URL is available.`);
     }
 
     // Controller buyer wallet — support both naming conventions
