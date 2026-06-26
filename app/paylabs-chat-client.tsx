@@ -775,6 +775,29 @@ export default function PayLabsChatClient({ analytics }: Props) {
   useEffect(() => {
     const restoreAfterRedirect = async () => {
       dbg("restoreAfterRedirect: start");
+
+      // ── DCW session restore (check first — no SDK needed) ──
+      try {
+        const dcwSessionResp = await fetch("/api/paylabs/auth/session", { credentials: "include" });
+        if (dcwSessionResp.ok) {
+          const dcwSession = await dcwSessionResp.json();
+          if (dcwSession.ok && dcwSession.authenticated && dcwSession.hasWallet && dcwSession.walletAddress) {
+            dbg("DCW session found — restoring wallet state");
+            setWalletInfo({
+              address: dcwSession.walletAddress,
+              walletType: "circle_developer_controlled",
+              network: "ARC-TESTNET",
+            });
+            const dcwBal = await fetchDcwBalance();
+            setUcwBalance(dcwBal);
+            const x402Bal = parseFloat(dcwBal.gatewayUsdc ?? "0");
+            setWalletState(x402Bal > 0 ? "ready_to_approve" : "needs_gateway_deposit");
+            return; // DCW session restored, skip UCW restore
+          }
+        }
+      } catch { /* no DCW session, continue to UCW check */ }
+
+      // ── UCW session restore ──
       try {
         const resp = await fetch("/api/paylabs/wallet/ucw?action=session-restore", { method: "POST", credentials: "include" });
         if (!resp.ok) {
@@ -1722,6 +1745,23 @@ export default function PayLabsChatClient({ analytics }: Props) {
                 <span className="pl-wallet-pill-balance">
                   {ucwBalance?.gatewayUsdc ?? ucwBalance?.walletUsdc ?? "0.00"} USDC
                 </span>
+                {walletInfo?.walletType === "circle_developer_controlled" && (
+                  <button
+                    type="button"
+                    className="pl-wallet-copy-btn"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        const dcwBal = await fetchDcwBalance();
+                        setUcwBalance(dcwBal);
+                      } catch { /* refresh failed */ }
+                    }}
+                    aria-label="Refresh balance"
+                    title="Refresh DCW balance"
+                  >
+                    ↻
+                  </button>
+                )}
                 <button
                   type="button"
                   className="pl-wallet-copy-btn"
@@ -1874,18 +1914,30 @@ export default function PayLabsChatClient({ analytics }: Props) {
         open={dcwOpen}
         onClose={() => setDcwOpen(false)}
         plannedCost={planned}
+        onBalanceUpdate={(bal) => {
+          setUcwBalance({
+            walletUsdc: bal.walletUsdc,
+            gatewayUsdc: bal.gatewayUsdc,
+            pendingBatchUsdc: bal.pendingBatchUsdc,
+            source: "dcw",
+          });
+        }}
         onWalletReady={async (w) => {
           setWalletInfo({
             address: w.address,
             walletType: "circle_developer_controlled",
             network: w.chain,
           });
-          setDcwOpen(false);
-          // Fetch DCW Gateway balance for pill display
+          // Fetch balance FIRST, then close modal (avoid race condition)
           try {
             const dcwBal = await fetchDcwBalance();
             setUcwBalance(dcwBal);
-          } catch { /* balance fetch failed — pill stays at 0.00 */ }
+            const x402Bal = parseFloat(dcwBal.gatewayUsdc ?? "0");
+            setWalletState(x402Bal > 0 ? "ready_to_approve" : "needs_gateway_deposit");
+          } catch {
+            setWalletState("connected");
+          }
+          setDcwOpen(false);
         }}
       />
 

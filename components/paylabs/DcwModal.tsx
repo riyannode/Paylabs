@@ -20,6 +20,7 @@ type Props = {
   open: boolean;
   onClose: () => void;
   onWalletReady?: (wallet: DcwWalletInfo) => void;
+  onBalanceUpdate?: (balance: DcwBalanceInfo) => void;
   plannedCost?: string;
 };
 
@@ -33,7 +34,7 @@ function asDecimal(value?: string | null): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "0.000015" }: Props) {
+export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate, plannedCost = "0.000015" }: Props) {
   const [step, setStep] = useState<DcwStep>("auth");
   const [email, setEmail] = useState("");
   const [wallet, setWallet] = useState<DcwWalletInfo | null>(null);
@@ -48,6 +49,11 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
   const [activeTab, setActiveTab] = useState<"balances" | "topup">("balances");
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const googleInitialized = useRef(false);
+
+  // Deposit state
+  const [depositAmount, setDepositAmount] = useState("");
+  const [isDepositing, setIsDepositing] = useState(false);
+  const [depositError, setDepositError] = useState<string | null>(null);
 
   const x402Balance = asDecimal(balance.gatewayUsdc);
   const plannedCostNum = asDecimal(plannedCost);
@@ -393,17 +399,50 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
   // ── Refresh Balance ───────────────────────────────────────
   const refreshBalance = useCallback(async () => {
     try {
-      const resp = await fetch("/api/paylabs/dcw/balance");
+      const resp = await fetch("/api/paylabs/dcw/balance", { credentials: "include" });
       const data = await resp.json();
       if (data.ok) {
-        setBalance({
+        const newBalance: DcwBalanceInfo = {
           walletUsdc: data.wallet?.usdc ?? null,
           gatewayUsdc: data.gateway?.balanceUsdc || "0",
           pendingBatchUsdc: data.gateway?.pendingBatchUsdc || "0",
-        });
+        };
+        setBalance(newBalance);
+        onBalanceUpdate?.(newBalance);
       }
     } catch {}
-  }, []);
+  }, [onBalanceUpdate]);
+
+  // ── Deposit to Gateway ────────────────────────────────────
+  const handleDeposit = useCallback(async () => {
+    const amount = parseFloat(depositAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setDepositError("Enter a valid amount");
+      return;
+    }
+    setIsDepositing(true);
+    setDepositError(null);
+    try {
+      const resp = await fetch("/api/paylabs/dcw/deposit-gateway", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amountUsdc: amount }),
+      });
+      const data = await resp.json();
+      if (!data.ok) {
+        setDepositError(data.error || "Deposit failed");
+        return;
+      }
+      setDepositAmount("");
+      // Refresh balance after successful deposit
+      await refreshBalance();
+    } catch (e: unknown) {
+      setDepositError(e instanceof Error ? e.message : "Deposit failed");
+    } finally {
+      setIsDepositing(false);
+    }
+  }, [depositAmount, refreshBalance]);
 
   const handleCopy = useCallback(() => {
     if (wallet?.address) {
@@ -639,14 +678,56 @@ export default function DcwModal({ open, onClose, onWalletReady, plannedCost = "
                   </div>
                 </div>
 
-                {/* DCW honest state: deposit not wired */}
-                <div style={{ marginTop: 12, padding: "12px", background: "var(--warn-bg, #fef3c7)", borderRadius: 6, border: "1px solid var(--warn-border, #f59e0b)" }}>
-                  <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
-                    DCW x402 Balance is required for auto-pay.
+                {/* Deposit to Gateway */}
+                <div style={{ marginTop: 12, padding: "12px", background: "var(--card-bg, #1a1a2e)", borderRadius: 6, border: "1px solid var(--border, #333)" }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
+                    Deposit USDC to x402 Balance
                   </p>
-                  <p className="muted" style={{ fontSize: 11 }}>
-                    DCW Gateway top-up is not wired yet in this build. Fund x402 Balance before auto-pay can run.
+                  <p className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
+                    Transfer USDC from your wallet into Circle Gateway for x402 auto-pay.
+                    Your wallet needs on-chain USDC first.
                   </p>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      min="0"
+                      placeholder="Amount USDC"
+                      value={depositAmount}
+                      onChange={(e) => { setDepositAmount(e.target.value); setDepositError(null); }}
+                      disabled={isDepositing}
+                      style={{
+                        flex: 1,
+                        padding: "6px 10px",
+                        borderRadius: 4,
+                        border: "1px solid var(--border, #444)",
+                        background: "var(--input-bg, #0d0d1a)",
+                        color: "inherit",
+                        fontSize: 13,
+                      }}
+                    />
+                    <button
+                      className="pl-primary-v3"
+                      onClick={handleDeposit}
+                      disabled={isDepositing || !depositAmount}
+                      style={{ whiteSpace: "nowrap", opacity: isDepositing || !depositAmount ? 0.5 : 1 }}
+                    >
+                      {isDepositing ? "Depositing…" : "Deposit"}
+                    </button>
+                  </div>
+                  {depositError && (
+                    <p style={{ color: "var(--error, #ef4444)", fontSize: 11, marginTop: 6 }}>{depositError}</p>
+                  )}
+                  {recommendedTopUp > 0 && (
+                    <button
+                      className="pl-eoa-fallback-v3"
+                      onClick={() => setDepositAmount(recommendedStr)}
+                      disabled={isDepositing}
+                      style={{ marginTop: 6, fontSize: 11 }}
+                    >
+                      Use recommended: {recommendedStr} USDC
+                    </button>
+                  )}
                 </div>
 
                 {/* Wallet address for manual funding */}
