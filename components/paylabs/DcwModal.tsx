@@ -652,10 +652,6 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                 Already have a passkey? Sign in
               </button>
             </div>
-
-            <p className="muted" style={{ fontSize: 11, marginTop: 4, textAlign: "center" }}>
-              Auto-pay wallet. No popups, no signing.
-            </p>
           </div>
         )}
 
