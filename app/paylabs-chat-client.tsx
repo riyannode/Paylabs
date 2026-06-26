@@ -773,6 +773,9 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
   // ── Post-redirect: restore SDK from server session ──
   useEffect(() => {
+    let cancelled = false;
+    let oauthTimeout: ReturnType<typeof setTimeout> | null = null;
+
     const restoreAfterRedirect = async () => {
       dbg("restoreAfterRedirect: start");
 
@@ -973,8 +976,8 @@ export default function PayLabsChatClient({ analytics }: Props) {
           // handler on timeout, preventing the onLoginComplete callback from ever firing.
 
           // Timeout: if callback didn't fire in 10s, the OAuth detection failed
-          setTimeout(() => {
-            if (!callbackFired) {
+          oauthTimeout = setTimeout(() => {
+            if (!callbackFired && !cancelled) {
               console.warn("[UCW] Login callback did not fire after 10s — OAuth detection likely failed");
               setWalletState("not_connected");
               setWalletError("Login timed out. Please try again.");
@@ -989,6 +992,11 @@ export default function PayLabsChatClient({ analytics }: Props) {
       }
     };
     restoreAfterRedirect();
+
+    return () => {
+      cancelled = true;
+      if (oauthTimeout) clearTimeout(oauthTimeout);
+    };
   }, [planned]);
 
   // ── Session lifecycle: cookie TTL refreshed by session-restore + session-balance ──
