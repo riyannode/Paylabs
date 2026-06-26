@@ -1,5 +1,7 @@
 "use client";
 
+import CreatorWalletPanel from "@/components/paylabs/CreatorWalletPanel";
+
 export default function CreatorPage() {
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -8,12 +10,12 @@ export default function CreatorPage() {
         <h1 className="page-title">Creator Dashboard</h1>
       </div>
 
-      <div className="card" style={{ textAlign: "center", padding: "64px 24px" }}>
-        <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
-        <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>Register Waitlist</h2>
-        <p className="muted" style={{ fontSize: 14, maxWidth: 400, margin: "0 auto" }}>
-          Creator earnings dashboard is under development. Connect your wallet later to track source payment earnings.
+      <div className="card" style={{ padding: "24px" }}>
+        <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Creator Wallet</h2>
+        <p className="muted" style={{ fontSize: 14, marginBottom: 16 }}>
+          Connect your Circle wallet to receive creator payouts from source attribution.
         </p>
+        <CreatorWalletPanel />
       </div>
     </div>
   );
