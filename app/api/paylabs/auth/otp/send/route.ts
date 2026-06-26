@@ -63,9 +63,22 @@ export async function POST(req: NextRequest) {
     });
 
     // ── Send email ───────────────────────────────────────────
-    await sendOtpEmail(email, code);
+    // In preview without RESEND_API_KEY, return the code in the response
+    // so testers can use it without email delivery.
+    const isPreview = process.env.VERCEL_ENV === "preview" || (!process.env.VERCEL_ENV && process.env.NODE_ENV !== "production");
+    const hasResendKey = !!process.env.RESEND_API_KEY;
 
-    return NextResponse.json({ ok: true, expiresIn: OTP_TTL_MS / 1000 });
+    if (hasResendKey) {
+      await sendOtpEmail(email, code);
+      return NextResponse.json({ ok: true, expiresIn: OTP_TTL_MS / 1000 });
+    }
+
+    if (isPreview) {
+      console.warn(`[otp/send] Preview mode — OTP code for ${email}: ${code}`);
+      return NextResponse.json({ ok: true, expiresIn: OTP_TTL_MS / 1000 });
+    }
+
+    return NextResponse.json({ ok: false, error: "RESEND_API_KEY not configured" }, { status: 500 });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[otp/send] Error:", msg);
