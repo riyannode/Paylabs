@@ -2,9 +2,7 @@
 
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import SidebarPanel from "@/components/paylabs/SidebarPanel";
-import WalletConnectModal from "@/components/paylabs/WalletConnectModal";
 import type { WalletState, WalletInfo, UcwBalance } from "@/components/paylabs/WalletConnectModal";
-import WalletPicker from "@/components/paylabs/WalletPicker";
 import DcwModal from "@/components/paylabs/DcwModal";
 import PaymentExplorerLinks from "@/components/paylabs/PaymentExplorerLinks";
 import { safeExplorerUrl as validateExplorerUrl } from "@/lib/paylabs/x402/payment-links";
@@ -702,21 +700,8 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const chatThreadRef = useRef<HTMLDivElement | null>(null);
 
-  // Wallet state
-  const [walletOpen, setWalletOpen] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  // Wallet state — DCW only
   const [dcwOpen, setDcwOpen] = useState(false);
-
-  // Mutual exclusivity: only one wallet modal can be open at a time
-  useEffect(() => {
-    if (dcwOpen) { setPickerOpen(false); setWalletOpen(false); }
-  }, [dcwOpen]);
-  useEffect(() => {
-    if (walletOpen) { setPickerOpen(false); setDcwOpen(false); }
-  }, [walletOpen]);
-  useEffect(() => {
-    if (pickerOpen) { setWalletOpen(false); setDcwOpen(false); }
-  }, [pickerOpen]);
   const [walletState, setWalletState] = useState<WalletState>("not_connected");
   const [walletInfo, setWalletInfo] = useState<WalletInfo | null>(null);
   const [walletError, setWalletError] = useState<string | null>(null);
@@ -1458,7 +1443,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
     // Run gating: must have wallet
     if (!walletInfo?.address) {
-      setPickerOpen(true);
+      setDcwOpen(true);
       return;
     }
 
@@ -1468,23 +1453,13 @@ export default function PayLabsChatClient({ analytics }: Props) {
       const x402Bal = parseFloat(ucwBalance.gatewayUsdc ?? "0");
       const costNum = parseFloat(planned);
       if (x402Bal < costNum) {
-        // Insufficient x402 balance — open wallet modal with top-up tab
-        if (walletInfo.walletType === "circle_developer_controlled") {
-          setDcwOpen(true);
-        } else {
-          setWalletState("needs_gateway_deposit");
-          setWalletOpen(true);
-        }
+        // Insufficient x402 balance — open DCW modal with top-up tab
+        setDcwOpen(true);
         return;
       }
     }
 
-    // Run gating: UCW wallet must have live SDK/auth to sign
-    if (walletInfo.walletType === "circle_user_controlled" && (!ucwSdkRef.current || !ucwAuthRef.current)) {
-      setWalletError("Reconnect wallet to sign x402 payments.");
-      setWalletOpen(true);
-      return;
-    }
+    // UCW SDK check removed — chat page is DCW-only
 
     const userMsg: ChatMessage = { id: makeChatId("user"), role: "user", content: prompt.trim(), createdAt: Date.now() };
     const assistantId = makeChatId("assistant");
@@ -1729,11 +1704,10 @@ export default function PayLabsChatClient({ analytics }: Props) {
             });
             setSigningPhase(null);
           } else if (walletInfo.walletType === "circle_user_controlled" && !ucwSdkRef.current) {
-            // UCW wallet but SDK/auth lost (e.g. after refresh) — never fall back to EOA
+            // UCW wallet but SDK/auth lost — redirect to DCW (chat is DCW-only)
             finishAssistant({ status: "error", error: "Reconnect wallet to sign x402 payments." });
             setError("Reconnect wallet to sign x402 payments.");
-            setWalletOpen(true);
-            setWalletState("connected");
+            setDcwOpen(true);
             setStatus("error");
             return;
           } else {
@@ -1835,19 +1809,10 @@ export default function PayLabsChatClient({ analytics }: Props) {
   // Dev mode: show EOA fallback if ?eoa=1 in URL
   const showEoaFallback = typeof window !== "undefined" && window.location.search.includes("eoa=1");
 
-  // Reconnect using the original auth method
+  // Reconnect — chat is DCW-only, just open DcwModal
   const reconnectByAuth = useCallback(() => {
-    if (authMethod === "google") connectGoogle();
-    else if (authMethod === "email") {
-      // Open wallet modal with email input visible
-      setShowEmailInputForReconnect(true);
-      setWalletOpen(true);
-    }
-    else if (authMethod === "pin") connectPin();
-    else {
-      setWalletOpen(true);
-    }
-  }, [authMethod, connectGoogle, connectPin]);
+    setDcwOpen(true);
+  }, []);
 
   const copyWalletAddress = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
@@ -1872,7 +1837,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
           <button
             type="button"
             className={`pl-wallet-pill ${walletInfo?.address ? "connected" : ""}`}
-            onClick={() => walletInfo?.address ? setWalletOpen(true) : setPickerOpen(true)}
+            onClick={() => setDcwOpen(true)}
             title={walletInfo?.address || "Connect wallet"}
           >
             {walletInfo?.address ? (
@@ -2071,13 +2036,6 @@ export default function PayLabsChatClient({ analytics }: Props) {
         </section>
       </main>
 
-      <WalletPicker
-        open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        onSelectUcw={() => { setPickerOpen(false); setWalletOpen(true); }}
-        onSelectDcw={() => { setPickerOpen(false); setDcwOpen(true); }}
-      />
-
       <DcwModal
         open={dcwOpen}
         onClose={() => setDcwOpen(false)}
@@ -2107,30 +2065,6 @@ export default function PayLabsChatClient({ analytics }: Props) {
           }
           setDcwOpen(false);
         }}
-      />
-
-      <WalletConnectModal
-        open={walletOpen}
-        onClose={() => { setWalletOpen(false); setShowEmailInputForReconnect(false); }}
-        walletState={walletState}
-        walletInfo={walletInfo}
-        ucwBalance={ucwBalance}
-        budget={budget}
-        plannedCost={planned}
-        error={walletError}
-        onConnectGoogle={connectGoogle}
-        onConnectEmail={connectEmail}
-        onConnectPin={connectPin}
-        onConnectEoa={connectEoa}
-        onDepositGateway={depositGateway}
-        onApprove={() => { setWalletOpen(false); submitChat(); }}
-        showEoaFallback={showEoaFallback}
-        needsReconnectToSign={needsReconnectToSign}
-        onReconnect={reconnectByAuth}
-        authMethod={authMethod}
-        depositStatus={depositStatus}
-        debugLog={ucwDebug ? debugLog : undefined}
-        defaultShowEmailInput={showEmailInputForReconnect}
       />
     </div>
   );
