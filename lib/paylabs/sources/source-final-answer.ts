@@ -106,7 +106,7 @@ export function buildSourceGroundedFinalAnswer(
 
   // No sources found
   if (!sourcesUsed || sourcesUsed.length === 0) {
-    return "Tidak menemukan source yang cukup relevan untuk menjawab pertanyaan ini. Coba dengan query yang lebih spesifik atau topik berbeda.";
+    return "No sufficiently relevant sources found for this query. Try a more specific query or a different topic.";
   }
 
   // Check entity intent match
@@ -115,7 +115,7 @@ export function buildSourceGroundedFinalAnswer(
 
   // If entity was specified but NO sources match it, treat as no-match
   if (ownerRepo && matchingSources.length === 0) {
-    return `Tidak menemukan source yang relevan untuk ${ownerRepo.owner}/${ownerRepo.repo}. Source yang ditemukan tidak berkaitan dengan repository tersebut.`;
+    return `No relevant sources found for ${ownerRepo.owner}/${ownerRepo.repo}. The sources found are not related to this repository.`;
   }
 
   // Use matching sources (or all if no entity filter)
@@ -128,16 +128,16 @@ export function buildSourceGroundedFinalAnswer(
 
   // Opening — context-aware
   if (ownerRepo) {
-    parts.push(`Aktivitas terbaru yang ditemukan untuk ${ownerRepo.owner}/${ownerRepo.repo}:`);
+    parts.push(`Latest activity found for ${ownerRepo.owner}/${ownerRepo.repo}:`);
   } else {
     // Generic opening based on goal keywords
     const goalLower = goal.toLowerCase();
     if (goalLower.includes("news") || goalLower.includes("latest") || goalLower.includes("update")) {
-      parts.push(`Berikut ${totalRelevant} source terbaru yang ditemukan:`);
+      parts.push(`Here are ${totalRelevant} latest sources found:`);
     } else if (goalLower.includes("research") || goalLower.includes("paper") || goalLower.includes("analysis")) {
-      parts.push(`Ditemukan ${totalRelevant} source terkait riset/analisis:`);
+      parts.push(`Found ${totalRelevant} sources related to research/analysis:`);
     } else {
-      parts.push(`Ditemukan ${totalRelevant} source relevan dari RSSHub:`);
+      parts.push(`Found ${totalRelevant} relevant sources from RSSHub:`);
     }
   }
 
@@ -148,7 +148,7 @@ export function buildSourceGroundedFinalAnswer(
 
   // Confidence note if low
   if (sourceConfidence < 0.3) {
-    parts.push("Catatan: relevansi sumber masih terbatas. Hasil bisa kurang akurat.");
+    parts.push("Note: source relevance is limited. Results may be less accurate.");
   }
 
   return parts.join("\n");
