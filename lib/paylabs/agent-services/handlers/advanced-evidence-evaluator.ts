@@ -54,6 +54,8 @@ export async function advancedEvidenceEvaluatorHandler(
         why_two_sources_needed: "No creator sources selected.",
         user_facing_rationale: "No creator sources to evaluate.",
         evaluator_confidence: 1,
+        second_source_justified: false,
+        composite_quality_score: 0,
         warnings: [],
         safe_memory_update: {
           source_reliability_notes: [],

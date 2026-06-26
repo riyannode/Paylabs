@@ -112,11 +112,17 @@ export interface AdvancedEvidenceEvaluatorOutput {
     contribution_summary: string;
     materiality_score: number; // 0..1
     duplicate_risk: number; // 0..1
+    reliability_score: number; // 0..1
+    complementarity_score: number; // 0..1
+    authority_score: number; // 0..1
+    composite_score: number; // 0..1 weighted composite
     memory_signal?: string;
   }>;
   why_two_sources_needed: string;
   user_facing_rationale: string;
   evaluator_confidence: number; // 0..1
+  second_source_justified: boolean;
+  composite_quality_score: number; // 0..1 average of per-source composites
   warnings: string[];
   safe_memory_update: {
     source_reliability_notes: string[];
