@@ -1644,12 +1644,16 @@ export default function PayLabsChatClient({ analytics }: Props) {
                  // Network error — retry on next tick
                }
 
-               // Schedule next poll
-               dcwJobRef.current.timer = setTimeout(tick, POLL_INTERVAL_MS);
+               // Schedule next poll (skip if cancelled)
+               if (!dcwJobRef.current.cancelled) {
+                 dcwJobRef.current.timer = setTimeout(tick, POLL_INTERVAL_MS);
+               }
              };
 
-             dcwJobRef.current.timer = setTimeout(tick, POLL_INTERVAL_MS);
-           });
+             if (!dcwJobRef.current.cancelled) {
+               dcwJobRef.current.timer = setTimeout(tick, POLL_INTERVAL_MS);
+             }
+             });
 
          await pollJob();
 
