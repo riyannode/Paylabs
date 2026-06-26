@@ -706,6 +706,17 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [walletOpen, setWalletOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [dcwOpen, setDcwOpen] = useState(false);
+
+  // Mutual exclusivity: only one wallet modal can be open at a time
+  useEffect(() => {
+    if (dcwOpen) { setPickerOpen(false); setWalletOpen(false); }
+  }, [dcwOpen]);
+  useEffect(() => {
+    if (walletOpen) { setPickerOpen(false); setDcwOpen(false); }
+  }, [walletOpen]);
+  useEffect(() => {
+    if (pickerOpen) { setWalletOpen(false); setDcwOpen(false); }
+  }, [pickerOpen]);
   const [walletState, setWalletState] = useState<WalletState>("not_connected");
   const [walletInfo, setWalletInfo] = useState<WalletInfo | null>(null);
   const [walletError, setWalletError] = useState<string | null>(null);

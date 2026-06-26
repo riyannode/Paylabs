@@ -553,8 +553,8 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   if (!open) return null;
 
   return (
-    <div className="pl-wallet-overlay-v3" onClick={onClose}>
-      <div className="pl-dcw-modal" onClick={(e) => e.stopPropagation()}>
+    <div className="pl-wallet-overlay-v3" onClick={onClose} style={{ zIndex: 1200, pointerEvents: "auto" }}>
+      <div className="pl-dcw-modal" onClick={(e) => e.stopPropagation()} style={{ position: "relative", zIndex: 1201 }}>
         <button className="pl-wallet-x-v3" onClick={onClose} aria-label="Close">×</button>
 
         <div className="pl-dcw-header">
