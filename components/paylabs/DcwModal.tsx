@@ -174,23 +174,46 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
     return () => clearInterval(interval);
   }, [open, handleGoogleSignIn]);
 
-  /** Trigger Google One Tap / sign-in prompt */
-  const triggerGoogleSignIn = useCallback(() => {
+  /** Trigger Google One Tap / sign-in prompt — FedCM-first, GSI fallback */
+  const triggerGoogleSignIn = useCallback(async () => {
     setIsGoogleLoading(true);
     setError(null);
+    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+
+    // ── Try FedCM first (modern browsers, no deprecation warnings) ──
+    try {
+      if (clientId && "IdentityProvider" in globalThis) {
+        const cred = await navigator.credentials.get({
+          identity: {
+            providers: [{
+              configURL: "https://accounts.google.com/gi/fedcm.json",
+              clientId,
+            }],
+          },
+        } as CredentialRequestOptions);
+        if (cred && "token" in cred && typeof (cred as { token: unknown }).token === "string") {
+          handleGoogleSignIn((cred as { token: string }).token);
+          setIsGoogleLoading(false);
+          return;
+        }
+      }
+    } catch {
+      // FedCM not available or user cancelled — fall through to GSI
+    }
+
+    // ── Fallback: legacy GSI One Tap prompt ──
     const g = (window as unknown as Record<string, unknown>).google as
       | { accounts?: { id?: { prompt: Function } } }
       | undefined;
     if (g?.accounts?.id) {
       g.accounts.id.prompt(() => {
-        // Prompt dismissed or callback fired
         setIsGoogleLoading(false);
       });
     } else {
       setError("Google Sign-In not loaded. Please try again.");
       setIsGoogleLoading(false);
     }
-  }, []);
+  }, [handleGoogleSignIn]);
 
   // ── Passkey Registration ──────────────────────────────────
   const handlePasskeyRegister = useCallback(async () => {
