@@ -31,15 +31,14 @@ export async function readCreatorMemory(
   let query = db
     .from("paylabs_creator_memory")
     .select("*")
+    .eq("source_url", sourceUrl)
     .order("updated_at", { ascending: false })
     .limit(10);
 
   if (creatorWallet) {
-    query = query.or(
-      `source_url.eq.${sourceUrl},creator_wallet.eq.${creatorWallet}`
-    );
+    query = query.eq("creator_wallet", creatorWallet.toLowerCase());
   } else {
-    query = query.eq("source_url", sourceUrl);
+    query = query.is("creator_wallet", null);
   }
 
   const { data, error } = await query;

@@ -311,7 +311,30 @@ async function processPaymentDeciderResult(state: PaymentDecisionStateType) {
   );
 
   const rawApproved = data.approved_items || [];
-  const filteredApproved = rawApproved.filter((item) => !liveIds.has(item.feed_item_id));
+  const metaById = new Map(candidateMeta.map((m) => [m.feed_item_id, m]));
+
+  const filteredApproved = rawApproved
+    .filter((item) => !liveIds.has(item.feed_item_id))
+    .map((item) => {
+      const meta = metaById.get(item.feed_item_id);
+
+      return {
+        ...item,
+        creator_wallet:
+          item.creator_wallet ??
+          meta?.creator_wallet ??
+          null,
+        claim_status:
+          meta?.claim_status ??
+          "unclaimed",
+        publisher:
+          meta?.publisher,
+        source_kind:
+          meta?.source_kind,
+        is_live:
+          meta?.is_live ?? false,
+      };
+    });
   const liveSkipped = rawApproved
     .filter((item) => liveIds.has(item.feed_item_id))
     .map((item) => ({

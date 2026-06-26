@@ -18,6 +18,7 @@ import type {
   CreatorPayoutResult,
 } from "./types";
 import { USDC_DECIMALS } from "./split-policy";
+import { supabaseAdmin } from "@/lib/supabase/server";
 
 // ─── Payment Transport Interface ──────────────────────────────
 
@@ -271,5 +272,45 @@ export async function executeServiceRevenueShare(
       explorer_url: null,
       error: `service_share_error: ${msg}`,
     };
+  }
+}
+
+// ─── Persist Payout Events ────────────────────────────────────
+
+export async function writeCreatorPayoutEvent(input: {
+  discoveryRunId: string;
+  routeTier: string;
+  result: CreatorPayoutResult;
+  splitPolicy: string;
+}): Promise<void> {
+  const db = supabaseAdmin();
+
+  const isPaid = input.result.status === "paid" || input.result.status === "gateway_accepted";
+
+  const { error } = await db.from("paylabs_creator_payout_events").insert({
+    discovery_run_id: input.discoveryRunId,
+    route_tier: input.routeTier,
+    feed_item_id: input.result.feed_item_id,
+    source_url: input.result.source_url,
+    creator_wallet: input.result.creator_wallet,
+    status: input.result.status,
+    planned_amount_atomic: input.result.amount_atomic,
+    planned_amount_usdc: input.result.amount_usdc,
+    actual_amount_atomic: isPaid ? input.result.amount_atomic : null,
+    actual_amount_usdc: isPaid ? input.result.amount_usdc : null,
+    split_policy: input.splitPolicy,
+    settlement_id: input.result.settlement_id,
+    settlement_url: input.result.settlement_url,
+    tx_hash: input.result.tx_hash,
+    explorer_url: input.result.explorer_url,
+    batch_tx_hash: input.result.batch_tx_hash,
+    batch_explorer_url: input.result.batch_explorer_url,
+    error: input.result.error,
+    safe_summary: `Creator payout ${input.result.status}: ${input.result.amount_usdc.toFixed(6)} USDC`,
+    metadata: {},
+  });
+
+  if (error) {
+    console.warn("[creator-payout-event-write] error:", error.message);
   }
 }

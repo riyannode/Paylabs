@@ -141,3 +141,25 @@ export function buildCreatorSplitPlan(
     service_wallet: serviceWallet,
   };
 }
+
+// ─── Revenue Share for Successful Creator Payouts ─────────────
+// Bot/service shares are calculated from PAID creator count only.
+// If no creators succeeded, bot/service get nothing.
+
+export function buildRevenueShareForPaidCreatorCount(input: {
+  paidCreatorCount: number;
+}): {
+  paid_creator_count: number;
+  paid_pool_atomic: bigint;
+  bot_atomic: bigint;
+  service_atomic: bigint;
+} {
+  const paidSlots = BigInt(Math.max(0, input.paidCreatorCount));
+
+  return {
+    paid_creator_count: Number(paidSlots),
+    paid_pool_atomic: paidSlots * CREATOR_PAYOUT_UNIT_ATOMIC,
+    bot_atomic: paidSlots * SPLIT_PER_SLOT.bot,
+    service_atomic: paidSlots * SPLIT_PER_SLOT.service,
+  };
+}

@@ -11,6 +11,7 @@
 import type { MacroNodePhase } from "./types";
 import type { ServiceName } from "../agent-services/types";
 import { FIXED_FEES_USDC } from "./quote-engine";
+import { getMacroNodeServicesForTier } from "./tier-service-bundles";
 
 // ─── Constants ───────────────────────────────────────────────
 
@@ -129,13 +130,32 @@ export function getMacroNodeChildBudgetUsdc(nodeName: MacroNodePhase): number {
 }
 
 /**
+ * Get tier-aware child services for a macro-node.
+ * Normal settlement_memory: 2 children (creator_attribution + creator_payout_router)
+ * Advanced settlement_memory: 3 children (+ advanced_evidence_evaluator)
+ */
+export function getMacroNodeChildServicesForTier(
+  nodeName: MacroNodePhase,
+  routeTier: "easy" | "normal" | "advanced",
+): ServiceName[] {
+  return [...getMacroNodeServicesForTier(nodeName, routeTier)];
+}
+
+/**
+ * Get tier-aware allocation for a macro-node.
+ * Uses actual child service count for the given tier.
+ */
+export function getMacroNodeAllocationUsdcForTier(
+  nodeName: MacroNodePhase,
+  routeTier: "easy" | "normal" | "advanced",
+): number {
+  const children = getMacroNodeChildServicesForTier(nodeName, routeTier);
+  return MACRO_NODE_FEE_USDC + children.length * CHILD_SERVICE_FEE_USDC;
+}
+
+/**
  * Get total allocation for a macro-node (base fee + child budget).
- *
- * Formula: MACRO_NODE_FEE_USDC + childCount * CHILD_SERVICE_FEE_USDC
- *
- * discovery_planner: 0.000001 + 3 * 0.000001 = 0.000004
- * payment_decision:  0.000001 + 5 * 0.000001 = 0.000006
- * settlement_memory: 0.000001 + 1 * 0.000001 = 0.000002
+ * Uses static childServices count — prefer getMacroNodeAllocationUsdcForTier for billing.
  */
 export function getMacroNodeAllocationUsdc(nodeName: MacroNodePhase): number {
   const config = MACRO_NODES[nodeName];
@@ -159,7 +179,7 @@ export function getTierMacroAllocations(routeTier: "easy" | "normal" | "advanced
   const allocations: Partial<Record<MacroNodePhase, number>> = {};
   let total = 0;
   for (const node of macroNodes) {
-    const alloc = getMacroNodeAllocationUsdc(node);
+    const alloc = getMacroNodeAllocationUsdcForTier(node, routeTier);
     allocations[node] = alloc;
     total += alloc;
   }

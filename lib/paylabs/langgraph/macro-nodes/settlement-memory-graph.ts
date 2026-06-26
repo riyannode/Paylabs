@@ -24,6 +24,23 @@ import { createServiceNode } from "../services/service-node";
 import type { ServiceName } from "../../agent-services/types";
 import type { BudgetSnapshot } from "../../delegated-runtime/types";
 
+// ─── Helper: Extract service output from evaluations ──────────
+
+function getServiceOutput(
+  state: SettlementMemoryStateType,
+  serviceName: ServiceName,
+): Record<string, unknown> | null {
+  const evaluation = (state.serviceEvaluations || []).find(
+    (e) => e.serviceName === serviceName,
+  );
+
+  if (!evaluation?.output || typeof evaluation.output !== "object") {
+    return null;
+  }
+
+  return evaluation.output as Record<string, unknown>;
+}
+
 // ─── Node: Creator Attribution ────────────────────────────────
 // Deterministic — no LLM, no payment. Validates wallets and claim status.
 
@@ -41,6 +58,43 @@ const creatorAttributionNode = createServiceNode(
     skipIfNotSelected: false,
   }
 );
+
+// ─── Node: Process Attribution Result ────────────────────────
+// Copies creator_attribution handler output into LangGraph state
+// so downstream nodes (evaluator, payout_router) can read it.
+
+async function processAttributionResult(state: SettlementMemoryStateType) {
+  const data = getServiceOutput(state, "creator_attribution");
+
+  if (!data) {
+    return {
+      creatorAttributions: [],
+      eligibleCreatorItems: [],
+      selectedCreatorPayoutItems: [],
+      error: "creator_attribution_returned_no_output",
+      progressSummaries: [
+        "Settlement: creator attribution returned no output; payout routing stopped.",
+      ],
+    };
+  }
+
+  const creatorAttributions = Array.isArray(data.creator_attributions)
+    ? data.creator_attributions
+    : [];
+
+  const eligibleCreatorItems = Array.isArray(data.eligible_creator_items)
+    ? data.eligible_creator_items
+    : [];
+
+  return {
+    creatorAttributions,
+    eligibleCreatorItems,
+    selectedCreatorPayoutItems: eligibleCreatorItems,
+    progressSummaries: [
+      `Settlement: attribution resolved ${eligibleCreatorItems.length}/${creatorAttributions.length} eligible creator source(s).`,
+    ],
+  };
+}
 
 // ─── Node: Advanced Evidence Evaluator ────────────────────────
 // Deep Agent + memory. Runs only for Advanced tier.
@@ -89,18 +143,18 @@ async function processResults(state: SettlementMemoryStateType) {
   const evals = state.serviceEvaluations || [];
 
   // Extract creator attribution results
-  const attrEval = evals.find((e) => e.serviceName === "creator_attribution");
+  const attrEval = evals.find((e: { serviceName: string }) => e.serviceName === "creator_attribution");
   const attrData = attrEval?.output as Record<string, unknown> | undefined;
 
   // Extract evaluator results (Advanced only)
   const evalEval = evals.find(
-    (e) => e.serviceName === "advanced_evidence_evaluator"
+    (e: { serviceName: string }) => e.serviceName === "advanced_evidence_evaluator"
   );
   const evalData = evalEval?.output as Record<string, unknown> | undefined;
 
   // Extract payout router results
   const payoutEval = evals.find(
-    (e) => e.serviceName === "creator_payout_router"
+    (e: { serviceName: string }) => e.serviceName === "creator_payout_router"
   );
   const payoutData = payoutEval?.output as Record<string, unknown> | undefined;
 
@@ -152,18 +206,20 @@ async function processResults(state: SettlementMemoryStateType) {
       ? JSON.stringify(evalData.safe_memory_update)
       : undefined,
     progressSummaries: [summary],
-    routedItems: creatorPayoutResults.map((r) => ({
-      feed_item_id: r.feed_item_id,
-      source_url: r.source_url,
-      amount_usdc: r.amount_usdc,
-      status: r.status === "paid" || r.status === "gateway_accepted" ? "planned" as const : "planned" as const,
-    })),
-    failedItems: creatorPayoutResults
-      .filter((r) => r.status === "failed")
+    routedItems: creatorPayoutResults
+      .filter((r) => r.status === "paid" || r.status === "gateway_accepted")
       .map((r) => ({
         feed_item_id: r.feed_item_id,
         source_url: r.source_url,
-        error: r.error || "payout_failed",
+        amount_usdc: r.amount_usdc,
+        status: "planned" as const,
+      })),
+    failedItems: creatorPayoutResults
+      .filter((r) => r.status === "failed" || r.status === "pending")
+      .map((r) => ({
+        feed_item_id: r.feed_item_id,
+        source_url: r.source_url,
+        error: r.error || `creator_payout_${r.status}`,
       })),
   };
 }
@@ -192,12 +248,14 @@ function routeAfterAttribution(state: SettlementMemoryStateType): string {
 
 const graph = new StateGraph(SettlementMemoryState)
   .addNode("creator_attribution", creatorAttributionNode)
+  .addNode("process_attribution", processAttributionResult)
   .addNode("advanced_evidence_evaluator", advancedEvidenceEvaluatorNode)
   .addNode("creator_payout_router", creatorPayoutRouterNode)
   .addNode("process_result", processResults)
   .addNode("build_summary", buildSummary)
   .addEdge(START, "creator_attribution")
-  .addConditionalEdges("creator_attribution", routeAfterAttribution, {
+  .addEdge("creator_attribution", "process_attribution")
+  .addConditionalEdges("process_attribution", routeAfterAttribution, {
     advanced_evidence_evaluator: "advanced_evidence_evaluator",
     creator_payout_router: "creator_payout_router",
   })
