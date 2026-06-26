@@ -1,13 +1,13 @@
 /**
  * Agent Service Execution Mode
  *
- * Controls how the 12 delegated agent services execute:
+ * Controls how the 9 delegated agent services execute:
  *   - deterministic: no LLM, DB/rules/math/schema checks only (DEFAULT)
  *   - llm: service handler may call LLM (structured JSON, no CoT)
  *   - hybrid: deterministic decision first, LLM for summary/explanation only
  *
  * The Brain (orchestrator) is ALWAYS LLM-assisted. This switch applies
- * to the 12 delegated agent services only.
+ * to the 9 delegated agent services only.
  *
  * Per-service env override global fallback:
  *   PAYLABS_AGENT_SERVICE_EXECUTION_MODE_<SERVICE_KEY> overrides PAYLABS_AGENT_SERVICE_EXECUTION_MODE
@@ -42,7 +42,6 @@ const LLM_CAPABLE_SERVICES: Set<string> = new Set([
   "source_verifier",
   "value_allocator",
   "trust_verifier",
-  "advanced_evidence_evaluator",
 ]);
 
 // ─── Service name → env key mapping ─────────────────────────
@@ -56,10 +55,6 @@ const SERVICE_ENV_KEY_MAP: Record<string, string> = {
   value_allocator: "VALUE_ALLOCATOR",
   trust_verifier: "TRUST_VERIFIER",
   payment_decider: "PAYMENT_DECIDER",
-  signal_scout_basics: "SIGNAL_SCOUT_BASICS",
-  creator_attribution: "CREATOR_ATTRIBUTION",
-  advanced_evidence_evaluator: "ADVANCED_EVIDENCE_EVALUATOR",
-  creator_payout_router: "CREATOR_PAYOUT_ROUTER",
 };
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -210,15 +205,11 @@ const ALL_SERVICES: ServiceName[] = [
   "intent_planner",
   "query_builder",
   "signal_scout",
-  "signal_scout_basics",
   "intent_matcher",
   "source_verifier",
   "value_allocator",
   "trust_verifier",
   "payment_decider",
-  "creator_attribution",
-  "advanced_evidence_evaluator",
-  "creator_payout_router",
 ];
 
 /**

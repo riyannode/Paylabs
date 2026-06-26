@@ -2,7 +2,9 @@
 
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import SidebarPanel from "@/components/paylabs/SidebarPanel";
-import type { UcwBalance } from "@/components/paylabs/WalletConnectModal";
+import WalletConnectModal from "@/components/paylabs/WalletConnectModal";
+import type { WalletState, WalletInfo, UcwBalance } from "@/components/paylabs/WalletConnectModal";
+import WalletPicker from "@/components/paylabs/WalletPicker";
 import DcwModal from "@/components/paylabs/DcwModal";
 import PaymentExplorerLinks from "@/components/paylabs/PaymentExplorerLinks";
 import { safeExplorerUrl as validateExplorerUrl } from "@/lib/paylabs/x402/payment-links";
@@ -69,6 +71,9 @@ function formatChatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+// UCW sensitive tokens are stored server-side in httpOnly session cookie.
+// Frontend only holds wallet address + wallet ID (non-sensitive) in memory.
+
 // ─── Helpers ────────────────────────────────────────────────
 
 function short(value?: string | null, chars = 6): string {
@@ -93,86 +98,523 @@ function isSourceInventoryAnswer(value?: string | null): boolean {
 
 // Planned cost comes from backend /api/paylabs/quote. No frontend constants.
 
-// ─── Safe Result Transformer ────────────────────────────────
+// UCW session is Supabase-backed with httpOnly cookie (ucw_sid).
+// Sensitive tokens (userToken, encryptionKey, deviceToken) are stored
+// server-side. Frontend only holds wallet address + wallet ID in memory.
 
 function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
-  const sourcesRaw = (data.sources_used ?? data.discovered_sources ?? []) as Array<Record<string, unknown>>;
-  const sourcesUsed: SourceLink[] = sourcesRaw.map((s) => ({
-    title: (s.title as string) ?? "",
-    url: (s.source_url as string) ?? (s.url as string) ?? "",
-    domain: (s.domain as string) ?? null,
-    summary: (s.summary as string) ?? "",
-    rank: (s.rank as number) ?? 0,
-    relevance_score: (s.relevance_score as number) ?? 0,
-  }));
+  const paymentGraph =
+    (data?.payment_graph as unknown[]) ??
+    ((data?.result as Record<string, unknown>)?.paymentGraph as unknown[]) ??
+    ((data?.agent_trace as Record<string, unknown>)?.payment_graph as unknown[]) ??
+    ((data?.exit_output as Record<string, unknown>)?.payment_graph as unknown[]) ??
+    [];
+  const paidEdges = Array.isArray(paymentGraph)
+    ? paymentGraph.filter((e: unknown) => (e as Record<string, string>).status === "paid").length
+    : 0;
+  const exitOutput = data?.exit_output as Record<string, unknown> | undefined;
+  const quote = data?.quote as Record<string, unknown> | undefined;
+  const tieredSummaries = data?.tiered_summaries as Record<string, string> | undefined;
+  const brainPlanning = data?.brain_planning as Record<string, unknown> | undefined;
+  const agentTraceBrain = (data?.agent_trace as Record<string, unknown>)?.brain_planning as Record<string, unknown> | undefined;
 
-  const paymentMetadata = data.paymentMetadata as Record<string, unknown> | undefined;
-  const entryPayment = data.entry_payment as Record<string, unknown> | undefined;
+  const rawFinalAnswer =
+    (data?.final_answer as string) ??
+    (exitOutput?.final_answer as string) ??
+    null;
 
-  // Resolve explorer URL from nested payment objects (handle both entry_payment and paymentMetadata shapes)
-  const resolvedEntry =
-    entryPayment ?? paymentMetadata ?? null;
+  const assistantResponse =
+    (brainPlanning?.assistant_response as string) ??
+    (agentTraceBrain?.assistant_response as string) ??
+    (brainPlanning?.plan_rationale as string) ??
+    (agentTraceBrain?.plan_rationale as string) ??
+    (!isSourceInventoryAnswer(rawFinalAnswer) ? rawFinalAnswer : null) ??
+    (exitOutput?.final_summary as string) ??
+    tieredSummaries?.final_summary ??
+    "Run completed.";
+  const userVisibleReasoning =
+    (brainPlanning?.user_visible_reasoning as string) ??
+    (agentTraceBrain?.user_visible_reasoning as string) ??
+    null;
+  const brainRationale =
+    (brainPlanning?.plan_rationale as string) ??
+    (brainPlanning?.tier_decision_reason as string) ??
+    (brainPlanning?.safe_summary as string) ??
+    (agentTraceBrain?.plan_rationale as string) ??
+    (agentTraceBrain?.tier_decision_reason as string) ??
+    (agentTraceBrain?.safe_summary as string) ??
+    null;
+
+  // Extract sources from source_context.sources_used or fallback to exit_output.sources_used
+  const sourceContext = data?.source_context as Record<string, unknown> | undefined;
+  const rawSources: unknown[] =
+    (sourceContext?.sources_used as unknown[]) ??
+    (exitOutput?.sources_used as unknown[]) ??
+    [];
+  const sourcesUsed: SourceLink[] = Array.isArray(rawSources)
+    ? rawSources
+        .filter((s): s is Record<string, unknown> => !!s && typeof s === "object")
+        .map((s) => {
+          const url = typeof s.url === "string" ? s.url : "";
+          const title = typeof s.title === "string" && s.title ? s.title : null;
+          let domain: string | null = typeof s.domain === "string" ? s.domain : null;
+          if (!domain && url) {
+            try { domain = new URL(url).hostname; } catch { /* noop */ }
+          }
+          return {
+            title: title || domain || "Source",
+            url,
+            domain,
+            summary: typeof s.summary === "string" ? s.summary : "",
+            rank: typeof s.rank === "number" ? s.rank : 0,
+            relevance_score: typeof s.relevance_score === "number" ? s.relevance_score : 0,
+          };
+        })
+        .filter((s) => /^https?:\/\//.test(s.url))
+    : [];
+
+  // Extract entry payment link fields (safe URLs only, never settlement UUID)
+  const entryPayment = data?.entry_payment as Record<string, unknown> | undefined;
+  const agentTrace = data?.agent_trace as Record<string, unknown> | undefined;
+  const agentTraceEntry = agentTrace?.entry_payment as Record<string, unknown> | undefined;
+  const resolvedEntry = entryPayment ?? agentTraceEntry;
+  const paymentMetadata = data?.paymentMetadata as Record<string, unknown> | undefined;
 
   return {
-    ok: (data.ok as boolean) ?? false,
-    runId: (data.discovery_run_id as string) ?? (data.run_id as string) ?? (data.runId as string) ?? null,
-    status: (data.status as string) ?? null,
-    requestedTier: (data.requested_tier as string) ?? (data.requestedTier as string) ?? null,
-    tier: (data.route_tier as string) ?? (data.tier as string) ?? null,
-    effectiveTier: (data.effective_tier as string) ?? (data.effectiveTier as string) ?? null,
-    entryPaymentStatus: (data.entry_payment_status as string) ?? (data.entryPaymentStatus as string) ?? (paymentMetadata?.status as string) ?? null,
-    plannedCostUsdc: (data.planned_cost_usdc as number) ?? (data.plannedCostUsdc as number) ?? null,
-    paidEdges: (data.paid_edges as number) ?? 0,
-    totalEdges: (data.total_edges as number) ?? 0,
-    receiptReady: (data.receipt_ready as boolean) ?? false,
-    safeSummary: (data.safe_summary as string) ?? (data.safeSummary as string) ?? "",
-    assistantResponse: (data.assistant_response as string) ?? (data.assistantResponse as string) ?? null,
-    userVisibleReasoning: (data.user_visible_reasoning as string) ?? (data.userVisibleReasoning as string) ?? null,
-    brainRationale: (data.brain_rationale as string) ?? (data.brainRationale as string) ?? null,
-    lockedNodes: (data.locked_nodes as string[]) ?? (data.lockedNodes as string[]) ?? [],
-    lockedServices: (data.locked_services as string[]) ?? (data.lockedServices as string[]) ?? [],
-    tierDecisionReason: (data.tier_decision_reason as string) ?? (data.tierDecisionReason as string) ?? null,
+    ok: !!data?.ok,
+    runId: (data?.discovery_run_id as string) ?? (data?.id as string) ?? null,
+    status: (data?.status as string) ?? null,
+    requestedTier: (data?.requested_route_tier as string) ?? null,
+    tier: (data?.effective_route_tier as string) ?? (data?.route_tier as string) ?? null,
+    effectiveTier: (data?.effective_route_tier as string) ?? (data?.route_tier as string) ?? null,
+    entryPaymentStatus: (data?.entry_payment as Record<string, string>)?.status ?? null,
+    plannedCostUsdc: (quote?.plannedCostUsdc as number) ?? (exitOutput?.planned_cost_usdc as number) ?? null,
+    paidEdges,
+    totalEdges: Array.isArray(paymentGraph) ? paymentGraph.length : 0,
+    receiptReady: (data?.receipt_ready as boolean) ?? (exitOutput?.receipt_ready as boolean) ?? false,
+    safeSummary: (exitOutput?.final_summary as string) ?? tieredSummaries?.final_summary ?? "Run completed.",
+    assistantResponse,
+    userVisibleReasoning,
+    brainRationale,
+    lockedNodes: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_macro_nodes as string[]) ?? [],
+    lockedServices: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_services as string[]) ?? [],
+    tierDecisionReason: (brainPlanning?.tier_decision_reason as string) ?? null,
     sourcesUsed,
     entryExplorerUrl:
-      (data.entry_explorer_url as string) ??
-      (data.entryExplorerUrl as string) ??
-      (resolvedEntry?.explorer_url as string | null | undefined) ??
-      (paymentMetadata?.explorerUrl as string | null | undefined) ??
-      null,
+      validateExplorerUrl(resolvedEntry?.explorer_url) ??
+      validateExplorerUrl(data?.entry_payment_explorer_url) ??
+      validateExplorerUrl(paymentMetadata?.explorerUrl),
+
     entrySettlementId:
-      (data.entry_settlement_id as string) ??
-      (data.entrySettlementId as string) ??
       (resolvedEntry?.settlement_id as string | null | undefined) ??
+      (data?.entry_payment_settlement_id as string | null | undefined) ??
       (paymentMetadata?.settlementId as string | null | undefined) ??
       null,
+
     entryTransferStatus:
-      (data.entry_transfer_status as string) ??
-      (data.entryTransferStatus as string) ??
       (resolvedEntry?.transfer_status as string | null | undefined) ??
       (paymentMetadata?.transferStatus as string | null | undefined) ??
       null,
+
     entryGatewayAccepted:
-      (data.entry_gateway_accepted as boolean) ??
-      (data.entryGatewayAccepted as boolean) ??
-      (resolvedEntry?.gateway_accepted as boolean | null | undefined) ??
-      (paymentMetadata?.gatewayAccepted as boolean | null | undefined) ??
+      (resolvedEntry?.gateway_accepted as boolean | undefined) ??
+      (paymentMetadata?.gatewayAccepted as boolean | undefined) ??
       false,
+
     entryBatchExplorerUrl:
-      (data.entry_batch_explorer_url as string) ??
-      (data.entryBatchExplorerUrl as string) ??
-      (resolvedEntry?.batch_explorer_url as string | null | undefined) ??
-      (paymentMetadata?.batchExplorerUrl as string | null | undefined) ??
-      null,
+      validateExplorerUrl(resolvedEntry?.batch_explorer_url) ??
+      validateExplorerUrl(data?.entry_payment_batch_explorer_url) ??
+      validateExplorerUrl(paymentMetadata?.batchExplorerUrl),
+
     entryBatchTxHash:
-      (data.entry_batch_tx_hash as string) ??
-      (data.entryBatchTxHash as string) ??
       (resolvedEntry?.batch_tx_hash as string | null | undefined) ??
       (paymentMetadata?.batchTxHash as string | null | undefined) ??
       null,
   };
 }
 
-// ─── DCW Balance Fetcher ────────────────────────────────────
+// ─── x402 Client Signing ────────────────────────────────────
+
+const ARC_CHAIN_ID = 5042002;
+const GATEWAY_VERIFIED_CONTRACT = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
+
+function randomNonce(): `0x${string}` {
+  const arr = new Uint8Array(32);
+  crypto.getRandomValues(arr);
+  return `0x${Array.from(arr).map((b) => b.toString(16).padStart(2, "0")).join("")}` as `0x${string}`;
+}
+
+/** Build EIP-712 params for x402 TransferWithAuthorization */
+function buildEip712Params(challenge: Record<string, unknown>, walletAddress: string) {
+  const accepts = challenge.accepts as Array<Record<string, unknown>>;
+  const requirement = accepts[0];
+  const extra = requirement.extra as Record<string, string>;
+  const amountAtomic = requirement.amount as string;
+  const payTo = requirement.payTo as string;
+  const maxTimeout = requirement.maxTimeoutSeconds as number;
+
+  const now = Math.floor(Date.now() / 1000);
+  const nonce = randomNonce();
+
+  const domain = {
+    name: extra.name || "GatewayWalletBatched",
+    version: extra.version || "1",
+    chainId: ARC_CHAIN_ID,
+    verifyingContract: (extra.verifyingContract || GATEWAY_VERIFIED_CONTRACT) as `0x${string}`,
+  };
+
+  const types = {
+    TransferWithAuthorization: [
+      { name: "from", type: "address" },
+      { name: "to", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" },
+    ],
+  };
+
+  const message = {
+    from: walletAddress as `0x${string}`,
+    to: payTo as `0x${string}`,
+    value: amountAtomic,
+    validAfter: "0",
+    validBefore: String(now + maxTimeout),
+    nonce,
+  };
+
+  return { domain, types, message, requirement, x402Version: (challenge.x402Version as number) || 2 };
+}
+
+/** Build x402 payment payload from EIP-712 signature */
+function buildPaymentPayload(
+  challenge: Record<string, unknown>,
+  requirement: Record<string, unknown>,
+  message: { from: string; to: string; value: string; validAfter: string; validBefore: string; nonce: string },
+  signature: string,
+  x402Version: number,
+): string {
+  const paymentPayload = {
+    x402Version,
+    payload: {
+      authorization: {
+        from: message.from,
+        to: message.to,
+        value: message.value,
+        validAfter: message.validAfter,
+        validBefore: message.validBefore,
+        nonce: message.nonce,
+      },
+      signature,
+    },
+    resource: challenge.resource || null,
+    accepted: requirement,
+  };
+  return btoa(JSON.stringify(paymentPayload));
+}
+
+/** Sign with external EOA (window.ethereum) — hidden dev fallback */
+async function signWithEoa(params: {
+  challenge: Record<string, unknown>;
+  walletAddress: string;
+}): Promise<string> {
+  const { challenge, walletAddress } = params;
+  const { domain, types, message, requirement, x402Version } = buildEip712Params(challenge, walletAddress);
+
+  const eth = (window as unknown as Record<string, unknown>).ethereum as
+    | { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }
+    | undefined;
+  if (!eth) throw new Error("No browser wallet found.");
+
+  const signature = await (eth as { request: (args: { method: string; params: unknown[] }) => Promise<string> }).request({
+    method: "eth_signTypedData_v4",
+    params: [
+      walletAddress,
+      JSON.stringify({
+        types: {
+          EIP712Domain: [
+            { name: "name", type: "string" },
+            { name: "version", type: "string" },
+            { name: "chainId", type: "uint256" },
+            { name: "verifyingContract", type: "address" },
+          ],
+          ...types,
+        },
+        domain,
+        primaryType: "TransferWithAuthorization",
+        message: {
+          ...message,
+          value: BigInt(message.value),
+          validAfter: BigInt(message.validAfter),
+          validBefore: BigInt(message.validBefore),
+        },
+      }),
+    ],
+  });
+
+  return buildPaymentPayload(challenge, requirement, message, signature, x402Version);
+}
+
+/** Safe debug log — gated behind NEXT_PUBLIC_PAYLABS_UCW_DEBUG=1 */
+const ucwDebugEnabled = typeof window !== "undefined" && process.env.NEXT_PUBLIC_PAYLABS_UCW_DEBUG === "1";
+function signDbg(msg: string) {
+  if (ucwDebugEnabled) {
+    console.log(`[ucw_sign] ${msg}`);
+  }
+}
+const nowMs = () => Math.round(performance.now());
+
+/** Sign with Circle UCW via challenge-response */
+async function signWithUcw(params: {
+  challenge: Record<string, unknown>;
+  walletAddress: string;
+  ucwSdk: { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void; setLocalizations: (l: Record<string, unknown>) => void };
+  auth?: { userToken: string; encryptionKey?: string } | null;
+}): Promise<string> {
+  const { challenge, walletAddress, ucwSdk, auth } = params;
+  const signStart = nowMs();
+  const { domain, types, message, requirement, x402Version } = buildEip712Params(challenge, walletAddress);
+
+  // Preflight: ensure session exists with wallet data before sign-challenge
+  signDbg("preflight: checking session-restore...");
+  const t0 = nowMs();
+  const checkResp = await fetch("/api/paylabs/wallet/ucw?action=session-restore", { method: "POST", credentials: "include" });
+  signDbg(`session-restore: status=${checkResp.status} ${nowMs() - t0}ms`);
+  if (checkResp.ok) {
+    const sess = (await checkResp.json()) as { hasUserToken: boolean; walletId: string | null; walletAddress: string | null };
+    if (!sess.hasUserToken || !sess.walletId || !sess.walletAddress) {
+      // Session exists but incomplete — try repair
+      if (auth) {
+        const t1 = nowMs();
+        const createResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
+        signDbg(`session-create: status=${createResp.status} ${nowMs() - t1}ms`);
+        if (!createResp.ok) throw new Error("Session expired. Reconnect wallet.");
+        const t2 = nowMs();
+        const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userToken: auth.userToken, encryptionKey: auth.encryptionKey }),
+        });
+        signDbg(`session-save-login: status=${saveResp.status} ${nowMs() - t2}ms`);
+        if (!saveResp.ok) throw new Error("Session expired. Reconnect wallet.");
+        const repaired = (await saveResp.json()) as { walletAddress?: string | null };
+        if (repaired.walletAddress && repaired.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+          throw new Error("Session expired. Reconnect wallet.");
+        }
+      } else {
+        throw new Error("Session expired. Reconnect wallet.");
+      }
+    }
+  } else if (checkResp.status === 401 && auth) {
+    // Session expired — recreate and re-save auth
+    const t1 = nowMs();
+    const createResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
+    signDbg(`session-create(401): status=${createResp.status} ${nowMs() - t1}ms`);
+    if (!createResp.ok) throw new Error("Session expired. Reconnect wallet.");
+    const t2 = nowMs();
+    const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userToken: auth.userToken, encryptionKey: auth.encryptionKey }),
+    });
+    signDbg(`session-save-login(401): status=${saveResp.status} ${nowMs() - t2}ms`);
+    if (!saveResp.ok) throw new Error("Session expired. Reconnect wallet.");
+    const repaired = (await saveResp.json()) as { walletAddress?: string | null };
+    if (repaired.walletAddress && repaired.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+      throw new Error("Session expired. Reconnect wallet.");
+    }
+  } else {
+    throw new Error("Session expired. Reconnect wallet.");
+  }
+
+  // Backend reads walletId/userToken from httpOnly session
+  const t3 = nowMs();
+  await ucwSdk.getDeviceId();
+  signDbg(`getDeviceId: ${nowMs() - t3}ms`);
+  if (auth?.encryptionKey) {
+    const ek: string = auth.encryptionKey;
+    ucwSdk.setAuthentication({ userToken: auth.userToken, encryptionKey: ek });
+  }
+
+  const signData = {
+    domain,
+    types: {
+      EIP712Domain: [
+        { name: "name", type: "string" },
+        { name: "version", type: "string" },
+        { name: "chainId", type: "uint256" },
+        { name: "verifyingContract", type: "address" },
+      ],
+      ...types,
+    },
+    primaryType: "TransferWithAuthorization",
+    message: {
+      ...message,
+      value: message.value.toString(),
+      validAfter: message.validAfter.toString(),
+      validBefore: message.validBefore.toString(),
+    },
+  };
+
+  // sign-challenge reads userToken/walletId from httpOnly session
+  signDbg("signChallenge: started");
+  const t4 = nowMs();
+  const signResp = await fetch("/api/paylabs/wallet/ucw?action=sign-challenge", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data: signData }),
+  });
+  signDbg(`signChallenge: status=${signResp.status} ${nowMs() - t4}ms`);
+  if (!signResp.ok) {
+    const err = await signResp.json().catch(() => ({}));
+    throw new Error(`Sign challenge failed: ${(err as Record<string, string>).error || signResp.status}`);
+  }
+  const { challengeId } = (await signResp.json()) as { challengeId: string };
+  if (!challengeId) throw new Error("No challengeId returned from sign-challenge");
+  signDbg("signChallenge: ok, executing challenge via UCW SDK...");
+
+  // Step 2: Execute challenge via UCW SDK (user approves via Circle hosted UI)
+  // Per Circle docs: use sdk.setLocalizations() to customize the confirmation UI
+  // so users see a friendly description instead of raw EIP-712 JSON.
+  const t5 = nowMs();
+  const amountDisplay = message.value ? (Number(message.value) / 1_000_000).toFixed(6) : "?";
+  ucwSdk.setLocalizations({
+    signatureRequest: {
+      title: "Confirm Payment",
+      description: `Authorize ${amountDisplay} USDC payment via x402`,
+    },
+  });
+  const signature: string = await new Promise((resolve, reject) => {
+    ucwSdk.execute(challengeId, (error: unknown, result: unknown) => {
+      if (error) reject(error instanceof Error ? error : new Error(String(error)));
+      else {
+        const sig = (result as { data?: { signature?: string } })?.data?.signature;
+        if (!sig) reject(new Error("No signature returned from UCW challenge"));
+        else resolve(sig);
+      }
+    });
+  });
+  signDbg(`ucwSdk.execute: ${nowMs() - t5}ms`);
+  signDbg(`signWithUcw total: ${nowMs() - signStart}ms`);
+
+  return buildPaymentPayload(challenge, requirement, message, signature, x402Version);
+}
+
+// ─── UCW Post-Login Finalizer ───────────────────────────────
+
+type SaveLoginData = {
+  walletId: string | null;
+  walletAddress: string | null;
+  challengeId: string | null;
+  error?: string;
+};
+
+type FinalizeCallbacks = {
+  setWalletState: (s: WalletState) => void;
+  setWalletError: (e: string | null) => void;
+  setUcwWalletId: (id: string | null) => void;
+  setWalletInfo: (info: WalletInfo | null) => void;
+  setUcwBalance: (b: UcwBalance | null) => void;
+};
+
+/** Shared post-login flow: execute challenge → finalize → validate → update UI.
+ *  Returns true if wallet is ready, false if any step fails (error already set).
+ */
+async function finalizeWalletAfterLogin(
+  saveData: SaveLoginData,
+  sdk: { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void; setLocalizations: (l: Record<string, unknown>) => void },
+  cbs: FinalizeCallbacks,
+  planned: string,
+  auth?: { userToken: string; encryptionKey?: string },
+): Promise<boolean> {
+  if (saveData.error) {
+    cbs.setWalletState("not_connected");
+    cbs.setWalletError(`Login failed: ${saveData.error}`);
+    return false;
+  }
+
+  // Execute wallet creation challenge if needed
+  if (saveData.challengeId) {
+    try {
+      // Per Circle docs: getDeviceId() must be called before execute()
+      // to establish the iframe session with Circle's service.
+      await sdk.getDeviceId();
+      // Per Circle docs: setAuthentication() must be called before execute()
+      // to authenticate the challenge with userToken + encryptionKey.
+      if (auth?.encryptionKey) {
+        const ek: string = auth.encryptionKey;
+        sdk.setAuthentication({ userToken: auth.userToken, encryptionKey: ek });
+      }
+      // Per Circle docs: use sdk.setLocalizations() to customize the UI
+      sdk.setLocalizations({
+        signatureRequest: {
+          title: "Create Wallet",
+          description: "Set up your secure wallet on Arc Testnet",
+        },
+      });
+      await new Promise<void>((resolve, reject) => {
+        sdk.execute(saveData.challengeId!, (err: unknown, result: unknown) => {
+          if (err) {
+            const msg = err instanceof Error ? err.message : (err as Record<string, string>)?.message || JSON.stringify(err);
+            reject(new Error(msg));
+          } else {
+            resolve();
+          }
+        });
+      });
+      const finalizeResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST", credentials: "include" });
+      const finalized = (await finalizeResp.json().catch(() => ({}))) as {
+        walletId?: string;
+        walletAddress?: string;
+        error?: string;
+      };
+      if (!finalizeResp.ok) {
+        cbs.setWalletState("not_connected");
+        cbs.setWalletError(`Wallet finalize failed: ${finalized.error || finalizeResp.status}`);
+        return false;
+      }
+      saveData.walletId = finalized.walletId ?? null;
+      saveData.walletAddress = finalized.walletAddress ?? null;
+    } catch (e: unknown) {
+      cbs.setWalletState("not_connected");
+      cbs.setWalletError(`Wallet challenge failed: ${e instanceof Error ? e.message : "Unknown error"}`);
+      return false;
+    }
+  }
+
+  // Fail closed: must have wallet address
+  if (!saveData.walletAddress || !saveData.walletId) {
+    cbs.setWalletState("not_connected");
+    cbs.setWalletError(
+      "Login succeeded, but Circle returned no wallet address. Check session-save-login/list-wallets/session-finalize-wallet logs.",
+    );
+    return false;
+  }
+
+  // Success — update UI
+  cbs.setUcwWalletId(saveData.walletId);
+  cbs.setWalletInfo({
+    address: saveData.walletAddress,
+    walletType: "circle_user_controlled",
+    network: "Arc Testnet",
+  });
+  cbs.setWalletState("connected");
+  const balance = await fetchSessionBalance();
+  cbs.setUcwBalance(balance);
+  cbs.setWalletState(parseFloat(balance.gatewayUsdc ?? "0") >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+  return true;
+}
+
+// ─── UCW Balance Fetcher ────────────────────────────────────
+
+/** Fetch UCW balance via server-side session (tokens stay server-side) */
+async function fetchSessionBalance(): Promise<UcwBalance> {
+  const resp = await fetch("/api/paylabs/wallet/ucw?action=session-balance", { method: "POST", credentials: "include" });
+  if (!resp.ok) return { walletUsdc: "0", gatewayUsdc: "0", source: "ucw" };
+  const data = (await resp.json()) as { usdc: string; gateway: string };
+  return { walletUsdc: data.usdc ?? "0", gatewayUsdc: data.gateway ?? "0", source: "ucw" };
+}
 
 /** Fetch DCW balance — on-chain wallet USDC + Gateway x402 balance */
 async function fetchDcwBalance(): Promise<UcwBalance> {
@@ -190,14 +632,6 @@ async function fetchDcwBalance(): Promise<UcwBalance> {
   };
 }
 
-// ─── Wallet Info Type ───────────────────────────────────────
-
-type WalletInfo = {
-  address: string;
-  walletType: "circle_developer_controlled";
-  network: string;
-};
-
 // ─── Main Component ─────────────────────────────────────────
 
 export default function PayLabsChatClient({ analytics }: Props) {
@@ -211,18 +645,112 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [signingPhase, setSigningPhase] = useState<string | null>(null);
   const [guideOpen, setGuideOpen] = useState(false);
 
+  // ── Batch link polling ──────────────────────────────────────
+  // When settlementId exists but batch link is missing, poll the
+  // batch resolver endpoint until the link appears or we give up.
+  const batchPollRef = useRef<{ attempts: number; timer: ReturnType<typeof setTimeout> | null }>({ attempts: 0, timer: null });
+  // ── DCW async job polling ───────────────────────────────────
+  const dcwJobRef = useRef<{ jobId: string | null; timer: ReturnType<typeof setTimeout> | null; cancelled: boolean }>({ jobId: null, timer: null, cancelled: false });
+
+
+  useEffect(() => {
+    const r = result;
+    if (!r?.entrySettlementId) return;
+    if (r.entryBatchExplorerUrl || r.entryBatchTxHash) return;
+    if (batchPollRef.current.timer) return; // already polling
+
+    const MAX_ATTEMPTS = 30;
+    const INTERVAL_MS = 10_000;
+
+    const poll = async () => {
+      if (batchPollRef.current.attempts >= MAX_ATTEMPTS) return;
+      batchPollRef.current.attempts++;
+
+      try {
+        const resp = await fetch(
+          `/api/paylabs/x402/batch-tx/${encodeURIComponent(r.entrySettlementId!)}`,
+          { credentials: "include" },
+        );
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data?.batchTxHash && data?.batchExplorerUrl) {
+          setResult((prev) => prev ? {
+            ...prev,
+            entryBatchTxHash: data.batchTxHash,
+            entryBatchExplorerUrl: data.batchExplorerUrl,
+          } : prev);
+          return; // stop polling
+        }
+      } catch {
+        // retry on next tick
+      }
+
+      batchPollRef.current.timer = setTimeout(poll, INTERVAL_MS);
+    };
+
+    batchPollRef.current.timer = setTimeout(poll, INTERVAL_MS);
+
+    return () => {
+      if (batchPollRef.current.timer) {
+        clearTimeout(batchPollRef.current.timer);
+        batchPollRef.current.timer = null;
+      }
+    };
+  }, [result?.entrySettlementId, result?.entryBatchExplorerUrl, result?.entryBatchTxHash]);
+
   // Chat message history
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const chatThreadRef = useRef<HTMLDivElement | null>(null);
 
-  // Wallet state — DCW only
+  // Wallet state
+  const [walletOpen, setWalletOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [dcwOpen, setDcwOpen] = useState(false);
-  const [walletInfo, setWalletInfo] = useState<WalletInfo | null>(null);
-  const [ucwBalance, setUcwBalance] = useState<UcwBalance | null>(null);
-  const [walletCopied, setWalletCopied] = useState(false);
 
-  // DCW wallet signing state
-  const [walletState, setWalletState] = useState<"not_connected" | "connected" | "needs_gateway_deposit" | "ready_to_approve" | "approving" | "paid" | "failed">("not_connected");
+  // Mutual exclusivity: only one wallet modal can be open at a time
+  useEffect(() => {
+    if (dcwOpen) { setPickerOpen(false); setWalletOpen(false); }
+  }, [dcwOpen]);
+  useEffect(() => {
+    if (walletOpen) { setPickerOpen(false); setDcwOpen(false); }
+  }, [walletOpen]);
+  useEffect(() => {
+    if (pickerOpen) { setWalletOpen(false); setDcwOpen(false); }
+  }, [pickerOpen]);
+  const [walletState, setWalletState] = useState<WalletState>("not_connected");
+  const [walletInfo, setWalletInfo] = useState<WalletInfo | null>(null);
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const [ucwBalance, setUcwBalance] = useState<UcwBalance | null>(null);
+
+  // UCW state — wallet info in memory, tokens server-side
+  const [ucwWalletId, setUcwWalletId] = useState<string | null>(null);
+  const [walletCopied, setWalletCopied] = useState(false);
+  const ucwSdkRef = useRef<unknown>(null); // W3SSdk instance
+  const ucwAuthRef = useRef<{ userToken: string; encryptionKey?: string } | null>(null);
+  const [authMethod, setAuthMethod] = useState<"google" | "email" | "pin" | "">("");
+  const [depositStatus, setDepositStatus] = useState<string | null>(null);
+  const [showEmailInputForReconnect, setShowEmailInputForReconnect] = useState(false);
+
+  // Derived: can this wallet actually sign right now?
+  const ucwCanSign = walletInfo?.walletType === "circle_user_controlled"
+    ? !!ucwSdkRef.current && !!ucwAuthRef.current
+    : !!walletInfo?.address;
+
+  const needsReconnectToSign =
+    walletInfo?.walletType === "circle_user_controlled" &&
+    !!walletInfo.address &&
+    !ucwCanSign;
+
+  // Debug log — gated behind env var, stripped from production
+  const ucwDebug = process.env.NEXT_PUBLIC_PAYLABS_UCW_DEBUG === "1";
+  const [debugLog, setDebugLog] = useState<string[]>([]);
+  const dbg = useCallback((msg: string) => {
+    if (!ucwDebug) return;
+    const ts = new Date().toISOString().slice(11, 23);
+    const entry = `[${ts}] ${msg}`;
+    console.log("[UCW]", entry);
+    setDebugLog((prev) => [...prev.slice(-20), entry]);
+  }, [ucwDebug]);
 
   // Backend-driven planned cost (replaces hardcoded TIER_COSTS)
   const [plannedCostUsdc, setPlannedCostUsdc] = useState<number>(0.000015); // conservative default (advanced tier)
@@ -230,14 +758,9 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
   const planned = useMemo(() => plannedCostUsdc.toFixed(6), [plannedCostUsdc]);
 
-  // Batch link polling
-  const batchPollRef = useRef<{ attempts: number; timer: ReturnType<typeof setTimeout> | null }>({ attempts: 0, timer: null });
-  // DCW async job polling
-  const dcwJobRef = useRef<{ jobId: string | null; timer: ReturnType<typeof setTimeout> | null; cancelled: boolean }>({ jobId: null, timer: null, cancelled: false });
-
   // Fetch quote from backend when budget or tier changes
   useEffect(() => {
-    const tier = "auto";
+    const tier = /* routeTier state or */ "auto";
     const budgetNum = parseFloat(budget) || 0.01;
     let cancelled = false;
 
@@ -265,100 +788,702 @@ export default function PayLabsChatClient({ analytics }: Props) {
     chatThreadRef.current?.scrollTo({ top: chatThreadRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
-  // ── Batch link polling ──
-  useEffect(() => {
-    const r = result;
-    if (!r?.entrySettlementId) return;
-    if (r.entryBatchExplorerUrl || r.entryBatchTxHash) return;
-    if (batchPollRef.current.timer) return;
-
-    const MAX_ATTEMPTS = 30;
-    const INTERVAL_MS = 10_000;
-
-    const poll = async () => {
-      if (batchPollRef.current.attempts >= MAX_ATTEMPTS) return;
-      batchPollRef.current.attempts++;
-
-      try {
-        const resp = await fetch(
-          `/api/paylabs/x402/batch-tx/${encodeURIComponent(r.entrySettlementId!)}`,
-          { credentials: "include" },
-        );
-        if (!resp.ok) return;
-        const data = await resp.json();
-        if (data?.batchTxHash && data?.batchExplorerUrl) {
-          setResult((prev) => prev ? {
-            ...prev,
-            entryBatchTxHash: data.batchTxHash,
-            entryBatchExplorerUrl: data.batchExplorerUrl,
-          } : prev);
-          return;
-        }
-      } catch {
-        // retry on next tick
-      }
-
-      batchPollRef.current.timer = setTimeout(poll, INTERVAL_MS);
-    };
-
-    batchPollRef.current.timer = setTimeout(poll, INTERVAL_MS);
-
-    return () => {
-      if (batchPollRef.current.timer) {
-        clearTimeout(batchPollRef.current.timer);
-        batchPollRef.current.timer = null;
-      }
-    };
-  }, [result?.entrySettlementId, result?.entryBatchExplorerUrl, result?.entryBatchTxHash]);
-
-  // ── DCW session restore on mount ──
+  // ── Post-redirect: restore SDK from server session ──
   useEffect(() => {
     let cancelled = false;
+    let oauthTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    const restoreDcwSession = async () => {
+    const restoreAfterRedirect = async () => {
+      dbg("restoreAfterRedirect: start");
+
+      // ── DCW session restore (check first — no SDK needed) ──
       try {
         const dcwSessionResp = await fetch("/api/paylabs/auth/session", { credentials: "include" });
-        if (cancelled) return;
         if (dcwSessionResp.ok) {
           const dcwSession = await dcwSessionResp.json();
           if (dcwSession.ok && dcwSession.authenticated && dcwSession.hasWallet && dcwSession.walletAddress) {
+            dbg("DCW session found — restoring wallet state");
             setWalletInfo({
               address: dcwSession.walletAddress,
               walletType: "circle_developer_controlled",
               network: "ARC-TESTNET",
             });
             const dcwBal = await fetchDcwBalance();
-            if (cancelled) return;
             setUcwBalance(dcwBal);
             const x402Bal = parseFloat(dcwBal.gatewayUsdc ?? "0");
             setWalletState(x402Bal > 0 ? "ready_to_approve" : "needs_gateway_deposit");
+            return; // DCW session restored, skip UCW restore
           }
         }
-      } catch { /* no DCW session — normal first-visit state */ }
-    };
-    restoreDcwSession();
+      } catch { /* no DCW session, continue to UCW check */ }
 
-    return () => { cancelled = true; };
+      // ── UCW session restore ──
+      try {
+        const resp = await fetch("/api/paylabs/wallet/ucw?action=session-restore", { method: "POST", credentials: "include" });
+        if (!resp.ok) {
+          // 401 = no session cookie or expired → normal first-visit state, not an error
+          if (resp.status === 401) return;
+          setWalletState("not_connected");
+          const err = await resp.json().catch(() => ({}));
+          setWalletError(`Session restore failed: ${(err as Record<string, string>).error || resp.status}`);
+          return;
+        }
+        const data = (await resp.json()) as { hasDeviceToken: boolean; hasUserToken: boolean; walletId: string | null; walletAddress: string | null; authMethod: string };
+        dbg(`session-restore: deviceToken=${data.hasDeviceToken} userToken=${data.hasUserToken} walletId=${data.walletId ? "present" : "null"} walletAddress=${data.walletAddress ? "present" : "null"}`);
+
+        // If we already have a wallet from a previous session, just restore UI
+        if (data.walletId && data.walletAddress && data.hasUserToken) {
+          dbg("Wallet already in session — restoring UI + re-creating SDK");
+          setUcwWalletId(data.walletId);
+          setWalletInfo({ address: data.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
+          setWalletState("connected");
+          if (data.authMethod) setAuthMethod(data.authMethod as "google" | "email" | "pin");
+
+          // Re-create SDK + re-auth so user can sign without "Reconnect"
+          try {
+            const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
+            const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
+            if (appId) {
+              const sdk = new W3SSdk({ appSettings: { appId } });
+              await sdk.getDeviceId();
+              ucwSdkRef.current = sdk;
+
+              // Restore auth tokens from server session
+              const authResp = await fetch("/api/paylabs/wallet/ucw?action=session-get-auth", {
+                method: "POST",
+                credentials: "include",
+                headers: { "X-Requested-With": "ucw-sdk-restore" },
+              });
+              if (authResp.ok) {
+                const authData = (await authResp.json()) as { userToken: string; encryptionKey: string | null; authMethod: string };
+                if (authData.encryptionKey) {
+                  ucwAuthRef.current = { userToken: authData.userToken, encryptionKey: authData.encryptionKey };
+                  sdk.setAuthentication({ userToken: authData.userToken, encryptionKey: authData.encryptionKey });
+                } else {
+                  ucwAuthRef.current = { userToken: authData.userToken };
+                }
+                dbg("SDK re-created and authenticated after refresh");
+              }
+            }
+          } catch (e) {
+            dbg(`SDK re-creation failed (will show reconnect): ${e instanceof Error ? e.message : String(e)}`);
+            // Non-fatal — user can still reconnect manually
+          }
+
+          const balance = await fetchSessionBalance();
+          setUcwBalance(balance);
+          if (parseFloat(balance.gatewayUsdc ?? "0") < parseFloat(planned)) {
+            setWalletState("needs_gateway_deposit");
+          }
+          return;
+        }
+
+        // If userToken exists but wallet was never finalized → re-run finalize
+        if (data.hasUserToken && (!data.walletId || !data.walletAddress)) {
+          dbg("User token exists but no wallet — attempting finalize");
+          // Call session-finalize-wallet to check if wallet exists now
+          const finResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST", credentials: "include" });
+          if (finResp.ok) {
+            const fin = (await finResp.json()) as { walletId: string; walletAddress: string; usdc: string; gateway: string };
+            setUcwWalletId(fin.walletId);
+            setWalletInfo({ address: fin.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
+            setUcwBalance({ walletUsdc: fin.usdc ?? "0", gatewayUsdc: fin.gateway ?? "0", source: "ucw" });
+            setWalletState("connected");
+            if (parseFloat(fin.gateway) < parseFloat(planned)) {
+              setWalletState("needs_gateway_deposit");
+            }
+            return;
+          }
+          // If finalize fails (no wallets yet), destroy stale session and start fresh
+          dbg("Finalize failed — destroying session for fresh start");
+          fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST", credentials: "include" }).catch(() => {});
+          setWalletState("not_connected");
+          return;
+        }
+
+        // If we have device token but no user token → SDK needs to finalize OAuth
+        // ONLY if we actually have an OAuth hash in the URL (post-redirect).
+        // If no hash, this is a stale session — destroy it and start fresh.
+        if (data.hasDeviceToken && !data.hasUserToken) {
+          const hasOAuthHash = window.location.hash.includes("access_token") || window.location.hash.includes("id_token");
+          dbg(`OAuth hash check: ${hasOAuthHash ? "present" : "absent"}`);
+          if (!hasOAuthHash) {
+            // Stale session — device token saved but OAuth never completed
+            dbg("Stale session (deviceToken but no OAuth hash) — destroying");
+            fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST", credentials: "include" }).catch(() => {});
+            setWalletState("not_connected");
+            return;
+          }
+          setWalletState("connecting");
+          const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
+          const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
+          if (!appId) return;
+
+          // Get device token from server session
+          const dtResp = await fetch("/api/paylabs/wallet/ucw?action=session-get-device", { method: "POST", credentials: "include" });
+          if (!dtResp.ok) {
+            const err = await dtResp.json().catch(() => ({}));
+            setWalletState("not_connected");
+            setWalletError(`Session restore failed: ${(err as Record<string, string>).error || dtResp.status}`);
+            return;
+          }
+          const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
+
+          const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+          dbg(`Restoring SDK deviceToken=${deviceToken ? "present" : "absent"} googleClientId=${googleClientId ? "present" : "absent"} oauthHash=${window.location.hash ? "present" : "absent"}`);
+
+          let callbackFired = false;
+          // Per Circle docs: pass loginConfigs + callback in CONSTRUCTOR.
+          // setupInstance() → execSocialLoginStatusCheck() runs inside constructor
+          // and needs loginConfigs (deviceToken) to verify the OAuth token via iframe.
+          const fullConfig = {
+            appSettings: { appId },
+            loginConfigs: {
+              deviceToken,
+              deviceEncryptionKey,
+              ...(googleClientId
+                ? {
+                    google: {
+                      clientId: googleClientId,
+                      redirectUri: window.location.origin,
+                      selectAccountPrompt: true,
+                    },
+                  }
+                : {}),
+            },
+          };
+          const sdk = new W3SSdk(fullConfig, async (error: unknown, result: unknown) => {
+              callbackFired = true;
+              dbg(`Login callback: ${error ? "ERROR: " + (error instanceof Error ? error.message : String(error)) : "SUCCESS"}`);
+              if (error) {
+                setWalletState("not_connected");
+                setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown"}`);
+                return;
+              }
+              const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
+              ucwAuthRef.current = { userToken, encryptionKey };
+              // Clear OAuth hash from URL to avoid re-processing on next visit
+              if (window.location.hash) window.history.replaceState(null, "", window.location.pathname + window.location.search);
+              setAuthMethod("google");
+              dbg("Login token obtained, saving to session...");
+              // Save to server session + finalize (init user, list wallets)
+              const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
+                method: "POST",
+                credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ userToken, encryptionKey, authMethod: "google" }),
+              });
+              if (!saveResp.ok) {
+                setWalletState("not_connected");
+                setWalletError("Failed to save login session");
+                return;
+              }
+              const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null; error?: string };
+              dbg(`session-save-login: wid=${saveData.walletId} addr=${saveData.walletAddress} challenge=${saveData.challengeId} err=${saveData.error}`);
+
+              const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
+              await finalizeWalletAfterLogin(saveData, sdk, cbs, planned, { userToken, encryptionKey });
+            });
+          ucwSdkRef.current = sdk;
+          // NOTE: do NOT call sdk.getDeviceId() here!
+          // The constructor's setupInstance() already calls execSocialLoginStatusCheck()
+          // which calls verifyTokenViaService() and appends the OAuth iframe.
+          // Calling getDeviceId() would MOVE the same iframe element to a different
+          // route, killing the OAuth verification. It also unsubscribes the message
+          // handler on timeout, preventing the onLoginComplete callback from ever firing.
+
+          // Timeout: if callback didn't fire in 10s, the OAuth detection failed
+          oauthTimeout = setTimeout(() => {
+            if (!callbackFired && !cancelled) {
+              console.warn("[UCW] Login callback did not fire after 10s — OAuth detection likely failed");
+              setWalletState("not_connected");
+              setWalletError("Login timed out. Please try again.");
+              // Clear stale session so next attempt starts fresh
+              fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST", credentials: "include" }).catch(() => {});
+            }
+          }, 10000);
+        }
+      } catch (e: unknown) {
+        setWalletState("not_connected");
+        setWalletError(`Restore failed: ${e instanceof Error ? e.message : "Unknown error"}`);
+      }
+    };
+    restoreAfterRedirect();
+
+    return () => {
+      cancelled = true;
+      if (oauthTimeout) clearTimeout(oauthTimeout);
+    };
+  }, [planned]);
+
+  // ── Session lifecycle: cookie TTL refreshed by session-restore + session-balance ──
+  // No auto-destroy needed — session has 30 min TTL, refreshed on every API call.
+
+  // ── Connect via Google (UCW social login) ──
+  const connectGoogle = useCallback(async () => {
+    // Guard: prevent re-entry if already connecting
+    if (walletState === "connecting") return;
+    dbg("connectGoogle: start");
+    setWalletState("connecting");
+    setWalletError(null);
+
+    try {
+      const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
+      const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
+      if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
+
+      // Create server-side session (sets httpOnly cookie)
+      const sessionResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
+      if (!sessionResp.ok) {
+        const err = await sessionResp.json().catch(() => ({}));
+        dbg("session-create: FAIL " + sessionResp.status);
+        throw new Error(`Session create failed: ${(err as Record<string, string>).error || sessionResp.status}`);
+      }
+
+      // Init SDK + get deviceId
+      const sdk = new W3SSdk({ appSettings: { appId } });
+      const deviceId = await sdk.getDeviceId();
+      ucwSdkRef.current = sdk;
+
+      // Create device token via backend
+      const dtResp = await fetch("/api/paylabs/wallet/ucw?action=device-token", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId }),
+      });
+      if (!dtResp.ok) {
+        const err = await dtResp.json().catch(() => ({}));
+        dbg("device-token: FAIL " + dtResp.status);
+        throw new Error(`Device token failed: ${(err as Record<string, string>).error || dtResp.status}`);
+      }
+      const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
+
+      // Save device token to server session
+      const saveDeviceResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-device", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, deviceToken, deviceEncryptionKey }),
+      });
+      if (!saveDeviceResp.ok) {
+        const err = await saveDeviceResp.json().catch(() => ({}));
+        dbg("session-save-device: FAIL " + saveDeviceResp.status);
+        throw new Error(`Session save device failed: ${(err as Record<string, string>).error || saveDeviceResp.status}`);
+      }
+
+      // Re-init SDK with device token + Google config + login callback
+      sdk.updateConfigs(
+        {
+          appSettings: { appId },
+          loginConfigs: {
+            deviceToken,
+            deviceEncryptionKey,
+            google: {
+              clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "",
+              redirectUri: window.location.origin,
+              selectAccountPrompt: true,
+            },
+          },
+        },
+        async (error: unknown, result: unknown) => {
+          // This callback fires after OAuth redirect
+          if (error) {
+            setWalletState("not_connected");
+            setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown"}`);
+            return;
+          }
+          const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
+          ucwAuthRef.current = { userToken, encryptionKey };
+          setAuthMethod("google");
+          const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userToken, encryptionKey, authMethod: "google" }),
+          });
+          if (!saveResp.ok) {
+            setWalletState("not_connected");
+            setWalletError("Failed to save login");
+            return;
+          }
+          const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null; error?: string };
+
+          const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
+          await finalizeWalletAfterLogin(saveData, sdk, cbs, planned, { userToken, encryptionKey });
+        },
+      );
+
+      // Trigger Google OAuth redirect
+      const { SocialLoginProvider } = await import("@circle-fin/w3s-pw-web-sdk/dist/src/types");
+      dbg("Calling performLogin(GOOGLE)...");
+      sdk.performLogin(SocialLoginProvider.GOOGLE);
+    } catch (e: unknown) {
+      setWalletState("not_connected");
+      setWalletError(e instanceof Error ? e.message : "Connection failed.");
+    }
+  }, [planned, walletState]);
+
+// finalizeUcwLogin removed — server-side session handles finalization.
+
+// OAuth redirect detection removed — session is memory-only.
+  // After OAuth redirect, user must click "Continue with Google" again.
+
+  // ── Connect EOA wallet (hidden fallback) ──
+  const connectEoa = useCallback(async () => {
+    setWalletState("connecting");
+    setWalletError(null);
+    try {
+      const eth = (window as unknown as Record<string, unknown>).ethereum as
+        | { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }
+        | undefined;
+      if (!eth) {
+        setWalletState("not_connected");
+        setWalletError("No browser wallet found. Install MetaMask or similar.");
+        return;
+      }
+      const accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
+      if (!accounts || accounts.length === 0) {
+        setWalletState("not_connected");
+        setWalletError("Wallet connection rejected.");
+        return;
+      }
+      setWalletInfo({ address: accounts[0], walletType: "external_eoa", network: "Arc Testnet" });
+      setWalletState("ready_to_approve");
+    } catch (e: unknown) {
+      setWalletState("not_connected");
+      setWalletError(e instanceof Error ? e.message : "Connection failed.");
+    }
   }, []);
 
-  // ── Submit chat (DCW only) ──
+  // ── Connect via Email OTP ──
+  const connectEmail = useCallback(async (email: string) => {
+    if (walletState === "connecting") return;
+    setWalletState("connecting");
+    setWalletError(null);
+    try {
+      const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
+      const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
+      if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
+
+      // Create server session
+      await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
+
+      const sdk = new W3SSdk({ appSettings: { appId } });
+      const deviceId = await sdk.getDeviceId();
+      ucwSdkRef.current = sdk;
+
+      // Create email device token
+      const dtResp = await fetch("/api/paylabs/wallet/ucw?action=email-device-token", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, email }),
+      });
+      if (!dtResp.ok) {
+        const err = await dtResp.json().catch(() => ({}));
+        throw new Error(`Email device token failed: ${(err as Record<string, string>).error || dtResp.status}`);
+      }
+      const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
+
+      // Save device token to server session
+      await fetch("/api/paylabs/wallet/ucw?action=session-save-device", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, deviceToken, deviceEncryptionKey }),
+      });
+
+      // Update SDK with email device token + login callback
+      sdk.updateConfigs(
+        { appSettings: { appId }, loginConfigs: { deviceToken, deviceEncryptionKey } },
+        async (error: unknown, result: unknown) => {
+          if (error) {
+            setWalletState("not_connected");
+            setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown"}`);
+            return;
+          }
+          const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
+          ucwAuthRef.current = encryptionKey ? { userToken, encryptionKey } : { userToken };
+          setAuthMethod("email");
+          const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userToken, encryptionKey, authMethod: "email" }),
+          });
+          const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null; error?: string };
+          const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
+          await finalizeWalletAfterLogin(saveData, sdk, cbs, planned, { userToken, encryptionKey });
+        },
+      );
+
+      sdk.verifyOtp();
+    } catch (e: unknown) {
+      setWalletState("not_connected");
+      setWalletError(e instanceof Error ? e.message : "Email login failed.");
+    }
+  }, [planned, walletState]);
+
+  // ── Connect via PIN ──
+  const connectPin = useCallback(async () => {
+    if (walletState === "connecting") return;
+    setWalletState("connecting");
+    setWalletError(null);
+    try {
+      const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
+      const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
+      if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
+
+      // Create server session
+      await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
+
+      const sdk = new W3SSdk({ appSettings: { appId } });
+      const deviceId = await sdk.getDeviceId();
+      ucwSdkRef.current = sdk;
+
+      // Step 1: Create user in Circle (required before getUserToken)
+      const userId = deviceId; // use deviceId as userId for PIN auth
+      const createResp = await fetch("/api/paylabs/wallet/ucw?action=create-user", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId }),
+      });
+      if (!createResp.ok) {
+        const err = await createResp.json().catch(() => ({}));
+        // 155106 = user already exists, continue
+        if ((err as Record<string, number>).code !== 155106) {
+          throw new Error(`Create user failed: ${(err as Record<string, string>).error || createResp.status}`);
+        }
+      }
+
+      // Step 2: Get user token (60-min session)
+      const utResp = await fetch("/api/paylabs/wallet/ucw?action=user-token", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId }),
+      });
+      if (!utResp.ok) {
+        const err = await utResp.json().catch(() => ({}));
+        throw new Error(`User token failed: ${(err as Record<string, string>).error || utResp.status}`);
+      }
+      const { userToken, encryptionKey } = (await utResp.json()) as { userToken: string; encryptionKey: string };
+      // Store auth for later use by signWithUcw (encryptionKey may be absent for PIN auth)
+      ucwAuthRef.current = encryptionKey ? { userToken, encryptionKey } : { userToken };
+
+      // Step 3: Set auth BEFORE execute
+      // For PIN auth, encryptionKey may not be available (createUserToken doesn't return it).
+      // Only call setAuthentication when encryptionKey is present.
+      if (encryptionKey) {
+        sdk.setAuthentication({ userToken, encryptionKey });
+      }
+
+      setAuthMethod("pin");
+      const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userToken, encryptionKey, authMethod: "pin" }),
+      });
+      if (!saveResp.ok) throw new Error("Failed to save login session");
+      const saveData = (await saveResp.json()) as { walletId: string | null; walletAddress: string | null; challengeId: string | null; error?: string };
+
+      const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
+      await finalizeWalletAfterLogin(saveData, sdk, cbs, planned, encryptionKey ? { userToken, encryptionKey } : undefined);
+    } catch (e: unknown) {
+      setWalletState("not_connected");
+      setWalletError(e instanceof Error ? e.message : "PIN login failed.");
+    }
+  }, [planned, walletState]);
+
+  // ── Gateway deposit — approve polls allowance, then creates deposit ──
+  const depositGateway = useCallback(async (amountAtomic: string) => {
+    setWalletState("approving");
+    setWalletError(null);
+    setDepositStatus(null);
+    try {
+
+      // Step 1: Check allowance / get first challenge
+      const resp = await fetch("/api/paylabs/wallet/ucw?action=deposit", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amountAtomic }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        const errMsg = (err as Record<string, string>).error || String(resp.status);
+        if (resp.status === 401) {
+          setWalletState("not_connected");
+          throw new Error("Session expired — please reconnect your wallet");
+        }
+        throw new Error(`Deposit challenge failed: ${errMsg}`);
+      }
+      const data = (await resp.json()) as {
+        step: "approve_required" | "deposit_ready";
+        approveChallengeId?: string;
+        depositChallengeId?: string;
+      };
+
+      // Fail-closed: deposit_ready must have a challengeId
+      if (data.step === "deposit_ready" && !data.depositChallengeId) {
+        throw new Error("Deposit challenge missing. Please try again.");
+      }
+
+      const sdk = ucwSdkRef.current as { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (id: string, cb: (err: unknown, res: unknown) => void) => void; setLocalizations: (l: Record<string, unknown>) => void };
+      if (!sdk) throw new Error("UCW SDK not initialized");
+
+      const execErr = (err: unknown) => {
+        const msg = err instanceof Error ? err.message : (err as Record<string, string>)?.message || JSON.stringify(err);
+        return new Error(msg);
+      };
+
+      const prepareSdk = async () => {
+        await sdk.getDeviceId();
+        const auth = ucwAuthRef.current;
+        if (auth?.encryptionKey) {
+          const ek: string = auth.encryptionKey;
+          sdk.setAuthentication({ userToken: auth.userToken, encryptionKey: ek });
+        }
+      };
+
+      // Step 2: If approve needed, execute and poll allowance until confirmed
+      if (data.step === "approve_required" && data.approveChallengeId) {
+        setDepositStatus("Step 1/2: Approving USDC spend…");
+        await prepareSdk();
+        // Per Circle docs: use contractInteraction for contract execution UI
+        sdk.setLocalizations({
+          contractInteraction: {
+            title: "Approve USDC",
+            subtitle: "Allow Gateway to spend your USDC for deposits",
+          },
+        });
+        await new Promise<void>((resolve, reject) => {
+          sdk.execute(data.approveChallengeId!, (err: unknown) => err ? reject(execErr(err)) : resolve());
+        });
+
+        // Poll allowance until confirmed
+        setDepositStatus("Approving USDC allowance…");
+        let allowanceConfirmed = false;
+        for (let i = 0; i < 15; i++) { // 15 × 2s = 30s max
+          await new Promise((r) => setTimeout(r, 2000));
+          const checkResp = await fetch("/api/paylabs/wallet/ucw?action=check-allowance", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ amountAtomic }),
+          });
+          if (checkResp.ok) {
+            const check = (await checkResp.json()) as { sufficient: boolean };
+            if (check.sufficient) {
+              allowanceConfirmed = true;
+              break;
+            }
+          }
+        }
+        if (!allowanceConfirmed) {
+          setDepositStatus("Approval submitted. Allowance is not confirmed yet. Please try deposit again shortly.");
+          setWalletState(parseFloat((await fetchSessionBalance()).gatewayUsdc ?? "0") >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+          return;
+        }
+
+        // Step 3: Allowance confirmed — request deposit challenge
+        setDepositStatus("Allowance confirmed. Creating deposit…");
+        const depositResp = await fetch("/api/paylabs/wallet/ucw?action=deposit", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ amountAtomic }),
+        });
+        if (!depositResp.ok) {
+          const err = await depositResp.json().catch(() => ({}));
+          throw new Error(`Deposit challenge failed: ${(err as Record<string, string>).error || depositResp.status}`);
+        }
+        const depositData = (await depositResp.json()) as { step: string; depositChallengeId?: string };
+        if (!depositData.depositChallengeId) throw new Error("No deposit challenge returned after allowance confirmed");
+        data.depositChallengeId = depositData.depositChallengeId;
+      }
+
+      // Step 4: Execute deposit
+      if (data.depositChallengeId) {
+        setDepositStatus("Step 2/2: Depositing to Gateway…");
+        await prepareSdk();
+        sdk.setLocalizations({
+          contractInteraction: {
+            title: "Deposit to Gateway",
+            subtitle: `Deposit ${Number(amountAtomic) / 1_000_000} USDC to Gateway`,
+          },
+        });
+        await new Promise<void>((resolve, reject) => {
+          sdk.execute(data.depositChallengeId!, (err: unknown) => err ? reject(execErr(err)) : resolve());
+        });
+      }
+
+      // Step 5: Poll for balance update
+      setDepositStatus("Waiting for Gateway balance confirmation…");
+      const startBal = parseFloat((await fetchSessionBalance()).gatewayUsdc ?? "0");
+      const requiredBal = parseFloat(amountAtomic) / 1_000_000; // atomic → USDC
+      let confirmed = false;
+      for (let i = 0; i < 15; i++) { // 15 × 2s = 30s max
+        await new Promise((r) => setTimeout(r, 2000));
+        const balance = await fetchSessionBalance();
+        setUcwBalance(balance);
+        const gwBal = parseFloat(balance.gatewayUsdc ?? "0");
+        if (gwBal > startBal || gwBal >= requiredBal) {
+          confirmed = true;
+          setDepositStatus(null);
+          setWalletState(gwBal >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+          if (gwBal >= parseFloat(planned)) setWalletError(null);
+          break;
+        }
+      }
+      if (!confirmed) {
+        setDepositStatus("Deposit submitted. Gateway balance has not updated yet. Please refresh balance shortly.");
+        const finalBalance = await fetchSessionBalance();
+        setUcwBalance(finalBalance);
+        setWalletState(parseFloat(finalBalance.gatewayUsdc ?? "0") >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+      }
+    } catch (e: unknown) {
+      setWalletState("needs_gateway_deposit");
+      setWalletError(e instanceof Error ? e.message : "Deposit failed.");
+      setDepositStatus(null);
+    }
+  }, [planned]);
+
+  // ── Submit chat ──
   const submitChat = useCallback(async () => {
     if (!prompt.trim()) return;
 
-    // Run gating: must have DCW wallet
+    // Run gating: must have wallet
     if (!walletInfo?.address) {
-      setDcwOpen(true);
+      setPickerOpen(true);
       return;
     }
 
     // Run gating: must have sufficient x402 Balance (Gateway) for planned cost
+    // This applies to both UCW and DCW. x402 Balance = gatewayUsdc.
     if (ucwBalance) {
       const x402Bal = parseFloat(ucwBalance.gatewayUsdc ?? "0");
       const costNum = parseFloat(planned);
       if (x402Bal < costNum) {
-        setDcwOpen(true);
+        // Insufficient x402 balance — open wallet modal with top-up tab
+        if (walletInfo.walletType === "circle_developer_controlled") {
+          setDcwOpen(true);
+        } else {
+          setWalletState("needs_gateway_deposit");
+          setWalletOpen(true);
+        }
         return;
       }
+    }
+
+    // Run gating: UCW wallet must have live SDK/auth to sign
+    if (walletInfo.walletType === "circle_user_controlled" && (!ucwSdkRef.current || !ucwAuthRef.current)) {
+      setWalletError("Reconnect wallet to sign x402 payments.");
+      setWalletOpen(true);
+      return;
     }
 
     const userMsg: ChatMessage = { id: makeChatId("user"), role: "user", content: prompt.trim(), createdAt: Date.now() };
@@ -379,171 +1504,310 @@ export default function PayLabsChatClient({ analytics }: Props) {
       ));
     };
 
-    try {
-      // ── DCW: server-side run-paid ──
-      setWalletState("approving");
-      setSigningPhase("Starting DCW payment…");
+    const body = {
+      goal: userMsg.content,
+      user_wallet: walletInfo.address,
+      route_tier: "auto",
+      budget_usdc: Number(budget),
+      customer_wallet_type: walletInfo.walletType,
+      customer_auth_method: authMethod || "unknown",
+    };
 
-      // ── Fire-and-forget: POST to get jobId ──
-      dcwJobRef.current.cancelled = false;
-      let jobId: string;
-      try {
-        const startResp = await fetch("/api/paylabs/dcw/run-paid", {
+    try {
+      // ── DCW: bypass inline entirely, go straight to server-side run-paid ──
+      if (walletInfo.walletType === "circle_developer_controlled") {
+        setWalletState("approving");
+         setSigningPhase("Starting DCW payment…");
+
+         // ── Fire-and-forget: POST to get jobId ──
+         dcwJobRef.current.cancelled = false;
+         let jobId: string;
+         try {
+           const startResp = await fetch("/api/paylabs/dcw/run-paid", {
+             method: "POST",
+             credentials: "include",
+             headers: { "Content-Type": "application/json" },
+             body: JSON.stringify({
+               goal: body.goal || prompt,
+               routeTier: body.route_tier || "auto",
+               budgetUsdc: Number(budget),
+             }),
+           });
+           const startData = await startResp.json();
+           if (!startData.ok || !startData.jobId) {
+             throw new Error(startData.error || "Failed to start DCW job");
+           }
+           jobId = startData.jobId;
+           dcwJobRef.current.jobId = jobId;
+         } catch (e: unknown) {
+           const msg = e instanceof Error ? e.message : "Failed to start payment.";
+           setSigningPhase(null);
+           finishAssistant({ status: "error", error: msg });
+           setError(msg);
+           setWalletState("failed");
+           setStatus("error");
+           return;
+         }
+
+         // ── Poll for job completion ──
+         const POLL_INTERVAL_MS = 3_000;
+         const MAX_POLL_ATTEMPTS = 120; // ~6 minutes max
+         let pollAttempts = 0;
+
+         const pollJob = (): Promise<void> =>
+           new Promise((resolve) => {
+             const tick = async () => {
+               if (dcwJobRef.current.cancelled) {
+                 setSigningPhase(null);
+                 finishAssistant({ status: "error", error: "Request cancelled." });
+                 setWalletState("ready_to_approve");
+                 setStatus("idle");
+                 resolve();
+                 return;
+               }
+
+               pollAttempts++;
+               if (pollAttempts > MAX_POLL_ATTEMPTS) {
+                 setSigningPhase(null);
+                 finishAssistant({ status: "error", error: "Payment timed out. The request may still complete — check your wallet." });
+                 setWalletState("failed");
+                 setStatus("error");
+                 resolve();
+                 return;
+               }
+
+               try {
+                 const pollResp = await fetch(
+                   `/api/paylabs/dcw/run-paid/status?jobId=${encodeURIComponent(jobId)}`,
+                   { credentials: "include" },
+                 );
+                 const pollData = await pollResp.json();
+
+                 if (!pollResp.ok || !pollData.ok) {
+                   // Job lost (cold start?) — retry a few times before giving up
+                   if (pollAttempts > 5) {
+                     setSigningPhase(null);
+                     finishAssistant({ status: "error", error: pollData.error || "Lost track of payment job." });
+                     setWalletState("failed");
+                     setStatus("error");
+                     resolve();
+                     return;
+                   }
+                 } else {
+                   // Update progress message
+                   if (pollData.progress) {
+                     setSigningPhase(pollData.progress);
+                   }
+
+                   if (pollData.status === "completed" && pollData.result) {
+                     // ── Success! ──
+                     setSigningPhase(null);
+                     const dcwResult = pollData.result;
+                     const dcwData =
+                       dcwResult.data && typeof dcwResult.data === "object"
+                         ? (dcwResult.data as Record<string, unknown>)
+                         : {};
+
+                     const safeResult = toSafeRunResult({
+                       ...dcwData,
+                       entry_payment: dcwResult.entry_payment ?? dcwData.entry_payment,
+                       paymentMetadata: dcwResult.paymentMetadata ?? dcwData.paymentMetadata,
+                       entry_payment_explorer_url:
+                         dcwResult.entry_payment?.explorer_url ??
+                         dcwResult.paymentMetadata?.explorerUrl ??
+                         dcwData.entry_payment_explorer_url ??
+                         null,
+                       entry_payment_batch_explorer_url:
+                         dcwResult.entry_payment?.batch_explorer_url ??
+                         dcwResult.paymentMetadata?.batchExplorerUrl ??
+                         dcwData.entry_payment_batch_explorer_url ??
+                         null,
+                     });
+                     setWalletState("paid");
+                     finishAssistant({ status: "done", result: safeResult });
+                     setResult(safeResult);
+                     setStatus("done");
+                     dcwJobRef.current.jobId = null;
+                     resolve();
+                     return;
+                   }
+
+                   if (pollData.status === "failed") {
+                     setSigningPhase(null);
+                     const errMsg = pollData.error || "DCW payment failed.";
+                     finishAssistant({ status: "error", error: errMsg });
+                     setError(errMsg);
+                     setWalletState("failed");
+                     setStatus("error");
+                     dcwJobRef.current.jobId = null;
+                     resolve();
+                     return;
+                   }
+
+                   if (pollData.status === "cancelled") {
+                     setSigningPhase(null);
+                     finishAssistant({ status: "error", error: "Request cancelled." });
+                     setWalletState("ready_to_approve");
+                     setStatus("idle");
+                     dcwJobRef.current.jobId = null;
+                     resolve();
+                     return;
+                   }
+                 }
+               } catch {
+                 // Network error — retry on next tick
+               }
+
+               // Schedule next poll (skip if cancelled)
+               if (!dcwJobRef.current.cancelled) {
+                 dcwJobRef.current.timer = setTimeout(tick, POLL_INTERVAL_MS);
+               }
+               };
+
+               // Start first poll immediately (no initial delay)
+               if (!dcwJobRef.current.cancelled) {
+               dcwJobRef.current.timer = setTimeout(tick, 100);
+               }
+               });
+
+         await pollJob();
+
+         // Cleanup
+         if (dcwJobRef.current.timer) {
+           clearTimeout(dcwJobRef.current.timer);
+           dcwJobRef.current.timer = null;
+         }
+         return;
+       }
+
+      // ── UCW / EOA: call inline first, handle 402 client-side ──
+      const inlineStart = nowMs();
+      const first = await fetch("/api/paylabs/discovery-runs/inline", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (ucwDebugEnabled) signDbg(`inline POST: status=${first.status} ${nowMs() - inlineStart}ms`);
+
+      // ── Handle 402: payment required (UCW/EOA only) ──
+      if (first.status === 402) {
+        const paymentRequired = first.headers.get("PAYMENT-REQUIRED");
+        if (!paymentRequired) {
+          finishAssistant({ status: "error", error: "Payment challenge missing." });
+          setError("Payment challenge missing.");
+          setStatus("error");
+          return;
+        }
+
+        let challenge: Record<string, unknown>;
+        try {
+          challenge = JSON.parse(atob(paymentRequired));
+        } catch {
+          finishAssistant({ status: "error", error: "Invalid payment challenge." });
+          setError("Invalid payment challenge.");
+          setStatus("error");
+          return;
+        }
+
+        // Extract discovery_run_id from 402 response body for retry row reuse
+        const challengeBody = await first.json().catch(() => ({})) as Record<string, unknown>;
+        const retryDiscoveryRunId = challengeBody.discovery_run_id as string | undefined;
+
+        // Sign with appropriate wallet type
+        setWalletState("approving");
+        setSigningPhase("Preparing x402 approval…");
+        let paymentSignature: string;
+        try {
+          if (walletInfo.walletType === "circle_user_controlled" && ucwSdkRef.current) {
+            setSigningPhase("Opening Circle approval…");
+            paymentSignature = await signWithUcw({
+              challenge,
+              walletAddress: walletInfo.address,
+              ucwSdk: ucwSdkRef.current as { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (id: string, cb: (err: unknown, res: unknown) => void) => void; setLocalizations: (l: Record<string, unknown>) => void },
+              auth: ucwAuthRef.current,
+            });
+            setSigningPhase(null);
+          } else if (walletInfo.walletType === "circle_user_controlled" && !ucwSdkRef.current) {
+            // UCW wallet but SDK/auth lost (e.g. after refresh) — never fall back to EOA
+            finishAssistant({ status: "error", error: "Reconnect wallet to sign x402 payments." });
+            setError("Reconnect wallet to sign x402 payments.");
+            setWalletOpen(true);
+            setWalletState("connected");
+            setStatus("error");
+            return;
+          } else {
+            // EOA fallback — only for external_eoa wallets
+            paymentSignature = await signWithEoa({ challenge, walletAddress: walletInfo.address });
+          }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : "Signing failed.";
+          setSigningPhase(null);
+          finishAssistant({ status: "error", error: msg });
+          setError(msg);
+          setWalletState("ready_to_approve");
+          setStatus("error");
+          return;
+        }
+
+        // Retry with payment signature + discovery_run_id for row reuse
+        setSigningPhase("Submitting paid request…");
+        const retryBody: Record<string, unknown> = { ...body };
+        if (retryDiscoveryRunId) {
+          retryBody.discovery_run_id = retryDiscoveryRunId;
+        }
+        const retryStart = nowMs();
+        const paid = await fetch("/api/paylabs/discovery-runs/inline", {
           method: "POST",
           credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            goal: prompt.trim(),
-            routeTier: "auto",
-            budgetUsdc: Number(budget),
-          }),
+          headers: {
+            "content-type": "application/json",
+            "PAYMENT-SIGNATURE": paymentSignature,
+          },
+          body: JSON.stringify(retryBody),
         });
-        const startData = await startResp.json();
-        if (!startData.ok || !startData.jobId) {
-          throw new Error(startData.error || "Failed to start DCW job");
-        }
-        jobId = startData.jobId;
-        dcwJobRef.current.jobId = jobId;
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "Failed to start payment.";
+        if (ucwDebugEnabled) signDbg(`paid retry: status=${paid.status} ${nowMs() - retryStart}ms`);
         setSigningPhase(null);
-        finishAssistant({ status: "error", error: msg });
-        setError(msg);
-        setWalletState("failed");
+
+        const paidData = await paid.json().catch(() => ({}));
+        if (!paid.ok) {
+          const errMsg = (paidData as Record<string, string>)?.error || "Payment failed.";
+          finishAssistant({ status: "error", error: errMsg });
+          setError(errMsg);
+          setWalletState("failed");
+          setStatus("error");
+          return;
+        }
+
+        const safeResult = toSafeRunResult(paidData as Record<string, unknown>);
+        setWalletState("paid");
+        finishAssistant({ status: "done", result: safeResult });
+        setResult(safeResult);
+        setStatus("done");
+        return;
+      }
+
+      // ── Handle non-402 responses ──
+      const data = await first.json().catch(() => ({}));
+      if (!first.ok) {
+        const errMsg = (data as Record<string, string>)?.error || "Run failed.";
+        finishAssistant({ status: "error", error: errMsg });
+        setError(errMsg);
         setStatus("error");
         return;
       }
 
-      // ── Poll for job completion ──
-      const POLL_INTERVAL_MS = 3_000;
-      const MAX_POLL_ATTEMPTS = 120;
-      let pollAttempts = 0;
-
-      const pollJob = (): Promise<void> =>
-        new Promise((resolve) => {
-          const tick = async () => {
-            if (dcwJobRef.current.cancelled) {
-              setSigningPhase(null);
-              finishAssistant({ status: "error", error: "Request cancelled." });
-              setWalletState("ready_to_approve");
-              setStatus("idle");
-              resolve();
-              return;
-            }
-
-            pollAttempts++;
-            if (pollAttempts > MAX_POLL_ATTEMPTS) {
-              setSigningPhase(null);
-              finishAssistant({ status: "error", error: "Payment timed out. The request may still complete — check your wallet." });
-              setWalletState("failed");
-              setStatus("error");
-              resolve();
-              return;
-            }
-
-            try {
-              const pollResp = await fetch(
-                `/api/paylabs/dcw/run-paid/status?jobId=${encodeURIComponent(jobId)}`,
-                { credentials: "include" },
-              );
-              const pollData = await pollResp.json();
-
-              if (!pollResp.ok || !pollData.ok) {
-                if (pollAttempts > 5) {
-                  setSigningPhase(null);
-                  finishAssistant({ status: "error", error: pollData.error || "Lost track of payment job." });
-                  setWalletState("failed");
-                  setStatus("error");
-                  resolve();
-                  return;
-                }
-              } else {
-                if (pollData.progress) {
-                  setSigningPhase(pollData.progress);
-                }
-
-                if (pollData.status === "completed" && pollData.result) {
-                  setSigningPhase(null);
-                  const dcwResult = pollData.result;
-                  const dcwData =
-                    dcwResult.data && typeof dcwResult.data === "object"
-                      ? (dcwResult.data as Record<string, unknown>)
-                      : {};
-
-                  const safeResult = toSafeRunResult({
-                    ...dcwData,
-                    entry_payment: dcwResult.entry_payment ?? dcwData.entry_payment,
-                    paymentMetadata: dcwResult.paymentMetadata ?? dcwData.paymentMetadata,
-                    entry_payment_explorer_url:
-                      dcwResult.entry_payment?.explorer_url ??
-                      dcwResult.paymentMetadata?.explorerUrl ??
-                      dcwData.entry_payment_explorer_url ??
-                      null,
-                    entry_payment_batch_explorer_url:
-                      dcwResult.entry_payment?.batch_explorer_url ??
-                      dcwResult.paymentMetadata?.batchExplorerUrl ??
-                      dcwData.entry_payment_batch_explorer_url ??
-                      null,
-                  });
-                  setWalletState("paid");
-                  finishAssistant({ status: "done", result: safeResult });
-                  setResult(safeResult);
-                  setStatus("done");
-                  dcwJobRef.current.jobId = null;
-                  resolve();
-                  return;
-                }
-
-                if (pollData.status === "failed") {
-                  setSigningPhase(null);
-                  const errMsg = pollData.error || "DCW payment failed.";
-                  finishAssistant({ status: "error", error: errMsg });
-                  setError(errMsg);
-                  setWalletState("failed");
-                  setStatus("error");
-                  dcwJobRef.current.jobId = null;
-                  resolve();
-                  return;
-                }
-
-                if (pollData.status === "cancelled") {
-                  setSigningPhase(null);
-                  finishAssistant({ status: "error", error: "Request cancelled." });
-                  setWalletState("ready_to_approve");
-                  setStatus("idle");
-                  dcwJobRef.current.jobId = null;
-                  resolve();
-                  return;
-                }
-              }
-            } catch {
-              // Network error — retry on next tick
-            }
-
-            if (!dcwJobRef.current.cancelled) {
-              dcwJobRef.current.timer = setTimeout(tick, POLL_INTERVAL_MS);
-            }
-          };
-
-          if (!dcwJobRef.current.cancelled) {
-            dcwJobRef.current.timer = setTimeout(tick, 100);
-          }
-        });
-
-      await pollJob();
-
-      if (dcwJobRef.current.timer) {
-        clearTimeout(dcwJobRef.current.timer);
-        dcwJobRef.current.timer = null;
-      }
-      return;
+      const safeResult = toSafeRunResult(data as Record<string, unknown>);
+      finishAssistant({ status: "done", result: safeResult });
+      setResult(safeResult);
+      setStatus("done");
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message : "Network error.";
       finishAssistant({ status: "error", error: errMsg });
       setError(errMsg);
       setStatus("error");
     }
-  }, [prompt, budget, walletInfo, ucwBalance, planned]);
+  }, [prompt, budget, walletInfo, ucwWalletId, ucwBalance, planned, authMethod]);
 
   const resetChat = useCallback(() => {
     setPrompt("");
@@ -555,11 +1819,35 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
   // ── Disconnect wallet ──
   const disconnectWallet = useCallback(() => {
+    // Destroy UCW session if exists
+    fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST", credentials: "include" }).catch(() => {});
+    // Destroy DCW session if exists
     fetch("/api/paylabs/auth/session", { method: "DELETE", credentials: "include" }).catch(() => {});
+    // Clear all wallet state
+    setUcwWalletId(null);
     setWalletInfo(null);
     setWalletState("not_connected");
     setUcwBalance(null);
+    setWalletError(null);
+    ucwSdkRef.current = null;
   }, []);
+
+  // Dev mode: show EOA fallback if ?eoa=1 in URL
+  const showEoaFallback = typeof window !== "undefined" && window.location.search.includes("eoa=1");
+
+  // Reconnect using the original auth method
+  const reconnectByAuth = useCallback(() => {
+    if (authMethod === "google") connectGoogle();
+    else if (authMethod === "email") {
+      // Open wallet modal with email input visible
+      setShowEmailInputForReconnect(true);
+      setWalletOpen(true);
+    }
+    else if (authMethod === "pin") connectPin();
+    else {
+      setWalletOpen(true);
+    }
+  }, [authMethod, connectGoogle, connectPin]);
 
   const copyWalletAddress = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
@@ -569,7 +1857,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
       setWalletCopied(true);
       window.setTimeout(() => setWalletCopied(false), 1200);
     } catch {
-      /* clipboard not available */
+      setWalletError("Could not copy wallet address.");
     }
   }, [walletInfo?.address]);
 
@@ -584,7 +1872,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
           <button
             type="button"
             className={`pl-wallet-pill ${walletInfo?.address ? "connected" : ""}`}
-            onClick={() => setDcwOpen(true)}
+            onClick={() => walletInfo?.address ? setWalletOpen(true) : setPickerOpen(true)}
             title={walletInfo?.address || "Connect wallet"}
           >
             {walletInfo?.address ? (
@@ -600,21 +1888,23 @@ export default function PayLabsChatClient({ analytics }: Props) {
                     wallet: {ucwBalance.walletUsdc}
                   </span>
                 )}
-                <button
-                  type="button"
-                  className="pl-wallet-copy-btn"
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    try {
-                      const dcwBal = await fetchDcwBalance();
-                      setUcwBalance(dcwBal);
-                    } catch { /* refresh failed */ }
-                  }}
-                  aria-label="Refresh balance"
-                  title="Refresh DCW balance"
-                >
-                  ↻
-                </button>
+                {walletInfo?.walletType === "circle_developer_controlled" && (
+                  <button
+                    type="button"
+                    className="pl-wallet-copy-btn"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        const dcwBal = await fetchDcwBalance();
+                        setUcwBalance(dcwBal);
+                      } catch { /* refresh failed */ }
+                    }}
+                    aria-label="Refresh balance"
+                    title="Refresh DCW balance"
+                  >
+                    ↻
+                  </button>
+                )}
                 <button
                   type="button"
                   className="pl-wallet-copy-btn"
@@ -685,9 +1975,10 @@ export default function PayLabsChatClient({ analytics }: Props) {
                                       clearTimeout(dcwJobRef.current.timer);
                                       dcwJobRef.current.timer = null;
                                     }
+                                    // Fire-and-forget cancel to server
                                     const jid = dcwJobRef.current.jobId;
                                     if (jid) {
-                                      fetch(`/api/paylabs/dcw/run-paid/cancel`, {
+                                      fetch("/api/paylabs/dcw/run-paid/cancel", {
                                         method: "POST",
                                         credentials: "include",
                                         headers: { "Content-Type": "application/json" },
@@ -715,86 +2006,77 @@ export default function PayLabsChatClient({ analytics }: Props) {
               </div>
             )}
 
-            <div className={`pl-input-row ${messages.length > 0 ? "sticky" : ""}`}>
+            <div className="pl-chat-composer">
               <textarea
-                className="pl-prompt-input"
-                placeholder="Ask about sources, payments, or creator attribution…"
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
+                placeholder="Ask for a route, receipt, or source-backed payment…"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     submitChat();
                   }
                 }}
-                rows={1}
               />
-              <div className="pl-input-controls">
-                <div className="pl-budget-row">
-                  <label className="pl-budget-label">Budget</label>
-                  <input
-                    className="pl-budget-input"
-                    type="text"
-                    value={budget}
-                    onChange={(e) => setBudget(e.target.value)}
-                    placeholder="0.0001"
-                  />
-                  <span className="pl-budget-unit">USDC</span>
-                </div>
+              <div className="pl-search-actions">
+                <span className="pl-x402-badge">x402 protected</span>
                 <button
-                  type="button"
-                  className="pl-submit-btn"
+                  className="pl-run-btn"
                   onClick={submitChat}
                   disabled={status === "running" || !prompt.trim()}
                 >
-                  {status === "running" ? "Running…" : "Ask"}
+                  {status === "running" ? "…" : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>}
                 </button>
               </div>
             </div>
           </div>
-        </section>
 
-        {result && messages.length === 0 && (
-          <ResultCard result={result} onReset={resetChat} />
-        )}
-
-        {/* Guide section */}
-        <section className="pl-guide-section">
-          <button
-            type="button"
-            className="pl-guide-toggle"
-            onClick={() => setGuideOpen(!guideOpen)}
-          >
-            <span>How PayLabs works</span>
-            <span>{guideOpen ? "▾" : "▸"}</span>
-          </button>
-          {guideOpen && (
-            <div className="pl-guide-content">
-              <div className="pl-guide-step">
-                <span className="pl-guide-num">1</span>
-                <div>
-                  <b>Ask a question</b>
-                  <p>PayLabs discovers relevant sources using AI agents.</p>
+          <div className="pl-guide-block">
+            <button
+              className="pl-guide-toggle"
+              onClick={() => setGuideOpen(!guideOpen)}
+            >
+              <span>Route guide</span>
+              <span>{guideOpen ? "▾" : "▸"}</span>
+            </button>
+            {guideOpen && (
+              <div className="pl-guide-rows">
+                <div className="pl-guide-row">
+                  <div className="pl-guide-info">
+                    <b>Easy</b>
+                    <span>Best for: Quick answer</span>
+                    <span className="pl-guide-example">Explain Arc x402 simply using source-backed info.</span>
+                  </div>
+                  <button className="pl-guide-use" onClick={() => setPrompt("Explain Arc x402 simply using source-backed info.")}>Use</button>
+                </div>
+                <div className="pl-guide-row">
+                  <div className="pl-guide-info">
+                    <b>Normal</b>
+                    <span>Best for: Compare / verify</span>
+                    <span className="pl-guide-example">Compare Arc x402 and Circle Gateway and verify the main claims.</span>
+                  </div>
+                  <button className="pl-guide-use" onClick={() => setPrompt("Compare Arc x402 and Circle Gateway and verify the main claims.")}>Use</button>
+                </div>
+                <div className="pl-guide-row">
+                  <div className="pl-guide-info">
+                    <b>Advanced</b>
+                    <span>Best for: Paid source / receipt</span>
+                    <span className="pl-guide-example">Use advanced route, unlock paid or creator-monetized sources if needed, and return receipt confirmation.</span>
+                  </div>
+                  <button className="pl-guide-use" onClick={() => setPrompt("Use advanced route, unlock paid or creator-monetized sources if needed, and return receipt confirmation.")}>Use</button>
                 </div>
               </div>
-              <div className="pl-guide-step">
-                <span className="pl-guide-num">2</span>
-                <div>
-                  <b>Review sources</b>
-                  <p>Sources are ranked by relevance and quality.</p>
-                </div>
-              </div>
-              <div className="pl-guide-step">
-                <span className="pl-guide-num">3</span>
-                <div>
-                  <b>Pay per source</b>
-                  <p>x402 nanopayments go directly to creators via Circle Gateway.</p>
-                </div>
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </section>
       </main>
+
+      <WalletPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onSelectUcw={() => { setPickerOpen(false); setWalletOpen(true); }}
+        onSelectDcw={() => { setPickerOpen(false); setDcwOpen(true); }}
+      />
 
       <DcwModal
         open={dcwOpen}
@@ -814,6 +2096,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
             walletType: "circle_developer_controlled",
             network: w.chain,
           });
+          // Fetch balance FIRST, then close modal (avoid race condition)
           try {
             const dcwBal = await fetchDcwBalance();
             setUcwBalance(dcwBal);
@@ -824,6 +2107,30 @@ export default function PayLabsChatClient({ analytics }: Props) {
           }
           setDcwOpen(false);
         }}
+      />
+
+      <WalletConnectModal
+        open={walletOpen}
+        onClose={() => { setWalletOpen(false); setShowEmailInputForReconnect(false); }}
+        walletState={walletState}
+        walletInfo={walletInfo}
+        ucwBalance={ucwBalance}
+        budget={budget}
+        plannedCost={planned}
+        error={walletError}
+        onConnectGoogle={connectGoogle}
+        onConnectEmail={connectEmail}
+        onConnectPin={connectPin}
+        onConnectEoa={connectEoa}
+        onDepositGateway={depositGateway}
+        onApprove={() => { setWalletOpen(false); submitChat(); }}
+        showEoaFallback={showEoaFallback}
+        needsReconnectToSign={needsReconnectToSign}
+        onReconnect={reconnectByAuth}
+        authMethod={authMethod}
+        depositStatus={depositStatus}
+        debugLog={ucwDebug ? debugLog : undefined}
+        defaultShowEmailInput={showEmailInputForReconnect}
       />
     </div>
   );
