@@ -199,7 +199,7 @@ async function processResults(state: SettlementMemoryStateType) {
   );
   const actualCreatorPaidUsdc = paidResults.reduce((sum, r) => sum + r.amount_usdc, 0);
   const actualCreatorPaidAtomic = paidResults.length > 0
-    ? String(BigInt(paidResults.length) * CREATOR_PAYOUT_UNIT_ATOMIC)
+    ? paidResults.reduce((sum, r) => sum + BigInt(r.amount_atomic), BigInt(0)).toString()
     : null;
 
   // Reserve = planned pool - successfully paid slots (includes failed/pending selected payouts)
