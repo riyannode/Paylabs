@@ -1,5 +1,5 @@
 /**
- * GET /api/paylabs/runs/[discoveryRunId]/evidence
+ * GET /api/paylabs/runs/[runId]/evidence
  *
  * Returns the Deep Agent evaluator trace for a specific run.
  * Shows: tool calls, evidence matrix, scores, rationale, memory.
@@ -12,10 +12,10 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ discoveryRunId: string }> }
+  { params }: { params: Promise<{ runId: string }> }
 ) {
   try {
-    const { discoveryRunId } = await params;
+    const { runId: discoveryRunId } = await params;
 
     if (!discoveryRunId) {
       return NextResponse.json(
