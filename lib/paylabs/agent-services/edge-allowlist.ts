@@ -4,10 +4,12 @@
  * Defines allowed buyer→seller edges for delegated service calls.
  * Non-allowlisted edges fail closed.
  *
- * Allowed edges form a linear chain:
- *   run_budget_controller -> intent_planner -> query_builder -> signal_scout ->
- *   intent_matcher -> source_verifier -> value_allocator -> trust_verifier ->
- *   payment_decider -> payment_router
+ * Payment graph edges (hierarchical):
+ *   run_budget_controller → brain
+ *   brain → discovery_planner / payment_decision / settlement_memory
+ *   discovery_planner → intent_planner / query_builder / signal_scout / signal_scout_basics
+ *   payment_decision → intent_matcher / source_verifier / value_allocator / trust_verifier / payment_decider
+ *   settlement_memory → creator_attribution / advanced_evidence_evaluator / creator_payout_router / payment_router
  */
 
 import type { ServiceName, EdgeValidationResult } from "./types";
@@ -34,8 +36,11 @@ const PAYMENT_GRAPH_EDGES: ReadonlyArray<readonly [string, string]> = [
   ["payment_decision", "value_allocator"],
   ["payment_decision", "trust_verifier"],
   ["payment_decision", "payment_decider"],
-  // settlement_memory → child services
+  // settlement_memory → child services (legacy + creator distribution)
   ["settlement_memory", "payment_router"],
+  ["settlement_memory", "creator_attribution"],
+  ["settlement_memory", "advanced_evidence_evaluator"],
+  ["settlement_memory", "creator_payout_router"],
 ] as const;
 
 // ── Legacy direct edges (backward compat audit-only) ──

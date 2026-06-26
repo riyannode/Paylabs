@@ -29,6 +29,7 @@ import {
 } from "@/lib/paylabs/x402/seller-challenge";
 import { isDelegatedRuntimeEnabled } from "@/lib/paylabs/feature-flags";
 import { TIER_SERVICE_PRESETS } from "@/lib/paylabs/delegated-runtime/quote-engine";
+import { getMacroNodeServicesForTier } from "@/lib/paylabs/delegated-runtime/tier-service-bundles";
 import { createOrchestratorState, addProgressSummary, addServiceEvaluation } from "@/lib/paylabs/delegated-runtime/state";
 import type { MacroNodePhase, OrchestratorInput } from "@/lib/paylabs/delegated-runtime/types";
 
@@ -167,10 +168,8 @@ async function executeMacroNode(
     );
   }
 
-  // Use tier-based service selection for discovery_planner, static for others
-  const selectedServices = nodeName === "discovery_planner"
-    ? TIER_SERVICE_PRESETS[input.routeTier as keyof typeof TIER_SERVICE_PRESETS] || nodeConfig.childServices
-    : nodeConfig.childServices;
+  // Use tier-based service selection via tier-service-bundles
+  const selectedServices = getMacroNodeServicesForTier(nodeName, input.routeTier as "easy" | "normal" | "advanced");
 
   try {
     let result: unknown;

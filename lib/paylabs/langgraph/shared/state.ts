@@ -305,7 +305,87 @@ export const SettlementMemoryState = Annotation.Root({
     default: () => [],
   }),
 
-  // Payment Router output
+  // Creator attribution output
+  creatorAttributions: Annotation<Array<{
+    feed_item_id: string;
+    source_url: string;
+    source_title: string;
+    creator_wallet: string | null;
+    claim_status: string;
+    eligibility_status: string;
+    reason: string;
+    final_score: number;
+    risk_score: number;
+  }>>({
+    reducer: concatReducer,
+    default: () => [],
+  }),
+  eligibleCreatorItems: Annotation<Array<{
+    feed_item_id: string;
+    source_url: string;
+    source_title: string;
+    creator_wallet: string | null;
+    claim_status: string;
+    eligibility_status: string;
+    reason: string;
+    final_score: number;
+    risk_score: number;
+  }>>({
+    reducer: replaceReducer,
+    default: () => [],
+  }),
+
+  // Advanced evaluator output (Advanced tier only)
+  advancedEvaluatorOutput: Annotation<Record<string, unknown> | undefined>,
+
+  // Selected creator payout items
+  selectedCreatorPayoutItems: Annotation<Array<{
+    feed_item_id: string;
+    source_url: string;
+    source_title: string;
+    creator_wallet: string | null;
+    claim_status: string;
+    eligibility_status: string;
+    reason: string;
+    final_score: number;
+    risk_score: number;
+  }>>({
+    reducer: replaceReducer,
+    default: () => [],
+  }),
+
+  // Creator split plan
+  creatorSplitPlan: Annotation<Record<string, unknown> | undefined>,
+
+  // Payout results
+  creatorPayoutResults: Annotation<Array<{
+    feed_item_id: string;
+    source_url: string;
+    creator_wallet: string;
+    amount_atomic: string;
+    amount_usdc: number;
+    status: string;
+    settlement_id: string | null;
+    tx_hash: string | null;
+    explorer_url: string | null;
+    error: string | null;
+  }>>({
+    reducer: concatReducer,
+    default: () => [],
+  }),
+  botShareResult: Annotation<Record<string, unknown> | undefined>,
+  serviceShareResult: Annotation<Record<string, unknown> | undefined>,
+
+  // Creator payout summary
+  creatorPayoutSummary: Annotation<string | undefined>,
+  pendingCreatorReserveAtomic: Annotation<string | undefined>,
+  actualCreatorPaidAtomic: Annotation<string | undefined>,
+  actualCreatorPaidUsdc: Annotation<number | undefined>,
+
+  // Evaluator memory
+  evaluatorMemorySummary: Annotation<string | undefined>,
+
+  // Payment Router output (legacy)
   routedItems: Annotation<Array<{
     feed_item_id: string;
     source_url: string;

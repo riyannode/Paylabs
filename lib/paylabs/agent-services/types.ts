@@ -16,7 +16,10 @@ export type ServiceName =
   | "value_allocator"
   | "trust_verifier"
   | "payment_decider"
-  | "payment_router";
+  | "payment_router"
+  | "creator_attribution"
+  | "advanced_evidence_evaluator"
+  | "creator_payout_router";
 
 // ─── Macro-Node Assignment ───────────────────────────────────
 export type ServiceMacroNode =

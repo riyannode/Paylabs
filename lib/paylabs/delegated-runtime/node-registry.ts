@@ -98,7 +98,7 @@ export const MACRO_NODES: Record<MacroNodePhase, MacroNodeConfig> = {
     buyerWalletIdEnv: "PAYLABS_NODE_SETTLEMENT_MEMORY_BUYER_WALLET_ID",
     fixedNodeFeeUsdc: MACRO_NODE_FEE_USDC, // 0.000001 (base)
     endpointPath: "/api/paylabs/macro-nodes/settlement_memory/run",
-    childServices: ["payment_router"],
+    childServices: ["creator_attribution", "advanced_evidence_evaluator", "creator_payout_router"],
     tierLabel: "advanced",
     brainPaymentMode: "circle_gateway_wallet_batched",
     childPaymentMode: "circle_gateway_wallet_batched_per_child_fallback",
@@ -152,7 +152,7 @@ export function getTierMacroAllocations(routeTier: "easy" | "normal" | "advanced
 } {
   const tierPhaseMap: Record<"easy" | "normal" | "advanced", MacroNodePhase[]> = {
     easy: ["discovery_planner"],
-    normal: ["discovery_planner", "payment_decision"],
+    normal: ["discovery_planner", "payment_decision", "settlement_memory"],
     advanced: ["discovery_planner", "payment_decision", "settlement_memory"],
   };
   const macroNodes = tierPhaseMap[routeTier];
