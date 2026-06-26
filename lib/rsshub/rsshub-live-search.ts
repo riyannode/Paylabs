@@ -110,11 +110,11 @@ function scoreItem(
     } else if (domain.includes(e)) {
       score += 5;
       matched.push(entity);
-    } else if (urlPath.includes(e.replace(/\//g, "/"))) {
+    } else if (urlPath.includes(e)) {
       // Entity in source URL path (e.g. /riyannode/Paylabs in URL)
       score += 12;
       matched.push(entity);
-    } else if (rPath.includes(e.replace(/\//g, "/"))) {
+    } else if (rPath.includes(e)) {
       // Entity in route path
       score += 10;
       matched.push(entity);
