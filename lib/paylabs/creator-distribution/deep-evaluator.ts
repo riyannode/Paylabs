@@ -695,6 +695,14 @@ function createEvaluatorTools(context: {
       creator_usage_notes: z
         .array(z.string())
         .describe("Notes about creator wallet usage"),
+      why_two_sources_needed: z
+        .string()
+        .optional()
+        .describe("Why two sources are needed for this evaluation"),
+      evaluator_confidence: z
+        .number()
+        .optional()
+        .describe("Your confidence in the evaluation (0-1)"),
       warnings: z
         .array(z.string())
         .describe("Any warnings about the evaluation"),
@@ -703,6 +711,8 @@ function createEvaluatorTools(context: {
       safe_evaluator_summary,
       source_reliability_notes,
       creator_usage_notes,
+      why_two_sources_needed,
+      evaluator_confidence,
       warnings,
     }) => {
       await writeEvaluatorMemorySummary({
@@ -711,8 +721,8 @@ function createEvaluatorTools(context: {
         source_ids: context.allApprovedItems.map((i) => i.feed_item_id),
         source_urls: context.sourceUrls,
         safe_evaluator_summary,
-        why_two_sources_needed: null,
-        evaluator_confidence: null,
+        why_two_sources_needed: why_two_sources_needed ?? null,
+        evaluator_confidence: typeof evaluator_confidence === "number" ? evaluator_confidence : null,
         warnings,
       });
 
@@ -850,9 +860,7 @@ export async function runAdvancedEvidenceDeepEvaluator(
     if (structuredResponse) {
       return {
         ...structuredResponse,
-        ok: true,
         evaluator_version: "advanced_evidence_deep_agent_v1",
-        error: null,
       };
     }
 
@@ -934,7 +942,7 @@ function parseFallbackOutput(
   try {
     const parsed = JSON.parse(jsonMatch[0]);
     return {
-      ok: true,
+      ok: parsed.ok !== false,
       evaluator_version: "advanced_evidence_deep_agent_v1",
       selected_source_ids:
         parsed.selected_source_ids ||

@@ -80,6 +80,14 @@ export async function POST(
     );
   }
 
+  const VALID_TIERS = new Set(["easy", "normal", "advanced"]);
+  if (!VALID_TIERS.has(routeTier)) {
+    return NextResponse.json(
+      { ok: false, error: `Invalid routeTier: ${routeTier}. Must be easy, normal, or advanced.` },
+      { status: 400 }
+    );
+  }
+
   if (process.env.PAYLABS_NODE_X402_ENABLED !== "true") {
     return NextResponse.json(
       {
