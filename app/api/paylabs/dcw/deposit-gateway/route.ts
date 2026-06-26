@@ -224,8 +224,9 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Deposit tx is COMPLETE — verify Gateway balance increased
-    // Look up wallet address for balance check
+    // Deposit tx is COMPLETE — verify Gateway balance >= expected amount
+    const expectedAmount = Number(amountUsdc);
+
     const { data: walletForCheck } = await supabaseAdmin()
       .from("paylabs_dcw_wallets")
       .select("wallet_address")
@@ -237,21 +238,24 @@ export async function GET(req: NextRequest) {
     let balanceVerified = false;
     let gatewayBalance: string | null = null;
 
-    if (walletForCheck?.wallet_address) {
+    if (walletForCheck?.wallet_address && Number.isFinite(expectedAmount) && expectedAmount > 0) {
       try {
         const gwBal = await checkGatewayBalance({ depositor: walletForCheck.wallet_address });
         if (gwBal.ok && gwBal.balanceUsdc) {
           gatewayBalance = gwBal.balanceUsdc;
-          // Balance > 0 means deposit worked (at minimum)
-          balanceVerified = parseFloat(gwBal.balanceUsdc) > 0;
+          // Must be >= deposited amount to confirm this specific deposit landed
+          balanceVerified = parseFloat(gwBal.balanceUsdc) >= expectedAmount;
         }
       } catch {
-        // Balance check failed — still mark complete since deposit tx is confirmed on-chain
-        balanceVerified = true;
+        // Balance check failed — return deposit_complete, NOT complete
+        balanceVerified = false;
       }
+    } else if (!Number.isFinite(expectedAmount) || expectedAmount <= 0) {
+      // amountUsdc missing or invalid — can't verify, stay at deposit_complete
+      balanceVerified = false;
     } else {
-      // Can't verify balance — trust on-chain tx
-      balanceVerified = true;
+      // No wallet address — can't verify, stay at deposit_complete
+      balanceVerified = false;
     }
 
     return NextResponse.json({
