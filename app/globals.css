@@ -832,6 +832,22 @@ a:hover { text-decoration: none; }
   margin-left: 8px;
   white-space: nowrap;
 }
+.pl-cancel-btn {
+  font-size: 11px;
+  color: #dc2626;
+  background: transparent;
+  border: 1px solid #dc2626;
+  border-radius: 4px;
+  padding: 2px 8px;
+  margin-left: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+.pl-cancel-btn:hover {
+  background: #dc2626;
+  color: #fff;
+}
 
 .pl-result-card {
   display: grid;
