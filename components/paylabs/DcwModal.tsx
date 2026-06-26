@@ -30,6 +30,19 @@ function shortAddr(addr?: string | null) {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
+function isMobileBrowser(): boolean {
+  return typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label}_timeout`)), ms)
+    ),
+  ]);
+}
+
 function asDecimal(value?: string | null): number {
   const n = Number(value ?? "0");
   return Number.isFinite(n) ? n : 0;
@@ -196,39 +209,51 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   const triggerGoogleSignIn = useCallback(async () => {
     setIsGoogleLoading(true);
     setError(null);
-    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
-    // ── Try FedCM first (modern browsers, no deprecation warnings) ──
     try {
-      if (clientId && "IdentityProvider" in globalThis) {
-        const cred = await navigator.credentials.get({
-          identity: {
-            providers: [{
-              configURL: "https://accounts.google.com/gi/fedcm.json",
-              clientId,
-            }],
-          },
-        } as CredentialRequestOptions);
+      const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+      const isMobile = isMobileBrowser();
+
+      // ── Skip FedCM on mobile (hangs in Android Chrome / custom tab) ──
+      if (!isMobile && clientId && "IdentityProvider" in globalThis) {
+        const cred = await withTimeout(
+          navigator.credentials.get({
+            identity: {
+              providers: [{
+                configURL: "https://accounts.google.com/gi/fedcm.json",
+                clientId,
+              }],
+            },
+          } as CredentialRequestOptions),
+          8000,
+          "fedcm"
+        );
+
         if (cred && "token" in cred && typeof (cred as { token: unknown }).token === "string") {
-          handleGoogleSignIn((cred as { token: string }).token);
-          setIsGoogleLoading(false);
+          await handleGoogleSignIn((cred as { token: string }).token);
           return;
         }
       }
-    } catch {
-      // FedCM not available or user cancelled — fall through to GSI
-    }
 
-    // ── Fallback: legacy GSI One Tap prompt ──
-    const g = (window as unknown as Record<string, unknown>).google as
-      | { accounts?: { id?: { prompt: Function } } }
-      | undefined;
-    if (g?.accounts?.id) {
-      g.accounts.id.prompt(() => {
-        setIsGoogleLoading(false);
-      });
-    } else {
-      setError("Google Sign-In not loaded. Please try again.");
+      // ── Fallback: legacy GSI One Tap prompt ──
+      const g = (window as unknown as Record<string, unknown>).google as
+        | { accounts?: { id?: { prompt: Function } } }
+        | undefined;
+
+      if (!g?.accounts?.id) {
+        throw new Error("Google Sign-In not loaded. Please try OTP or Passkey.");
+      }
+
+      await withTimeout(
+        new Promise<void>((resolve) => {
+          g.accounts!.id!.prompt(() => resolve());
+        }),
+        8000,
+        "google_prompt"
+      );
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Google Sign-In timed out. Try OTP or Passkey.");
+    } finally {
       setIsGoogleLoading(false);
     }
   }, [handleGoogleSignIn]);
