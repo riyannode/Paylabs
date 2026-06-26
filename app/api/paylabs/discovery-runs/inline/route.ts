@@ -299,6 +299,12 @@ async function runX402Orchestration(params: {
       "PAYLABS_SERVICE_CREATOR_PAYOUT_ROUTER_SELLER_WALLET_ADDRESS",
       "PAYLABS_SERVICE_CREATOR_PAYOUT_ROUTER_BUYER_WALLET_ID",
     );
+    // Payout funding wallet — required for creator payouts
+    if (!process.env.PAYLABS_CREATOR_PAYOUT_BUYER_WALLET_ID && !process.env.PAYLABS_SETTLEMENT_TREASURY_WALLET_ID) {
+      throw new Error(
+        "config_error: PAYLABS_CREATOR_PAYOUT_BUYER_WALLET_ID or PAYLABS_SETTLEMENT_TREASURY_WALLET_ID required for normal/advanced tier"
+      );
+    }
   }
   if (effectiveRouteTier === "advanced") {
     tierRequiredEnv.push(
@@ -673,6 +679,13 @@ function buildX402Output(
       macroAllocationUsdc: userBudgetUsedUsdc - FIXED_FEES_USDC.brainTreasury,
       childPaymentVolumeUsdc,
       grossPaymentVolumeUsdc: userBudgetUsedUsdc + childPaymentVolumeUsdc,
+      executionFeeUsdc: lockedPlan
+        ? (lockedPlan.plannedCostBreakdown.brain_treasury_usdc +
+           lockedPlan.plannedCostBreakdown.macro_node_fees_usdc +
+           lockedPlan.plannedCostBreakdown.service_edge_fees_usdc +
+           lockedPlan.plannedCostBreakdown.registry_check_fees_usdc +
+           lockedPlan.plannedCostBreakdown.source_access_fees_usdc)
+        : undefined,
     },
     consensusDecisions: [],
     paymentPlan,

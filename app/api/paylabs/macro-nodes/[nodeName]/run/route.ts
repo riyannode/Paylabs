@@ -88,6 +88,17 @@ export async function POST(
     );
   }
 
+  // Reject incompatible node/tier combinations (e.g. payment_decision + easy)
+  const { getMacroNodeServicesForTier } = await import("@/lib/paylabs/delegated-runtime/tier-service-bundles");
+  const typedRouteTier = routeTier as "easy" | "normal" | "advanced";
+  const tierServices = getMacroNodeServicesForTier(nodeName, typedRouteTier);
+  if (tierServices.length === 0) {
+    return NextResponse.json(
+      { ok: false, error: `Macro-node ${nodeName} has no services for tier ${routeTier}. Use a valid tier for this node.` },
+      { status: 400 }
+    );
+  }
+
   if (process.env.PAYLABS_NODE_X402_ENABLED !== "true") {
     return NextResponse.json(
       {
@@ -114,7 +125,6 @@ export async function POST(
     req.headers.get("X-Payment");
 
   // Use full macro allocation (base fee + child budget) for the given tier
-  const typedRouteTier = routeTier as "easy" | "normal" | "advanced";
   const macroAllocationUsdc = getMacroNodeAllocationUsdcForTier(nodeName as MacroNodePhase, typedRouteTier);
   const amountAtomic = Math.round(macroAllocationUsdc * 1_000_000).toString();
 
@@ -282,7 +292,7 @@ async function executeMacroNode(
     }
 
     return NextResponse.json({
-      ok: true,
+      ok: (result as Record<string, unknown>)?.ok !== false,
       nodeType: "macro_node",
       nodeName,
       mode: "x402",

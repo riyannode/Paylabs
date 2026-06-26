@@ -53,8 +53,15 @@ export async function creatorPayoutRouterHandler(
   });
 
   // Construct server-side transport — fail closed if unavailable
+  // Initialize DCW signer if not already set (service endpoint may run in
+  // a different serverless invocation from the macro-node route)
   let transport;
   try {
+    const { getDcwSigner, createDcwSigner, setDcwSigner } = await import("@/lib/paylabs/x402/dcw-signer-adapter");
+    if (!getDcwSigner()) {
+      const signer = createDcwSigner();
+      setDcwSigner(signer);
+    }
     transport = createCreatorPaymentTransport();
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

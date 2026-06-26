@@ -64,6 +64,8 @@ export interface BudgetSnapshot {
   childPaymentVolumeUsdc?: number;
   /** Gross payment volume (userBudgetUsed + childPaymentVolume) */
   grossPaymentVolumeUsdc?: number;
+  /** Full execution fee (brain + macro + service + registry + source), excluding creator pool */
+  executionFeeUsdc?: number;
 }
 
 // ─── Service Evaluation ──────────────────────────────────────

@@ -201,7 +201,7 @@ export async function writePayLabsVisibility(
     source_fees_usdc: 0,
     creator_reserve_usdc: 0,
     // Creator distribution V1 fields — derive from split plan, not results.length
-    execution_fee_usdc: result.budgetSnapshot?.settledServiceFeesUsdc ?? null,
+    execution_fee_usdc: result.budgetSnapshot?.executionFeeUsdc ?? result.budgetSnapshot?.settledServiceFeesUsdc ?? null,
     planned_creator_pool_usdc: result.creatorDistribution?.plannedCreatorPoolAtomic
       ? (Number(result.creatorDistribution.plannedCreatorPoolAtomic) / 1e6)
       : null,

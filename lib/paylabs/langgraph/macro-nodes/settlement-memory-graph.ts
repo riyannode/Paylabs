@@ -66,14 +66,21 @@ const creatorAttributionNode = createServiceNode(
 async function processAttributionResult(state: SettlementMemoryStateType) {
   const data = getServiceOutput(state, "creator_attribution");
 
-  if (!data) {
+  // Check evaluation status — fail if attribution failed or returned no output
+  const attrEval = (state.serviceEvaluations || []).find(
+    (e) => e.serviceName === "creator_attribution",
+  );
+  const attributionFailed =
+    !attrEval || attrEval.status === "failed" || !data || data.ok === false;
+
+  if (attributionFailed) {
     return {
       creatorAttributions: [],
       eligibleCreatorItems: [],
       selectedCreatorPayoutItems: [],
-      error: "creator_attribution_returned_no_output",
+      error: "creator_attribution_failed",
       progressSummaries: [
-        "Settlement: creator attribution returned no output; payout routing stopped.",
+        "Settlement: creator attribution failed or returned no output; payout routing stopped.",
       ],
     };
   }
@@ -183,17 +190,22 @@ async function processResults(state: SettlementMemoryStateType) {
   const plannedCreatorPoolAtomic = splitPlan?.planned_creator_pool_atomic
     ? String(splitPlan.planned_creator_pool_atomic)
     : null;
-  const actualCreatorPoolAtomic = splitPlan?.actual_creator_pool_atomic
-    ? String(splitPlan.actual_creator_pool_atomic)
-    : null;
-  const pendingCreatorReserveAtomic = splitPlan?.pending_creator_reserve_atomic
-    ? String(splitPlan.pending_creator_reserve_atomic)
-    : null;
   const splitPlanPayoutLimit = splitPlan?.payout_limit as number | undefined;
 
-  const actualCreatorPaidUsdc = creatorPayoutResults
-    .filter((r) => r.status === "paid" || r.status === "gateway_accepted")
-    .reduce((sum, r) => sum + r.amount_usdc, 0);
+  // Compute actual paid amounts from results (not split plan)
+  const CREATOR_PAYOUT_UNIT_ATOMIC = BigInt(20);
+  const paidResults = creatorPayoutResults.filter(
+    (r) => r.status === "paid" || r.status === "gateway_accepted"
+  );
+  const actualCreatorPaidUsdc = paidResults.reduce((sum, r) => sum + r.amount_usdc, 0);
+  const actualCreatorPaidAtomic = paidResults.length > 0
+    ? String(BigInt(paidResults.length) * CREATOR_PAYOUT_UNIT_ATOMIC)
+    : null;
+
+  // Reserve = planned pool - successfully paid slots (includes failed/pending selected payouts)
+  const plannedPoolBigInt = plannedCreatorPoolAtomic ? BigInt(plannedCreatorPoolAtomic) : BigInt(0);
+  const paidSlotsBigInt = BigInt(paidResults.length) * CREATOR_PAYOUT_UNIT_ATOMIC;
+  const pendingCreatorReserveAtomic = String(plannedPoolBigInt - paidSlotsBigInt);
 
   // Check evaluator status for Advanced tier
   const evaluatorStatus = evalEval?.status as string | undefined;
@@ -225,7 +237,7 @@ async function processResults(state: SettlementMemoryStateType) {
     creatorSplitPlan: splitPlan || null,
     plannedCreatorPoolAtomic,
     pendingCreatorReserveAtomic,
-    actualCreatorPaidAtomic: actualCreatorPoolAtomic,
+    actualCreatorPaidAtomic: actualCreatorPaidAtomic,
     actualCreatorPaidUsdc,
     plannedCreatorPayoutCount: splitPlanPayoutLimit ?? null,
     advancedEvaluatorStatus: isAdvancedTier ? (evaluatorStatus || "not_run") : null,
@@ -291,10 +303,25 @@ async function buildSummary(state: SettlementMemoryStateType) {
 // ─── Conditional Routing ──────────────────────────────────────
 
 function routeAfterAttribution(state: SettlementMemoryStateType): string {
+  // If attribution failed, skip payout router entirely
+  if (state.error) {
+    return "build_summary";
+  }
   if (state.routeTier === "advanced") {
     return "advanced_evidence_evaluator";
   }
   // Normal: skip evaluator, go directly to payout router
+  return "creator_payout_router";
+}
+
+function routeAfterEvaluator(state: SettlementMemoryStateType): string {
+  // If evaluator failed, skip payout router
+  const evalEval = (state.serviceEvaluations || []).find(
+    (e) => e.serviceName === "advanced_evidence_evaluator",
+  );
+  if (!evalEval || evalEval.status === "failed") {
+    return "build_summary";
+  }
   return "creator_payout_router";
 }
 
@@ -313,8 +340,12 @@ const graph = new StateGraph(SettlementMemoryState)
   .addConditionalEdges("process_attribution", routeAfterAttribution, {
     advanced_evidence_evaluator: "advanced_evidence_evaluator",
     creator_payout_router: "creator_payout_router",
+    build_summary: "build_summary",
   })
-  .addEdge("advanced_evidence_evaluator", "creator_payout_router")
+  .addConditionalEdges("advanced_evidence_evaluator", routeAfterEvaluator, {
+    creator_payout_router: "creator_payout_router",
+    build_summary: "build_summary",
+  })
   .addEdge("creator_payout_router", "process_result")
   .addEdge("process_result", "build_summary")
   .addEdge("build_summary", END)
