@@ -1743,8 +1743,13 @@ export default function PayLabsChatClient({ analytics }: Props) {
                 <span className="pl-wallet-pill-address">{short(walletInfo.address)}</span>
                 <span className="pl-wallet-pill-network">Arc</span>
                 <span className="pl-wallet-pill-balance">
-                  {ucwBalance?.gatewayUsdc ?? ucwBalance?.walletUsdc ?? "0.00"} USDC
+                  x402: {ucwBalance?.gatewayUsdc ?? "0.00"} USDC
                 </span>
+                {ucwBalance?.walletUsdc && ucwBalance.walletUsdc !== "0" && (
+                  <span className="pl-wallet-pill-balance" style={{ fontSize: 10, opacity: 0.7, marginLeft: 6 }}>
+                    wallet: {ucwBalance.walletUsdc}
+                  </span>
+                )}
                 {walletInfo?.walletType === "circle_developer_controlled" && (
                   <button
                     type="button"

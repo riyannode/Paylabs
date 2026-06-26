@@ -1,20 +1,19 @@
 /**
  * POST /api/paylabs/dcw/deposit-gateway
- * GET  /api/paylabs/dcw/deposit-gateway?txId=...
+ * GET  /api/paylabs/dcw/deposit-gateway?approveTxId=...&depositTxId=...&amountUsdc=...
  *
- * POST: Initiates USDC deposit from DCW wallet into Circle Gateway.
- *   Returns tx IDs immediately (non-blocking). Poll with GET.
+ * POST: Submits USDC approve tx only. Returns approveTxId + state="approve_pending".
+ *   DO NOT submit deposit until approve is COMPLETE.
  *
- * GET: Poll transaction state by ID.
- *   Returns { ok, txId, state, txHash }.
+ * GET: Semantic state machine poll.
+ *   - If approveTxId COMPLETE and no depositTxId: submits deposit server-side, returns depositTxId + "deposit_pending"
+ *   - If depositTxId COMPLETE: checks Gateway balance, returns "complete"
+ *   - Returns semantic states: approve_pending | approve_complete | deposit_pending | deposit_complete | complete | failed
  *
  * REQUIRES valid session cookie (DCW auth).
  *
  * POST Body: { amountUsdc: number }
- * Returns: { ok, approveTxId, depositTxId, amountUsdc, state }
- *
- * State machine:
- *   approve_pending → deposit_pending → complete | failed
+ * Returns: { ok, approveTxId, amountUsdc, state }
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -26,6 +25,7 @@ import {
   GATEWAY_CONTRACT_ADDRESS,
   getDcwHealth,
 } from "@/lib/paylabs/dcw/config";
+import { checkGatewayBalance } from "@/lib/paylabs/x402/gateway-balance";
 
 const _require = createRequire(import.meta.url);
 
@@ -67,7 +67,13 @@ async function getTxState(txId: string): Promise<{
   }
 }
 
-// ─── GET: Poll tx status ─────────────────────────────────────
+const TERMINAL_STATES = ["COMPLETE", "FAILED", "CANCELLED", "DENIED"];
+
+function isTerminal(state: string): boolean {
+  return TERMINAL_STATES.includes(state);
+}
+
+// ─── GET: Semantic state machine poll ────────────────────────
 
 export async function GET(req: NextRequest) {
   try {
@@ -76,22 +82,187 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Authentication required" }, { status: 401 });
     }
 
-    const txId = req.nextUrl.searchParams.get("txId");
-    if (!txId) {
-      return NextResponse.json({ ok: false, error: "txId parameter required" }, { status: 400 });
+    const approveTxId = req.nextUrl.searchParams.get("approveTxId");
+    const depositTxId = req.nextUrl.searchParams.get("depositTxId");
+    const amountUsdc = req.nextUrl.searchParams.get("amountUsdc");
+
+    if (!approveTxId) {
+      return NextResponse.json({ ok: false, error: "approveTxId parameter required" }, { status: 400 });
     }
 
-    const { state, txHash, error } = await getTxState(txId);
+    // ── Phase 1: Check approve tx ──
+    const approveState = await getTxState(approveTxId);
 
-    const terminal = ["COMPLETE", "FAILED", "CANCELLED", "DENIED"].includes(state);
+    if (approveState.state === "FAILED" || approveState.state === "CANCELLED" || approveState.state === "DENIED") {
+      return NextResponse.json({
+        ok: true,
+        approveTxId,
+        depositTxId: null,
+        state: "failed",
+        reason: `Approve tx ${approveState.state}: ${approveState.error || "no details"}`,
+        approveTxHash: approveState.txHash,
+      });
+    }
+
+    if (!isTerminal(approveState.state) || approveState.state !== "COMPLETE") {
+      // Approve still pending
+      return NextResponse.json({
+        ok: true,
+        approveTxId,
+        depositTxId: null,
+        state: "approve_pending",
+        approveTxHash: approveState.txHash,
+        rawApproveState: approveState.state,
+      });
+    }
+
+    // Approve is COMPLETE — now check if we need to submit deposit
+
+    // ── Phase 2: Submit deposit if not yet submitted ──
+    if (!depositTxId) {
+      // Look up wallet to submit deposit
+      const { data: wallet, error } = await supabaseAdmin()
+        .from("paylabs_dcw_wallets")
+        .select("wallet_id, wallet_address")
+        .eq("id", session.sub)
+        .not("wallet_id", "eq", "")
+        .eq("status", "active")
+        .limit(1)
+        .single();
+
+      if (error || !wallet?.wallet_id) {
+        return NextResponse.json({
+          ok: true,
+          approveTxId,
+          depositTxId: null,
+          state: "failed",
+          reason: "No DCW wallet found for deposit submission",
+        });
+      }
+
+      if (!amountUsdc || !Number.isFinite(Number(amountUsdc)) || Number(amountUsdc) <= 0) {
+        return NextResponse.json({
+          ok: true,
+          approveTxId,
+          depositTxId: null,
+          state: "approve_complete",
+          reason: "Approve complete. Pass amountUsdc to submit deposit.",
+          approveTxHash: approveState.txHash,
+        });
+      }
+
+      const client = getDcwClient();
+      const amountAtomic = String(Math.round(Number(amountUsdc) * 1_000_000));
+
+      try {
+        const depositResp = await client.createContractExecutionTransaction({
+          walletId: wallet.wallet_id,
+          contractAddress: GATEWAY_CONTRACT_ADDRESS,
+          abiFunctionSignature: "deposit(address,uint256)",
+          abiParameters: [wallet.wallet_address, amountAtomic],
+          fee: { type: "level", config: { feeLevel: "MEDIUM" } },
+          idempotencyKey: crypto.randomUUID(),
+        });
+
+        const newDepositTxId = depositResp?.data?.id;
+        if (!newDepositTxId) {
+          return NextResponse.json({
+            ok: true,
+            approveTxId,
+            depositTxId: null,
+            state: "failed",
+            reason: "Deposit tx returned no ID from Circle",
+            approveTxHash: approveState.txHash,
+          });
+        }
+
+        return NextResponse.json({
+          ok: true,
+          approveTxId,
+          depositTxId: newDepositTxId,
+          state: "deposit_pending",
+          approveTxHash: approveState.txHash,
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[dcw/deposit-gateway] Deposit submission failed:", msg);
+        return NextResponse.json({
+          ok: true,
+          approveTxId,
+          depositTxId: null,
+          state: "failed",
+          reason: `Deposit submission failed: ${msg.slice(0, 200)}`,
+          approveTxHash: approveState.txHash,
+        });
+      }
+    }
+
+    // ── Phase 3: Deposit tx exists — check its state ──
+    const depositState = await getTxState(depositTxId);
+
+    if (depositState.state === "FAILED" || depositState.state === "CANCELLED" || depositState.state === "DENIED") {
+      return NextResponse.json({
+        ok: true,
+        approveTxId,
+        depositTxId,
+        state: "failed",
+        reason: `Deposit tx ${depositState.state}: ${depositState.error || "no details"}`,
+        approveTxHash: approveState.txHash,
+        depositTxHash: depositState.txHash,
+      });
+    }
+
+    if (!isTerminal(depositState.state) || depositState.state !== "COMPLETE") {
+      return NextResponse.json({
+        ok: true,
+        approveTxId,
+        depositTxId,
+        state: "deposit_pending",
+        approveTxHash: approveState.txHash,
+        depositTxHash: depositState.txHash,
+        rawDepositState: depositState.state,
+      });
+    }
+
+    // Deposit tx is COMPLETE — verify Gateway balance increased
+    // Look up wallet address for balance check
+    const { data: walletForCheck } = await supabaseAdmin()
+      .from("paylabs_dcw_wallets")
+      .select("wallet_address")
+      .eq("id", session.sub)
+      .not("wallet_id", "eq", "")
+      .limit(1)
+      .single();
+
+    let balanceVerified = false;
+    let gatewayBalance: string | null = null;
+
+    if (walletForCheck?.wallet_address) {
+      try {
+        const gwBal = await checkGatewayBalance({ depositor: walletForCheck.wallet_address });
+        if (gwBal.ok && gwBal.balanceUsdc) {
+          gatewayBalance = gwBal.balanceUsdc;
+          // Balance > 0 means deposit worked (at minimum)
+          balanceVerified = parseFloat(gwBal.balanceUsdc) > 0;
+        }
+      } catch {
+        // Balance check failed — still mark complete since deposit tx is confirmed on-chain
+        balanceVerified = true;
+      }
+    } else {
+      // Can't verify balance — trust on-chain tx
+      balanceVerified = true;
+    }
 
     return NextResponse.json({
       ok: true,
-      txId,
-      state,
-      txHash,
-      error,
-      terminal,
+      approveTxId,
+      depositTxId,
+      state: balanceVerified ? "complete" : "deposit_complete",
+      approveTxHash: approveState.txHash,
+      depositTxHash: depositState.txHash,
+      gatewayBalance,
+      balanceVerified,
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -99,7 +270,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// ─── POST: Initiate deposit (non-blocking) ───────────────────
+// ─── POST: Submit approve only (non-blocking) ───────────────
 
 export async function POST(req: NextRequest) {
   try {
@@ -140,8 +311,8 @@ export async function POST(req: NextRequest) {
       }, { status: 500 });
     }
 
-    // Step 1: Approve USDC spending by Gateway contract (non-blocking)
-    // Per Circle docs: use createContractExecutionTransaction with fee level
+    // Step 1 ONLY: Approve USDC spending by Gateway contract
+    // DO NOT submit deposit here — wait for approve COMPLETE via GET poll
     const approveResp = await client.createContractExecutionTransaction({
       walletId: wallet.wallet_id,
       contractAddress: USDC_CONTRACT_ADDRESS,
@@ -157,41 +328,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Approve transaction failed to initiate" }, { status: 502 });
     }
 
-    // Step 2: Submit deposit tx immediately (don't wait for approve)
-    // The Gateway contract handles approve+deposit atomically on-chain.
-    // If approve isn't confirmed yet, deposit will queue and execute after.
-    let depositTxId: string | null = null;
-    let depositError: string | null = null;
-
-    try {
-      const depositResp = await client.createContractExecutionTransaction({
-        walletId: wallet.wallet_id,
-        contractAddress: GATEWAY_CONTRACT_ADDRESS,
-        abiFunctionSignature: "deposit(address,uint256)",
-        abiParameters: [wallet.wallet_address, amountAtomic],
-        fee: { type: "level", config: { feeLevel: "MEDIUM" } },
-        idempotencyKey: crypto.randomUUID(),
-      });
-
-      depositTxId = depositResp?.data?.id || null;
-      if (!depositTxId) {
-        depositError = "Deposit tx returned no ID";
-      }
-    } catch (err: unknown) {
-      depositError = err instanceof Error ? err.message : String(err);
-      // Deposit may fail if approve isn't confirmed yet — that's OK
-      console.warn("[dcw/deposit-gateway] Deposit submitted (may queue):", depositError.slice(0, 120));
-    }
-
     return NextResponse.json({
       ok: true,
       approveTxId,
-      depositTxId,
+      depositTxId: null,
       amountUsdc,
-      state: depositTxId ? "deposit_pending" : "approve_pending",
-      note: depositTxId
-        ? "Both transactions submitted. Poll with GET ?txId=<id>."
-        : "Approve submitted. Deposit will be submitted after approve confirms. Poll approve first.",
+      state: "approve_pending",
+      note: "Approve submitted. Poll GET ?approveTxId=<id>&amountUsdc=<amount> to track and auto-submit deposit after approve confirms.",
       health,
     });
   } catch (e: unknown) {

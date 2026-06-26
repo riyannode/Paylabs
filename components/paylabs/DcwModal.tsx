@@ -415,9 +415,19 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
     } catch {}
   }, [onBalanceUpdate]);
 
-  // ── Deposit to Gateway ────────────────────────────────────
+  // ── Deposit to Gateway (two-phase: approve → deposit) ────
   const [depositTxId, setDepositTxId] = useState<string | null>(null);
+  const [approveTxId, setApproveTxId] = useState<string | null>(null);
   const [depositState, setDepositState] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const depositTxIdRef = useRef<string | null>(null);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
 
   const handleDeposit = useCallback(async () => {
     const amount = parseFloat(depositAmount);
@@ -428,8 +438,18 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
     setIsDepositing(true);
     setDepositError(null);
     setDepositTxId(null);
+    setApproveTxId(null);
     setDepositState(null);
+    depositTxIdRef.current = null;
+
+    // Clear any existing poll
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+
     try {
+      // Phase 1: Submit approve only
       const resp = await fetch("/api/paylabs/dcw/deposit-gateway", {
         method: "POST",
         credentials: "include",
@@ -442,29 +462,56 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
         return;
       }
       setDepositAmount("");
-      setDepositTxId(data.depositTxId || data.approveTxId);
-      setDepositState(data.state || "submitted");
+      setApproveTxId(data.approveTxId);
+      setDepositState("approve_pending");
 
-      // Poll tx status until terminal
-      const txToPoll = data.depositTxId || data.approveTxId;
-      if (txToPoll) {
-        const pollInterval = setInterval(async () => {
-          try {
-            const statusResp = await fetch(`/api/paylabs/dcw/deposit-gateway?txId=${txToPoll}`, { credentials: "include" });
-            const statusData = await statusResp.json();
-            setDepositState(statusData.state || "pending");
-            if (statusData.terminal) {
-              clearInterval(pollInterval);
-              setDepositState(statusData.state === "COMPLETE" ? "complete" : "failed");
-              if (statusData.state === "COMPLETE") {
+      const amt = amount;
+
+      // Phase 2: Poll GET endpoint — it manages the approve→deposit state machine server-side
+      pollRef.current = setInterval(async () => {
+        try {
+          const params = new URLSearchParams({
+            approveTxId: data.approveTxId,
+            amountUsdc: String(amt),
+          });
+          // Include depositTxId if we already have it from a previous poll response
+          if (depositTxIdRef.current) params.set("depositTxId", depositTxIdRef.current);
+
+          const statusResp = await fetch(
+            `/api/paylabs/dcw/deposit-gateway?${params.toString()}`,
+            { credentials: "include" }
+          );
+          const statusData = await statusResp.json();
+
+          if (statusData.state) {
+            setDepositState(statusData.state);
+
+            // Capture depositTxId from server response (submitted after approve COMPLETE)
+            if (statusData.depositTxId && !depositTxIdRef.current) {
+              depositTxIdRef.current = statusData.depositTxId;
+              setDepositTxId(statusData.depositTxId);
+            }
+
+            // Terminal states — stop polling
+            if (statusData.state === "complete" || statusData.state === "failed") {
+              if (pollRef.current) {
+                clearInterval(pollRef.current);
+                pollRef.current = null;
+              }
+              if (statusData.state === "complete") {
                 await refreshBalance();
               }
-              // Clear state after 5s
-              setTimeout(() => { setDepositTxId(null); setDepositState(null); }, 5000);
+              // Clear state after 8s
+              setTimeout(() => {
+                setDepositTxId(null);
+                setApproveTxId(null);
+                setDepositState(null);
+                depositTxIdRef.current = null;
+              }, 8000);
             }
-          } catch { /* poll failed — will retry */ }
-        }, 5000); // poll every 5s
-      }
+          }
+        } catch { /* poll failed — will retry */ }
+      }, 5000);
     } catch (e: unknown) {
       setDepositError(e instanceof Error ? e.message : "Deposit failed");
     } finally {
@@ -756,16 +803,18 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                   {depositError && (
                     <p style={{ color: "var(--error, #ef4444)", fontSize: 11, marginTop: 6 }}>{depositError}</p>
                   )}
-                  {depositTxId && depositState && (
+                  {depositState && (
                     <p style={{
-                      color: depositState === "complete" ? "var(--success, #22c55e)" : "var(--info, #3b82f6)",
+                      color: depositState === "complete" ? "var(--success, #22c55e)" : depositState === "failed" ? "var(--error, #ef4444)" : "var(--info, #3b82f6)",
                       fontSize: 11, marginTop: 6,
                     }}>
                       {depositState === "approve_pending" && "⏳ Approve submitted… waiting for confirmation"}
+                      {depositState === "approve_complete" && "✓ Approve confirmed! Submitting deposit…"}
                       {depositState === "deposit_pending" && "⏳ Deposit submitted… waiting for confirmation"}
+                      {depositState === "deposit_complete" && "✓ Deposit confirmed on-chain! Verifying balance…"}
                       {depositState === "complete" && "✓ Deposit complete! Balance updated."}
                       {depositState === "failed" && "✗ Deposit failed. Check explorer for details."}
-                      {!["approve_pending", "deposit_pending", "complete", "failed"].includes(depositState) && `⏳ ${depositState}…`}
+                      {!["approve_pending", "approve_complete", "deposit_pending", "deposit_complete", "complete", "failed"].includes(depositState) && `⏳ ${depositState}…`}
                     </p>
                   )}
                   {recommendedTopUp > 0 && (
