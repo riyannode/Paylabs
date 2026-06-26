@@ -311,6 +311,46 @@ export async function callPaidSeller(
     };
   }
 
+  // ── Step 2.5: Pre-payment seller health check ───────────
+  // Before committing payment, verify the seller endpoint is alive.
+  // Derive health URL from sellerUrl (e.g. /api/paylabs/brain/run → /api/paylabs/health)
+  // If health check fails, abort before spending USDC.
+  {
+    const sellerParsed = new URL(sellerUrl);
+    const healthUrl = `${sellerParsed.origin}/api/paylabs/health`;
+    try {
+      const healthResp = await fetch(healthUrl, {
+        method: "GET",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!healthResp.ok) {
+        return {
+          ok: false,
+          error: `Seller health check failed (HTTP ${healthResp.status}) before payment. Aborting to prevent lost payment.`,
+          challengeStatus: 402,
+        };
+      }
+      const healthData = await healthResp.json().catch(() => ({})) as Record<string, unknown>;
+      if (healthData.ok !== true) {
+        return {
+          ok: false,
+          error: `Seller health check returned unhealthy: ${JSON.stringify(healthData).slice(0, 200)}. Aborting to prevent lost payment.`,
+          challengeStatus: 402,
+        };
+      }
+      if (process.env.NODE_ENV !== "production") {
+        console.debug("[buyer-transport] pre-payment health check passed", { healthUrl });
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return {
+        ok: false,
+        error: `Seller health check unreachable (${msg}) before payment. Aborting to prevent lost payment.`,
+        challengeStatus: 402,
+      };
+    }
+  }
+
   // ── Step 3: Validate amount ──────────────────────────────
 
   const reqAmountAtomic = BigInt(gatewayReq.amount || "0");
@@ -443,8 +483,8 @@ export async function callPaidSeller(
         "PAYMENT-SIGNATURE": paymentSignatureValue,
       },
       body: retryBody ? JSON.stringify(retryBody) : undefined,
-      // 120s timeout for retry: seller may need cold RSSHub catalog fetch + pipeline
-      signal: AbortSignal.timeout(120_000),
+      // 180s timeout for retry: seller may need cold RSSHub catalog fetch + pipeline + Brain LLM
+      signal: AbortSignal.timeout(180_000),
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
