@@ -602,7 +602,7 @@ async function finalizeWalletAfterLogin(
   cbs.setWalletState("connected");
   const balance = await fetchSessionBalance();
   cbs.setUcwBalance(balance);
-  cbs.setWalletState(parseFloat(balance.gatewayUsdc) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+  cbs.setWalletState(parseFloat(balance.gatewayUsdc ?? "0") >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
   return true;
 }
 
@@ -621,10 +621,13 @@ async function fetchDcwBalance(): Promise<UcwBalance> {
   const resp = await fetch("/api/paylabs/dcw/balance", { credentials: "include" });
   if (!resp.ok) return { walletUsdc: "0", gatewayUsdc: "0", source: "dcw" };
   const data = await resp.json();
+  if (!data.ok) return { walletUsdc: "0", gatewayUsdc: "0", source: "dcw" };
   return {
     walletUsdc: data.wallet?.usdc ?? "0",
-    gatewayUsdc: data.gateway?.balanceUsdc ?? "0",
+    // null means gateway check failed — preserve as null so UI can show error
+    gatewayUsdc: data.gateway?.balanceUsdc ?? (data.gateway?.ok === false ? null : "0"),
     pendingBatchUsdc: data.gateway?.pendingBatchUsdc,
+    gatewayError: data.gateway?.error ?? null,
     source: "dcw",
   };
 }
@@ -858,7 +861,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
           const balance = await fetchSessionBalance();
           setUcwBalance(balance);
-          if (parseFloat(balance.gatewayUsdc) < parseFloat(planned)) {
+          if (parseFloat(balance.gatewayUsdc ?? "0") < parseFloat(planned)) {
             setWalletState("needs_gateway_deposit");
           }
           return;
@@ -1371,7 +1374,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
         }
         if (!allowanceConfirmed) {
           setDepositStatus("Approval submitted. Allowance is not confirmed yet. Please try deposit again shortly.");
-          setWalletState(parseFloat((await fetchSessionBalance()).gatewayUsdc) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+          setWalletState(parseFloat((await fetchSessionBalance()).gatewayUsdc ?? "0") >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
           return;
         }
 
@@ -1409,14 +1412,14 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
       // Step 5: Poll for balance update
       setDepositStatus("Waiting for Gateway balance confirmation…");
-      const startBal = parseFloat((await fetchSessionBalance()).gatewayUsdc);
+      const startBal = parseFloat((await fetchSessionBalance()).gatewayUsdc ?? "0");
       const requiredBal = parseFloat(amountAtomic) / 1_000_000; // atomic → USDC
       let confirmed = false;
       for (let i = 0; i < 15; i++) { // 15 × 2s = 30s max
         await new Promise((r) => setTimeout(r, 2000));
         const balance = await fetchSessionBalance();
         setUcwBalance(balance);
-        const gwBal = parseFloat(balance.gatewayUsdc);
+        const gwBal = parseFloat(balance.gatewayUsdc ?? "0");
         if (gwBal > startBal || gwBal >= requiredBal) {
           confirmed = true;
           setDepositStatus(null);
@@ -1429,7 +1432,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
         setDepositStatus("Deposit submitted. Gateway balance has not updated yet. Please refresh balance shortly.");
         const finalBalance = await fetchSessionBalance();
         setUcwBalance(finalBalance);
-        setWalletState(parseFloat(finalBalance.gatewayUsdc) >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
+        setWalletState(parseFloat(finalBalance.gatewayUsdc ?? "0") >= parseFloat(planned) ? "ready_to_approve" : "needs_gateway_deposit");
       }
     } catch (e: unknown) {
       setWalletState("needs_gateway_deposit");
@@ -1648,12 +1651,13 @@ export default function PayLabsChatClient({ analytics }: Props) {
                if (!dcwJobRef.current.cancelled) {
                  dcwJobRef.current.timer = setTimeout(tick, POLL_INTERVAL_MS);
                }
-             };
+               };
 
-             if (!dcwJobRef.current.cancelled) {
-               dcwJobRef.current.timer = setTimeout(tick, POLL_INTERVAL_MS);
-             }
-             });
+               // Start first poll immediately (no initial delay)
+               if (!dcwJobRef.current.cancelled) {
+               dcwJobRef.current.timer = setTimeout(tick, 100);
+               }
+               });
 
          await pollJob();
 

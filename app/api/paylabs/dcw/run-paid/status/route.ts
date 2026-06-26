@@ -6,9 +6,15 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { getSession } from "@/lib/paylabs/auth/session";
 import { getJob } from "@/lib/paylabs/dcw/job-store";
 
 export async function GET(req: NextRequest) {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ ok: false, error: "Authentication required" }, { status: 401 });
+  }
+
   const jobId = req.nextUrl.searchParams.get("jobId");
   if (!jobId) {
     return NextResponse.json({ ok: false, error: "jobId required" }, { status: 400 });
