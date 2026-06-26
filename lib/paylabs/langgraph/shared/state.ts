@@ -136,6 +136,9 @@ export const DiscoveryPlannerState = Annotation.Root({
 
   // Error tracking
   error: Annotation<string | undefined>,
+
+  // Retrieval mode from signal scout output
+  retrievalMode: Annotation<string | undefined>,
 });
 
 export type DiscoveryPlannerStateType = typeof DiscoveryPlannerState.State;

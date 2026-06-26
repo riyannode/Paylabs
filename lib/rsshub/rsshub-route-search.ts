@@ -329,5 +329,11 @@ export async function searchRsshubRoutes(input: {
   const intent = detectRouteIntent(userGoal, uniqueEntities);
   const filtered = applyIntentFilter(scored, intent);
 
+  // Re-sort after intent boosts changed scores
+  filtered.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return b.route.heat - a.route.heat;
+  });
+
   return filtered.slice(0, limit);
 }

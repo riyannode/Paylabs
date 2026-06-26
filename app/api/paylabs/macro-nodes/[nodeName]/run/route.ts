@@ -196,7 +196,7 @@ async function executeMacroNode(
       for (const pe of graphResult.paymentEdges) {
         state.paymentEdges.push(pe);
       }
-      result = { ok: graphResult.ok, rankedCandidates: graphResult.rankedCandidates, easySummary: graphResult.easySummary };
+      result = { ok: graphResult.ok, rankedCandidates: graphResult.rankedCandidates, easySummary: graphResult.easySummary, retrieval_mode: graphResult.retrievalMode };
 
     } else if (nodeName === "payment_decision") {
       const { runPaymentDecisionGraph } = await import("@/lib/paylabs/langgraph/macro-nodes/payment-decision-graph");

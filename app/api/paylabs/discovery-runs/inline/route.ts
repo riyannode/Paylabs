@@ -490,6 +490,15 @@ async function runX402Orchestration(params: {
           error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200),
         });
       }
+    } else if (serviceRetrievalMode) {
+      // No candidates but retrieval_mode known — create empty sourceContext
+      sourceContext = {
+        sources_used: [],
+        source_selection_summary: "No matching live RSSHub sources found.",
+        source_confidence: 0,
+        source_count: 0,
+        retrieval_mode: serviceRetrievalMode as import("@/lib/paylabs/sources/types").SourceContext["retrieval_mode"],
+      };
     }
   }
 

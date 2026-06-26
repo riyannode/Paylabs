@@ -25,28 +25,44 @@ export interface FinalAnswerInput {
 
 // ─── Helpers ────────────────────────────────────────────────
 
-/** Extract owner/repo pattern from goal string */
+/** Extract owner/repo pattern from goal string — only for real GitHub intents */
 function extractOwnerRepo(goal: string): { owner: string; repo: string } | null {
-  // Match "owner/repo" or "github.com/owner/repo"
-  const patterns = [
-    /github\.com\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)/i,
-    /\b([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)\b/,
-  ];
-  for (const p of patterns) {
-    const m = goal.match(p);
-    if (m) {
-      const owner = m[1].toLowerCase();
-      const repo = m[2].toLowerCase().replace(/\.git$/, "");
-      // Skip common false positives
-      if (["http", "https", "www", "com", "org", "io"].includes(owner)) continue;
-      if (repo.length < 2) continue;
+  const goalLower = goal.toLowerCase();
+
+  // Pattern 1: github.com/owner/repo (always valid)
+  const ghUrl = goal.match(/github\.com\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)/i);
+  if (ghUrl) {
+    const owner = ghUrl[1].toLowerCase();
+    const repo = ghUrl[2].toLowerCase().replace(/\.git$/, "");
+    if (!["www", "com", "org", "io"].includes(owner) && repo.length >= 2) {
       return { owner, repo };
     }
   }
-  return null;
+
+  // Pattern 2: owner/repo — only if goal has GitHub/repo context
+  const hasGithubIntent =
+    /\bgithub\b/i.test(goal) ||
+    /\brepo\b/i.test(goal) ||
+    /\brepository\b/i.test(goal) ||
+    /\bcommit\b/i.test(goal) ||
+    /\bpull request\b/i.test(goal) ||
+    /\bpr\b/i.test(goal);
+
+  if (!hasGithubIntent) return null;
+
+  const slash = goal.match(/\b([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)\b/);
+  if (!slash) return null;
+
+  const owner = slash[1].toLowerCase();
+  const repo = slash[2].toLowerCase().replace(/\.git$/, "");
+
+  if (["http", "https", "www", "com", "org", "io", "api", "v1", "v2"].includes(owner)) return null;
+  if (repo.length < 2) return null;
+
+  return { owner, repo };
 }
 
-/** Check if a source matches the user's intent (entity in title/summary/url/route_path) */
+/** Check if a source matches the user's intent — require repo match, not just owner */
 function sourceMatchesIntent(s: SourceItem, ownerRepo: { owner: string; repo: string } | null): boolean {
   if (!ownerRepo) return true; // No entity to match against
 
@@ -55,15 +71,16 @@ function sourceMatchesIntent(s: SourceItem, ownerRepo: { owner: string; repo: st
   const summary = (s.summary || "").toLowerCase();
   const url = (s.url || "").toLowerCase();
   const routePath = (s.route_path || "").toLowerCase();
-  const domain = (s.domain || "").toLowerCase();
 
-  // Check owner/repo in various fields
   const ownerRepoCombined = `${owner}/${repo}`;
+
+  // URL contains owner/repo (strongest)
+  if (url.includes(ownerRepoCombined)) return true;
+  // route_path contains /owner/repo
+  if (routePath.includes(`/${owner}/${repo}`)) return true;
+  // title or summary contains owner/repo or repo name
   if (title.includes(ownerRepoCombined) || title.includes(repo)) return true;
   if (summary.includes(ownerRepoCombined) || summary.includes(repo)) return true;
-  if (url.includes(ownerRepoCombined)) return true;
-  if (routePath.includes(`/${owner}/${repo}`) || routePath.includes(`/${owner}`)) return true;
-  if (domain.includes(owner)) return true;
 
   return false;
 }

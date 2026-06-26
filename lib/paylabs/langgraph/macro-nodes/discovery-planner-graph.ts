@@ -194,11 +194,13 @@ async function processSignalResult(state: DiscoveryPlannerStateType) {
       relevance_score: number;
     }>;
     top_candidates?: string[];
+    retrieval_mode?: string;
   };
 
   return {
     rankedCandidates: data.ranked_candidates || [],
     topCandidates: data.top_candidates || [],
+    retrievalMode: data.retrieval_mode || undefined,
   };
 }
 
@@ -301,6 +303,7 @@ export interface RunDiscoveryPlannerGraphOutput {
   serviceEvaluations: DiscoveryPlannerStateType["serviceEvaluations"];
   paymentEdges: DiscoveryPlannerStateType["paymentEdges"];
   progressSummaries: string[];
+  retrievalMode?: string;
   error: string | null;
 }
 
@@ -400,6 +403,7 @@ export async function runDiscoveryPlannerGraph(
       serviceEvaluations: result.serviceEvaluations || [],
       paymentEdges: result.paymentEdges || [],
       progressSummaries: result.progressSummaries || [],
+      retrievalMode: result.retrievalMode,
       error: result.error || null,
     };
   } catch (e: unknown) {
@@ -413,6 +417,7 @@ export async function runDiscoveryPlannerGraph(
       serviceEvaluations: [],
       paymentEdges: [],
       progressSummaries: [`Discovery Planner graph error: ${msg}`],
+      retrievalMode: undefined,
       error: msg,
     };
   }
