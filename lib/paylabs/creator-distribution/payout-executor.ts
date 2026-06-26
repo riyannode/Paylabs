@@ -282,7 +282,7 @@ export async function writeCreatorPayoutEvent(input: {
   routeTier: string;
   result: CreatorPayoutResult;
   splitPolicy: string;
-}): Promise<void> {
+}): Promise<{ ok: boolean; error?: string }> {
   const db = supabaseAdmin();
 
   const isPaid = input.result.status === "paid" || input.result.status === "gateway_accepted";
@@ -311,6 +311,8 @@ export async function writeCreatorPayoutEvent(input: {
   });
 
   if (error) {
-    console.warn("[creator-payout-event-write] error:", error.message);
+    console.error("[creator-payout-event-write] error:", error.message);
+    return { ok: false, error: `payout_event_write_failed: ${error.message}` };
   }
+  return { ok: true };
 }

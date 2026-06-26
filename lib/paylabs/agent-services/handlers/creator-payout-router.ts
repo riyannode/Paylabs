@@ -105,20 +105,47 @@ export async function creatorPayoutRouterHandler(
     transport,
   });
 
-  // Persist all payout events to DB
+  // Persist all payout events to DB — fail closed if any write fails
   const { writeCreatorPayoutEvent } = await import("../../creator-distribution/payout-executor");
 
+  const eventWriteErrors: string[] = [];
   for (const result of creatorResults) {
-    try {
-      await writeCreatorPayoutEvent({
-        discoveryRunId: input.discoveryRunId,
-        routeTier,
-        result,
-        splitPolicy: "creator_split_v1_85_10_5",
-      });
-    } catch (e) {
-      console.warn("[creator-payout-router] failed to write payout event:", e);
+    const writeResult = await writeCreatorPayoutEvent({
+      discoveryRunId: input.discoveryRunId,
+      routeTier,
+      result,
+      splitPolicy: "creator_split_v1_85_10_5",
+    });
+    if (!writeResult.ok) {
+      eventWriteErrors.push(`[${result.feed_item_id}]: ${writeResult.error}`);
     }
+  }
+
+  if (eventWriteErrors.length > 0) {
+    const errorSummary = `payout_event_write_failures: ${eventWriteErrors.length}/${creatorResults.length} events failed to persist`;
+    console.error("[creator-payout-router]", errorSummary, eventWriteErrors);
+    return {
+      ok: false,
+      serviceName: "creator_payout_router",
+      data: {
+        creator_payout_results: creatorResults,
+        bot_share_result: botResult,
+        service_share_result: serviceResult,
+        split_plan: {
+          route_tier: splitPlan.route_tier,
+          payout_limit: splitPlan.payout_limit,
+          planned_creator_pool_atomic: splitPlan.planned_creator_pool_atomic.toString(),
+          actual_creator_pool_atomic: splitPlan.actual_creator_pool_atomic.toString(),
+          pending_creator_reserve_atomic: splitPlan.pending_creator_reserve_atomic.toString(),
+        },
+        pending_creator_reserve:
+          Number(splitPlan.pending_creator_reserve_atomic) / 1e6,
+        safe_summary: `Creator payouts executed but ${eventWriteErrors.length} event(s) failed to persist. Audit trail incomplete.`,
+      },
+      safeSummary: `Creator payout router: ${eventWriteErrors.length} payout event(s) failed persistence.`,
+      settled: false,
+      error: errorSummary,
+    };
   }
 
   const paidCount = paidCreatorResults.length;

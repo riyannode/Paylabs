@@ -367,6 +367,14 @@ export interface OrchestratorOutput {
     pendingReserveAtomic: string | null;
     actualCreatorPaidAtomic: string | null;
     actualCreatorPaidUsdc: number | null;
+    /** Deterministic split plan from payout router */
+    creatorSplitPlan?: Record<string, unknown> | null;
+    /** Planned creator pool in atomic units (string) */
+    plannedCreatorPoolAtomic?: string | null;
+    /** Planned creator payout count from tier limit */
+    plannedCreatorPayoutCount?: number | null;
+    /** Advanced evaluator status: "completed" | "failed" | "not_run" | null */
+    advancedEvaluatorStatus?: string | null;
   };
   error: string | null;
 }

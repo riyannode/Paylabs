@@ -236,16 +236,18 @@ export async function executeDelegatedDiscoveryRun(
       state.paymentEdges.push(pe);
     }
 
-    // Store creator distribution data for output
+    // Store creator distribution data for output — use split plan fields from settlement graph
     ((state as unknown) as Record<string, unknown>)._creatorDistribution = {
       payoutSummary: settlementResult.creatorPayoutSummary || null,
       payoutResults: settlementResult.creatorPayoutResults || [],
       evaluatorOutput: settlementResult.advancedEvaluatorOutput || null,
-      pendingReserveAtomic: null,
-      actualCreatorPaidAtomic: null,
-      actualCreatorPaidUsdc: settlementResult.creatorPayoutResults
-        ?.filter((r: { status: string }) => r.status === "paid" || r.status === "gateway_accepted")
-        .reduce((sum: number, r: { amount_usdc: number }) => sum + r.amount_usdc, 0) || null,
+      pendingReserveAtomic: settlementResult.pendingCreatorReserveAtomic ?? null,
+      actualCreatorPaidAtomic: settlementResult.actualCreatorPaidAtomic ?? null,
+      actualCreatorPaidUsdc: settlementResult.actualCreatorPaidUsdc ?? null,
+      creatorSplitPlan: settlementResult.creatorSplitPlan ?? null,
+      plannedCreatorPoolAtomic: settlementResult.plannedCreatorPoolAtomic ?? null,
+      plannedCreatorPayoutCount: settlementResult.plannedCreatorPayoutCount ?? null,
+      advancedEvaluatorStatus: settlementResult.advancedEvaluatorStatus ?? null,
     };
 
     setMacroPhaseStatus(state, "settlement_memory", "completed");

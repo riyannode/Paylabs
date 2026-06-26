@@ -29,7 +29,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 async function persistAttributions(
   discoveryRunId: string,
   attributions: CreatorAttribution[],
-): Promise<void> {
+): Promise<{ ok: boolean; error?: string }> {
   try {
     const db = supabaseAdmin();
     const rows = attributions.map((a) => ({
@@ -47,10 +47,14 @@ async function persistAttributions(
 
     const { error } = await db.from("paylabs_source_attributions").insert(rows);
     if (error) {
-      console.warn("[creator-attribution] persist error:", error.message);
+      console.error("[creator-attribution] persist error:", error.message);
+      return { ok: false, error: `attribution_persist_failed: ${error.message}` };
     }
+    return { ok: true };
   } catch (e) {
-    console.warn("[creator-attribution] persist exception:", e);
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[creator-attribution] persist exception:", msg);
+    return { ok: false, error: `attribution_persist_exception: ${msg}` };
   }
 }
 
@@ -79,8 +83,25 @@ export async function creatorAttributionHandler(
     (a) => a.eligibility_status === "failed_closed"
   );
 
-  // Persist attributions for audit trail
-  await persistAttributions(input.discoveryRunId, attributions);
+  // Persist attributions for audit trail — fail closed if persistence fails
+  const persistResult = await persistAttributions(input.discoveryRunId, attributions);
+
+  if (!persistResult.ok) {
+    return {
+      ok: false,
+      serviceName: "creator_attribution",
+      data: {
+        creator_attributions: attributions,
+        eligible_creator_items: eligibleItems,
+        pending_claim_items: pendingClaimItems,
+        failed_closed_items: failedClosedItems,
+        safe_summary: `Creator attribution computed but audit persistence failed: ${persistResult.error}`,
+      },
+      safeSummary: `Creator attribution: persistence failed — audit trail incomplete.`,
+      settled: false,
+      error: persistResult.error || "attribution_persist_failed",
+    };
+  }
 
   return {
     ok: true,

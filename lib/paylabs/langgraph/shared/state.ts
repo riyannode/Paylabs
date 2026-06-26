@@ -381,6 +381,9 @@ export const SettlementMemoryState = Annotation.Root({
   pendingCreatorReserveAtomic: Annotation<string | undefined>,
   actualCreatorPaidAtomic: Annotation<string | undefined>,
   actualCreatorPaidUsdc: Annotation<number | undefined>,
+  plannedCreatorPoolAtomic: Annotation<string | undefined>,
+  plannedCreatorPayoutCount: Annotation<number | undefined>,
+  advancedEvaluatorStatus: Annotation<string | undefined>,
 
   // Evaluator memory
   evaluatorMemorySummary: Annotation<string | undefined>,

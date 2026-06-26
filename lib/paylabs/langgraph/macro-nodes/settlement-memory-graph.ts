@@ -176,8 +176,29 @@ async function processResults(state: SettlementMemoryStateType) {
     (r) => r.status === "paid" || r.status === "gateway_accepted"
   ).length;
 
+  // Extract split plan details from payout router output
   const splitPlan = payoutData?.split_plan as Record<string, unknown> | undefined;
   const pendingReserve = payoutData?.pending_creator_reserve as number | undefined;
+
+  const plannedCreatorPoolAtomic = splitPlan?.planned_creator_pool_atomic
+    ? String(splitPlan.planned_creator_pool_atomic)
+    : null;
+  const actualCreatorPoolAtomic = splitPlan?.actual_creator_pool_atomic
+    ? String(splitPlan.actual_creator_pool_atomic)
+    : null;
+  const pendingCreatorReserveAtomic = splitPlan?.pending_creator_reserve_atomic
+    ? String(splitPlan.pending_creator_reserve_atomic)
+    : null;
+  const splitPlanPayoutLimit = splitPlan?.payout_limit as number | undefined;
+
+  const actualCreatorPaidUsdc = creatorPayoutResults
+    .filter((r) => r.status === "paid" || r.status === "gateway_accepted")
+    .reduce((sum, r) => sum + r.amount_usdc, 0);
+
+  // Check evaluator status for Advanced tier
+  const evaluatorStatus = evalEval?.status as string | undefined;
+  const isAdvancedTier = state.routeTier === "advanced";
+  const evaluatorRequiredAndFailed = isAdvancedTier && (!evalEval || evaluatorStatus === "failed");
 
   let summary: string;
   if (state.routeTier === "easy") {
@@ -186,10 +207,13 @@ async function processResults(state: SettlementMemoryStateType) {
     summary = `Settlement: Normal tier — ${paidCount} creator(s) paid. Reserve: ${pendingReserve ?? 0} USDC.`;
   } else {
     const evalConfidence = evalData?.evaluator_confidence as number | undefined;
+    const evaluatorNote = evaluatorRequiredAndFailed
+      ? " [WARNING: evaluator failed — Advanced settlement unreliable]"
+      : "";
     summary =
       `Settlement: Advanced tier — ${paidCount} creator(s) paid. ` +
       `Evaluator confidence: ${evalConfidence !== undefined ? (evalConfidence * 100).toFixed(0) + "%" : "N/A"}. ` +
-      `Reserve: ${pendingReserve ?? 0} USDC.`;
+      `Reserve: ${pendingReserve ?? 0} USDC.${evaluatorNote}`;
   }
 
   return {
@@ -197,15 +221,21 @@ async function processResults(state: SettlementMemoryStateType) {
     botShareResult: payoutData?.bot_share_result,
     serviceShareResult: payoutData?.service_share_result,
     creatorPayoutSummary: summary,
-    pendingCreatorReserveAtomic: splitPlan?.pending_creator_reserve_atomic,
-    actualCreatorPaidAtomic: splitPlan?.actual_creator_pool_atomic,
-    actualCreatorPaidUsdc: creatorPayoutResults
-      .filter((r) => r.status === "paid" || r.status === "gateway_accepted")
-      .reduce((sum, r) => sum + r.amount_usdc, 0),
+    // Split plan fields for orchestrator/visibility
+    creatorSplitPlan: splitPlan || null,
+    plannedCreatorPoolAtomic,
+    pendingCreatorReserveAtomic,
+    actualCreatorPaidAtomic: actualCreatorPoolAtomic,
+    actualCreatorPaidUsdc,
+    plannedCreatorPayoutCount: splitPlanPayoutLimit ?? null,
+    advancedEvaluatorStatus: isAdvancedTier ? (evaluatorStatus || "not_run") : null,
     evaluatorMemorySummary: evalData?.safe_memory_update
       ? JSON.stringify(evalData.safe_memory_update)
       : undefined,
-    progressSummaries: [summary],
+    advancedEvaluatorOutput: evalData || null,
+    progressSummaries: evaluatorRequiredAndFailed
+      ? [summary, "Advanced evaluator failed — settlement marked unreliable."]
+      : [summary],
     routedItems: creatorPayoutResults
       .filter((r) => r.status === "paid" || r.status === "gateway_accepted")
       .map((r) => ({
@@ -235,6 +265,14 @@ async function buildSummary(state: SettlementMemoryStateType) {
     const eval_ = evals.find((e: { serviceName: string }) => e.serviceName === svc);
     return !eval_ || eval_.status === "failed";
   });
+
+  // For Advanced tier, advanced_evidence_evaluator is also required
+  if (state.routeTier === "advanced") {
+    const evalEval = evals.find((e: { serviceName: string }) => e.serviceName === "advanced_evidence_evaluator");
+    if (!evalEval || evalEval.status === "failed") {
+      failedRequired.push("advanced_evidence_evaluator");
+    }
+  }
 
   if (failedRequired.length > 0) {
     const errorMsg = `Settlement required services failed: ${failedRequired.join(", ")}`;
@@ -333,6 +371,20 @@ export interface RunSettlementMemoryGraphOutput {
     error: string | null;
   }>;
   advancedEvaluatorOutput?: Record<string, unknown>;
+  /** Deterministic split plan from payout router */
+  creatorSplitPlan?: Record<string, unknown> | null;
+  /** Planned creator pool in atomic units (string) */
+  plannedCreatorPoolAtomic?: string | null;
+  /** Pending creator reserve in atomic units (string) */
+  pendingCreatorReserveAtomic?: string | null;
+  /** Actual creator pool paid in atomic units (string) */
+  actualCreatorPaidAtomic?: string | null;
+  /** Actual creator paid in USDC */
+  actualCreatorPaidUsdc?: number | null;
+  /** Planned creator payout count from tier limit */
+  plannedCreatorPayoutCount?: number | null;
+  /** Advanced evaluator status: "completed" | "failed" | "not_run" | null */
+  advancedEvaluatorStatus?: string | null;
   error: string | null;
 }
 
@@ -401,7 +453,14 @@ export async function runSettlementMemoryGraph(
       progressSummaries: result.progressSummaries || [],
       creatorPayoutSummary: result.creatorPayoutSummary,
       creatorPayoutResults: result.creatorPayoutResults,
-      advancedEvaluatorOutput: result.advancedEvaluatorOutput,
+      advancedEvaluatorOutput: result.advancedEvaluatorOutput || undefined,
+      creatorSplitPlan: result.creatorSplitPlan ?? null,
+      plannedCreatorPoolAtomic: result.plannedCreatorPoolAtomic ?? null,
+      pendingCreatorReserveAtomic: result.pendingCreatorReserveAtomic ?? null,
+      actualCreatorPaidAtomic: result.actualCreatorPaidAtomic ?? null,
+      actualCreatorPaidUsdc: result.actualCreatorPaidUsdc ?? null,
+      plannedCreatorPayoutCount: result.plannedCreatorPayoutCount ?? null,
+      advancedEvaluatorStatus: result.advancedEvaluatorStatus ?? null,
       error: result.error || null,
     };
   } catch (err: unknown) {
