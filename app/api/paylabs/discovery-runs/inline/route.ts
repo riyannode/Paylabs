@@ -317,6 +317,21 @@ async function runX402Orchestration(params: {
   );
   const macroNodes = lockedPlan.selectedMacroNodes;
 
+  // ── Runtime assertion: Easy tier MUST use signal_scout_basics ──
+  if (effectiveRouteTier === "easy") {
+    const hasBasics = lockedPlan.selectedServices.includes("signal_scout_basics" as import("@/lib/paylabs/agent-services/types").ServiceName);
+    const hasRich = lockedPlan.selectedServices.includes("signal_scout" as import("@/lib/paylabs/agent-services/types").ServiceName);
+    if (!hasBasics || hasRich) {
+      const svcList = lockedPlan.selectedServices.join(", ");
+      const assertionMsg = `ASSERTION FAILED: Easy tier locked plan must use signal_scout_basics, got: [${svcList}]`;
+      console.error("[inline] " + assertionMsg, { effectiveRouteTier, selectedServices: lockedPlan.selectedServices });
+      // Fail closed — do not execute with wrong service bundle
+      const failOutput = buildX402Output(discoveryRunId, effectiveRouteTier, userBudgetUsdc, "failed",
+        [...safeProgressSummaries, `FAILED: ${assertionMsg}`], paymentGraph, resolvedBrainData || null, null, assertionMsg, undefined, lockedPlan);
+      return { ...failOutput, _lockedPlan: lockedPlan };
+    }
+  }
+
   // ── Budget guard: fail closed if locked plan exceeds user budget ──
   if (lockedPlan.plannedCostUsdc > userBudgetUsdc) {
     const budgetFailMsg = `Brain locked plan exceeds user budget: planned=${lockedPlan.plannedCostUsdc.toFixed(6)}, budget=${userBudgetUsdc}`;
@@ -457,12 +472,23 @@ async function runX402Orchestration(params: {
 
   // ── Resolve source context from discovery_planner ranked candidates (PR #26) ──
   let sourceContext: import("@/lib/paylabs/sources/types").SourceContext | undefined;
+  let serviceRetrievalMode: string | undefined;
   const discoveryMacroResult = macroNodeResults["discovery_planner"];
   if (discoveryMacroResult) {
     const dData = (discoveryMacroResult.data as Record<string, unknown>) || discoveryMacroResult;
     const rankedCandidates = ((dData.rankedCandidates as Array<{ feed_item_id: string; rank: number; relevance_score: number }>)
       || (dData.ranked_candidates as Array<{ feed_item_id: string; rank: number; relevance_score: number }>)
       || []);
+
+    // Extract retrieval_mode from discovery_planner service output
+    serviceRetrievalMode = dData.retrieval_mode as string | undefined;
+
+    // Fallback: signal_scout_basics ALWAYS returns retrieval_mode.
+    // If discovery_planner didn't propagate it, infer from candidates.
+    if (!serviceRetrievalMode) {
+      serviceRetrievalMode = rankedCandidates.length > 0 ? "rsshub_live" : "rsshub_live_empty";
+    }
+
     if (rankedCandidates.length > 0) {
       try {
         const { resolveSources } = await import("@/lib/paylabs/sources/source-resolver");
@@ -475,12 +501,25 @@ async function runX402Orchestration(params: {
         });
         if (resolverResult.ok) {
           sourceContext = resolverResult.sourceContext;
+          // Propagate retrieval_mode from signal_scout_basics output
+          if (serviceRetrievalMode && !sourceContext.retrieval_mode) {
+            sourceContext.retrieval_mode = serviceRetrievalMode as import("@/lib/paylabs/sources/types").SourceContext["retrieval_mode"];
+          }
         }
       } catch (e: unknown) {
         console.error("[paylabs_source_context] x402 resolve failed", {
           error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200),
         });
       }
+    } else if (serviceRetrievalMode) {
+      // No candidates but retrieval_mode known — create empty sourceContext
+      sourceContext = {
+        sources_used: [],
+        source_selection_summary: "No matching live RSSHub sources found.",
+        source_confidence: 0,
+        source_count: 0,
+        retrieval_mode: serviceRetrievalMode as import("@/lib/paylabs/sources/types").SourceContext["retrieval_mode"],
+      };
     }
   }
 
@@ -593,10 +632,10 @@ function buildX402Output(
     safeProgressSummaries,
     budgetSnapshot: {
       totalBudgetUsdc: userBudgetUsdc,
-      spentUsdc: settledSpendUsdc,
+      spentUsdc: userBudgetUsedUsdc,  // Budget consumed: controller→brain + brain→macro (no child double-count)
       remainingUsdc: Math.max(0, userBudgetUsdc - userBudgetUsedUsdc),
       serviceSpend: {} as Record<string, number>,
-      settledServiceFeesUsdc: settledSpendUsdc,
+      settledServiceFeesUsdc: childPaymentVolumeUsdc,  // Actual child service payments only
       estimatedServiceFeesUsdc: 0,
       userBudgetUsdc,
       userBudgetUsedUsdc,
@@ -785,13 +824,23 @@ async function runX402Path(
       "PAYLABS_AGENT_NANOPAYMENTS_ENABLED",
       "PAYLABS_BRAIN_X402_ENABLED",
       "PAYLABS_NODE_X402_ENABLED",
-      "PAYLABS_APP_URL",
+      // PAYLABS_APP_URL removed — resolvePaylabsAppUrl() prefers
+      // PAYLABS_INTERNAL_APP_URL or VERCEL_URL (auto-set by Vercel).
+      // We verify URL resolution works below instead of hardcoding one key.
       "PAYLABS_BRAIN_SELLER_WALLET_ADDRESS",
       "PAYLABS_NODE_DISCOVERY_PLANNER_SELLER_WALLET_ADDRESS",
     ];
     const missingEnvs = requiredEnvs.filter((k) => !process.env[k]);
     if (missingEnvs.length > 0) {
       throw new Error(`config_error: missing required x402 envs: ${missingEnvs.join(", ")}`);
+    }
+
+    // Verify URL resolution works (PAYLABS_INTERNAL_APP_URL or VERCEL_URL)
+    try {
+      resolvePaylabsAppUrl();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`config_error: cannot resolve app URL: ${msg}. Set PAYLABS_INTERNAL_APP_URL or ensure VERCEL_URL is available.`);
     }
 
     // Controller buyer wallet — support both naming conventions
@@ -1142,7 +1191,9 @@ async function runX402Path(
         goal,
         sourcesUsed,
         sourceConfidence: exitOutput.source_confidence || 0,
-        retrievalMode: exitOutput.source_retrieval_mode || (sourcesUsed.length > 0 ? "db_fallback" : "none"),
+        retrievalMode: exitOutput.source_retrieval_mode || (sourcesUsed.length > 0
+          ? (sourcesUsed.some((s) => s.source_kind === "rsshub_live") ? "rsshub_live" : "db_fallback")
+          : "none"),
       });
     } catch (e: unknown) {
       console.error("[paylabs_final_answer] build failed", {
@@ -1225,6 +1276,8 @@ async function runX402Path(
             planned_cost_breakdown: result._lockedPlan.plannedCostBreakdown,
             locked: true,
             source: "brain_planner_validated",
+            _diag_raw_services: result._lockedPlan.selectedServices,
+            _diag_effective_tier: result.routeTier,
           }
         : null,
       execution_origin: "vercel_inline",

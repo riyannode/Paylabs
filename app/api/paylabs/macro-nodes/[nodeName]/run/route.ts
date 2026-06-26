@@ -28,6 +28,7 @@ import {
   verifyAndSettlePayment,
 } from "@/lib/paylabs/x402/seller-challenge";
 import { isDelegatedRuntimeEnabled } from "@/lib/paylabs/feature-flags";
+import { TIER_SERVICE_PRESETS } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import { createOrchestratorState, addProgressSummary, addServiceEvaluation } from "@/lib/paylabs/delegated-runtime/state";
 import type { MacroNodePhase, OrchestratorInput } from "@/lib/paylabs/delegated-runtime/types";
 
@@ -166,7 +167,10 @@ async function executeMacroNode(
     );
   }
 
-  const selectedServices = nodeConfig.childServices;
+  // Use tier-based service selection for discovery_planner, static for others
+  const selectedServices = nodeName === "discovery_planner"
+    ? TIER_SERVICE_PRESETS[input.routeTier as keyof typeof TIER_SERVICE_PRESETS] || nodeConfig.childServices
+    : nodeConfig.childServices;
 
   try {
     let result: unknown;
@@ -192,7 +196,7 @@ async function executeMacroNode(
       for (const pe of graphResult.paymentEdges) {
         state.paymentEdges.push(pe);
       }
-      result = { ok: graphResult.ok, rankedCandidates: graphResult.rankedCandidates, easySummary: graphResult.easySummary };
+      result = { ok: graphResult.ok, rankedCandidates: graphResult.rankedCandidates, easySummary: graphResult.easySummary, retrieval_mode: graphResult.retrievalMode };
 
     } else if (nodeName === "payment_decision") {
       const { runPaymentDecisionGraph } = await import("@/lib/paylabs/langgraph/macro-nodes/payment-decision-graph");

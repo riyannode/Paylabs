@@ -20,6 +20,18 @@ import { createServiceNode } from "../services/service-node";
 import type { ServiceName } from "../../agent-services/types";
 import type { BudgetSnapshot, SafeSourceCard } from "../../delegated-runtime/types";
 
+// ─── Local Discovery Planner Service Presets ────────────────
+// Single source of truth for discovery planner routing.
+// TIER_SERVICE_PRESETS from quote-engine includes macro-node-level services
+// (discovery_planner, payment_decision, settlement_memory) that are NOT
+// graph-internal child services. These presets are graph-internal only.
+
+const DISCOVERY_PLANNER_SERVICE_PRESETS: Record<string, ServiceName[]> = {
+  easy: ["intent_planner", "query_builder", "signal_scout_basics"],
+  normal: ["intent_planner", "query_builder", "signal_scout"],
+  advanced: ["intent_planner", "query_builder", "signal_scout"],
+};
+
 // ─── Node: Intent Planner ───────────────────────────────────
 
 const intentPlannerNode = createServiceNode(
@@ -65,7 +77,22 @@ const signalScoutNode = createServiceNode(
     source_preferences: (state as DiscoveryPlannerStateType).sourcePreferences || [],
     routeTier: state.routeTier,
   }),
-  { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: true, skipIfNotSelected: false }
+  { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: false, skipIfNotSelected: true }
+);
+
+// ─── Node: Signal Scout Basics (deterministic, easy tier) ──
+
+const signalScoutBasicsNode = createServiceNode(
+  "signal_scout_basics",
+  "discovery_planner",
+  (state) => ({
+    expanded_queries: (state as DiscoveryPlannerStateType).expandedQueries || [],
+    entity_terms: (state as DiscoveryPlannerStateType).entityTerms || [],
+    negative_filters: (state as DiscoveryPlannerStateType).negativeFilters || [],
+    source_preferences: (state as DiscoveryPlannerStateType).sourcePreferences || [],
+    routeTier: state.routeTier,
+  }),
+  { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: false, skipIfNotSelected: true }
 );
 
 // ─── Node: Process Intent Result ────────────────────────────
@@ -133,7 +160,11 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
 
 async function processSignalResult(state: DiscoveryPlannerStateType) {
   const evals = state.serviceEvaluations || [];
-  const signalEval = evals.find((e) => e.serviceName === "signal_scout");
+  // Look for either signal_scout (rich) or signal_scout_basics (easy tier)
+  // Prefer the one with actual output (completed), not a skipped entry
+  const signalEval = evals.find((e: { serviceName: string; output: unknown }) =>
+    (e.serviceName === "signal_scout" || e.serviceName === "signal_scout_basics") && e.output
+  );
 
   if (!signalEval?.output) {
     return {
@@ -163,11 +194,13 @@ async function processSignalResult(state: DiscoveryPlannerStateType) {
       relevance_score: number;
     }>;
     top_candidates?: string[];
+    retrieval_mode?: string;
   };
 
   return {
     rankedCandidates: data.ranked_candidates || [],
     topCandidates: data.top_candidates || [],
+    retrievalMode: data.retrieval_mode || undefined,
   };
 }
 
@@ -197,6 +230,7 @@ const graph = new StateGraph(DiscoveryPlannerState)
   .addNode("query_builder", queryBuilderNode)
   .addNode("process_query", processQueryResult)
   .addNode("signal_scout", signalScoutNode)
+  .addNode("signal_scout_basics", signalScoutBasicsNode)
   .addNode("process_signal", processSignalResult)
   .addNode("build_summary", buildEasySummary)
   // Edges
@@ -204,8 +238,26 @@ const graph = new StateGraph(DiscoveryPlannerState)
   .addEdge("intent_planner", "process_intent")
   .addEdge("process_intent", "query_builder")
   .addEdge("query_builder", "process_query")
-  .addEdge("process_query", "signal_scout")
+  .addConditionalEdges("process_query", (state: DiscoveryPlannerStateType) => {
+    // Deterministic routing: use routeTier, NOT selectedServices
+    // selectedServices may be empty or corrupted by concatReducer in some code paths
+    const routeTier = (state.routeTier as string) || "easy";
+    const presets = DISCOVERY_PLANNER_SERVICE_PRESETS[routeTier] || DISCOVERY_PLANNER_SERVICE_PRESETS.easy;
+    const nextScoutNode: string = presets.includes("signal_scout_basics") ? "signal_scout_basics" : "signal_scout";
+
+    // Safe production diagnostic (no secrets)
+    console.log(JSON.stringify({
+      log: "[discovery-planner-route]",
+      discoveryRunId: state.discoveryRunId,
+      routeTier,
+      selectedServices: presets,
+      nextScoutNode,
+    }));
+
+    return nextScoutNode;
+  }, ["signal_scout", "signal_scout_basics"])
   .addEdge("signal_scout", "process_signal")
+  .addEdge("signal_scout_basics", "process_signal")
   .addEdge("process_signal", "build_summary")
   .addEdge("build_summary", END)
   .compile();
@@ -251,6 +303,7 @@ export interface RunDiscoveryPlannerGraphOutput {
   serviceEvaluations: DiscoveryPlannerStateType["serviceEvaluations"];
   paymentEdges: DiscoveryPlannerStateType["paymentEdges"];
   progressSummaries: string[];
+  retrievalMode?: string;
   error: string | null;
 }
 
@@ -275,7 +328,10 @@ export async function runDiscoveryPlannerGraph(
       userGoal: input.userGoal,
       routeTier: input.routeTier,
       userBudgetUsdc: input.userBudgetUsdc,
-      selectedServices: input.selectedServices || [],
+      // Always use local discovery planner presets — never trust caller-selectedServices
+      // for internal graph routing. Caller-selectedServices may be empty, incomplete,
+      // or corrupted by concatReducer in upstream code paths.
+      selectedServices: DISCOVERY_PLANNER_SERVICE_PRESETS[input.routeTier] || DISCOVERY_PLANNER_SERVICE_PRESETS.easy,
       parentWalletId: input.parentWalletId,
       budgetSnapshot: initialBudget,
       // Brain planning pass-through
@@ -347,6 +403,7 @@ export async function runDiscoveryPlannerGraph(
       serviceEvaluations: result.serviceEvaluations || [],
       paymentEdges: result.paymentEdges || [],
       progressSummaries: result.progressSummaries || [],
+      retrievalMode: result.retrievalMode,
       error: result.error || null,
     };
   } catch (e: unknown) {
@@ -360,6 +417,7 @@ export async function runDiscoveryPlannerGraph(
       serviceEvaluations: [],
       paymentEdges: [],
       progressSummaries: [`Discovery Planner graph error: ${msg}`],
+      retrievalMode: undefined,
       error: msg,
     };
   }
