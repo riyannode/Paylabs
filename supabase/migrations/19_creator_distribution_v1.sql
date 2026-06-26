@@ -128,3 +128,24 @@ ALTER TABLE paylabs_receipts
   ADD COLUMN IF NOT EXISTS advanced_evaluator_confidence numeric,
   ADD COLUMN IF NOT EXISTS advanced_evaluator_rationale text,
   ADD COLUMN IF NOT EXISTS why_two_sources_needed text;
+
+-- 7. RLS hardening — deny-all from anon/authenticated (service role only)
+ALTER TABLE public.paylabs_creator_claims ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.paylabs_creator_claims FROM anon;
+REVOKE ALL ON TABLE public.paylabs_creator_claims FROM authenticated;
+
+ALTER TABLE public.paylabs_source_attributions ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.paylabs_source_attributions FROM anon;
+REVOKE ALL ON TABLE public.paylabs_source_attributions FROM authenticated;
+
+ALTER TABLE public.paylabs_creator_payout_events ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.paylabs_creator_payout_events FROM anon;
+REVOKE ALL ON TABLE public.paylabs_creator_payout_events FROM authenticated;
+
+ALTER TABLE public.paylabs_creator_memory ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.paylabs_creator_memory FROM anon;
+REVOKE ALL ON TABLE public.paylabs_creator_memory FROM authenticated;
+
+ALTER TABLE public.paylabs_evaluator_memory ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.paylabs_evaluator_memory FROM anon;
+REVOKE ALL ON TABLE public.paylabs_evaluator_memory FROM authenticated;

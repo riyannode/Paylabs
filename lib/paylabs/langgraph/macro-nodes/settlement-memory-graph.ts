@@ -227,6 +227,23 @@ async function processResults(state: SettlementMemoryStateType) {
 // ─── Node: Build Summary ──────────────────────────────────────
 
 async function buildSummary(state: SettlementMemoryStateType) {
+  const evals = state.serviceEvaluations || [];
+
+  // Check required services succeeded
+  const requiredServices: ServiceName[] = ["creator_attribution", "creator_payout_router"];
+  const failedRequired = requiredServices.filter((svc) => {
+    const eval_ = evals.find((e: { serviceName: string }) => e.serviceName === svc);
+    return !eval_ || eval_.status === "failed";
+  });
+
+  if (failedRequired.length > 0) {
+    const errorMsg = `Settlement required services failed: ${failedRequired.join(", ")}`;
+    return {
+      progressSummaries: [errorMsg],
+      error: errorMsg,
+    };
+  }
+
   const summary = state.creatorPayoutSummary || "Settlement: no summary available.";
   return {
     progressSummaries: [summary],

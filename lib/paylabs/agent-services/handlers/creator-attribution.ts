@@ -6,6 +6,8 @@
  *
  * Calls claim-policy.ts and source-selection.ts.
  * Does not decide amounts.
+ *
+ * Persists attribution decisions to paylabs_source_attributions for audit.
  */
 
 import type {
@@ -22,6 +24,35 @@ import type {
   ApprovedCreatorItem,
   CreatorAttribution,
 } from "../../creator-distribution/types";
+import { supabaseAdmin } from "@/lib/supabase/server";
+
+async function persistAttributions(
+  discoveryRunId: string,
+  attributions: CreatorAttribution[],
+): Promise<void> {
+  try {
+    const db = supabaseAdmin();
+    const rows = attributions.map((a) => ({
+      discovery_run_id: discoveryRunId,
+      feed_item_id: a.feed_item_id,
+      source_url: a.source_url,
+      source_title: a.source_title,
+      creator_wallet: a.creator_wallet,
+      claim_status: a.claim_status,
+      eligibility_status: a.eligibility_status,
+      final_score: a.final_score,
+      risk_score: a.risk_score,
+      attribution_reason: a.reason,
+    }));
+
+    const { error } = await db.from("paylabs_source_attributions").insert(rows);
+    if (error) {
+      console.warn("[creator-attribution] persist error:", error.message);
+    }
+  } catch (e) {
+    console.warn("[creator-attribution] persist exception:", e);
+  }
+}
 
 export async function creatorAttributionHandler(
   input: ServiceHandlerInput
@@ -47,6 +78,9 @@ export async function creatorAttributionHandler(
   const failedClosedItems = attributions.filter(
     (a) => a.eligibility_status === "failed_closed"
   );
+
+  // Persist attributions for audit trail
+  await persistAttributions(input.discoveryRunId, attributions);
 
   return {
     ok: true,

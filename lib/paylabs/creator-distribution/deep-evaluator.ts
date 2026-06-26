@@ -20,7 +20,7 @@
  * - No raw chain-of-thought exposed
  */
 
-import { ChatOpenAI } from "@langchain/openai";
+import { getTutorModel } from "@/lib/ai/llm";
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
@@ -785,11 +785,28 @@ export async function runAdvancedEvidenceDeepEvaluator(
   );
 
   try {
-    // ── Create LLM ──
-    const llm = new ChatOpenAI({
-      modelName: process.env.PAYLABS_EVALUATOR_MODEL || "gpt-4o-mini",
-      temperature: 0, // Deterministic for evaluation tasks (LangSmith best practice)
-    });
+    // ── Create LLM via shared factory ──
+    const llm = getTutorModel("advanced_evidence_evaluator");
+    if (!llm) {
+      return {
+        ok: false,
+        evaluator_version: "advanced_evidence_deep_agent_v1",
+        selected_source_ids: [],
+        evidence_matrix: [],
+        why_two_sources_needed: "LLM unavailable for evaluator.",
+        user_facing_rationale: "Evidence evaluation skipped — LLM not configured.",
+        evaluator_confidence: 0,
+        second_source_justified: false,
+        composite_quality_score: 0,
+        warnings: ["llm_not_configured"],
+        safe_memory_update: {
+          source_reliability_notes: [],
+          creator_usage_notes: [],
+          evaluator_summary: "LLM not available.",
+        },
+        error: "llm_not_configured",
+      };
+    }
 
     // ── Create tools ──
     const tools = createEvaluatorTools({
