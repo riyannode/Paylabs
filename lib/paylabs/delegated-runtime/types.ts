@@ -348,5 +348,25 @@ export interface OrchestratorOutput {
   sourceContext?: SourceContext;
   /** Budget refund reconciliation (backend-computed, Brain-advisory) */
   budgetRefundReconciliation?: BudgetRefundReconciliation;
+  /** Creator distribution summary (settlement_memory output) */
+  creatorDistribution?: {
+    payoutSummary: string | null;
+    payoutResults: Array<{
+      feed_item_id: string;
+      source_url: string;
+      creator_wallet: string;
+      amount_atomic: string;
+      amount_usdc: number;
+      status: string;
+      settlement_id: string | null;
+      tx_hash: string | null;
+      explorer_url: string | null;
+      error: string | null;
+    }>;
+    evaluatorOutput: Record<string, unknown> | null;
+    pendingReserveAtomic: string | null;
+    actualCreatorPaidAtomic: string | null;
+    actualCreatorPaidUsdc: number | null;
+  };
   error: string | null;
 }

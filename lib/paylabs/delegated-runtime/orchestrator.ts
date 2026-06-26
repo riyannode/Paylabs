@@ -236,6 +236,18 @@ export async function executeDelegatedDiscoveryRun(
       state.paymentEdges.push(pe);
     }
 
+    // Store creator distribution data for output
+    ((state as unknown) as Record<string, unknown>)._creatorDistribution = {
+      payoutSummary: settlementResult.creatorPayoutSummary || null,
+      payoutResults: settlementResult.creatorPayoutResults || [],
+      evaluatorOutput: settlementResult.advancedEvaluatorOutput || null,
+      pendingReserveAtomic: null,
+      actualCreatorPaidAtomic: null,
+      actualCreatorPaidUsdc: settlementResult.creatorPayoutResults
+        ?.filter((r: { status: string }) => r.status === "paid" || r.status === "gateway_accepted")
+        .reduce((sum: number, r: { amount_usdc: number }) => sum + r.amount_usdc, 0) || null,
+    };
+
     setMacroPhaseStatus(state, "settlement_memory", "completed");
     addProgressSummary(
       state,
@@ -298,6 +310,7 @@ function buildOutput(state: ReturnType<typeof createOrchestratorState>): Orchest
     paymentGraph: state.paymentGraph,
     tieredSummaries: buildTieredSummaries(state),
     easyToNormalHandoff: state.easyToNormalHandoff,
+    creatorDistribution: ((state as unknown) as Record<string, unknown>)._creatorDistribution as OrchestratorOutput["creatorDistribution"],
     error: state.error,
   };
 }

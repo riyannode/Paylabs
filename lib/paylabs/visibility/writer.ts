@@ -201,20 +201,32 @@ export async function writePayLabsVisibility(
     source_fees_usdc: 0,
     creator_reserve_usdc: 0,
     // Creator distribution V1 fields
-    execution_fee_usdc: null,
-    planned_creator_pool_usdc: null,
-    actual_creator_paid_usdc: null,
-    planned_creator_payout_count: null,
-    actual_creator_payout_count: null,
-    pending_creator_reserve_usdc: null,
-    bot_share_usdc: null,
-    service_share_usdc: null,
+    execution_fee_usdc: result.budgetSnapshot?.settledServiceFeesUsdc ?? null,
+    planned_creator_pool_usdc: result.creatorDistribution
+      ? (result.creatorDistribution.payoutResults.length * 0.000020)
+      : null,
+    actual_creator_paid_usdc: result.creatorDistribution?.actualCreatorPaidUsdc ?? null,
+    planned_creator_payout_count: result.creatorDistribution?.payoutResults.length ?? null,
+    actual_creator_payout_count: result.creatorDistribution?.payoutResults.filter(
+      (r) => r.status === "paid" || r.status === "gateway_accepted"
+    ).length ?? null,
+    pending_creator_reserve_usdc: result.creatorDistribution
+      ? ((result.creatorDistribution.payoutResults.length * 0.000020) - (result.creatorDistribution.actualCreatorPaidUsdc ?? 0))
+      : null,
+    bot_share_usdc: result.creatorDistribution
+      ? (result.creatorDistribution.payoutResults.filter((r) => r.status === "paid" || r.status === "gateway_accepted").length * 0.000002)
+      : null,
+    service_share_usdc: result.creatorDistribution
+      ? (result.creatorDistribution.payoutResults.filter((r) => r.status === "paid" || r.status === "gateway_accepted").length * 0.000001)
+      : null,
     creator_split_policy: routeTier !== "easy" ? "85_10_5_atomic_safe" : null,
-    creator_payout_status: null,
-    advanced_evaluator_used: routeTier === "advanced",
-    advanced_evaluator_confidence: null,
-    advanced_evaluator_rationale: null,
-    why_two_sources_needed: null,
+    creator_payout_status: result.creatorDistribution?.payoutResults.some(
+      (r) => r.status === "paid" || r.status === "gateway_accepted"
+    ) ? "partial_or_complete" : (routeTier !== "easy" ? "none" : null),
+    advanced_evaluator_used: routeTier === "advanced" && !!result.creatorDistribution?.evaluatorOutput,
+    advanced_evaluator_confidence: (result.creatorDistribution?.evaluatorOutput as Record<string, unknown>)?.evaluator_confidence as number ?? null,
+    advanced_evaluator_rationale: (result.creatorDistribution?.evaluatorOutput as Record<string, unknown>)?.user_facing_rationale as string ?? null,
+    why_two_sources_needed: (result.creatorDistribution?.evaluatorOutput as Record<string, unknown>)?.why_two_sources_needed as string ?? null,
     // End creator fields
     payment_count: paidCount,
     last_tx_hash: lastTxHash,
