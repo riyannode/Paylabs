@@ -90,7 +90,7 @@ function formatSourceBullet(s: SourceItem, index: number): string {
   const title = s.title || "(untitled)";
   const domain = s.domain ? ` (${s.domain})` : "";
   const published = s.published_at
-    ? new Date(s.published_at).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })
+    ? new Date(s.published_at).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })
     : "";
   const dateStr = published ? `, ${published}` : "";
 

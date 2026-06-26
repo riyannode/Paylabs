@@ -317,6 +317,21 @@ async function runX402Orchestration(params: {
   );
   const macroNodes = lockedPlan.selectedMacroNodes;
 
+  // ── Runtime assertion: Easy tier MUST use signal_scout_basics ──
+  if (effectiveRouteTier === "easy") {
+    const hasBasics = lockedPlan.selectedServices.includes("signal_scout_basics" as import("@/lib/paylabs/agent-services/types").ServiceName);
+    const hasRich = lockedPlan.selectedServices.includes("signal_scout" as import("@/lib/paylabs/agent-services/types").ServiceName);
+    if (!hasBasics || hasRich) {
+      const svcList = lockedPlan.selectedServices.join(", ");
+      const assertionMsg = `ASSERTION FAILED: Easy tier locked plan must use signal_scout_basics, got: [${svcList}]`;
+      console.error("[inline] " + assertionMsg, { effectiveRouteTier, selectedServices: lockedPlan.selectedServices });
+      // Fail closed — do not execute with wrong service bundle
+      const failOutput = buildX402Output(discoveryRunId, effectiveRouteTier, userBudgetUsdc, "failed",
+        [...safeProgressSummaries, `FAILED: ${assertionMsg}`], paymentGraph, resolvedBrainData || null, null, assertionMsg, undefined, lockedPlan);
+      return { ...failOutput, _lockedPlan: lockedPlan };
+    }
+  }
+
   // ── Budget guard: fail closed if locked plan exceeds user budget ──
   if (lockedPlan.plannedCostUsdc > userBudgetUsdc) {
     const budgetFailMsg = `Brain locked plan exceeds user budget: planned=${lockedPlan.plannedCostUsdc.toFixed(6)}, budget=${userBudgetUsdc}`;
@@ -468,6 +483,12 @@ async function runX402Orchestration(params: {
     // Extract retrieval_mode from discovery_planner service output
     serviceRetrievalMode = dData.retrieval_mode as string | undefined;
 
+    // Fallback: signal_scout_basics ALWAYS returns retrieval_mode.
+    // If discovery_planner didn't propagate it, infer from candidates.
+    if (!serviceRetrievalMode) {
+      serviceRetrievalMode = rankedCandidates.length > 0 ? "rsshub_live" : "rsshub_live_empty";
+    }
+
     if (rankedCandidates.length > 0) {
       try {
         const { resolveSources } = await import("@/lib/paylabs/sources/source-resolver");
@@ -611,10 +632,10 @@ function buildX402Output(
     safeProgressSummaries,
     budgetSnapshot: {
       totalBudgetUsdc: userBudgetUsdc,
-      spentUsdc: settledSpendUsdc,
+      spentUsdc: userBudgetUsedUsdc,  // Budget consumed: controller→brain + brain→macro (no child double-count)
       remainingUsdc: Math.max(0, userBudgetUsdc - userBudgetUsedUsdc),
       serviceSpend: {} as Record<string, number>,
-      settledServiceFeesUsdc: settledSpendUsdc,
+      settledServiceFeesUsdc: childPaymentVolumeUsdc,  // Actual child service payments only
       estimatedServiceFeesUsdc: 0,
       userBudgetUsdc,
       userBudgetUsedUsdc,

@@ -181,6 +181,60 @@ function buildSelectionSummary(
   return parts.join(", ") + ".";
 }
 
+// ─── Relevance filter: reject sources that don't match the query ───
+function filterByRelevance(sources: SourceItem[], normalizedGoal: string): SourceItem[] {
+  if (sources.length === 0) return sources;
+
+  const goalLower = normalizedGoal.toLowerCase();
+  const terms = goalLower.split(/\s+/).filter((w) => w.length > 2);
+
+  // Extract entity patterns (owner/repo, product names)
+  const ownerRepoMatch = goalLower.match(/(\w[\w-]*)\s*\/\s*(\w[\w-]*)/);
+  const entityTerms: string[] = [];
+  if (ownerRepoMatch) {
+    entityTerms.push(ownerRepoMatch[1].toLowerCase());
+    entityTerms.push(ownerRepoMatch[2].toLowerCase());
+  }
+
+  // Domain-specific intent
+  const isGitHubIntent = goalLower.includes("github") || goalLower.includes("repo") || !!ownerRepoMatch;
+  const isNewsIntent = goalLower.includes("news") || goalLower.includes("latest") || goalLower.includes("update");
+
+  const filtered = sources.filter((src) => {
+    const title = (src.title || "").toLowerCase();
+    const summary = (src.summary || "").toLowerCase();
+    const domain = (src.domain || "").toLowerCase();
+    const routePath = (src.route_path || "").toLowerCase();
+    const url = (src.url || "").toLowerCase();
+    const combined = `${title} ${summary} ${domain} ${routePath} ${url}`;
+
+    // Entity terms: at least ONE must appear
+    if (entityTerms.length > 0) {
+      const hasEntity = entityTerms.some((et) => combined.includes(et));
+      if (!hasEntity) return false;
+    }
+
+    // GitHub intent: must be from github.com or have repo-related content
+    if (isGitHubIntent) {
+      const isGitHubDomain = domain.includes("github.com") || domain.includes("github.");
+      const hasRepoContent = combined.includes("commit") || combined.includes("pull request") ||
+        combined.includes("repository") || combined.includes("release") || combined.includes("merge") ||
+        combined.includes("issue") || combined.includes("branch") || combined.includes("fork");
+      if (!isGitHubDomain && !hasRepoContent) return false;
+    }
+
+    // General keyword match: at least ONE query term must appear
+    if (terms.length > 0 && !isGitHubIntent) {
+      const hasKeyword = terms.some((t) => combined.includes(t));
+      if (!hasKeyword) return false;
+    }
+
+    return true;
+  });
+
+  return filtered;
+}
+
 // ─── Public API ───────────────────────────────────────────
 
 /**
@@ -193,7 +247,9 @@ export async function resolveSources(
   const maxSources = input.maxSources ?? 10;
 
   try {
-    const sources = await enrichRankedCandidates(input.rankedCandidates, maxSources);
+    const rawSources = await enrichRankedCandidates(input.rankedCandidates, maxSources);
+    // Apply relevance filter: reject sources that don't match the query
+    const sources = filterByRelevance(rawSources, input.normalizedGoal);
     const sourceConfidence = computeSourceConfidence(sources);
     const sourceSelectionSummary = buildSelectionSummary(
       sources,

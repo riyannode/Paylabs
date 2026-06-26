@@ -86,9 +86,11 @@ function short(value?: string | null, chars = 6): string {
 function isSourceInventoryAnswer(value?: string | null): boolean {
   if (!value) return false;
   return (
-    /Ditemukan\s+\d+\s+source\s+relevan/i.test(value) ||
-    /Sumber\s+dari:/i.test(value) ||
-    /Sumber\s+utama:/i.test(value) ||
+    /Found\s+\d+\s+(relevant\s+)?sources/i.test(value) ||
+    /Here are\s+\d+\s+latest sources/i.test(value) ||
+    /No (sufficiently )?relevant sources found/i.test(value) ||
+    /Latest activity found for/i.test(value) ||
+    /No relevant sources found for/i.test(value) ||
     /\(Mode:\s*(db_fallback|rsshub_live|tavily_live|none)\)/i.test(value)
   );
 }
