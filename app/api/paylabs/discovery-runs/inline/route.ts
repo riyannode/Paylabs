@@ -1276,6 +1276,8 @@ async function runX402Path(
             planned_cost_breakdown: result._lockedPlan.plannedCostBreakdown,
             locked: true,
             source: "brain_planner_validated",
+            _diag_raw_services: result._lockedPlan.selectedServices,
+            _diag_effective_tier: effectiveRouteTier,
           }
         : null,
       execution_origin: "vercel_inline",
