@@ -95,6 +95,8 @@ export interface X402BuyerCallInput {
    * Supabase directly without coupling buyer-transport to the DB.
    */
   recoverResultById?: (runId: string) => Promise<unknown | null>;
+  /** AbortSignal for cancellation (e.g. user cancel button) */
+  signal?: AbortSignal;
 }
 
 export interface X402BuyerCallResult {
@@ -213,6 +215,7 @@ export async function callPaidSeller(
     maxAmountUsdc,
     requirePayment = false,
     recoverResultById,
+    signal,
   } = input;
 
   // ── SSRF guard: validate seller URL ─────────────────────
@@ -234,7 +237,7 @@ export async function callPaidSeller(
       method,
       headers: initialHeaders,
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(30000),
+      signal,
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -495,7 +498,9 @@ export async function callPaidSeller(
         "PAYMENT-SIGNATURE": paymentSignatureValue,
       },
       body: retryBody ? JSON.stringify(retryBody) : undefined,
-      signal: AbortSignal.timeout(retryTimeoutMs),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(retryTimeoutMs)])
+        : AbortSignal.timeout(retryTimeoutMs),
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

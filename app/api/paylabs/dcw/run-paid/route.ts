@@ -4,15 +4,12 @@
  * Execute a full paid discovery run via DCW wallet.
  * REQUIRES valid session cookie.
  *
- * This endpoint does EVERYTHING server-side:
- *   1. Auth check (session)
- *   2. Wallet lookup (session user ID)
- *   3. Budget enforcement (from DB, not client)
- *   4. Full x402 payment flow (callPaidSeller)
- *   5. Returns final result (no client retry needed)
+ * ASYNC PATTERN: Returns { jobId } immediately.
+ *   - Client polls GET /api/paylabs/dcw/run-paid/status?jobId=... for progress
+ *   - Client can cancel via POST /api/paylabs/dcw/run-paid/cancel { jobId }
  *
- * Body: { goal: string, routeTier?: string }
- * Returns: { ok, result, paymentMetadata }
+ * Body: { goal: string, routeTier?: string, budgetUsdc?: number }
+ * Returns: { ok: true, jobId: string }
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -21,11 +18,10 @@ import { getSession } from "@/lib/paylabs/auth/session";
 import { createDcwSigner } from "@/lib/paylabs/x402/dcw-signer-adapter";
 import { callPaidSeller } from "@/lib/paylabs/x402/buyer-transport";
 import { resolvePaylabsAppUrl } from "@/lib/paylabs/runtime/resolve-app-url";
+import { createJob, updateJob, getJob } from "@/lib/paylabs/dcw/job-store";
+import { randomUUID } from "node:crypto";
 
 // ─── Allowlisted internal seller URLs ────────────────────────
-// Only these URLs can be called as x402 sellers.
-// Never accept arbitrary URLs from the client.
-
 function getAllowedSellerUrl(path: string): string | null {
   const { baseUrl } = resolvePaylabsAppUrl();
   if (!baseUrl) return null;
@@ -35,7 +31,6 @@ function getAllowedSellerUrl(path: string): string | null {
     "/api/paylabs/macro-nodes",
   ];
 
-  // Exact match or prefix match for macro-nodes (which has [nodeName] param)
   for (const allowed of allowedPaths) {
     if (path === allowed || (allowed === "/api/paylabs/macro-nodes" && path.startsWith("/api/paylabs/macro-nodes/"))) {
       return `${baseUrl}${path}`;
@@ -45,10 +40,7 @@ function getAllowedSellerUrl(path: string): string | null {
 }
 
 // ─── Budget constants ────────────────────────────────────────
-// Server-side budget cap. Client cannot exceed this.
 const SERVER_MAX_BUDGET_USDC = 1.0;
-
-// ─── Allowed route tiers ─────────────────────────────────────
 const ALLOWED_ROUTE_TIERS = new Set(["standard", "auto", "easy", "normal", "advanced"]);
 
 function parseBudget(value: unknown): number {
@@ -56,21 +48,18 @@ function parseBudget(value: unknown): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-export async function POST(req: NextRequest) {
+/**
+ * Run the actual paid flow in the background.
+ * Updates job status as it progresses.
+ */
+async function executeRunPaid(jobId: string, session: { sub: string }) {
+  const job = getJob(jobId);
+  if (!job || job.status === "cancelled") return;
+
   try {
-    // 1. Auth required
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ ok: false, error: "Authentication required" }, { status: 401 });
-    }
+    updateJob(jobId, { status: "running", progress: "Looking up wallet…" });
 
-    const body = await req.json();
-    const goal = (body.goal || "").trim();
-    if (!goal) {
-      return NextResponse.json({ ok: false, error: "Goal required" }, { status: 400 });
-    }
-
-    // 2. Look up DCW wallet by session user ID (NOT email from body)
+    // 1. Look up DCW wallet
     const { data: wallet } = await supabaseAdmin()
       .from("paylabs_dcw_wallets")
       .select("wallet_id, wallet_address")
@@ -81,72 +70,52 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (!wallet?.wallet_id) {
-      return NextResponse.json({ ok: false, error: "No DCW wallet. Create one first." }, { status: 400 });
+      updateJob(jobId, { status: "failed", error: "No DCW wallet. Create one first." });
+      return;
     }
 
-    // 3. Check Gateway balance before attempting payment
+    if (getJob(jobId)?.status === "cancelled") return;
+    updateJob(jobId, { progress: "Checking Gateway balance…" });
+
+    // 2. Check Gateway balance
     const { checkGatewayBalance } = await import("@/lib/paylabs/x402/gateway-balance");
     const gwBalance = await checkGatewayBalance({ depositor: wallet.wallet_address });
 
     if (!gwBalance.ok) {
-      // Gateway API unreachable or errored — distinguish from zero balance
-      console.error("[dcw/run-paid] Gateway balance check failed", {
-        error: gwBalance.error?.slice(0, 120),
-        depositor: wallet.wallet_address?.slice(0, 10) + "...",
-      });
-      return NextResponse.json({
-        ok: false,
-        error: `Gateway balance check failed: ${gwBalance.error || "unknown"}. Retry in a moment.`,
-        balanceUsdc: gwBalance.balanceUsdc || "0",
-        gatewayError: true,
-      }, { status: 503 });
+      updateJob(jobId, { status: "failed", error: `Gateway balance check failed: ${gwBalance.error || "unknown"}. Retry in a moment.` });
+      return;
     }
 
     if (parseFloat(gwBalance.balanceUsdc || "0") <= 0) {
-      return NextResponse.json({
-        ok: false,
-        error: "Insufficient Gateway balance. Deposit USDC to your wallet first.",
-        balanceUsdc: gwBalance.balanceUsdc || "0",
-      }, { status: 402 });
+      updateJob(jobId, { status: "failed", error: "Insufficient Gateway balance. Deposit USDC to your wallet first." });
+      return;
     }
 
-    // 4. Resolve seller URL (allowlist only)
-    const sellerPath = body.sellerPath || "/api/paylabs/discovery-runs/inline";
+    if (getJob(jobId)?.status === "cancelled") return;
+    updateJob(jobId, { progress: "Processing x402 payment…" });
+
+    // 3. Resolve seller URL
+    const sellerPath = "/api/paylabs/discovery-runs/inline";
     const sellerUrl = getAllowedSellerUrl(sellerPath);
     if (!sellerUrl) {
-      return NextResponse.json({ ok: false, error: `Seller path not allowed: ${sellerPath}` }, { status: 400 });
+      updateJob(jobId, { status: "failed", error: `Seller path not allowed: ${sellerPath}` });
+      return;
     }
 
-    // 5. Validate route tier server-side
-    const routeTier = body.routeTier || "standard";
-    if (!ALLOWED_ROUTE_TIERS.has(routeTier)) {
-      return NextResponse.json({ ok: false, error: `Invalid route tier: ${routeTier}` }, { status: 400 });
-    }
-
-    // 6. Budget: parse client budget, cap to server max
-    const requestedBudget = parseBudget(body.budgetUsdc ?? body.budget_usdc ?? body.budget);
+    // 4. Budget
+    const requestedBudget = parseBudget(job.request.budgetUsdc);
     const userBudgetUsdc = requestedBudget > 0 ? requestedBudget : 0.01;
+    const maxAmountUsdc = Math.min(userBudgetUsdc, SERVER_MAX_BUDGET_USDC).toFixed(6);
 
-    if (userBudgetUsdc > SERVER_MAX_BUDGET_USDC) {
-      return NextResponse.json(
-        { ok: false, error: `Budget exceeds server cap ${SERVER_MAX_BUDGET_USDC} USDC` },
-        { status: 400 },
-      );
-    }
-
-    const maxAmountUsdc = userBudgetUsdc.toFixed(6);
-
-    // 7. Execute full paid request via DCW
-    //    requirePayment=true for ALL tiers (auto picks effective tier at runtime).
-    //    Auto always requires payment because the inline route will return 402 for paid services.
+    // 5. Execute paid request
     const dcwSigner = createDcwSigner();
 
     const result = await callPaidSeller(dcwSigner, {
       sellerUrl,
       method: "POST",
       body: {
-        goal,
-        route_tier: routeTier,
+        goal: job.request.goal,
+        route_tier: job.request.routeTier,
         user_wallet: wallet.wallet_address,
         budget_usdc: maxAmountUsdc,
       },
@@ -156,7 +125,7 @@ export async function POST(req: NextRequest) {
       sellerServiceName: "discovery",
       maxAmountUsdc,
       requirePayment: true,
-      // Post-payment recovery callback: query Supabase for stored result
+      signal: job.abortController?.signal,
       recoverResultById: async (runId: string) => {
         const { data: run } = await supabaseAdmin()
           .from("paylabs_discovery_runs")
@@ -167,9 +136,6 @@ export async function POST(req: NextRequest) {
         if (!run) return null;
         if (run.status !== "completed" && run.status !== "paid_path_available") return null;
 
-        // Reconstruct safe result from stored data.
-        // Inline route stores final_answer/source_context in agent_trace,
-        // not in source_snapshot or the final_answer column.
         const sourceSnapshot = (run.source_snapshot as Record<string, unknown>) || {};
         const agentTrace = (run.agent_trace as Record<string, unknown>) || {};
 
@@ -189,75 +155,89 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // 8. Build UCW-compatible entry_payment shape
-    //    so frontend uses the same toSafeRunResult + PaymentExplorerLinks path
+    if (getJob(jobId)?.status === "cancelled") return;
+
+    // 6. Build entry_payment shape
     const paymentMetadata = result.paymentMetadata ?? null;
     const resultData = result.data as Record<string, unknown> | null | undefined;
     const dataEntry = (resultData?.entry_payment as Record<string, unknown> | null | undefined) ?? null;
 
     const entryPayment = {
       status: result.ok ? "paid" : "failed",
-
-      tx_hash:
-        paymentMetadata?.txHash ??
-        (dataEntry?.tx_hash as string | null | undefined) ??
-        null,
-
-      explorer_url:
-        paymentMetadata?.explorerUrl ??
-        (dataEntry?.explorer_url as string | null | undefined) ??
-        null,
-
-      settlement_id:
-        paymentMetadata?.settlementId ??
-        (dataEntry?.settlement_id as string | null | undefined) ??
-        null,
-
-      settlement_url:
-        paymentMetadata?.settlementUrl ??
-        (dataEntry?.settlement_url as string | null | undefined) ??
-        null,
-
-      transfer_status:
-        paymentMetadata?.transferStatus ??
-        (dataEntry?.transfer_status as string | null | undefined) ??
-        null,
-
-      gateway_accepted:
-        paymentMetadata?.gatewayAccepted ??
-        (dataEntry?.gateway_accepted as boolean | undefined) ??
-        result.ok,
-
-      batch_tx_hash:
-        paymentMetadata?.batchTxHash ??
-        (dataEntry?.batch_tx_hash as string | null | undefined) ??
-        null,
-
-      batch_explorer_url:
-        paymentMetadata?.batchExplorerUrl ??
-        (dataEntry?.batch_explorer_url as string | null | undefined) ??
-        null,
-
-      batch_resolver_url:
-        paymentMetadata?.batchResolverUrl ??
-        (dataEntry?.batch_resolver_url as string | null | undefined) ??
-        null,
-
+      tx_hash: paymentMetadata?.txHash ?? (dataEntry?.tx_hash as string | null | undefined) ?? null,
+      explorer_url: paymentMetadata?.explorerUrl ?? (dataEntry?.explorer_url as string | null | undefined) ?? null,
+      settlement_id: paymentMetadata?.settlementId ?? (dataEntry?.settlement_id as string | null | undefined) ?? null,
+      settlement_url: paymentMetadata?.settlementUrl ?? (dataEntry?.settlement_url as string | null | undefined) ?? null,
+      transfer_status: paymentMetadata?.transferStatus ?? (dataEntry?.transfer_status as string | null | undefined) ?? null,
+      gateway_accepted: paymentMetadata?.gatewayAccepted ?? (dataEntry?.gateway_accepted as boolean | undefined) ?? result.ok,
+      batch_tx_hash: paymentMetadata?.batchTxHash ?? (dataEntry?.batch_tx_hash as string | null | undefined) ?? null,
+      batch_explorer_url: paymentMetadata?.batchExplorerUrl ?? (dataEntry?.batch_explorer_url as string | null | undefined) ?? null,
+      batch_resolver_url: paymentMetadata?.batchResolverUrl ?? (dataEntry?.batch_resolver_url as string | null | undefined) ?? null,
       customer_wallet: wallet.wallet_address,
       customer_wallet_type: "circle_developer_controlled" as const,
     };
 
-    return NextResponse.json({
-      ok: result.ok,
-      status: result.status,
-      data: result.data,
-      error: result.error,
-      paymentMetadata,
-      freeResponse: result.freeResponse,
-      entry_payment: entryPayment,
-      entry_payment_explorer_url: entryPayment.explorer_url,
-      entry_payment_batch_explorer_url: entryPayment.batch_explorer_url,
+    updateJob(jobId, {
+      status: result.ok ? "completed" : "failed",
+      progress: result.ok ? "Done" : "Payment failed",
+      result: {
+        ok: result.ok,
+        status: result.status,
+        data: result.data,
+        error: result.error,
+        paymentMetadata,
+        freeResponse: result.freeResponse,
+        entry_payment: entryPayment,
+        entry_payment_explorer_url: entryPayment.explorer_url,
+        entry_payment_batch_explorer_url: entryPayment.batch_explorer_url,
+      },
+      error: result.ok ? null : (result.error || "Payment failed"),
     });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`[dcw/run-paid] Job ${jobId} error:`, msg);
+
+    // Don't mark as failed if cancelled
+    if (getJob(jobId)?.status === "cancelled") return;
+
+    updateJob(jobId, { status: "failed", error: msg });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    // 1. Auth required
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ ok: false, error: "Authentication required" }, { status: 401 });
+    }
+
+    const body = await req.json();
+    const goal = (body.goal || "").trim();
+    if (!goal) {
+      return NextResponse.json({ ok: false, error: "Goal required" }, { status: 400 });
+    }
+
+    const routeTier = body.routeTier || "auto";
+    if (!ALLOWED_ROUTE_TIERS.has(routeTier)) {
+      return NextResponse.json({ ok: false, error: `Invalid route tier: ${routeTier}` }, { status: 400 });
+    }
+
+    const budgetUsdc = parseBudget(body.budgetUsdc ?? body.budget_usdc ?? body.budget);
+    if (budgetUsdc > SERVER_MAX_BUDGET_USDC) {
+      return NextResponse.json({ ok: false, error: `Budget exceeds server cap ${SERVER_MAX_BUDGET_USDC} USDC` }, { status: 400 });
+    }
+
+    // 2. Create async job
+    const jobId = randomUUID();
+    createJob(jobId, { goal, routeTier, budgetUsdc });
+
+    // 3. Fire and forget — run in background
+    //    Use void to explicitly discard the promise (no floating promise lint warning)
+    void executeRunPaid(jobId, session);
+
+    // 4. Return job ID immediately
+    return NextResponse.json({ ok: true, jobId });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[dcw/run-paid] Error:", msg);
