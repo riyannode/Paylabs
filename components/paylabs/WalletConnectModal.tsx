@@ -21,10 +21,12 @@ export type WalletInfo = {
 export type UcwBalance = {
   /** Wallet token balance (on-chain USDC). For DCW, this may be null if not fetched. */
   walletUsdc: string | null;
-  /** Gateway balance (deposited USDC available for x402 payments) */
-  gatewayUsdc: string;
+  /** Gateway balance (deposited USDC available for x402 payments). null if gateway check failed. */
+  gatewayUsdc: string | null;
   /** Pending batch settlement USDC */
   pendingBatchUsdc?: string;
+  /** Gateway check error (null if ok) */
+  gatewayError?: string | null;
   /** Which wallet type this balance belongs to */
   source: "ucw" | "dcw" | "external_eoa";
 };

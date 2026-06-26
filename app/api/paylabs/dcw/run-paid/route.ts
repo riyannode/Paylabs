@@ -197,7 +197,7 @@ async function executeRunPaid(jobId: string, session: { sub: string }) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`[dcw/run-paid] Job ${jobId} error:`, msg);
 
-    // Don't mark as failed if cancelled
+    // Don't overwrite cancelled status — abort() throws AbortError which lands here
     if (getJob(jobId)?.status === "cancelled") return;
 
     updateJob(jobId, { status: "failed", error: msg });

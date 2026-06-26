@@ -123,8 +123,8 @@ export async function GET() {
         walletBalanceStatus: onChain.walletBalanceStatus,
       },
       gateway: {
-        balanceUsdc: gwBalance.ok ? (gwBalance.balanceUsdc || "0") : "0",
-        balanceAtomic: gwBalance.ok ? (gwBalance.balanceAtomic || "0") : "0",
+        balanceUsdc: gwBalance.ok ? (gwBalance.balanceUsdc || "0") : null,
+        balanceAtomic: gwBalance.ok ? (gwBalance.balanceAtomic || "0") : null,
         pendingBatchUsdc: gwBalance.pendingBatchUsdc || "0",
         ok: gwBalance.ok,
         error: gwBalance.error || null,
