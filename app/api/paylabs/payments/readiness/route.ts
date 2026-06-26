@@ -8,18 +8,13 @@ import { NextResponse } from "next/server";
 import { isDelegatedRuntimeEnabled, getX402EnabledServices } from "@/lib/paylabs/feature-flags";
 import { getRegisteredServiceCount, getActiveServiceCount, getActiveServices } from "@/lib/paylabs/agent-services/registry";
 import { getAllowedEdgeCount } from "@/lib/paylabs/agent-services/edge-allowlist";
+import { TIER_SERVICE_PRESETS } from "@/lib/paylabs/delegated-runtime/quote-engine";
 
-const REQUIRED_X402_SERVICES = [
-  "intent_planner",
-  "query_builder",
-  "signal_scout",
-  "intent_matcher",
-  "source_verifier",
-  "value_allocator",
-  "trust_verifier",
-  "payment_decider",
-  "payment_router",
-];
+// Derive required x402 services from canonical tier presets (union of all tiers)
+// so readiness always matches the actual execution plan.
+const REQUIRED_X402_SERVICES: string[] = [...new Set(
+  Object.values(TIER_SERVICE_PRESETS).flat()
+)];
 
 const REQUIRED_WALLET_ENV_KEYS = [
   "PAYLABS_CONTROLLER_BUYER_WALLET_ID",

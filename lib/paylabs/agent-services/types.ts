@@ -10,6 +10,7 @@ export type ServiceName =
   | "intent_planner"
   | "query_builder"
   | "signal_scout"
+  | "signal_scout_basics"
   | "intent_matcher"
   | "source_verifier"
   | "value_allocator"

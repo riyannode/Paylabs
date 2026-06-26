@@ -22,9 +22,9 @@ import { resolveSources } from "./source-resolver";
 export async function buildSourceContextFromResult(
   result: OrchestratorOutput
 ): Promise<SourceContext | null> {
-  // Extract ranked candidates from signal_scout evaluation
+  // Extract ranked candidates from signal_scout or signal_scout_basics evaluation
   const signalEval = result.serviceEvaluations.find(
-    (e) => e.serviceName === "signal_scout" && e.output
+    (e) => (e.serviceName === "signal_scout" || e.serviceName === "signal_scout_basics") && e.output
   );
   if (!signalEval?.output) return null;
 

@@ -82,13 +82,16 @@ function short(value?: string | null, chars = 6): string {
   return `${value.slice(0, chars)}…${value.slice(-chars)}`;
 }
 
-/** Detect deterministic source inventory answers that should be hidden from user */
+/** Detect deterministic source inventory answers that should be hidden from user.
+ *  NOTE: "Latest activity found for ..." is a real source-grounded answer from
+ *  buildSourceGroundedFinalAnswer() — do NOT suppress it. */
 function isSourceInventoryAnswer(value?: string | null): boolean {
   if (!value) return false;
   return (
-    /Ditemukan\s+\d+\s+source\s+relevan/i.test(value) ||
-    /Sumber\s+dari:/i.test(value) ||
-    /Sumber\s+utama:/i.test(value) ||
+    /Found\s+\d+\s+(relevant\s+)?sources/i.test(value) ||
+    /Here are\s+\d+\s+latest sources/i.test(value) ||
+    /No (sufficiently )?relevant sources found/i.test(value) ||
+    /No relevant sources found for/i.test(value) ||
     /\(Mode:\s*(db_fallback|rsshub_live|tavily_live|none)\)/i.test(value)
   );
 }
@@ -1808,27 +1811,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
                 }}
               />
               <div className="pl-search-actions">
-                <span className="pl-plan-auto">Plan: Auto</span>
-                <div className="pl-budget">
-                  <span>Budget</span>
-                  <input
-                    value={budget}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      // Only allow valid number characters
-                      if (/^[\d.]*$/.test(v)) setBudget(v);
-                    }}
-                    onBlur={() => {
-                      // Format on blur to fix precision
-                      const n = parseFloat(budget);
-                      if (Number.isFinite(n) && n > 0) setBudget(n.toFixed(6));
-                      else setBudget("0.000100");
-                    }}
-                    type="text"
-                    inputMode="decimal"
-                  />
-                  <small>USDC</small>
-                </div>
+                <span className="pl-x402-badge">x402 protected</span>
                 <button
                   className="pl-run-btn"
                   onClick={submitChat}

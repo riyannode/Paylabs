@@ -49,6 +49,8 @@ export type QueryBuilderOutput = z.infer<typeof QueryBuilderOutput>;
 export const SignalScoutInput = z.object({
   expanded_queries: z.array(z.string()),
   entity_terms: z.array(z.string()),
+  negative_filters: z.array(z.string()).optional(),
+  source_preferences: z.array(z.string()).optional(),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
 });
 export type SignalScoutInput = z.infer<typeof SignalScoutInput>;
@@ -294,6 +296,7 @@ const INPUT_SCHEMA_MAP: Partial<Record<ServiceName, z.ZodType<unknown>>> = {
   intent_planner: IntentPlannerInput,
   query_builder: QueryBuilderInput,
   signal_scout: SignalScoutInput,
+  signal_scout_basics: SignalScoutInput,
   intent_matcher: IntentMatcherInput,
   source_verifier: BatchSourceVerifierInput,
   value_allocator: BatchValueAllocatorInput,

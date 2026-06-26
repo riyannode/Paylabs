@@ -85,7 +85,8 @@ function scoreItem(
   item: NormalizedFeedItem,
   entityTerms: string[],
   expandedQueries: string[],
-  routeScore: number
+  routeScore: number,
+  routePath?: string
 ): { score: number; matchedTerms: string[] } {
   let score = 0;
   const matched: string[] = [];
@@ -93,6 +94,8 @@ function scoreItem(
   const title = (item.title || "").toLowerCase();
   const summary = (item.summary || "").toLowerCase();
   const domain = extractDomain(item.canonical_url || "")?.toLowerCase() || "";
+  const urlPath = (() => { try { return new URL(item.canonical_url || "").pathname.toLowerCase(); } catch { return ""; } })();
+  const rPath = (routePath || "").toLowerCase();
 
   // Exact entity match in title (strongest)
   for (const entity of entityTerms) {
@@ -106,6 +109,14 @@ function scoreItem(
       matched.push(entity);
     } else if (domain.includes(e)) {
       score += 5;
+      matched.push(entity);
+    } else if (urlPath.includes(e)) {
+      // Entity in source URL path (e.g. /riyannode/Paylabs in URL)
+      score += 12;
+      matched.push(entity);
+    } else if (rPath.includes(e)) {
+      // Entity in route path
+      score += 10;
       matched.push(entity);
     }
   }
@@ -263,6 +274,7 @@ export async function liveSearchRsshub(input: {
   sourcePreferences?: string[];
   routeTier?: string;
   maxSources?: number;
+  skipRerank?: boolean;
 }): Promise<LiveSearchResult> {
   const {
     userGoal,
@@ -271,6 +283,7 @@ export async function liveSearchRsshub(input: {
     negativeFilters = [],
     routeTier = "easy",
     maxSources = Number(process.env.PAYLABS_RSSHUB_LIVE_MAX_SOURCES) || 12,
+    skipRerank = false,
   } = input;
 
   const baseUrls = getRsshubBaseUrls();
@@ -330,8 +343,8 @@ export async function liveSearchRsshub(input: {
       };
     }
 
-    // 2b. Optional LLM rerank (if enabled)
-    const llmRerankEnabled = process.env.PAYLABS_RSSHUB_LLM_ROUTE_RERANK === "true";
+    // 2b. Optional LLM rerank (if enabled, unless skipped by caller)
+    const llmRerankEnabled = !skipRerank && process.env.PAYLABS_RSSHUB_LLM_ROUTE_RERANK === "true";
     if (llmRerankEnabled && candidates.length > maxRoutes) {
       try {
         const { rerankRouteCandidates } = await import("./rsshub-route-rerank");
@@ -424,11 +437,13 @@ export async function liveSearchRsshub(input: {
           item,
           entityTerms,
           expandedQueries,
-          route.route.heat
+          route.route.heat,
+          route.resolvedPath
         );
 
         // Filter out low-score unrelated items from relevant routes
-        const minItemScore = routeTier === "advanced" ? 2 : routeTier === "normal" ? 2 : 1;
+        // Minimum score 3 for Easy (was 1), 4 for Normal, 5 for Advanced
+        const minItemScore = routeTier === "advanced" ? 5 : routeTier === "normal" ? 4 : 3;
         if (scoring.score < minItemScore) continue;
 
         const sourceUrl = item.canonical_url || "";

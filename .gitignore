@@ -42,5 +42,9 @@ scripts/*.sh
 _test_reason.cjs
 scripts/
 
+# Root-level throwaway scripts (test, debug, deposit, check)
+/*.mjs
+!postcss.config.mjs
+
 # Temp scripts (CodeQL sensitive data)
 .tmp_*

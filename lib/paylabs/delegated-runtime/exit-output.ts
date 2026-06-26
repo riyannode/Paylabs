@@ -42,7 +42,12 @@ export function buildExitOutput(result: OrchestratorOutput): ExitOutput {
   const paidEdges = graph.filter((edge) => edge.status === "paid");
   const failedEdges = graph.filter((edge) => edge.status === "failed");
   const servicePaid = paidEdges.filter((edge) => edge.nodeType === "service").length;
-  const actualSettled = sumPaid(graph);
+  // Use budgetSnapshot.userBudgetUsedUsdc to avoid double-counting child edges
+  // that are already included in macro allocation edges.
+  // Fallback to sumPaid(graph) only if budgetSnapshot is missing.
+  const actualSettled = result.budgetSnapshot?.userBudgetUsedUsdc
+    ?? result.budgetSnapshot?.spentUsdc
+    ?? sumPaid(graph);
 
   return {
     selected_tier: result.routeTier,
