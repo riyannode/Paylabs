@@ -588,8 +588,8 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
 
         <div className="pl-dcw-header">
           <span className="pl-dcw-badge">DCW</span>
-          <h3>Auto-Pay Wallet</h3>
-          <p className="muted">No popups. No signing. Just works.</p>
+          <h3>PayLabs Wallet</h3>
+          <p className="muted">Deposit to gateway for automatic x402 payments.</p>
         </div>
 
         {/* ── Step: Auth (Google + Passkey) ─────────────── */}
@@ -921,6 +921,10 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
             </button>
           </div>
         )}
+        {/* ── Footer ──────────────────────────────────────── */}
+        <p className="muted" style={{ fontSize: 11, textAlign: "center", marginTop: 12 }}>
+          No manual approval per request.
+        </p>
       </div>
     </div>
   );
