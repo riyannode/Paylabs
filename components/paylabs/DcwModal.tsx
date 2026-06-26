@@ -62,6 +62,24 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   const recommendedTopUp = Math.max(plannedCostNum - x402Balance, plannedCostNum);
   const recommendedStr = recommendedTopUp > 0 ? recommendedTopUp.toFixed(6) : "0.000001";
 
+  // ── Refresh Balance ───────────────────────────────────────
+  const refreshBalance = useCallback(async () => {
+    try {
+      const resp = await fetch("/api/paylabs/dcw/balance", { credentials: "include" });
+      const data = await resp.json();
+      if (data.ok) {
+        const newBalance: DcwBalanceInfo = {
+          walletUsdc: data.wallet?.usdc ?? null,
+          walletBalanceStatus: data.wallet?.walletBalanceStatus ?? "unavailable",
+          gatewayUsdc: data.gateway?.balanceUsdc ?? (data.gateway?.ok === false ? null : "0"),
+          pendingBatchUsdc: data.gateway?.pendingBatchUsdc || "0",
+        };
+        setBalance(newBalance);
+        onBalanceUpdate?.(newBalance);
+      }
+    } catch {}
+  }, [onBalanceUpdate]);
+
   // Check existing session on open
   useEffect(() => {
     if (!open) return;
@@ -420,24 +438,6 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
     }
   }, [onWalletReady]);
 
-  // ── Refresh Balance ───────────────────────────────────────
-  const refreshBalance = useCallback(async () => {
-    try {
-      const resp = await fetch("/api/paylabs/dcw/balance", { credentials: "include" });
-      const data = await resp.json();
-      if (data.ok) {
-        const newBalance: DcwBalanceInfo = {
-          walletUsdc: data.wallet?.usdc ?? null,
-          walletBalanceStatus: data.wallet?.walletBalanceStatus ?? "unavailable",
-          gatewayUsdc: data.gateway?.balanceUsdc || "0",
-          pendingBatchUsdc: data.gateway?.pendingBatchUsdc || "0",
-        };
-        setBalance(newBalance);
-        onBalanceUpdate?.(newBalance);
-      }
-    } catch {}
-  }, [onBalanceUpdate]);
-
   // ── Deposit to Gateway (two-phase: approve → deposit) ────
   const [depositTxId, setDepositTxId] = useState<string | null>(null);
   const [approveTxId, setApproveTxId] = useState<string | null>(null);
@@ -699,7 +699,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                   <div className="pl-dcw-wallet-row">
                     <span className="muted">x402 Balance</span>
                     <b style={{ color: x402Balance > 0 ? "var(--success, #22c55e)" : undefined }}>
-                      {x402Balance.toFixed(6)} USDC
+                      {balance.gatewayUsdc != null ? `${x402Balance.toFixed(6)} USDC` : "Checking…"}
                     </b>
                   </div>
                   <span className="muted" style={{ fontSize: 10, marginLeft: 4 }}>Powered by Circle Gateway</span>
@@ -774,7 +774,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                   )}
                   <div className="pl-dcw-wallet-row">
                     <span className="muted">x402 Balance</span>
-                    <b>{x402Balance.toFixed(6)} USDC</b>
+                    <b>{balance.gatewayUsdc != null ? `${x402Balance.toFixed(6)} USDC` : "Checking…"}</b>
                   </div>
                   <div className="pl-dcw-wallet-row">
                     <span className="muted">Planned Cost</span>
@@ -791,6 +791,11 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                   <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
                     Deposit USDC to x402 Balance
                   </p>
+                  {balance.gatewayUsdc == null && (
+                    <p style={{ color: "var(--warn, #f59e0b)", fontSize: 11, marginBottom: 8 }}>
+                      ⚠ Gateway balance check failed. Refresh to retry.
+                    </p>
+                  )}
                   <p className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
                     Transfer USDC from your wallet into Circle Gateway for x402 auto-pay.
                     Your wallet needs on-chain USDC first.
