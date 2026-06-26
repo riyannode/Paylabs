@@ -213,12 +213,14 @@ export async function writePayLabsVisibility(
     pending_creator_reserve_usdc: result.creatorDistribution?.pendingReserveAtomic
       ? (Number(result.creatorDistribution.pendingReserveAtomic) / 1e6)
       : null,
-    bot_share_usdc: result.creatorDistribution
-      ? (result.creatorDistribution.payoutResults.filter((r) => r.status === "paid" || r.status === "gateway_accepted").length * 0.000002)
-      : null,
-    service_share_usdc: result.creatorDistribution
-      ? (result.creatorDistribution.payoutResults.filter((r) => r.status === "paid" || r.status === "gateway_accepted").length * 0.000001)
-      : null,
+    bot_share_usdc: result.creatorDistribution?.botShareResult
+      && (result.creatorDistribution.botShareResult.status === "paid" || result.creatorDistribution.botShareResult.status === "gateway_accepted")
+      ? result.creatorDistribution.botShareResult.amount_usdc
+      : 0,
+    service_share_usdc: result.creatorDistribution?.serviceShareResult
+      && (result.creatorDistribution.serviceShareResult.status === "paid" || result.creatorDistribution.serviceShareResult.status === "gateway_accepted")
+      ? result.creatorDistribution.serviceShareResult.amount_usdc
+      : 0,
     creator_split_policy: routeTier !== "easy" ? "85_10_5_atomic_safe" : null,
     creator_payout_status: result.creatorDistribution?.payoutResults.some(
       (r) => r.status === "paid" || r.status === "gateway_accepted"

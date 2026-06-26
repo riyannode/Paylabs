@@ -36,7 +36,7 @@ import type { OrchestratorOutput, PaymentGraphEdge, TieredRunSummaries } from "@
 import { TIER_PHASE_MAP } from "@/lib/paylabs/delegated-runtime/state";
 import { resolveAutoTier } from "@/lib/paylabs/delegated-runtime/state";
 import { validateAndLockExecutionPlan } from "@/lib/paylabs/delegated-runtime/state";
-import { getMacroNodeAllocationUsdc } from "@/lib/paylabs/delegated-runtime/node-registry";
+import { getMacroNodeAllocationUsdcForTier } from "@/lib/paylabs/delegated-runtime/node-registry";
 import { FIXED_FEES_USDC } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import type { MacroNodePhase } from "@/lib/paylabs/delegated-runtime/types";
 import {
@@ -407,7 +407,7 @@ async function runX402Orchestration(params: {
         edgeId: randomUUID(),
         buyer: "brain",
         seller: node,
-        amountUsdc: getMacroNodeAllocationUsdc(node as MacroNodePhase),
+        amountUsdc: getMacroNodeAllocationUsdcForTier(node as MacroNodePhase, effectiveRouteTier),
         status: "skipped",
         nodeType: "macro_node",
         paymentRef: null,
@@ -423,7 +423,7 @@ async function runX402Orchestration(params: {
       edgeId: randomUUID(),
       buyer: "brain",
       seller: node,
-      amountUsdc: getMacroNodeAllocationUsdc(node as MacroNodePhase),
+      amountUsdc: getMacroNodeAllocationUsdcForTier(node as MacroNodePhase, effectiveRouteTier),
       status: "paid",
       nodeType: "macro_node",
       paymentRef: null,
@@ -629,6 +629,30 @@ function buildX402Output(
     .filter((e) => e.status === "paid")
     .reduce((sum, e) => sum + e.amountUsdc, 0);
 
+  // ── Extract creatorDistribution from settlement_memory result ──
+  const settlementMemoryResult = macroNodeResults?.["settlement_memory"];
+  const settlementMemoryData = settlementMemoryResult
+    ? ((settlementMemoryResult.data as Record<string, unknown>) || settlementMemoryResult)
+    : null;
+  const settlementCreatorDist = settlementMemoryData?.creatorDistribution as Record<string, unknown> | undefined;
+
+  const creatorDistribution: OrchestratorOutput["creatorDistribution"] = settlementCreatorDist
+    ? {
+        payoutSummary: (settlementCreatorDist.payoutSummary as string) ?? null,
+        payoutResults: (settlementCreatorDist.payoutResults as OrchestratorOutput["creatorDistribution"] extends { payoutResults: infer R } ? R : never) ?? [],
+        evaluatorOutput: (settlementCreatorDist.evaluatorOutput as Record<string, unknown>) ?? null,
+        pendingReserveAtomic: (settlementCreatorDist.pendingReserveAtomic as string) ?? null,
+        actualCreatorPaidAtomic: (settlementCreatorDist.actualCreatorPaidAtomic as string) ?? null,
+        actualCreatorPaidUsdc: (settlementCreatorDist.actualCreatorPaidUsdc as number) ?? null,
+        creatorSplitPlan: (settlementCreatorDist.creatorSplitPlan as Record<string, unknown>) ?? null,
+        plannedCreatorPoolAtomic: (settlementCreatorDist.plannedCreatorPoolAtomic as string) ?? null,
+        plannedCreatorPayoutCount: (settlementCreatorDist.plannedCreatorPayoutCount as number) ?? null,
+        advancedEvaluatorStatus: (settlementCreatorDist.advancedEvaluatorStatus as string) ?? null,
+        botShareResult: (settlementCreatorDist.botShareResult as OrchestratorOutput["creatorDistribution"] extends { botShareResult: infer R } ? R : never) ?? null,
+        serviceShareResult: (settlementCreatorDist.serviceShareResult as OrchestratorOutput["creatorDistribution"] extends { serviceShareResult: infer R } ? R : never) ?? null,
+      }
+    : undefined;
+
   return {
     discoveryRunId,
     status,
@@ -658,6 +682,7 @@ function buildX402Output(
     paymentGraph,
     tieredSummaries,
     sourceContext,
+    creatorDistribution,
     error,
   };
 }

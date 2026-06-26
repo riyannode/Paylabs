@@ -327,6 +327,17 @@ export interface BudgetRefundReconciliation {
   summary: string;
 }
 
+// ─── Platform Share Result (bot/service share from creator_payout_router) ──
+export interface PlatformShareResult {
+  status: string;
+  amount_usdc: number;
+  amount_atomic?: string;
+  tx_hash?: string | null;
+  explorer_url?: string | null;
+  settlement_id?: string | null;
+  error?: string | null;
+}
+
 // ─── Orchestrator Output ─────────────────────────────────────
 export interface OrchestratorOutput {
   discoveryRunId: string;
@@ -375,6 +386,10 @@ export interface OrchestratorOutput {
     plannedCreatorPayoutCount?: number | null;
     /** Advanced evaluator status: "completed" | "failed" | "not_run" | null */
     advancedEvaluatorStatus?: string | null;
+    /** Bot platform share result from creator_payout_router */
+    botShareResult?: PlatformShareResult | null;
+    /** Service provider share result from creator_payout_router */
+    serviceShareResult?: PlatformShareResult | null;
   };
   error: string | null;
 }

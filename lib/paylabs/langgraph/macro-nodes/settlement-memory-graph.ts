@@ -385,6 +385,10 @@ export interface RunSettlementMemoryGraphOutput {
   plannedCreatorPayoutCount?: number | null;
   /** Advanced evaluator status: "completed" | "failed" | "not_run" | null */
   advancedEvaluatorStatus?: string | null;
+  /** Bot platform share result from creator_payout_router */
+  botShareResult?: import("../../delegated-runtime/types").PlatformShareResult | null;
+  /** Service provider share result from creator_payout_router */
+  serviceShareResult?: import("../../delegated-runtime/types").PlatformShareResult | null;
   error: string | null;
 }
 
@@ -461,6 +465,8 @@ export async function runSettlementMemoryGraph(
       actualCreatorPaidUsdc: result.actualCreatorPaidUsdc ?? null,
       plannedCreatorPayoutCount: result.plannedCreatorPayoutCount ?? null,
       advancedEvaluatorStatus: result.advancedEvaluatorStatus ?? null,
+      botShareResult: (result.botShareResult as unknown as import("../../delegated-runtime/types").PlatformShareResult) ?? null,
+      serviceShareResult: (result.serviceShareResult as unknown as import("../../delegated-runtime/types").PlatformShareResult) ?? null,
       error: result.error || null,
     };
   } catch (err: unknown) {

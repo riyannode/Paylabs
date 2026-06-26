@@ -19,7 +19,7 @@ import {
   isValidMacroNodeName,
   resolveNodeSellerWallet,
   resolveNodeBuyerWalletId,
-  getMacroNodeAllocationUsdc,
+  getMacroNodeAllocationUsdcForTier,
 } from "@/lib/paylabs/delegated-runtime/node-registry";
 import {
   buildPaymentRequirements,
@@ -113,8 +113,9 @@ export async function POST(
     req.headers.get("x-payment") ??
     req.headers.get("X-Payment");
 
-  // Use full macro allocation (base fee + child budget), not just base fee
-  const macroAllocationUsdc = getMacroNodeAllocationUsdc(nodeName as MacroNodePhase);
+  // Use full macro allocation (base fee + child budget) for the given tier
+  const typedRouteTier = routeTier as "easy" | "normal" | "advanced";
+  const macroAllocationUsdc = getMacroNodeAllocationUsdcForTier(nodeName as MacroNodePhase, typedRouteTier);
   const amountAtomic = Math.round(macroAllocationUsdc * 1_000_000).toString();
 
   if (!paymentHeader) {
@@ -258,7 +259,26 @@ async function executeMacroNode(
       for (const pe of graphResult.paymentEdges) {
         state.paymentEdges.push(pe);
       }
-      result = { ok: graphResult.ok, routedItems: graphResult.routedItems, failedItems: graphResult.failedItems, advancedSummary: graphResult.advancedSummary };
+      result = {
+        ok: graphResult.ok,
+        routedItems: graphResult.routedItems,
+        failedItems: graphResult.failedItems,
+        advancedSummary: graphResult.advancedSummary,
+        creatorDistribution: {
+          payoutSummary: graphResult.creatorPayoutSummary ?? null,
+          payoutResults: graphResult.creatorPayoutResults ?? [],
+          evaluatorOutput: graphResult.advancedEvaluatorOutput ?? null,
+          pendingReserveAtomic: graphResult.pendingCreatorReserveAtomic ?? null,
+          actualCreatorPaidAtomic: graphResult.actualCreatorPaidAtomic ?? null,
+          actualCreatorPaidUsdc: graphResult.actualCreatorPaidUsdc ?? null,
+          creatorSplitPlan: graphResult.creatorSplitPlan ?? null,
+          plannedCreatorPoolAtomic: graphResult.plannedCreatorPoolAtomic ?? null,
+          plannedCreatorPayoutCount: graphResult.plannedCreatorPayoutCount ?? null,
+          advancedEvaluatorStatus: graphResult.advancedEvaluatorStatus ?? null,
+          botShareResult: graphResult.botShareResult ?? null,
+          serviceShareResult: graphResult.serviceShareResult ?? null,
+        },
+      };
     }
 
     return NextResponse.json({
