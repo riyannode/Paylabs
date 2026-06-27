@@ -81,6 +81,41 @@ function parseDepositFlowId(value: unknown): string | null {
   return trimmed;
 }
 
+function text(value: unknown, fallback = ""): string {
+  if (typeof value === "string") return value.slice(0, 300);
+  if (value == null) return fallback;
+  return String(value).slice(0, 300);
+}
+
+function extractCircleError(e: unknown) {
+  const err = e as {
+    code?: unknown;
+    status?: unknown;
+    message?: unknown;
+    response?: {
+      status?: unknown;
+      data?: {
+        code?: unknown;
+        errorCode?: unknown;
+        message?: unknown;
+        error?: unknown;
+      };
+    };
+  };
+
+  return {
+    code: text(err?.code ?? err?.response?.data?.code ?? err?.response?.data?.errorCode, ""),
+    status: text(err?.status ?? err?.response?.status, ""),
+    message: text(err?.message ?? err?.response?.data?.message, "unknown"),
+    responseMessage: text(err?.response?.data?.message ?? err?.response?.data?.error, ""),
+  };
+}
+
+function shortAddress(address?: string | null): string {
+  if (!address) return "unknown";
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
 // ─── GET: Semantic state machine poll ────────────────────────
 
 export async function GET(req: NextRequest) {
@@ -201,8 +236,14 @@ export async function GET(req: NextRequest) {
           approveTxHash: approveState.txHash,
         });
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error("[dcw/deposit-gateway] Deposit submission failed:", msg);
+        const safe = extractCircleError(err);
+
+        console.error("[dcw/deposit-gateway] Deposit submission failed", {
+          ...safe,
+          wallet: shortAddress(wallet.wallet_address),
+          chain: "ARC-TESTNET",
+        });
+
         return NextResponse.json({
           ok: true,
           approveTxId,
@@ -357,9 +398,22 @@ export async function POST(req: NextRequest) {
 
       approveTxId = approveResp?.data?.id;
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("[dcw/deposit-gateway] Approve submission failed:", msg);
-      return NextResponse.json({ ok: false, error: "Approve transaction failed." }, { status: 502 });
+      const safe = extractCircleError(e);
+
+      console.error("[dcw/deposit-gateway] Approve submission failed", {
+        ...safe,
+        wallet: shortAddress(wallet.wallet_address),
+        chain: "ARC-TESTNET",
+      });
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Approve transaction failed.",
+          reason: safe.message,
+        },
+        { status: 502 }
+      );
     }
 
     if (!approveTxId) {
