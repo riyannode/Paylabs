@@ -11,15 +11,6 @@ async function getRecentX402Payments(limit = 50) {
   return data || [];
 }
 
-async function getRecentReceipts(limit = 25) {
-  const { data } = await supabaseAdmin()
-    .from("paylabs_receipts")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(limit);
-  return data || [];
-}
-
 async function getLastTx() {
   const { data } = await supabaseAdmin()
     .from("paylabs_service_payment_events")
@@ -94,7 +85,6 @@ function timeAgo(dateStr: string): string {
 export default async function DashboardPage() {
   const [
     x402PaymentRows,
-    receiptRows,
     servicePaymentCount,
     receiptCount,
     lastTxRow,
@@ -102,8 +92,6 @@ export default async function DashboardPage() {
   ] = await Promise.all([
     // x402 Service Payments
     getRecentX402Payments(50),
-    // Receipts
-    getRecentReceipts(25),
     // Counts
     safeCount("paylabs_service_payment_events"),
     safeCount("paylabs_receipts"),
@@ -180,7 +168,7 @@ export default async function DashboardPage() {
       <section className="card">
         <h2 className="section-title">x402 Service Payments</h2>
         <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
-          Official Circle x402 delegated-runtime service payment edges. Each edge represents a paid service call in the payment graph.
+          x402 paid service calls from PayLabs runs.
         </p>
         {x402PaymentRows.length === 0 ? (
           <div className="muted" style={{ textAlign: "center", padding: 24 }}>
@@ -248,61 +236,6 @@ export default async function DashboardPage() {
         )}
       </section>
 
-      {/* ─── Receipts Table ─────────────────────────────────── */}
-      <section className="card">
-        <h2 className="section-title">Receipts</h2>
-        <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
-          Per-run receipts from official Circle x402 delegated-runtime payments. Settled amount equals sum of paid payment graph edges.
-        </p>
-        {receiptRows.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
-            No receipts yet.
-          </div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Run ID</th>
-                  <th>Tier</th>
-                  <th>Planned</th>
-                  <th>Settled</th>
-                  <th>Remaining</th>
-                  <th>Payments</th>
-                  <th>Payment Links</th>
-                  <th>Summary</th>
-                </tr>
-              </thead>
-              <tbody>
-                {receiptRows.map((r: any) => (
-                  <tr key={r.receipt_id}>
-                    <td className="muted">{timeAgo(r.created_at)}</td>
-                    <td className="data-mono">{short(r.discovery_run_id)}</td>
-                    <td>{r.selected_tier}</td>
-                    <td className="data-mono">{r.planned_cost_usdc != null ? usdc(r.planned_cost_usdc) : "—"}</td>
-                    <td className="data-mono" style={{ fontWeight: 600 }}>{usdc(r.actual_settled_usdc)}</td>
-                    <td className="data-mono">{r.remaining_budget_usdc != null ? usdc(r.remaining_budget_usdc) : "—"}</td>
-                    <td className="data-mono">{r.payment_count}</td>
-                    <td>
-                      <BatchResolverLink
-                        runId={r.discovery_run_id}
-                        initialBatchExplorerUrl={r.last_batch_explorer_url}
-                        initialBatchTxHash={r.last_batch_tx_hash}
-                        directExplorerUrl={r.last_explorer_url}
-                        directTxHash={r.last_tx_hash}
-                      />
-                    </td>
-                    <td className="muted" style={{ fontSize: 11, maxWidth: 250, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {r.safe_receipt_summary || "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
 
 
 

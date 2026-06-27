@@ -58,6 +58,7 @@ type Props = {
   ucwGoogleError?: string | null;
   onPrepareGoogleLogin?: () => void;
   onRetryPrepareGoogleLogin?: () => void;
+  autoPrepareGoogleLogin?: boolean;
   showEmailLogin?: boolean;
   /** Show Gateway deposit / x402 run UI. Default true. Set false for creator wallet. */
   showGatewayDeposit?: boolean;
@@ -123,6 +124,7 @@ export default function WalletConnectModal({
   ucwGoogleError,
   onPrepareGoogleLogin,
   onRetryPrepareGoogleLogin,
+  autoPrepareGoogleLogin = true,
   showEmailLogin = true,
   showGatewayDeposit = true,
 }: Props) {
@@ -141,9 +143,10 @@ export default function WalletConnectModal({
   }, [defaultShowEmailInput, showEmailLogin]);
 
   useEffect(() => {
+    if (!autoPrepareGoogleLogin) return;
     if (!open || isConnected || ucwGoogleReady || ucwGooglePreparing || ucwGoogleError) return;
     onPrepareGoogleLogin?.();
-  }, [open, isConnected, ucwGoogleReady, ucwGooglePreparing, ucwGoogleError, onPrepareGoogleLogin]);
+  }, [autoPrepareGoogleLogin, open, isConnected, ucwGoogleReady, ucwGooglePreparing, ucwGoogleError, onPrepareGoogleLogin]);
 
   // Force tab back to balances when gateway deposit UI is hidden
   useEffect(() => {
@@ -194,28 +197,18 @@ export default function WalletConnectModal({
             <div className="pl-login-stack-v3">
               <button
                 className="pl-login-option-v3"
-                onClick={onConnectGoogle}
+                onClick={ucwGoogleError && onRetryPrepareGoogleLogin ? onRetryPrepareGoogleLogin : onConnectGoogle}
                 disabled={walletState === "connecting" || ucwGooglePreparing}
               >
                 <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
                 <b>
-                  {walletState === "connecting"
-                    ? "Opening Circle sign-in..."
-                    : ucwGooglePreparing
-                      ? "Preparing wallet login..."
+                  {ucwGooglePreparing
+                    ? "Preparing Google login..."
+                    : ucwGoogleError
+                      ? "Retry Google login setup"
                       : "Continue with Google"}
                 </b>
               </button>
-
-              {ucwGoogleError && onRetryPrepareGoogleLogin && (
-                <button
-                  className="pl-eoa-fallback-v3"
-                  onClick={onRetryPrepareGoogleLogin}
-                  disabled={ucwGooglePreparing || walletState === "connecting"}
-                >
-                  Retry Google login setup
-                </button>
-              )}
 
               {showEmailLogin && (
                 <button
