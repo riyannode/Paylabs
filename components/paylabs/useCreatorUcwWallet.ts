@@ -356,34 +356,50 @@ export function useCreatorUcwWallet() {
     return () => { cancelled = true; if (oauthTimeout) clearTimeout(oauthTimeout); };
   }, []);
 
-  // ── Connect via Google ──
-  const connectGoogle = useCallback(() => {
-    if (walletState === "connecting") return;
-
+  const startGoogleLogin = useCallback((preserveConnectedWallet: boolean) => {
     const sdk = ucwSdkRef.current;
-    if (!ucwGoogleReadyRef.current || !sdk) {
-      setWalletError("Preparing creator wallet login. Try again in a moment.");
-      prepareGoogleLogin().catch(() => {});
-      return;
-    }
+    if (!ucwGoogleReadyRef.current || !sdk) return false;
 
     setWalletState("connecting");
     setWalletError(null);
     clearLoginTimeout();
     loginTimeoutRef.current = setTimeout(() => {
-      setWalletState("not_connected");
+      setWalletState(preserveConnectedWallet ? "connected" : "not_connected");
       setWalletError("Login popup was blocked or timed out. Try again.");
       loginTimeoutRef.current = null;
     }, 55_000);
 
     try {
       sdk.performLogin(SocialLoginProvider.GOOGLE);
+      return true;
     } catch (e: unknown) {
       clearLoginTimeout();
-      setWalletState("not_connected");
+      setWalletState(preserveConnectedWallet ? "connected" : "not_connected");
       setWalletError(e instanceof Error ? e.message : "Connection failed.");
+      return false;
     }
-  }, [walletState, prepareGoogleLogin, clearLoginTimeout]);
+  }, [clearLoginTimeout]);
+
+  const retryPrepareGoogleLogin = useCallback(async () => {
+    setUcwGoogleError(null);
+    ucwGoogleReadyRef.current = false;
+    ucwSdkRef.current = null;
+    setUcwGoogleReady(false);
+    await prepareGoogleLogin();
+  }, [prepareGoogleLogin]);
+
+  // ── Connect via Google ──
+  const connectGoogle = useCallback(() => {
+    if (walletState === "connecting") return;
+
+    if (!ucwGoogleReadyRef.current || !ucwSdkRef.current) {
+      setWalletError("Preparing creator wallet login. Try again in a moment.");
+      prepareGoogleLogin().catch(() => {});
+      return;
+    }
+
+    startGoogleLogin(false);
+  }, [walletState, prepareGoogleLogin, startGoogleLogin]);
 
   // ── Connect via Email OTP ──
   const connectEmail = useCallback(async (email: string) => {
@@ -486,12 +502,32 @@ export function useCreatorUcwWallet() {
     }
   }, [walletState]);
 
+  const reconnectGoogle = useCallback(async () => {
+    if (walletState === "connecting") return;
+
+    if (!ucwGoogleReadyRef.current || !ucwSdkRef.current) {
+      setWalletState("connecting");
+      setWalletError("Preparing creator wallet login...");
+      try {
+        await prepareGoogleLogin();
+      } catch (e: unknown) {
+        setWalletState(walletInfo?.address ? "connected" : "not_connected");
+        setWalletError(e instanceof Error ? e.message : "Creator wallet login preparation failed.");
+        return;
+      }
+    }
+
+    startGoogleLogin(!!walletInfo?.address);
+  }, [walletState, walletInfo?.address, prepareGoogleLogin, startGoogleLogin]);
+
   // ── Reconnect by auth method ──
   const reconnect = useCallback(() => {
-    if (authMethod === "google") connectGoogle();
-    else if (authMethod === "email") { setDefaultShowEmailInput(true); }
+    if (authMethod === "google") reconnectGoogle();
+    else if (authMethod === "email") {
+      setWalletError("Email reconnect is not available. Use Google or PIN.");
+    }
     else if (authMethod === "pin") connectPin();
-  }, [authMethod, connectGoogle, connectPin]);
+  }, [authMethod, reconnectGoogle, connectPin]);
 
   // ── Gateway deposit (no-op for creator — kept for prop compatibility) ──
   const depositGateway = useCallback(async (_amountAtomic: string) => {
@@ -518,6 +554,7 @@ export function useCreatorUcwWallet() {
     ucwGoogleReady,
     ucwGoogleError,
     prepareGoogleLogin,
+    retryPrepareGoogleLogin,
     connectGoogle,
     connectEmail,
     connectPin,

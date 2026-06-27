@@ -57,6 +57,8 @@ type Props = {
   ucwGoogleReady?: boolean;
   ucwGoogleError?: string | null;
   onPrepareGoogleLogin?: () => void;
+  onRetryPrepareGoogleLogin?: () => void;
+  showEmailLogin?: boolean;
   /** Show Gateway deposit / x402 run UI. Default true. Set false for creator wallet. */
   showGatewayDeposit?: boolean;
 };
@@ -120,6 +122,8 @@ export default function WalletConnectModal({
   ucwGoogleReady = false,
   ucwGoogleError,
   onPrepareGoogleLogin,
+  onRetryPrepareGoogleLogin,
+  showEmailLogin = true,
   showGatewayDeposit = true,
 }: Props) {
   const [activeTab, setActiveTab] = useState<"balances" | "topup">("balances");
@@ -131,15 +135,15 @@ export default function WalletConnectModal({
   const isConnected = !!walletInfo?.address;
 
   useEffect(() => {
-    if (defaultShowEmailInput) {
+    if (defaultShowEmailInput && showEmailLogin) {
       setShowEmailInput(true);
     }
-  }, [defaultShowEmailInput]);
+  }, [defaultShowEmailInput, showEmailLogin]);
 
   useEffect(() => {
-    if (!open || isConnected || ucwGoogleReady || ucwGooglePreparing) return;
+    if (!open || isConnected || ucwGoogleReady || ucwGooglePreparing || ucwGoogleError) return;
     onPrepareGoogleLogin?.();
-  }, [open, isConnected, ucwGoogleReady, ucwGooglePreparing, onPrepareGoogleLogin]);
+  }, [open, isConnected, ucwGoogleReady, ucwGooglePreparing, ucwGoogleError, onPrepareGoogleLogin]);
 
   // Force tab back to balances when gateway deposit UI is hidden
   useEffect(() => {
@@ -203,7 +207,17 @@ export default function WalletConnectModal({
                 </b>
               </button>
 
-              {showGatewayDeposit && (
+              {ucwGoogleError && onRetryPrepareGoogleLogin && (
+                <button
+                  className="pl-eoa-fallback-v3"
+                  onClick={onRetryPrepareGoogleLogin}
+                  disabled={ucwGooglePreparing || walletState === "connecting"}
+                >
+                  Retry Google login setup
+                </button>
+              )}
+
+              {showEmailLogin && (
                 <button
                   className="pl-login-option-v3"
                   onClick={() => setShowEmailInput(!showEmailInput)}
@@ -214,7 +228,7 @@ export default function WalletConnectModal({
                 </button>
               )}
 
-              {showGatewayDeposit && showEmailInput && (
+              {showEmailLogin && showEmailInput && (
                 <div className="pl-email-input-row">
                   <input
                     className="pl-email-otp-input"
@@ -274,8 +288,19 @@ export default function WalletConnectModal({
               </div>
               {needsReconnectToSign && (
                 <button className="pl-primary-v3" onClick={onReconnect} style={{ marginTop: 8 }}>
-                  {authMethod ? `Reconnect via ${authMethod} to sign` : "Reconnect to sign"}
+                  {walletState === "connecting"
+                    ? "Preparing creator wallet login..."
+                    : ucwGoogleReady && authMethod === "google"
+                      ? "Continue Google reconnect"
+                      : authMethod
+                        ? `Reconnect via ${authMethod} to sign`
+                        : "Reconnect to sign"}
                 </button>
+              )}
+              {error && (
+                <div className="pl-wallet-error-v3" style={{ marginTop: 8 }}>
+                  {error}
+                </div>
               )}
             </div>
 
