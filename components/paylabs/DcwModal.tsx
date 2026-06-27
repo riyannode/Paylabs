@@ -30,19 +30,6 @@ function shortAddr(addr?: string | null) {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
-function isMobileBrowser(): boolean {
-  return typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label}_timeout`)), ms)
-    ),
-  ]);
-}
-
 function asDecimal(value?: string | null): number {
   const n = Number(value ?? "0");
   return Number.isFinite(n) ? n : 0;
@@ -62,7 +49,6 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [activeTab, setActiveTab] = useState<"balances" | "topup">("balances");
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
-  const googleInitialized = useRef(false);
 
   // Deposit state
   const [depositAmount, setDepositAmount] = useState("");
@@ -156,111 +142,48 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
     }
   }, [onWalletReady]);
 
-  // ── Load Google Identity Services ───────────────────────────
+  // ── Handle OAuth2 redirect callback ────────────────────────
   useEffect(() => {
     if (!open) return;
-    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    if (!clientId || googleInitialized.current) return;
+    const hash = window.location.hash;
+    if (!hash.includes("id_token=")) return;
 
-    // Load GIS script if not already loaded
-    const existing = document.getElementById("google-identity-script");
-    if (!existing) {
-      const script = document.createElement("script");
-      script.id = "google-identity-script";
-      script.src = "https://accounts.google.com/gsi/client";
-      script.async = true;
-      script.defer = true;
-      document.head.appendChild(script);
+    const params = new URLSearchParams(hash.substring(1));
+    const idToken = params.get("id_token");
+    // Clean hash from URL
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+
+    if (idToken) {
+      handleGoogleSignIn(idToken);
     }
-
-    // Poll until google.accounts.id is available, then initialize
-    let attempts = 0;
-    const maxAttempts = 30; // 3 seconds max
-    const interval = setInterval(() => {
-      attempts++;
-      const g = (window as unknown as Record<string, unknown>).google as
-        | { accounts?: { id?: { initialize: Function } } }
-        | undefined;
-
-      if (g?.accounts?.id) {
-        clearInterval(interval);
-        if (!googleInitialized.current) {
-          googleInitialized.current = true;
-          g.accounts.id.initialize({
-            client_id: clientId,
-            callback: (response: { credential: string }) => {
-              handleGoogleSignIn(response.credential);
-            },
-            auto_select: false,
-            cancel_on_tap_outside: true,
-          });
-        }
-      }
-
-      if (attempts >= maxAttempts) {
-        clearInterval(interval);
-      }
-    }, 100);
-
-    return () => clearInterval(interval);
   }, [open, handleGoogleSignIn]);
 
-  /** Trigger Google One Tap / sign-in prompt — FedCM-first, GSI fallback */
-  const triggerGoogleSignIn = useCallback(async () => {
+  /** Trigger Google sign-in via OAuth2 redirect (no GSI/FedCM dependency) */
+  const triggerGoogleSignIn = useCallback(() => {
     setIsGoogleLoading(true);
     setError(null);
 
-    try {
-      const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-      const isMobile = isMobileBrowser();
-
-      // ── Skip FedCM on mobile (hangs in Android Chrome / custom tab) ──
-      if (!isMobile && clientId && "IdentityProvider" in globalThis) {
-        try {
-          const cred = await withTimeout(
-            navigator.credentials.get({
-              identity: {
-                providers: [{
-                  configURL: "https://accounts.google.com/gi/fedcm.json",
-                  clientId,
-                }],
-              },
-            } as CredentialRequestOptions),
-            8000,
-            "fedcm"
-          );
-
-          if (cred && "token" in cred && typeof (cred as { token: unknown }).token === "string") {
-            await handleGoogleSignIn((cred as { token: string }).token);
-            return;
-          }
-        } catch {
-          // FedCM failed (timeout, rejection, or error) — fall through to legacy GSI
-        }
-      }
-
-      // ── Fallback: legacy GSI One Tap prompt ──
-      const g = (window as unknown as Record<string, unknown>).google as
-        | { accounts?: { id?: { prompt: Function } } }
-        | undefined;
-
-      if (!g?.accounts?.id) {
-        throw new Error("Google Sign-In not loaded. Please try OTP or Passkey.");
-      }
-
-      await withTimeout(
-        new Promise<void>((resolve) => {
-          g.accounts!.id!.prompt(() => resolve());
-        }),
-        8000,
-        "google_prompt"
-      );
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Google Sign-In timed out. Try OTP or Passkey.");
-    } finally {
+    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+    if (!clientId) {
+      setError("Google Sign-In not configured. Try OTP or Passkey.");
       setIsGoogleLoading(false);
+      return;
     }
-  }, [handleGoogleSignIn]);
+
+    const redirectUri = window.location.origin + window.location.pathname;
+    const nonce = crypto.randomUUID();
+    const scope = encodeURIComponent("openid email profile");
+    const url =
+      `https://accounts.google.com/o/oauth2/v2/auth` +
+      `?client_id=${encodeURIComponent(clientId)}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&response_type=id_token` +
+      `&scope=${scope}` +
+      `&nonce=${encodeURIComponent(nonce)}` +
+      `&prompt=select_account`;
+
+    window.location.href = url;
+  }, []);
 
   // ── Passkey Registration ──────────────────────────────────
   const handlePasskeyRegister = useCallback(async () => {
