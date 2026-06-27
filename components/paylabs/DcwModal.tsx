@@ -35,13 +35,46 @@ function asDecimal(value?: string | null): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function DcwInfoRow({
+  label,
+  value,
+  children,
+  copyValue,
+  muted,
+}: {
+  label: string;
+  value?: string;
+  children?: React.ReactNode;
+  copyValue?: string | null;
+  muted?: boolean;
+}) {
+  return (
+    <div className="pl-info-row-v3">
+      <span className="pl-row-icon-v3" aria-hidden="true" />
+      <span className="pl-row-label-v3">{label}</span>
+      <b className={muted ? "muted" : ""}>
+        {children ?? value}
+        {copyValue && (
+          <button
+            type="button"
+            className="pl-copy-v3"
+            onClick={() => navigator.clipboard?.writeText(copyValue)}
+            aria-label="Copy"
+          >
+            ⎘
+          </button>
+        )}
+      </b>
+    </div>
+  );
+}
+
 export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate, plannedCost = "0.000015" }: Props) {
   const [step, setStep] = useState<DcwStep>("auth");
   const [email, setEmail] = useState("");
   const [wallet, setWallet] = useState<DcwWalletInfo | null>(null);
   const [balance, setBalance] = useState<DcwBalanceInfo>({ walletUsdc: null, gatewayUsdc: "0" });
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState("");
@@ -206,6 +239,14 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
 
     return () => clearInterval(interval);
   }, [open, renderGoogleButton]);
+
+  useEffect(() => {
+    if (!open || step !== "auth") return;
+    const id = window.setTimeout(() => {
+      renderGoogleButton();
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [open, step, renderGoogleButton]);
 
   // ── Passkey Registration ──────────────────────────────────
   const handlePasskeyRegister = useCallback(async () => {
@@ -516,13 +557,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
     }
   }, [depositAmount, refreshBalance]);
 
-  const handleCopy = useCallback(() => {
-    if (wallet?.address) {
-      navigator.clipboard?.writeText(wallet.address);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  }, [wallet]);
+
 
   if (!open) return null;
 
@@ -631,60 +666,32 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
             {activeTab === "balances" && (
               <>
                 <div className="pl-summary-card-v3">
-                  <div className="pl-info-row-v3">
-                    <span className="muted">Wallet</span>
-                    <b className="data-mono">
-                      {shortAddr(wallet.address)}
-                      <button className="pl-copy-v3" onClick={handleCopy} aria-label="Copy">
-                        {copied ? "✓" : "⎘"}
-                      </button>
-                    </b>
-                  </div>
-                  <div className="pl-info-row-v3">
-                    <span className="muted">Type</span>
-                    <b>PayLabs Wallet</b>
-                  </div>
-                  <div className="pl-info-row-v3">
-                    <span className="muted">Network</span>
-                    <b>Arc Testnet</b>
-                  </div>
+                  <DcwInfoRow label="Wallet" copyValue={wallet.address}>
+                    <span className="data-mono">{shortAddr(wallet.address)}</span>
+                  </DcwInfoRow>
+                  <DcwInfoRow label="Type" value="PayLabs Wallet" />
+                  <DcwInfoRow label="Network" value="Arc Testnet" />
 
                   {balance.walletUsdc != null ? (
-                    <div className="pl-info-row-v3">
-                      <span className="muted">Wallet USDC</span>
-                      <b>{balance.walletUsdc} USDC</b>
-                    </div>
+                    <DcwInfoRow label="Wallet USDC" value={`${balance.walletUsdc} USDC`} />
                   ) : balance.walletBalanceStatus === "unavailable" ? (
-                    <div className="pl-info-row-v3">
-                      <span className="muted">Wallet USDC</span>
-                      <b className="muted">Syncing…</b>
-                    </div>
+                    <DcwInfoRow label="Wallet USDC" value="Syncing…" muted />
                   ) : (
-                    <div className="pl-info-row-v3">
-                      <span className="muted">Wallet USDC</span>
-                      <b className="muted">0.00 USDC</b>
-                    </div>
+                    <DcwInfoRow label="Wallet USDC" value="0.00 USDC" muted />
                   )}
 
-                  <div className="pl-info-row-v3">
-                    <span className="muted">Gateway Balance</span>
-                    <b style={{ color: x402Balance > 0 ? "var(--success, #22c55e)" : undefined }}>
+                  <DcwInfoRow label="Gateway Balance">
+                    <span style={{ color: x402Balance > 0 ? "var(--success, #22c55e)" : undefined }}>
                       {balance.gatewayUsdc != null ? `${x402Balance.toFixed(6)} USDC` : "Checking…"}
-                    </b>
-                  </div>
+                    </span>
+                  </DcwInfoRow>
                   <span className="muted" style={{ fontSize: 10, marginLeft: 4 }}>Powered by Circle Gateway</span>
 
                   {asDecimal(balance.pendingBatchUsdc) > 0 && (
-                    <div className="pl-info-row-v3">
-                      <span className="muted">Pending Batch</span>
-                      <b>{asDecimal(balance.pendingBatchUsdc).toFixed(6)} USDC</b>
-                    </div>
+                    <DcwInfoRow label="Pending Batch" value={`${asDecimal(balance.pendingBatchUsdc).toFixed(6)} USDC`} />
                   )}
 
-                  <div className="pl-info-row-v3">
-                    <span className="muted">Planned Cost</span>
-                    <b>{plannedCostNum.toFixed(6)} USDC</b>
-                  </div>
+                  <DcwInfoRow label="Planned Cost" value={`${plannedCostNum.toFixed(6)} USDC`} />
                 </div>
 
                 {/* Status */}
@@ -727,33 +734,18 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
               <>
                 <div className="pl-summary-card-v3">
                   {balance.walletUsdc != null ? (
-                    <div className="pl-info-row-v3">
-                      <span className="muted">Wallet USDC</span>
-                      <b>{balance.walletUsdc} USDC</b>
-                    </div>
+                    <DcwInfoRow label="Wallet USDC" value={`${balance.walletUsdc} USDC`} />
                   ) : balance.walletBalanceStatus === "unavailable" ? (
-                    <div className="pl-info-row-v3">
-                      <span className="muted">Wallet USDC</span>
-                      <b className="muted">Syncing…</b>
-                    </div>
+                    <DcwInfoRow label="Wallet USDC" value="Syncing…" muted />
                   ) : (
-                    <div className="pl-info-row-v3">
-                      <span className="muted">Wallet USDC</span>
-                      <b className="muted">0.00 USDC</b>
-                    </div>
+                    <DcwInfoRow label="Wallet USDC" value="0.00 USDC" muted />
                   )}
-                  <div className="pl-info-row-v3">
-                    <span className="muted">Gateway Balance</span>
-                    <b>{balance.gatewayUsdc != null ? `${x402Balance.toFixed(6)} USDC` : "Checking…"}</b>
-                  </div>
-                  <div className="pl-info-row-v3">
-                    <span className="muted">Planned Cost</span>
-                    <b>{plannedCostNum.toFixed(6)} USDC</b>
-                  </div>
-                  <div className="pl-info-row-v3">
-                    <span className="muted">Recommended</span>
-                    <b>{recommendedStr} USDC</b>
-                  </div>
+                  <DcwInfoRow
+                    label="Gateway Balance"
+                    value={balance.gatewayUsdc != null ? `${x402Balance.toFixed(6)} USDC` : "Checking…"}
+                  />
+                  <DcwInfoRow label="Planned Cost" value={`${plannedCostNum.toFixed(6)} USDC`} />
+                  <DcwInfoRow label="Recommended" value={`${recommendedStr} USDC`} />
                 </div>
 
                 {/* Deposit to Gateway */}
@@ -834,10 +826,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                 </button>
                 {showManualFunding && (
                   <div className="pl-summary-card-v3" style={{ marginTop: 8 }}>
-                    <div className="pl-info-row-v3">
-                      <span className="muted">Wallet address</span>
-                      <button className="pl-copy-v3" onClick={handleCopy}>{copied ? "Copied!" : "Copy"}</button>
-                    </div>
+                    <DcwInfoRow label="Wallet address" value="Copy" copyValue={wallet.address} />
                     <code className="pl-dcw-address-code">{wallet.address}</code>
                     <p className="muted" style={{ fontSize: 11, marginTop: 8 }}>
                       Send USDC on Arc Testnet to this wallet address.
