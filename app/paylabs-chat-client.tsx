@@ -4,7 +4,6 @@ import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import SidebarPanel from "@/components/paylabs/SidebarPanel";
 import type { WalletState, WalletInfo, UcwBalance } from "@/components/paylabs/WalletConnectModal";
 import DcwModal from "@/components/paylabs/DcwModal";
-import PaymentExplorerLinks from "@/components/paylabs/PaymentExplorerLinks";
 import { safeExplorerUrl as validateExplorerUrl } from "@/lib/paylabs/x402/payment-links";
 
 // ─── Types ──────────────────────────────────────────────────
@@ -995,15 +994,6 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
           </div>
         )}
       </div>
-      {(result.entryExplorerUrl || result.entryBatchExplorerUrl || result.entryBatchTxHash) && (
-        <PaymentExplorerLinks
-          directExplorerUrl={result.entryExplorerUrl}
-          batchExplorerUrl={result.entryBatchExplorerUrl}
-          batchTxHash={result.entryBatchTxHash}
-          className="pl-payment-links-inline"
-        />
-      )}
-
       {result.entrySettlementId && !result.entryBatchExplorerUrl && !result.entryBatchTxHash && (
         <div className="pl-payment-links-inline" style={{ fontSize: "0.85em", opacity: 0.7, marginTop: 4 }}>
           ✓ Gateway accepted — queued for batch settlement
@@ -1011,6 +1001,7 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
       )}
       {result.runId && (
         <div className="pl-result-links">
+          <a href={`/receipts?run=${result.runId}`}>View receipt</a>
           <a href={`/explorer?run=${result.runId}`}>View details</a>
           <button onClick={onReset} className="pl-new-run">New run</button>
         </div>

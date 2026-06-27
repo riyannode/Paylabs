@@ -23,6 +23,17 @@ type SaveLoginData = {
 
 type UcwSdk = CircleW3SSdk;
 
+function safeDiagnosticMessage(value: unknown): string {
+  if (value instanceof Error) return value.message.slice(0, 300);
+  if (typeof value === "string") return value.slice(0, 300);
+  if (value == null) return "unknown";
+  return String(value).slice(0, 300);
+}
+
+function logPrepareGoogle(step: string, details: Record<string, unknown> = {}) {
+  console.error(`[creator-ucw] ${step}`, { step, ...details });
+}
+
 type FinalizeCallbacks = {
   setWalletState: (s: WalletState) => void;
   setWalletError: (e: string | null) => void;
@@ -159,54 +170,99 @@ export function useCreatorUcwWallet() {
     const prepare = (async () => {
       setUcwGooglePreparing(true);
       setUcwGoogleError(null);
+      const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
+      const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+      const origin = window.location.origin;
+
+      logPrepareGoogle("prepare_google_start", {
+        hasCircleAppId: !!appId,
+        hasGoogleClientId: !!googleClientId,
+        origin,
+      });
+
       try {
         const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
-        const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
         if (!appId) throw new Error("Creator wallet login is not configured.");
+        if (!googleClientId) throw new Error("Google client ID is not configured.");
 
         const sessionResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
-        if (!sessionResp.ok) throw new Error("Creator wallet session failed.");
+        if (!sessionResp.ok) {
+          logPrepareGoogle("session_create_failed", { status: sessionResp.status });
+          throw new Error("Creator wallet session failed.");
+        }
 
-        const sdk = new W3SSdk({ appSettings: { appId } });
-        const deviceId = await sdk.getDeviceId();
+        let sdk: UcwSdk;
+        sdk = new W3SSdk({
+          configs: {
+            appSettings: { appId },
+            socialLoginConfig: {},
+          },
+          socialLoginCompleteCallback: (error: unknown, result: unknown) =>
+            handleGoogleLoginCallback(sdk, error, result),
+        } as unknown as ConstructorParameters<typeof W3SSdk>[0]);
+
+        let deviceId: string;
+        try {
+          deviceId = await sdk.getDeviceId();
+        } catch (e: unknown) {
+          logPrepareGoogle("get_device_id_failed", { message: safeDiagnosticMessage(e) });
+          throw e;
+        }
 
         const dtResp = await fetch("/api/paylabs/wallet/ucw?action=device-token", {
           method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ deviceId }),
         });
-        if (!dtResp.ok) throw new Error("Creator wallet device setup failed.");
+        if (!dtResp.ok) {
+          logPrepareGoogle("device_token_failed", { status: dtResp.status });
+          throw new Error("Creator wallet device setup failed.");
+        }
         const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
 
         const saveDeviceResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-device", {
           method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ deviceId, deviceToken, deviceEncryptionKey }),
         });
-        if (!saveDeviceResp.ok) throw new Error("Creator wallet device session failed.");
+        if (!saveDeviceResp.ok) {
+          logPrepareGoogle("session_save_device_failed", { status: saveDeviceResp.status });
+          throw new Error("Creator wallet device session failed.");
+        }
 
-        sdk.updateConfigs(
-          {
-            appSettings: { appId },
-            loginConfigs: {
-              deviceToken,
-              deviceEncryptionKey,
-              google: {
-                clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "",
-                redirectUri: window.location.origin,
-                selectAccountPrompt: true,
+        try {
+          sdk.updateConfigs(
+            {
+              appSettings: { appId },
+              socialLoginConfig: {
+                deviceToken,
+                deviceEncryptionKey,
+                google: {
+                  clientId: googleClientId,
+                  redirectUri: origin,
+                  selectAccountPrompt: true,
+                },
               },
-            },
-          },
-          (error: unknown, result: unknown) => handleGoogleLoginCallback(sdk, error, result),
-        );
+            } as unknown as Parameters<UcwSdk["updateConfigs"]>[0],
+            (error: unknown, result: unknown) => handleGoogleLoginCallback(sdk, error, result),
+          );
+        } catch (e: unknown) {
+          logPrepareGoogle("update_configs_failed", { message: safeDiagnosticMessage(e) });
+          throw e;
+        }
 
         ucwSdkRef.current = sdk;
         ucwGoogleReadyRef.current = true;
         setUcwGoogleReady(true);
+        logPrepareGoogle("prepare_google_ready", { origin });
       } catch (e: unknown) {
         ucwGoogleReadyRef.current = false;
         setUcwGoogleReady(false);
-        const message = e instanceof Error ? e.message : "Creator wallet login preparation failed.";
-        setUcwGoogleError(message);
+        logPrepareGoogle("prepare_google_failed", {
+          message: safeDiagnosticMessage(e),
+          hasCircleAppId: !!appId,
+          hasGoogleClientId: !!googleClientId,
+          origin,
+        });
+        setUcwGoogleError("Creator wallet login setup failed. Please retry.");
         throw e;
       } finally {
         setUcwGooglePreparing(false);
@@ -393,7 +449,7 @@ export function useCreatorUcwWallet() {
     if (walletState === "connecting") return;
 
     if (!ucwGoogleReadyRef.current || !ucwSdkRef.current) {
-      setWalletError("Preparing creator wallet login. Try again in a moment.");
+      setWalletError(null);
       prepareGoogleLogin().catch(() => {});
       return;
     }
