@@ -208,18 +208,24 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
       }
 
       // prompt() callback fires when popup is dismissed (user picks account OR closes).
-      // Do NOT timeout — let the user interact at their own pace.
-      await new Promise<void>((resolve) => {
-        g.accounts!.id!.prompt((notification: { isNotDisplayed: () => boolean; isSkippedMoment: () => boolean; getDismissedReason: () => string; getMomentType: () => string }) => {
-          if (notification.isNotDisplayed()) {
-            const reason = notification.getDismissedReason?.() || "unknown";
-            setError(`Google prompt not shown (${reason}). Try OTP or Passkey.`);
-          } else if (notification.isSkippedMoment()) {
-            // Auto-sign-in skipped — user needs to click manually, don't error
-          }
+      // 60s safety timeout — enough for user interaction, prevents hanging forever.
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          g.accounts!.id!.prompt((notification: { isNotDisplayed: () => boolean; isSkippedMoment: () => boolean; getDismissedReason: () => string; getMomentType: () => string }) => {
+            if (notification.isNotDisplayed()) {
+              const reason = notification.getDismissedReason?.() || "unknown";
+              setError(`Google prompt not shown (${reason}). Try OTP or Passkey.`);
+            } else if (notification.isSkippedMoment()) {
+              // Auto-sign-in skipped — user needs to click manually, don't error
+            }
+            resolve();
+          });
+        }),
+        new Promise<void>((resolve) => setTimeout(() => {
+          setError("Google sign-in timed out. Try OTP or Passkey.");
           resolve();
-        });
-      });
+        }, 60_000)),
+      ]);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Google Sign-In failed. Try OTP or Passkey.");
     } finally {
