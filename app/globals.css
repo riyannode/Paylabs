@@ -2084,3 +2084,235 @@ a:hover { text-decoration: none; }
   flex-direction: column;
   gap: 8px;
 }
+
+/* ── PayLabs user receipts ── */
+.pl-receipts-page {
+  display: grid;
+  gap: 16px;
+}
+
+.pl-receipts-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.pl-receipts-filter {
+  max-width: 180px;
+}
+
+.pl-receipt-list {
+  display: grid;
+  gap: 12px;
+}
+
+.pl-receipt-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--pl-radius-lg);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+}
+
+.pl-receipt-card-head {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pl-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--muted-2);
+}
+
+.pl-status-paid,
+.pl-status-settled { background: var(--success); }
+.pl-status-pending { background: var(--warning); }
+.pl-status-failed { background: var(--danger); }
+
+.pl-receipt-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.pl-receipt-main span,
+.pl-receipt-row span,
+.pl-receipt-row small,
+.pl-receipt-summary {
+  overflow-wrap: anywhere;
+}
+
+.pl-receipt-main span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pl-receipt-amount {
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.pl-receipt-chevron {
+  color: var(--muted);
+  font-size: 18px;
+}
+
+.pl-receipt-expanded {
+  border-top: 1px solid var(--border);
+  padding: 14px;
+  background: var(--card-soft);
+}
+
+.pl-receipt-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pl-receipt-section {
+  min-width: 0;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.pl-receipt-section h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.pl-receipt-section dl {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.pl-receipt-section dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pl-receipt-section dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pl-receipt-section dd {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.pl-receipt-summary {
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+
+.pl-receipt-rows,
+.pl-safe-empty {
+  display: grid;
+  gap: 8px;
+}
+
+.pl-safe-empty p {
+  margin: 0;
+  font-weight: 650;
+}
+
+.pl-safe-empty span,
+.pl-receipt-row span,
+.pl-receipt-row small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pl-receipt-row {
+  display: grid;
+  gap: 3px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+
+.pl-receipt-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.pl-receipt-row strong {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.pl-batch-payment-anchor {
+  display: inline-flex;
+  margin-top: 10px;
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pl-batch-payment-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.pl-batch-payment-link button {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: white;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.pl-batch-payment-link button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pl-batch-payment-link span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pl-empty-receipts {
+  text-align: center;
+  padding: 48px 24px;
+}
+
+.pl-empty-receipts h2 {
+  margin: 0 0 8px;
+}
+
+@media (max-width: 960px) {
+  .pl-receipt-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 640px) {
+  .pl-receipts-header { flex-direction: column; }
+  .pl-receipts-filter { max-width: none; }
+  .pl-receipt-card-head { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .pl-receipt-amount { grid-column: 2 / 3; }
+  .pl-receipt-chevron { grid-column: 3 / 4; grid-row: 1 / 3; }
+  .pl-receipt-grid { grid-template-columns: 1fr; }
+}

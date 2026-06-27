@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRunReceipt } from "@/lib/paylabs/visibility/read";
+import { getRunReceiptDetail } from "@/lib/paylabs/visibility/read";
 
 export async function GET(
   _req: NextRequest,
@@ -8,10 +8,13 @@ export async function GET(
   const { runId } = await params;
 
   try {
-    const receipt = await getRunReceipt(runId);
+    const receipt = await getRunReceiptDetail(runId);
+    if (!receipt) {
+      return NextResponse.json({ ok: false, error: "receipt_not_found" }, { status: 404 });
+    }
     return NextResponse.json({ ok: true, run_id: runId, receipt });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ ok: false, error: msg }, { status: 404 });
+    const msg = e instanceof Error ? e.message : "receipt_read_failed";
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }
