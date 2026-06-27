@@ -231,6 +231,19 @@ async function fetchDcwBalance(): Promise<UcwBalance> {
   };
 }
 
+
+async function hasActiveCreatorWalletSession() {
+  const resp = await fetch("/api/paylabs/wallet/ucw?action=session-restore", {
+    method: "POST",
+    credentials: "include",
+  });
+
+  if (!resp.ok) return false;
+
+  const data = await resp.json().catch(() => ({}));
+  return !!data?.hasUserToken && !!data?.walletAddress;
+}
+
 // ─── Main Component ─────────────────────────────────────────
 
 export default function PayLabsChatClient({ analytics }: Props) {
@@ -306,6 +319,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [walletState, setWalletState] = useState<WalletState>("not_connected");
   const [walletInfo, setWalletInfo] = useState<WalletInfo | null>(null);
   const [walletError, setWalletError] = useState<string | null>(null);
+  const [walletModeError, setWalletModeError] = useState<string | null>(null);
   const [ucwBalance, setUcwBalance] = useState<UcwBalance | null>(null);
   const [walletCopied, setWalletCopied] = useState(false);
 
@@ -391,13 +405,30 @@ export default function PayLabsChatClient({ analytics }: Props) {
     };
   }, [planned]);
 
+
+  const openDcwWalletModal = useCallback(async () => {
+    setWalletModeError(null);
+
+    try {
+      const ucwActive = await hasActiveCreatorWalletSession();
+      if (ucwActive) {
+        setWalletModeError("Creator Wallet is connected. Disconnect it before connecting User Test Wallet.");
+        return;
+      }
+    } catch {
+      // Fail open for network/read errors; backend session guards still apply.
+    }
+
+    setDcwOpen(true);
+  }, []);
+
   // ── Submit chat ──
   const submitChat = useCallback(async () => {
     if (!prompt.trim()) return;
 
     // Run gating: must have wallet
     if (!walletInfo?.address) {
-      setDcwOpen(true);
+      openDcwWalletModal();
       return;
     }
 
@@ -407,7 +438,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
       const costNum = parseFloat(planned);
       if (x402Bal < costNum) {
         // Insufficient x402 balance — open DCW modal with top-up tab
-        setDcwOpen(true);
+        openDcwWalletModal();
         return;
       }
     }
@@ -611,7 +642,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
       setError(errMsg);
       setStatus("error");
     }
-  }, [prompt, budget, walletInfo, ucwBalance, planned]);
+  }, [prompt, budget, walletInfo, ucwBalance, planned, openDcwWalletModal]);
 
   const resetChat = useCallback(() => {
     setPrompt("");
@@ -637,8 +668,8 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
   // Reconnect — chat is DCW-only, just open DcwModal
   const reconnectByAuth = useCallback(() => {
-    setDcwOpen(true);
-  }, []);
+    openDcwWalletModal();
+  }, [openDcwWalletModal]);
 
   const copyWalletAddress = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
@@ -663,7 +694,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
           <button
             type="button"
             className={`pl-wallet-pill ${walletInfo?.address ? "connected" : ""}`}
-            onClick={() => setDcwOpen(true)}
+            onClick={openDcwWalletModal}
             title={walletInfo?.address || "Connect wallet"}
           >
             {walletInfo?.address ? (
@@ -724,6 +755,12 @@ export default function PayLabsChatClient({ analytics }: Props) {
             )}
           </button>
         </div>
+
+        {walletModeError && (
+          <div className="pl-wallet-error-v3" style={{ margin: "8px 0" }}>
+            {walletModeError}
+          </div>
+        )}
 
         <section className="pl-hero">
           <h1>Ask PayLabs</h1>

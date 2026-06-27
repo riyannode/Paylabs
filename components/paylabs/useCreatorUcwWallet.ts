@@ -9,9 +9,9 @@ import { SocialLoginProvider } from "@circle-fin/w3s-pw-web-sdk/dist/src/types";
 
 async function fetchSessionBalance(): Promise<UcwBalance> {
   const resp = await fetch("/api/paylabs/wallet/ucw?action=session-balance", { method: "POST", credentials: "include" });
-  if (!resp.ok) return { walletUsdc: "0", gatewayUsdc: "0", source: "ucw" };
-  const data = (await resp.json()) as { usdc: string; gateway: string };
-  return { walletUsdc: data.usdc ?? "0", gatewayUsdc: data.gateway ?? "0", source: "ucw" };
+  if (!resp.ok) return { walletUsdc: "0", gatewayUsdc: null, source: "ucw" };
+  const data = (await resp.json()) as { usdc: string };
+  return { walletUsdc: data.usdc ?? "0", gatewayUsdc: null, source: "ucw" };
 }
 
 type SaveLoginData = {
@@ -122,7 +122,6 @@ export function useCreatorUcwWallet() {
   const [ucwBalance, setUcwBalance] = useState<UcwBalance | null>(null);
   const [ucwWalletId, setUcwWalletId] = useState<string | null>(null);
   const [authMethod, setAuthMethod] = useState<"google" | "email" | "pin" | null>(null);
-  const [depositStatus, setDepositStatus] = useState<string | null>(null);
   const [defaultShowEmailInput, setDefaultShowEmailInput] = useState(false);
   const [ucwGooglePreparing, setUcwGooglePreparing] = useState(false);
   const [ucwGoogleReady, setUcwGoogleReady] = useState(false);
@@ -280,7 +279,7 @@ export function useCreatorUcwWallet() {
           hasGoogleClientId: !!googleClientId,
           origin,
         });
-        setUcwGoogleError("Creator wallet login setup failed. Please retry.");
+        setUcwGoogleError("Creator Wallet login setup failed. Please retry.");
         throw e;
       } finally {
         setUcwGooglePreparing(false);
@@ -354,10 +353,10 @@ export function useCreatorUcwWallet() {
         if (data.hasUserToken && (!data.walletId || !data.walletAddress)) {
           const finResp = await fetch("/api/paylabs/wallet/ucw?action=session-finalize-wallet", { method: "POST", credentials: "include" });
           if (finResp.ok && !cancelled) {
-            const fin = (await finResp.json()) as { walletId: string; walletAddress: string; usdc: string; gateway: string };
+            const fin = (await finResp.json()) as { walletId: string; walletAddress: string; usdc: string };
             setUcwWalletId(fin.walletId);
             setWalletInfo({ address: fin.walletAddress, walletType: "circle_user_controlled", network: "Arc Testnet" });
-            setUcwBalance({ walletUsdc: fin.usdc ?? "0", gatewayUsdc: fin.gateway ?? "0", source: "ucw" });
+            setUcwBalance({ walletUsdc: fin.usdc ?? "0", gatewayUsdc: null, source: "ucw" });
             setWalletState("connected");
             return;
           }
@@ -486,11 +485,11 @@ export function useCreatorUcwWallet() {
       const started = startGoogleLogin(false);
       if (!started) {
         setWalletState("not_connected");
-        setWalletError("Creator wallet login was prepared but could not start. Please try again.");
+        setWalletError("Creator Wallet login was prepared but could not start. Please try again.");
       }
     } catch (e: unknown) {
       setWalletState("not_connected");
-      setWalletError(e instanceof Error ? e.message : "Creator wallet login setup failed.");
+      setWalletError(e instanceof Error ? e.message : "Creator Wallet login setup failed.");
     }
   }, [walletState, prepareGoogleLogin, startGoogleLogin]);
 
@@ -622,10 +621,22 @@ export function useCreatorUcwWallet() {
     else if (authMethod === "pin") connectPin();
   }, [authMethod, reconnectGoogle, connectPin]);
 
-  // ── Gateway deposit (no-op for creator — kept for prop compatibility) ──
-  const depositGateway = useCallback(async (_amountAtomic: string) => {
-    // Creator wallet does not support Gateway deposit.
-    // This is intentionally a no-op.
+  const disconnect = useCallback(async () => {
+    await fetch("/api/paylabs/wallet/ucw?action=session-destroy", {
+      method: "POST",
+      credentials: "include",
+    }).catch(() => {});
+
+    ucwSdkRef.current = null;
+    ucwAuthRef.current = null;
+    ucwGoogleReadyRef.current = false;
+    setUcwGoogleReady(false);
+    setWalletInfo(null);
+    setUcwWalletId(null);
+    setUcwBalance(null);
+    setWalletState("not_connected");
+    setWalletError(null);
+    setAuthMethod(null);
   }, []);
 
   // ── Refresh balance ──
@@ -641,7 +652,6 @@ export function useCreatorUcwWallet() {
     walletError,
     needsReconnectToSign,
     authMethod,
-    depositStatus,
     defaultShowEmailInput,
     ucwGooglePreparing,
     ucwGoogleReady,
@@ -652,7 +662,7 @@ export function useCreatorUcwWallet() {
     connectEmail,
     connectPin,
     reconnect,
-    depositGateway,
+    disconnect,
     refreshBalance,
   };
 }

@@ -70,7 +70,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const { sid, walletAddress } = await getWalletSession(req);
   if (!walletAddress) {
-    return NextResponse.json({ error: "Connected UCW creator wallet required" }, { status: 401 });
+    return NextResponse.json({ error: "Connected Creator Wallet required" }, { status: 401 });
   }
 
   const body = (await req.json().catch(() => ({}))) as { creator_name?: unknown; source_url?: unknown };
