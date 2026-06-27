@@ -100,11 +100,16 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (exitOutput?.final_answer as string) ??
     null;
 
-  const assistantResponse =
+  const brainAssistantResponse =
     (brainPlanning?.assistant_response as string) ??
     (agentTraceBrain?.assistant_response as string) ??
     (brainPlanning?.plan_rationale as string) ??
     (agentTraceBrain?.plan_rationale as string) ??
+    null;
+
+  const assistantResponse =
+    brainAssistantResponse ??
+    rawFinalAnswer ??
     (exitOutput?.final_summary as string) ??
     tieredSummaries?.final_summary ??
     "Run completed.";
@@ -909,7 +914,7 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
     <div className="pl-result-card">
       {result.assistantResponse && (
         <div className="pl-assistant-answer">
-          <div className="pl-assistant-label">Brain answer</div>
+          <div className="pl-assistant-label">Answer</div>
           <div>{result.assistantResponse}</div>
         </div>
       )}
