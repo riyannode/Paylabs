@@ -2355,3 +2355,194 @@ a:hover { text-decoration: none; }
   .pl-receipt-chevron { grid-column: 3 / 4; grid-row: 1 / 3; }
   .pl-receipt-grid { grid-template-columns: 1fr; }
 }
+
+.pl-wallet-connected-address-row {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.pl-wallet-connected-address {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--foreground);
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+
+.pl-copy-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: #fff;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.pl-copy-pill-copied {
+  border-color: rgba(22, 163, 74, 0.35);
+  background: rgba(22, 163, 74, 0.1);
+  color: #15803d;
+}
+
+.pl-copy-pill:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pl-deposit-panel-flat,
+.pl-deposit-panel,
+.pl-deposit-card,
+.pl-gateway-deposit-card {
+  margin-top: 16px;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.pl-deposit-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--foreground);
+  margin: 0 0 6px;
+}
+
+.pl-deposit-helper {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted-foreground, var(--muted));
+}
+
+.pl-deposit-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+  width: 100%;
+}
+
+.pl-deposit-input {
+  min-width: 0;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #d8dee8);
+  border-radius: 10px;
+  background: #fff;
+  color: inherit;
+  font-size: 14px;
+}
+
+.pl-deposit-button {
+  white-space: nowrap;
+  min-width: 112px;
+  max-width: 170px;
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+.pl-use-recommended-pill,
+.pl-use-recommended-button,
+.pl-recommended-pill {
+  margin-top: 8px;
+  display: inline-flex;
+  width: auto !important;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  border: 0 !important;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(8, 59, 133, 0.06);
+  color: var(--muted-foreground, var(--muted));
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: none !important;
+}
+
+.pl-faucet-card {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+  background: #fff;
+  display: grid;
+  gap: 12px;
+}
+
+.pl-faucet-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--foreground);
+}
+
+.pl-faucet-subtitle {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted-foreground, var(--muted));
+}
+
+.pl-faucet-button,
+.pl-fund-wallet-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  border-radius: 14px;
+  background: #083b85;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+@media (max-width: 480px) {
+  .pl-wallet-connected-address-row {
+    gap: 6px;
+  }
+
+  .pl-wallet-connected-address {
+    font-size: 17px;
+  }
+
+  .pl-copy-pill {
+    min-height: 26px;
+    padding: 4px 9px;
+    font-size: 11px;
+  }
+
+  .pl-deposit-input-row {
+    grid-template-columns: 1fr;
+  }
+
+  .pl-deposit-button {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .pl-use-recommended-pill,
+  .pl-use-recommended-button,
+  .pl-recommended-pill {
+    width: fit-content !important;
+  }
+
+  .pl-faucet-button,
+  .pl-fund-wallet-button {
+    width: 100%;
+  }
+}
