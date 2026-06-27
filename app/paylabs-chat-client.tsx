@@ -889,7 +889,6 @@ export default function PayLabsChatClient({ analytics }: Props) {
             walletType: "circle_developer_controlled",
             network: w.chain,
           });
-          // Fetch balance FIRST, then close modal (avoid race condition)
           try {
             const dcwBal = await fetchDcwBalance();
             setUcwBalance(dcwBal);
@@ -898,7 +897,6 @@ export default function PayLabsChatClient({ analytics }: Props) {
           } catch {
             setWalletState("connected");
           }
-          setDcwOpen(false);
         }}
       />
     </div>
