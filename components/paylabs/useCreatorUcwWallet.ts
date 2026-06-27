@@ -2,6 +2,8 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { WalletState, WalletInfo, UcwBalance } from "./WalletConnectModal";
+import type { W3SSdk as CircleW3SSdk } from "@circle-fin/w3s-pw-web-sdk";
+import { SocialLoginProvider } from "@circle-fin/w3s-pw-web-sdk/dist/src/types";
 
 // ── Session helpers (server-side, tokens never touch client) ──
 
@@ -19,6 +21,8 @@ type SaveLoginData = {
   error?: string;
 };
 
+type UcwSdk = CircleW3SSdk;
+
 type FinalizeCallbacks = {
   setWalletState: (s: WalletState) => void;
   setWalletError: (e: string | null) => void;
@@ -29,7 +33,7 @@ type FinalizeCallbacks = {
 
 async function finalizeWalletAfterLogin(
   saveData: SaveLoginData,
-  sdk: { getDeviceId: () => Promise<string>; setAuthentication: (auth: { userToken: string; encryptionKey: string }) => void; execute: (challengeId: string, cb: (error: unknown, result: unknown) => void) => void; setLocalizations: (l: Record<string, unknown>) => void },
+  sdk: UcwSdk,
   cbs: FinalizeCallbacks,
   auth?: { userToken: string; encryptionKey?: string },
 ): Promise<boolean> {
@@ -95,9 +99,15 @@ export function useCreatorUcwWallet() {
   const [authMethod, setAuthMethod] = useState<"google" | "email" | "pin" | null>(null);
   const [depositStatus, setDepositStatus] = useState<string | null>(null);
   const [defaultShowEmailInput, setDefaultShowEmailInput] = useState(false);
+  const [ucwGooglePreparing, setUcwGooglePreparing] = useState(false);
+  const [ucwGoogleReady, setUcwGoogleReady] = useState(false);
+  const [ucwGoogleError, setUcwGoogleError] = useState<string | null>(null);
 
-  const ucwSdkRef = useRef<unknown>(null);
+  const ucwSdkRef = useRef<UcwSdk | null>(null);
   const ucwAuthRef = useRef<{ userToken: string; encryptionKey?: string } | null>(null);
+  const ucwGoogleReadyRef = useRef(false);
+  const prepareGooglePromiseRef = useRef<Promise<void> | null>(null);
+  const loginTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const ucwCanSign = walletInfo?.walletType === "circle_user_controlled"
     ? !!ucwSdkRef.current && !!ucwAuthRef.current
@@ -107,6 +117,110 @@ export function useCreatorUcwWallet() {
     walletInfo?.walletType === "circle_user_controlled" &&
     !!walletInfo.address &&
     !ucwCanSign;
+
+  const clearLoginTimeout = useCallback(() => {
+    if (loginTimeoutRef.current) {
+      clearTimeout(loginTimeoutRef.current);
+      loginTimeoutRef.current = null;
+    }
+  }, []);
+
+  const handleGoogleLoginCallback = useCallback(async (sdk: UcwSdk, error: unknown, result: unknown) => {
+    clearLoginTimeout();
+    if (error) {
+      setWalletState("not_connected");
+      setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown"}`);
+      return;
+    }
+
+    const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
+    ucwAuthRef.current = { userToken, encryptionKey };
+    setAuthMethod("google");
+
+    const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userToken, encryptionKey, authMethod: "google" }),
+    });
+    if (!saveResp.ok) {
+      setWalletState("not_connected");
+      setWalletError("Failed to save login session");
+      return;
+    }
+
+    const saveData = (await saveResp.json()) as SaveLoginData;
+    const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
+    await finalizeWalletAfterLogin(saveData, sdk, cbs, { userToken, encryptionKey });
+  }, [clearLoginTimeout]);
+
+  const prepareGoogleLogin = useCallback(async () => {
+    if (ucwGoogleReadyRef.current) return;
+    if (prepareGooglePromiseRef.current) return prepareGooglePromiseRef.current;
+
+    const prepare = (async () => {
+      setUcwGooglePreparing(true);
+      setUcwGoogleError(null);
+      try {
+        const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
+        const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
+        if (!appId) throw new Error("Creator wallet login is not configured.");
+
+        const sessionResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
+        if (!sessionResp.ok) throw new Error("Creator wallet session failed.");
+
+        const sdk = new W3SSdk({ appSettings: { appId } });
+        const deviceId = await sdk.getDeviceId();
+
+        const dtResp = await fetch("/api/paylabs/wallet/ucw?action=device-token", {
+          method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deviceId }),
+        });
+        if (!dtResp.ok) throw new Error("Creator wallet device setup failed.");
+        const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
+
+        const saveDeviceResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-device", {
+          method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deviceId, deviceToken, deviceEncryptionKey }),
+        });
+        if (!saveDeviceResp.ok) throw new Error("Creator wallet device session failed.");
+
+        sdk.updateConfigs(
+          {
+            appSettings: { appId },
+            loginConfigs: {
+              deviceToken,
+              deviceEncryptionKey,
+              google: {
+                clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "",
+                redirectUri: window.location.origin,
+                selectAccountPrompt: true,
+              },
+            },
+          },
+          (error: unknown, result: unknown) => handleGoogleLoginCallback(sdk, error, result),
+        );
+
+        ucwSdkRef.current = sdk;
+        ucwGoogleReadyRef.current = true;
+        setUcwGoogleReady(true);
+      } catch (e: unknown) {
+        ucwGoogleReadyRef.current = false;
+        setUcwGoogleReady(false);
+        const message = e instanceof Error ? e.message : "Creator wallet login preparation failed.";
+        setUcwGoogleError(message);
+        throw e;
+      } finally {
+        setUcwGooglePreparing(false);
+        prepareGooglePromiseRef.current = null;
+      }
+    })();
+
+    prepareGooglePromiseRef.current = prepare;
+    return prepare;
+  }, [handleGoogleLoginCallback]);
+
+  useEffect(() => {
+    return () => clearLoginTimeout();
+  }, [clearLoginTimeout]);
 
   // ── Session restore (UCW only) ──
   useEffect(() => {
@@ -242,64 +356,50 @@ export function useCreatorUcwWallet() {
     return () => { cancelled = true; if (oauthTimeout) clearTimeout(oauthTimeout); };
   }, []);
 
-  // ── Connect via Google ──
-  const connectGoogle = useCallback(async () => {
-    if (walletState === "connecting") return;
+  const startGoogleLogin = useCallback((preserveConnectedWallet: boolean) => {
+    const sdk = ucwSdkRef.current;
+    if (!ucwGoogleReadyRef.current || !sdk) return false;
+
     setWalletState("connecting");
     setWalletError(null);
+    clearLoginTimeout();
+    loginTimeoutRef.current = setTimeout(() => {
+      setWalletState(preserveConnectedWallet ? "connected" : "not_connected");
+      setWalletError("Login popup was blocked or timed out. Try again.");
+      loginTimeoutRef.current = null;
+    }, 55_000);
+
     try {
-      const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
-      const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
-      if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
-
-      await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
-      const sdk = new W3SSdk({ appSettings: { appId } });
-      const deviceId = await sdk.getDeviceId();
-      ucwSdkRef.current = sdk;
-
-      const dtResp = await fetch("/api/paylabs/wallet/ucw?action=device-token", {
-        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId }),
-      });
-      if (!dtResp.ok) throw new Error("Device token failed");
-      const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
-
-      await fetch("/api/paylabs/wallet/ucw?action=session-save-device", {
-        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId, deviceToken, deviceEncryptionKey }),
-      });
-
-      sdk.updateConfigs(
-        {
-          appSettings: { appId },
-          loginConfigs: {
-            deviceToken, deviceEncryptionKey,
-            google: { clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "", redirectUri: window.location.origin, selectAccountPrompt: true },
-          },
-        },
-        async (error: unknown, result: unknown) => {
-          if (error) { setWalletState("not_connected"); setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown"}`); return; }
-          const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
-          ucwAuthRef.current = { userToken, encryptionKey };
-          setAuthMethod("google");
-          const saveResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-login", {
-            method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userToken, encryptionKey, authMethod: "google" }),
-          });
-          if (!saveResp.ok) { setWalletState("not_connected"); setWalletError("Failed to save login"); return; }
-          const saveData = (await saveResp.json()) as SaveLoginData;
-          const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
-          await finalizeWalletAfterLogin(saveData, sdk, cbs, { userToken, encryptionKey });
-        },
-      );
-
-      const { SocialLoginProvider } = await import("@circle-fin/w3s-pw-web-sdk/dist/src/types");
       sdk.performLogin(SocialLoginProvider.GOOGLE);
+      return true;
     } catch (e: unknown) {
-      setWalletState("not_connected");
+      clearLoginTimeout();
+      setWalletState(preserveConnectedWallet ? "connected" : "not_connected");
       setWalletError(e instanceof Error ? e.message : "Connection failed.");
+      return false;
     }
-  }, [walletState]);
+  }, [clearLoginTimeout]);
+
+  const retryPrepareGoogleLogin = useCallback(async () => {
+    setUcwGoogleError(null);
+    ucwGoogleReadyRef.current = false;
+    ucwSdkRef.current = null;
+    setUcwGoogleReady(false);
+    await prepareGoogleLogin();
+  }, [prepareGoogleLogin]);
+
+  // ── Connect via Google ──
+  const connectGoogle = useCallback(() => {
+    if (walletState === "connecting") return;
+
+    if (!ucwGoogleReadyRef.current || !ucwSdkRef.current) {
+      setWalletError("Preparing creator wallet login. Try again in a moment.");
+      prepareGoogleLogin().catch(() => {});
+      return;
+    }
+
+    startGoogleLogin(false);
+  }, [walletState, prepareGoogleLogin, startGoogleLogin]);
 
   // ── Connect via Email OTP ──
   const connectEmail = useCallback(async (email: string) => {
@@ -402,12 +502,32 @@ export function useCreatorUcwWallet() {
     }
   }, [walletState]);
 
+  const reconnectGoogle = useCallback(async () => {
+    if (walletState === "connecting") return;
+
+    if (!ucwGoogleReadyRef.current || !ucwSdkRef.current) {
+      setWalletState("connecting");
+      setWalletError("Preparing creator wallet login...");
+      try {
+        await prepareGoogleLogin();
+      } catch (e: unknown) {
+        setWalletState(walletInfo?.address ? "connected" : "not_connected");
+        setWalletError(e instanceof Error ? e.message : "Creator wallet login preparation failed.");
+        return;
+      }
+    }
+
+    startGoogleLogin(!!walletInfo?.address);
+  }, [walletState, walletInfo?.address, prepareGoogleLogin, startGoogleLogin]);
+
   // ── Reconnect by auth method ──
   const reconnect = useCallback(() => {
-    if (authMethod === "google") connectGoogle();
-    else if (authMethod === "email") { setDefaultShowEmailInput(true); }
+    if (authMethod === "google") reconnectGoogle();
+    else if (authMethod === "email") {
+      setWalletError("Email reconnect is not available. Use Google or PIN.");
+    }
     else if (authMethod === "pin") connectPin();
-  }, [authMethod, connectGoogle, connectPin]);
+  }, [authMethod, reconnectGoogle, connectPin]);
 
   // ── Gateway deposit (no-op for creator — kept for prop compatibility) ──
   const depositGateway = useCallback(async (_amountAtomic: string) => {
@@ -430,6 +550,11 @@ export function useCreatorUcwWallet() {
     authMethod,
     depositStatus,
     defaultShowEmailInput,
+    ucwGooglePreparing,
+    ucwGoogleReady,
+    ucwGoogleError,
+    prepareGoogleLogin,
+    retryPrepareGoogleLogin,
     connectGoogle,
     connectEmail,
     connectPin,
