@@ -73,6 +73,14 @@ function isTerminal(state: string): boolean {
   return TERMINAL_STATES.includes(state);
 }
 
+function parseDepositFlowId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 80) return null;
+  if (!/^[A-Za-z0-9-]+$/.test(trimmed)) return null;
+  return trimmed;
+}
+
 // ─── GET: Semantic state machine poll ────────────────────────
 
 export async function GET(req: NextRequest) {
@@ -85,6 +93,12 @@ export async function GET(req: NextRequest) {
     const approveTxId = req.nextUrl.searchParams.get("approveTxId");
     const depositTxId = req.nextUrl.searchParams.get("depositTxId");
     const amountUsdc = req.nextUrl.searchParams.get("amountUsdc");
+    const rawDepositFlowId = req.nextUrl.searchParams.get("depositFlowId");
+    const depositFlowId = parseDepositFlowId(rawDepositFlowId);
+
+    if (rawDepositFlowId && !depositFlowId) {
+      return NextResponse.json({ ok: false, error: "Invalid depositFlowId" }, { status: 400 });
+    }
 
     if (!approveTxId) {
       return NextResponse.json({ ok: false, error: "approveTxId parameter required" }, { status: 400 });
@@ -153,6 +167,9 @@ export async function GET(req: NextRequest) {
 
       const client = getDcwClient();
       const amountAtomic = String(Math.round(Number(amountUsdc) * 1_000_000));
+      const depositIdempotencyKey = depositFlowId
+        ? `paylabs-dcw-gateway-deposit:${session.sub}:${wallet.wallet_id}:${depositFlowId}:${approveTxId}:${amountAtomic}`
+        : `paylabs-dcw-gateway-deposit:${session.sub}:${wallet.wallet_id}:${approveTxId}:${amountAtomic}`;
 
       try {
         const depositResp = await client.createContractExecutionTransaction({
@@ -161,7 +178,7 @@ export async function GET(req: NextRequest) {
           abiFunctionSignature: "deposit(address,uint256)",
           abiParameters: [USDC_CONTRACT_ADDRESS, amountAtomic],
           fee: { type: "level", config: { feeLevel: "MEDIUM" } },
-          idempotencyKey: `paylabs-dcw-gateway-deposit:${session.sub}:${approveTxId}:${amountAtomic}`,
+          idempotencyKey: depositIdempotencyKey,
         });
 
         const newDepositTxId = depositResp?.data?.id;
@@ -286,6 +303,11 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => ({}));
     const amountUsdc = Number(body.amountUsdc);
+    const rawDepositFlowId = body.depositFlowId;
+    const depositFlowId = parseDepositFlowId(rawDepositFlowId);
+    if (rawDepositFlowId != null && !depositFlowId) {
+      return NextResponse.json({ ok: false, error: "Invalid depositFlowId" }, { status: 400 });
+    }
     if (!Number.isFinite(amountUsdc) || amountUsdc <= 0) {
       return NextResponse.json({ ok: false, error: "Valid amountUsdc required" }, { status: 400 });
     }
@@ -316,7 +338,9 @@ export async function POST(req: NextRequest) {
       }, { status: 500 });
     }
 
-    const approveIdempotencyKey = `paylabs-dcw-gateway-approve:${session.sub}:${wallet.wallet_id}:${amountAtomic}`;
+    const approveIdempotencyKey = depositFlowId
+      ? `paylabs-dcw-gateway-approve:${session.sub}:${wallet.wallet_id}:${depositFlowId}:${amountAtomic}`
+      : `paylabs-dcw-gateway-approve:${session.sub}:${wallet.wallet_id}:${amountAtomic}`;
 
     // Step 1 ONLY: Approve USDC spending by Gateway contract
     // DO NOT submit deposit here — wait for approve COMPLETE via GET poll

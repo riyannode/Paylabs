@@ -459,20 +459,33 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   const [depositState, setDepositState] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const depositTxIdRef = useRef<string | null>(null);
+  const depositInFlightRef = useRef(false);
+  const depositFlowIdRef = useRef<string | null>(null);
+  const flowActive =
+    isDepositing ||
+    depositInFlightRef.current ||
+    ["approve_pending", "approve_complete", "deposit_pending", "deposit_complete"].includes(depositState ?? "") ||
+    (!!approveTxId && depositState !== "complete" && depositState !== "failed");
 
   // Cleanup polling on unmount
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+      depositInFlightRef.current = false;
+      depositFlowIdRef.current = null;
     };
   }, []);
 
   const handleDeposit = useCallback(async () => {
+    if (depositInFlightRef.current) return;
+
     const amount = parseFloat(depositAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
       setDepositError("Enter a valid amount");
       return;
     }
+    depositInFlightRef.current = true;
+    depositFlowIdRef.current = crypto.randomUUID();
     setIsDepositing(true);
     setDepositError(null);
     setDepositTxId(null);
@@ -492,11 +505,14 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amountUsdc: amount }),
+        body: JSON.stringify({ amountUsdc: amount, depositFlowId: depositFlowIdRef.current }),
       });
       const data = await resp.json();
       if (!data.ok) {
         setDepositError(data.error || "Deposit failed");
+        setIsDepositing(false);
+        depositInFlightRef.current = false;
+        depositFlowIdRef.current = null;
         return;
       }
       setDepositAmount("");
@@ -512,6 +528,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
             approveTxId: data.approveTxId,
             amountUsdc: String(amt),
           });
+          if (depositFlowIdRef.current) params.set("depositFlowId", depositFlowIdRef.current);
           // Include depositTxId if we already have it from a previous poll response
           if (depositTxIdRef.current) params.set("depositTxId", depositTxIdRef.current);
 
@@ -539,6 +556,9 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                     : null;
                 setDepositError(safeReason || "Gateway deposit failed. Check details and retry.");
               }
+              setIsDepositing(false);
+              depositInFlightRef.current = false;
+              depositFlowIdRef.current = null;
               if (pollRef.current) {
                 clearInterval(pollRef.current);
                 pollRef.current = null;
@@ -559,8 +579,9 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
       }, 5000);
     } catch (e: unknown) {
       setDepositError(e instanceof Error ? e.message : "Deposit failed");
-    } finally {
       setIsDepositing(false);
+      depositInFlightRef.current = false;
+      depositFlowIdRef.current = null;
     }
   }, [depositAmount, refreshBalance]);
 
@@ -773,7 +794,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                       placeholder="Amount USDC"
                       value={depositAmount}
                       onChange={(e) => { setDepositAmount(e.target.value); setDepositError(null); }}
-                      disabled={isDepositing}
+                      disabled={flowActive}
                       style={{
                         width: "100%",
                         padding: "10px 12px",
@@ -787,10 +808,10 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                     <button
                       className="pl-primary-v3"
                       onClick={handleDeposit}
-                      disabled={isDepositing || !depositAmount}
-                      style={{ whiteSpace: "nowrap", opacity: isDepositing || !depositAmount ? 0.5 : 1 }}
+                      disabled={flowActive || !depositAmount}
+                      style={{ whiteSpace: "nowrap", opacity: flowActive || !depositAmount ? 0.5 : 1 }}
                     >
-                      {isDepositing ? "Depositing…" : "Deposit to Gateway"}
+                      {flowActive ? "Depositing…" : "Deposit to Gateway"}
                     </button>
                   </div>
                   {depositError && (
@@ -814,7 +835,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                     <button
                       className="pl-eoa-fallback-v3"
                       onClick={() => setDepositAmount(recommendedStr)}
-                      disabled={isDepositing}
+                      disabled={flowActive}
                       style={{ marginTop: 6, fontSize: 11 }}
                     >
                       Use recommended: {recommendedStr} USDC
