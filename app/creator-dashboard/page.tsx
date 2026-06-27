@@ -18,6 +18,16 @@ export default function CreatorPage() {
         <CreatorWalletPanel />
       </div>
 
+      <div className="card" style={{ display: "grid", gap: 12 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 600 }}>Creator Profile</h2>
+        <p className="muted" style={{ fontSize: 13 }}>
+          Register your source so PayLabs can attribute eligible runs to your creator wallet.
+        </p>
+        <a className="pl-primary-v3" href="/creator-profile" style={{ textAlign: "center", textDecoration: "none" }}>
+          Complete Creator Profile
+        </a>
+      </div>
+
       <div className="card" style={{ textAlign: "center", padding: "64px 24px" }}>
         <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
         <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>Earnings Dashboard</h2>
