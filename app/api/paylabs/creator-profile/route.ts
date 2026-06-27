@@ -48,7 +48,11 @@ function parseHttpsUrl(value: unknown): { url?: string; domain?: string; error?:
 export async function GET(req: NextRequest) {
   const { sid, walletAddress } = await getWalletSession(req);
   if (!walletAddress) {
-    return NextResponse.json({ walletAddress: null, claims: [] }, { status: 401 });
+    return NextResponse.json({
+      walletAddress: null,
+      claims: [],
+      authenticated: false,
+    });
   }
 
   const { data, error } = await supabaseAdmin()

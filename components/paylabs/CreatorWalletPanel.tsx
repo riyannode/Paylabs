@@ -66,7 +66,7 @@ export default function CreatorWalletPanel() {
         ucwGoogleError={ucwGoogleError}
         onPrepareGoogleLogin={() => { prepareGoogleLogin().catch(() => {}); }}
         onRetryPrepareGoogleLogin={() => { retryPrepareGoogleLogin().catch(() => {}); }}
-        autoPrepareGoogleLogin={false}
+        autoPrepareGoogleLogin={true}
         showEmailLogin={false}
         showGatewayDeposit={false}
       />
