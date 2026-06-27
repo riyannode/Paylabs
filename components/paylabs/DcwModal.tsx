@@ -461,6 +461,8 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   const depositTxIdRef = useRef<string | null>(null);
   const depositInFlightRef = useRef(false);
   const depositFlowIdRef = useRef<string | null>(null);
+  const approveIdempotencyKeyRef = useRef<string | null>(null);
+  const depositIdempotencyKeyRef = useRef<string | null>(null);
   const flowActive =
     isDepositing ||
     depositInFlightRef.current ||
@@ -473,6 +475,8 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
       if (pollRef.current) clearInterval(pollRef.current);
       depositInFlightRef.current = false;
       depositFlowIdRef.current = null;
+      approveIdempotencyKeyRef.current = null;
+      depositIdempotencyKeyRef.current = null;
     };
   }, []);
 
@@ -486,6 +490,8 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
     }
     depositInFlightRef.current = true;
     depositFlowIdRef.current = crypto.randomUUID();
+    approveIdempotencyKeyRef.current = crypto.randomUUID();
+    depositIdempotencyKeyRef.current = crypto.randomUUID();
     setIsDepositing(true);
     setDepositError(null);
     setDepositTxId(null);
@@ -505,7 +511,12 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amountUsdc: amount, depositFlowId: depositFlowIdRef.current }),
+        body: JSON.stringify({
+          amountUsdc: amount,
+          depositFlowId: depositFlowIdRef.current,
+          approveIdempotencyKey: approveIdempotencyKeyRef.current,
+          depositIdempotencyKey: depositIdempotencyKeyRef.current,
+        }),
       });
       const data = await resp.json();
       if (!data.ok) {
@@ -513,10 +524,15 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
         setIsDepositing(false);
         depositInFlightRef.current = false;
         depositFlowIdRef.current = null;
+        approveIdempotencyKeyRef.current = null;
+        depositIdempotencyKeyRef.current = null;
         return;
       }
       setDepositAmount("");
       setApproveTxId(data.approveTxId);
+      if (typeof data.depositIdempotencyKey === "string") {
+        depositIdempotencyKeyRef.current = data.depositIdempotencyKey;
+      }
       setDepositState("approve_pending");
 
       const amt = amount;
@@ -529,6 +545,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
             amountUsdc: String(amt),
           });
           if (depositFlowIdRef.current) params.set("depositFlowId", depositFlowIdRef.current);
+          if (depositIdempotencyKeyRef.current) params.set("depositIdempotencyKey", depositIdempotencyKeyRef.current);
           // Include depositTxId if we already have it from a previous poll response
           if (depositTxIdRef.current) params.set("depositTxId", depositTxIdRef.current);
 
@@ -559,6 +576,8 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
               setIsDepositing(false);
               depositInFlightRef.current = false;
               depositFlowIdRef.current = null;
+              approveIdempotencyKeyRef.current = null;
+              depositIdempotencyKeyRef.current = null;
               if (pollRef.current) {
                 clearInterval(pollRef.current);
                 pollRef.current = null;
@@ -582,6 +601,8 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
       setIsDepositing(false);
       depositInFlightRef.current = false;
       depositFlowIdRef.current = null;
+      approveIdempotencyKeyRef.current = null;
+      depositIdempotencyKeyRef.current = null;
     }
   }, [depositAmount, refreshBalance]);
 
