@@ -13,7 +13,7 @@ type DcwWalletInfo = {
 type DcwBalanceInfo = {
   walletUsdc: string | null;   // on-chain USDC (null if fetch failed)
   walletBalanceStatus?: "ok" | "unavailable"; // from Circle SDK
-  gatewayUsdc: string;         // x402 Balance (Gateway)
+  gatewayUsdc: string;         // Gateway Balance
   pendingBatchUsdc?: string;
 };
 
@@ -35,13 +35,46 @@ function asDecimal(value?: string | null): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function DcwInfoRow({
+  label,
+  value,
+  children,
+  copyValue,
+  muted,
+}: {
+  label: string;
+  value?: string;
+  children?: React.ReactNode;
+  copyValue?: string | null;
+  muted?: boolean;
+}) {
+  return (
+    <div className="pl-info-row-v3">
+      <span className="pl-row-icon-v3" aria-hidden="true" />
+      <span className="pl-row-label-v3">{label}</span>
+      <b className={muted ? "muted" : ""}>
+        {children ?? value}
+        {copyValue && (
+          <button
+            type="button"
+            className="pl-copy-v3"
+            onClick={() => navigator.clipboard?.writeText(copyValue)}
+            aria-label="Copy"
+          >
+            ⎘
+          </button>
+        )}
+      </b>
+    </div>
+  );
+}
+
 export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate, plannedCost = "0.000015" }: Props) {
   const [step, setStep] = useState<DcwStep>("auth");
   const [email, setEmail] = useState("");
   const [wallet, setWallet] = useState<DcwWalletInfo | null>(null);
   const [balance, setBalance] = useState<DcwBalanceInfo>({ walletUsdc: null, gatewayUsdc: "0" });
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState("");
@@ -49,7 +82,10 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [activeTab, setActiveTab] = useState<"balances" | "topup">("balances");
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [showPasskeyForm, setShowPasskeyForm] = useState(false);
+  const [showManualFunding, setShowManualFunding] = useState(false);
   const googleInitialized = useRef(false);
+  const googleButtonRef = useRef<HTMLDivElement | null>(null);
 
   // Deposit state
   const [depositAmount, setDepositAmount] = useState("");
@@ -83,6 +119,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   // Check existing session on open
   useEffect(() => {
     if (!open) return;
+    setShowPasskeyForm(false);
     checkSession();
   }, [open]);
 
@@ -143,13 +180,45 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
     }
   }, [onWalletReady]);
 
+  const renderGoogleButton = useCallback(() => {
+    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+    const g = (window as unknown as Record<string, unknown>).google as
+      | { accounts?: { id?: { initialize: Function; renderButton: Function } } }
+      | undefined;
+
+    if (!clientId || !g?.accounts?.id || !googleButtonRef.current) return;
+
+    if (!googleInitialized.current) {
+      googleInitialized.current = true;
+      g.accounts.id.initialize({
+        client_id: clientId,
+        callback: (response: { credential: string }) => {
+          handleGoogleSignIn(response.credential);
+        },
+        ux_mode: "popup",
+        auto_select: false,
+        cancel_on_tap_outside: true,
+        use_fedcm_for_button: false,
+      });
+    }
+
+    googleButtonRef.current.replaceChildren();
+    g.accounts.id.renderButton(googleButtonRef.current, {
+      type: "standard",
+      theme: "outline",
+      size: "large",
+      text: "continue_with",
+      shape: "rectangular",
+      width: googleButtonRef.current.offsetWidth || 320,
+    });
+  }, [handleGoogleSignIn]);
+
   // ── Load Google Identity Services ───────────────────────────
   useEffect(() => {
     if (!open) return;
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    if (!clientId || googleInitialized.current) return;
+    if (!clientId) return;
 
-    // Load GIS script if not already loaded
     const existing = document.getElementById("google-identity-script");
     if (!existing) {
       const script = document.createElement("script");
@@ -157,81 +226,27 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
       script.src = "https://accounts.google.com/gsi/client";
       script.async = true;
       script.defer = true;
+      script.onload = renderGoogleButton;
       document.head.appendChild(script);
     }
 
-    // Poll until google.accounts.id is available, then initialize
     let attempts = 0;
-    const maxAttempts = 30; // 3 seconds max
     const interval = setInterval(() => {
       attempts++;
-      const g = (window as unknown as Record<string, unknown>).google as
-        | { accounts?: { id?: { initialize: Function } } }
-        | undefined;
-
-      if (g?.accounts?.id) {
-        clearInterval(interval);
-        if (!googleInitialized.current) {
-          googleInitialized.current = true;
-          g.accounts.id.initialize({
-            client_id: clientId,
-            callback: (response: { credential: string }) => {
-              handleGoogleSignIn(response.credential);
-            },
-            auto_select: false,
-            cancel_on_tap_outside: true,
-            use_fedcm_for_prompt: false,
-          });
-        }
-      }
-
-      if (attempts >= maxAttempts) {
-        clearInterval(interval);
-      }
+      renderGoogleButton();
+      if (googleInitialized.current || attempts >= 30) clearInterval(interval);
     }, 100);
 
     return () => clearInterval(interval);
-  }, [open, handleGoogleSignIn]);
+  }, [open, renderGoogleButton]);
 
-  /** Trigger Google sign-in prompt — direct GSI, no FedCM */
-  const triggerGoogleSignIn = useCallback(async () => {
-    setIsGoogleLoading(true);
-    setError(null);
-
-    try {
-      const g = (window as unknown as Record<string, unknown>).google as
-        | { accounts?: { id?: { prompt: Function } } }
-        | undefined;
-
-      if (!g?.accounts?.id) {
-        throw new Error("Google Sign-In not loaded. Please try OTP or Passkey.");
-      }
-
-      // prompt() callback fires when popup is dismissed (user picks account OR closes).
-      // 60s safety timeout — enough for user interaction, prevents hanging forever.
-      await Promise.race([
-        new Promise<void>((resolve) => {
-          g.accounts!.id!.prompt((notification: { isNotDisplayed: () => boolean; isSkippedMoment: () => boolean; getDismissedReason: () => string; getMomentType: () => string }) => {
-            if (notification.isNotDisplayed()) {
-              const reason = notification.getDismissedReason?.() || "unknown";
-              setError(`Google prompt not shown (${reason}). Try OTP or Passkey.`);
-            } else if (notification.isSkippedMoment()) {
-              // Auto-sign-in skipped — user needs to click manually, don't error
-            }
-            resolve();
-          });
-        }),
-        new Promise<void>((resolve) => setTimeout(() => {
-          setError("Google sign-in timed out. Try OTP or Passkey.");
-          resolve();
-        }, 60_000)),
-      ]);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Google Sign-In failed. Try OTP or Passkey.");
-    } finally {
-      setIsGoogleLoading(false);
-    }
-  }, [handleGoogleSignIn]);
+  useEffect(() => {
+    if (!open || step !== "auth") return;
+    const id = window.setTimeout(() => {
+      renderGoogleButton();
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [open, step, renderGoogleButton]);
 
   // ── Passkey Registration ──────────────────────────────────
   const handlePasskeyRegister = useCallback(async () => {
@@ -542,19 +557,13 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
     }
   }, [depositAmount, refreshBalance]);
 
-  const handleCopy = useCallback(() => {
-    if (wallet?.address) {
-      navigator.clipboard?.writeText(wallet.address);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  }, [wallet]);
+
 
   if (!open) return null;
 
   return (
     <div className="pl-wallet-overlay-v3" onClick={onClose} style={{ zIndex: 1200, pointerEvents: "auto" }}>
-      <div className="pl-dcw-modal" onClick={(e) => e.stopPropagation()} style={{ position: "relative", zIndex: 1201 }}>
+      <div className="pl-wallet-modal-v3 pl-dcw-modal" onClick={(e) => e.stopPropagation()} style={{ position: "relative", zIndex: 1201 }}>
         <button className="pl-wallet-x-v3" onClick={onClose} aria-label="Close">×</button>
 
         <div className="pl-dcw-header">
@@ -567,62 +576,54 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
         {step === "auth" && (
           <div className="pl-dcw-step">
             <div className="pl-login-stack-v3">
-              <button
-                className="pl-login-option-v3"
-                onClick={triggerGoogleSignIn}
-                disabled={isGoogleLoading}
-              >
-                <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
-                <b>{isGoogleLoading ? "Signing in…" : "Continue with Google"}</b>
-              </button>
+              <div ref={googleButtonRef} className="pl-google-button-host" aria-busy={isGoogleLoading} />
 
               <button
-                className="pl-login-option-v3"
-                onClick={() => {
-                  const el = document.querySelector(".pl-dcw-email-section");
-                  if (el) el.classList.toggle("visible");
-                }}
+                className="pl-login-option-v3 pl-passkey-pill"
+                onClick={() => setShowPasskeyForm((value) => !value)}
+                aria-expanded={showPasskeyForm}
               >
                 <span className="pl-login-icon-v3"><PasskeyIcon /></span>
-                <b>Passkey</b>
+                <b>Use Passkey</b>
               </button>
             </div>
+
+            {showPasskeyForm && (
+              <div className="pl-dcw-email-section visible" style={{ marginTop: 8 }}>
+                <label className="pl-dcw-label">Email for passkey</label>
+                <input
+                  className="pl-email-otp-input"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && email.includes("@")) handlePasskeyRegister();
+                  }}
+                />
+                <button
+                  className="pl-primary-v3"
+                  onClick={handlePasskeyRegister}
+                  disabled={!email.includes("@") || isRegistering}
+                >
+                  {isRegistering ? "Creating passkey…" : "Register with Passkey"}
+                </button>
+                <button
+                  className="pl-eoa-fallback-v3"
+                  onClick={handlePasskeyAuthenticate}
+                  disabled={!email.includes("@")}
+                  style={{ marginTop: 4 }}
+                >
+                  Already have a passkey? Sign in
+                </button>
+              </div>
+            )}
 
             {error && (
               <p className="muted" style={{ fontSize: 12, color: "var(--danger, #ef4444)", textAlign: "center", marginTop: 4 }}>
                 {error}
               </p>
             )}
-
-            {/* Passkey section (collapsed by default) */}
-            <div className="pl-dcw-email-section" style={{ marginTop: 8 }}>
-              <label className="pl-dcw-label">Your email</label>
-              <input
-                className="pl-email-otp-input"
-                type="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && email.includes("@")) handlePasskeyRegister();
-                }}
-              />
-              <button
-                className="pl-primary-v3"
-                onClick={handlePasskeyRegister}
-                disabled={!email.includes("@") || isRegistering}
-              >
-                {isRegistering ? "Creating passkey…" : "🔐 Register with Passkey"}
-              </button>
-              <button
-                className="pl-eoa-fallback-v3"
-                onClick={handlePasskeyAuthenticate}
-                disabled={!email.includes("@")}
-                style={{ marginTop: 4 }}
-              >
-                Already have a passkey? Sign in
-              </button>
-            </div>
           </div>
         )}
 
@@ -636,7 +637,15 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
 
         {/* ── Step: Wallet connected — Balances / Top up tabs ── */}
         {step === "deposit" && wallet && (
-          <div className="pl-dcw-step">
+          <div className="pl-wallet-content-v3 pl-dcw-step">
+            <div className="pl-connected-hero-v3">
+              <div className="pl-connected-status-v3">
+                <span className="pl-connected-dot-v3" />
+                <span>PayLabs Wallet connected</span>
+              </div>
+              <b className="data-mono">{shortAddr(wallet.address)}</b>
+            </div>
+
             {/* Tab bar */}
             <div className="pl-wallet-tabs-v3" style={{ marginBottom: 12 }}>
               <button
@@ -649,83 +658,55 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                 className={activeTab === "topup" ? "active" : ""}
                 onClick={() => setActiveTab("topup")}
               >
-                Top up x402
+                Deposit to Gateway
               </button>
             </div>
 
             {/* Tab 1: Balances */}
             {activeTab === "balances" && (
               <>
-                <div className="pl-dcw-wallet-card">
-                  <div className="pl-dcw-wallet-row">
-                    <span className="muted">Address</span>
-                    <b className="data-mono">
-                      {shortAddr(wallet.address)}
-                      <button className="pl-copy-v3" onClick={handleCopy} aria-label="Copy">
-                        {copied ? "✓" : "⎘"}
-                      </button>
-                    </b>
-                  </div>
-                  <div className="pl-dcw-wallet-row">
-                    <span className="muted">Type</span>
-                    <b>DCW</b>
-                  </div>
-                  <div className="pl-dcw-wallet-row">
-                    <span className="muted">Network</span>
-                    <b>{wallet.chain}</b>
-                  </div>
+                <div className="pl-summary-card-v3">
+                  <DcwInfoRow label="Wallet" copyValue={wallet.address}>
+                    <span className="data-mono">{shortAddr(wallet.address)}</span>
+                  </DcwInfoRow>
+                  <DcwInfoRow label="Type" value="PayLabs Wallet" />
+                  <DcwInfoRow label="Network" value="Arc Testnet" />
 
                   {balance.walletUsdc != null ? (
-                    <div className="pl-dcw-wallet-row">
-                      <span className="muted">Wallet USDC</span>
-                      <b>{balance.walletUsdc} USDC</b>
-                    </div>
+                    <DcwInfoRow label="Wallet USDC" value={`${balance.walletUsdc} USDC`} />
                   ) : balance.walletBalanceStatus === "unavailable" ? (
-                    <div className="pl-dcw-wallet-row">
-                      <span className="muted">Wallet USDC</span>
-                      <b className="muted">Syncing…</b>
-                    </div>
+                    <DcwInfoRow label="Wallet USDC" value="Syncing…" muted />
                   ) : (
-                    <div className="pl-dcw-wallet-row">
-                      <span className="muted">Wallet USDC</span>
-                      <b className="muted">0.00 USDC</b>
-                    </div>
+                    <DcwInfoRow label="Wallet USDC" value="0.00 USDC" muted />
                   )}
 
-                  <div className="pl-dcw-wallet-row">
-                    <span className="muted">x402 Balance</span>
-                    <b style={{ color: x402Balance > 0 ? "var(--success, #22c55e)" : undefined }}>
+                  <DcwInfoRow label="Gateway Balance">
+                    <span style={{ color: x402Balance > 0 ? "var(--success, #22c55e)" : undefined }}>
                       {balance.gatewayUsdc != null ? `${x402Balance.toFixed(6)} USDC` : "Checking…"}
-                    </b>
-                  </div>
+                    </span>
+                  </DcwInfoRow>
                   <span className="muted" style={{ fontSize: 10, marginLeft: 4 }}>Powered by Circle Gateway</span>
 
                   {asDecimal(balance.pendingBatchUsdc) > 0 && (
-                    <div className="pl-dcw-wallet-row">
-                      <span className="muted">Pending Batch</span>
-                      <b>{asDecimal(balance.pendingBatchUsdc).toFixed(6)} USDC</b>
-                    </div>
+                    <DcwInfoRow label="Pending Batch" value={`${asDecimal(balance.pendingBatchUsdc).toFixed(6)} USDC`} />
                   )}
 
-                  <div className="pl-dcw-wallet-row">
-                    <span className="muted">Planned Cost</span>
-                    <b>{plannedCostNum.toFixed(6)} USDC</b>
-                  </div>
+                  <DcwInfoRow label="Planned Cost" value={`${plannedCostNum.toFixed(6)} USDC`} />
                 </div>
 
                 {/* Status */}
                 <div style={{ padding: "8px 0", fontSize: 13, fontWeight: 600 }}>
                   {needsTopUp ? (
-                    <span style={{ color: "var(--warn, #f59e0b)" }}>⚠ Top up needed</span>
+                    <span style={{ color: "var(--warn, #f59e0b)" }}>⚠ Gateway deposit needed</span>
                   ) : (
-                    <span style={{ color: "var(--success, #22c55e)" }}>✓ Ready to run</span>
+                    <span style={{ color: "var(--success, #22c55e)" }}>✓ Gateway Balance ready</span>
                   )}
                 </div>
 
                 {/* Actions */}
                 {needsTopUp ? (
                   <button className="pl-primary-v3" onClick={() => setActiveTab("topup")}>
-                    Top up x402 Balance
+                    Deposit to Gateway Balance
                   </button>
                 ) : (
                   <>
@@ -737,7 +718,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                       onClick={() => setActiveTab("topup")}
                       style={{ marginTop: 4 }}
                     >
-                      Add more x402 Balance
+                      Add more Gateway Balance
                     </button>
                   </>
                 )}
@@ -748,55 +729,37 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
               </>
             )}
 
-            {/* Tab 2: Top up x402 */}
+            {/* Tab 2: Deposit to Gateway */}
             {activeTab === "topup" && (
               <>
-                <div className="pl-dcw-wallet-card">
+                <div className="pl-summary-card-v3">
                   {balance.walletUsdc != null ? (
-                    <div className="pl-dcw-wallet-row">
-                      <span className="muted">Wallet USDC</span>
-                      <b>{balance.walletUsdc} USDC</b>
-                    </div>
+                    <DcwInfoRow label="Wallet USDC" value={`${balance.walletUsdc} USDC`} />
                   ) : balance.walletBalanceStatus === "unavailable" ? (
-                    <div className="pl-dcw-wallet-row">
-                      <span className="muted">Wallet USDC</span>
-                      <b className="muted">Syncing…</b>
-                    </div>
+                    <DcwInfoRow label="Wallet USDC" value="Syncing…" muted />
                   ) : (
-                    <div className="pl-dcw-wallet-row">
-                      <span className="muted">Wallet USDC</span>
-                      <b className="muted">0.00 USDC</b>
-                    </div>
+                    <DcwInfoRow label="Wallet USDC" value="0.00 USDC" muted />
                   )}
-                  <div className="pl-dcw-wallet-row">
-                    <span className="muted">x402 Balance</span>
-                    <b>{balance.gatewayUsdc != null ? `${x402Balance.toFixed(6)} USDC` : "Checking…"}</b>
-                  </div>
-                  <div className="pl-dcw-wallet-row">
-                    <span className="muted">Planned Cost</span>
-                    <b>{plannedCostNum.toFixed(6)} USDC</b>
-                  </div>
-                  <div className="pl-dcw-wallet-row">
-                    <span className="muted">Recommended</span>
-                    <b>{recommendedStr} USDC</b>
-                  </div>
+                  <DcwInfoRow
+                    label="Gateway Balance"
+                    value={balance.gatewayUsdc != null ? `${x402Balance.toFixed(6)} USDC` : "Checking…"}
+                  />
+                  <DcwInfoRow label="Planned Cost" value={`${plannedCostNum.toFixed(6)} USDC`} />
+                  <DcwInfoRow label="Recommended" value={`${recommendedStr} USDC`} />
                 </div>
 
                 {/* Deposit to Gateway */}
-                <div style={{ marginTop: 12, padding: "12px", background: "var(--card-bg, #1a1a2e)", borderRadius: 6, border: "1px solid var(--border, #333)" }}>
-                  <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
-                    Deposit USDC to x402 Balance
+                <div className="pl-summary-card-v3 pl-dcw-deposit-card">
+                  <h4 style={{ margin: "0 0 6px" }}>Deposit to Gateway</h4>
+                  <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
+                    Move USDC from your PayLabs Wallet into Gateway Balance for automatic x402 payments.
                   </p>
                   {balance.gatewayUsdc == null && (
                     <p style={{ color: "var(--warn, #f59e0b)", fontSize: 11, marginBottom: 8 }}>
                       ⚠ Gateway balance check failed. Refresh to retry.
                     </p>
                   )}
-                  <p className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
-                    Transfer USDC from your wallet into Circle Gateway for x402 auto-pay.
-                    Your wallet needs on-chain USDC first.
-                  </p>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <div className="pl-dcw-deposit-controls">
                     <input
                       type="number"
                       step="0.000001"
@@ -806,13 +769,13 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                       onChange={(e) => { setDepositAmount(e.target.value); setDepositError(null); }}
                       disabled={isDepositing}
                       style={{
-                        flex: 1,
-                        padding: "6px 10px",
-                        borderRadius: 4,
-                        border: "1px solid var(--border, #444)",
-                        background: "var(--input-bg, #0d0d1a)",
+                        width: "100%",
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: "1px solid var(--border, #d8dee8)",
+                        background: "#fff",
                         color: "inherit",
-                        fontSize: 13,
+                        fontSize: 14,
                       }}
                     />
                     <button
@@ -821,7 +784,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                       disabled={isDepositing || !depositAmount}
                       style={{ whiteSpace: "nowrap", opacity: isDepositing || !depositAmount ? 0.5 : 1 }}
                     >
-                      {isDepositing ? "Depositing…" : "Deposit"}
+                      {isDepositing ? "Depositing…" : "Deposit to Gateway"}
                     </button>
                   </div>
                   {depositError && (
@@ -832,12 +795,12 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                       color: depositState === "complete" ? "var(--success, #22c55e)" : depositState === "failed" ? "var(--error, #ef4444)" : "var(--info, #3b82f6)",
                       fontSize: 11, marginTop: 6,
                     }}>
-                      {depositState === "approve_pending" && "⏳ Approve submitted… waiting for confirmation"}
-                      {depositState === "approve_complete" && "✓ Approve confirmed! Submitting deposit…"}
-                      {depositState === "deposit_pending" && "⏳ Deposit submitted… waiting for confirmation"}
-                      {depositState === "deposit_complete" && "✓ Deposit confirmed on-chain! Verifying balance…"}
-                      {depositState === "complete" && "✓ Deposit complete! Balance updated."}
-                      {depositState === "failed" && "✗ Deposit failed. Check explorer for details."}
+                      {depositState === "approve_pending" && "Approving Gateway deposit..."}
+                      {depositState === "approve_complete" && "Approval confirmed. Depositing to Gateway..."}
+                      {depositState === "deposit_pending" && "Gateway deposit submitted..."}
+                      {depositState === "deposit_complete" && "Gateway deposit submitted..."}
+                      {depositState === "complete" && "Gateway Balance updated."}
+                      {depositState === "failed" && "Deposit failed. Check details and retry."}
                       {!["approve_pending", "approve_complete", "deposit_pending", "deposit_complete", "complete", "failed"].includes(depositState) && `⏳ ${depositState}…`}
                     </p>
                   )}
@@ -854,14 +817,22 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                 </div>
 
                 {/* Wallet address for manual funding */}
-                <label className="pl-dcw-label" style={{ marginTop: 12 }}>Send USDC to:</label>
-                <div className="pl-dcw-address-box">
-                  <code>{wallet.address}</code>
-                  <button className="pl-copy-v3" onClick={handleCopy}>{copied ? "Copied!" : "Copy"}</button>
-                </div>
-                <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>
-                  Send USDC on <b>Arc Testnet</b> to this address.
-                </p>
+                <button
+                  className="pl-eoa-fallback-v3"
+                  onClick={() => setShowManualFunding((value) => !value)}
+                  style={{ marginTop: 10 }}
+                >
+                  Need to fund wallet first?
+                </button>
+                {showManualFunding && (
+                  <div className="pl-summary-card-v3" style={{ marginTop: 8 }}>
+                    <DcwInfoRow label="Wallet address" value="Copy" copyValue={wallet.address} />
+                    <code className="pl-dcw-address-code">{wallet.address}</code>
+                    <p className="muted" style={{ fontSize: 11, marginTop: 8 }}>
+                      Send USDC on Arc Testnet to this wallet address.
+                    </p>
+                  </div>
+                )}
 
                 <button className="pl-primary-v3" onClick={refreshBalance} style={{ marginTop: 12 }}>
                   Refresh Balance
@@ -892,6 +863,19 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
         <p className="muted" style={{ fontSize: 11, textAlign: "center", marginTop: 12 }}>
           No manual approval per request.
         </p>
+        <style jsx>{`
+          .pl-google-button-host { width: 100%; min-height: 44px; display: grid; place-items: center; }
+          .pl-passkey-pill { width: 100%; }
+          .pl-dcw-email-section { width: 100%; }
+          .pl-dcw-deposit-card { margin-top: 12px; background: #fff; }
+          .pl-dcw-deposit-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; }
+          .pl-dcw-address-code { display: block; overflow-wrap: anywhere; font-size: 12px; }
+          @media (max-width: 520px) {
+            .pl-dcw-deposit-controls { grid-template-columns: 1fr; }
+            .pl-dcw-deposit-controls :global(.pl-primary-v3) { width: 100%; }
+            .pl-google-button-host { justify-items: stretch; }
+          }
+        `}</style>
       </div>
     </div>
   );
