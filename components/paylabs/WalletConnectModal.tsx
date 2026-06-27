@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 
 export type WalletState =
   | "not_connected"
@@ -19,15 +19,10 @@ export type WalletInfo = {
 };
 
 export type UcwBalance = {
-  /** Wallet token balance (on-chain USDC). For DCW, this may be null if not fetched. */
   walletUsdc: string | null;
-  /** Gateway balance (deposited USDC available for x402 payments). null if gateway check failed. */
   gatewayUsdc: string | null;
-  /** Pending batch settlement USDC */
   pendingBatchUsdc?: string;
-  /** Gateway check error (null if ok) */
   gatewayError?: string | null;
-  /** Which wallet type this balance belongs to */
   source: "ucw" | "dcw" | "external_eoa";
 };
 
@@ -37,20 +32,15 @@ type Props = {
   walletState: WalletState;
   walletInfo: WalletInfo | null;
   ucwBalance: UcwBalance | null;
-  budget: string;
-  plannedCost: string;
   error: string | null;
   onConnectGoogle: () => void;
   onConnectEmail: (email: string) => void;
   onConnectPin: () => void;
-  onDepositGateway: (amountAtomic: string) => void;
-  onApprove: () => void;
   showEoaFallback?: boolean;
   onConnectEoa?: () => void;
   needsReconnectToSign?: boolean;
   onReconnect?: () => void;
   authMethod?: string;
-  depositStatus?: string | null;
   debugLog?: string[];
   defaultShowEmailInput?: boolean;
   ucwGooglePreparing?: boolean;
@@ -60,32 +50,12 @@ type Props = {
   onRetryPrepareGoogleLogin?: () => void;
   autoPrepareGoogleLogin?: boolean;
   showEmailLogin?: boolean;
-  /** Show Gateway deposit / x402 run UI. Default true. Set false for creator wallet. */
-  showGatewayDeposit?: boolean;
+  onDisconnect?: () => void;
 };
 
 function shortAddr(addr?: string | null) {
   if (!addr) return "—";
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
-
-function asDecimal(value?: string | null): number {
-  const n = Number(value ?? "0");
-  return Number.isFinite(n) ? n : 0;
-}
-
-/** Safe USDC → atomic string conversion using BigInt (no float precision issues) */
-function usdcToAtomicString(input: string): string {
-  const raw = input.trim();
-  if (!/^\d+(\.\d{1,6})?$/.test(raw)) {
-    throw new Error("Amount must be a positive USDC value with max 6 decimals");
-  }
-  const [whole, frac = ""] = raw.split(".");
-  const atomic = BigInt(whole) * BigInt(1_000_000) + BigInt(frac.padEnd(6, "0"));
-  if (atomic <= BigInt(0)) {
-    throw new Error("Amount must be greater than 0");
-  }
-  return atomic.toString();
 }
 
 function walletTypeLabel(wt?: string): string {
@@ -103,20 +73,15 @@ export default function WalletConnectModal({
   walletState,
   walletInfo,
   ucwBalance,
-  budget,
-  plannedCost,
   error,
   onConnectGoogle,
   onConnectEmail,
   onConnectPin,
-  onDepositGateway,
-  onApprove,
   showEoaFallback = false,
   onConnectEoa,
   needsReconnectToSign = false,
   onReconnect,
   authMethod,
-  depositStatus,
   debugLog,
   defaultShowEmailInput = false,
   ucwGooglePreparing = false,
@@ -126,14 +91,10 @@ export default function WalletConnectModal({
   onRetryPrepareGoogleLogin,
   autoPrepareGoogleLogin = true,
   showEmailLogin = true,
-  showGatewayDeposit = true,
+  onDisconnect,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<"balances" | "topup">("balances");
-  const [depositAmount, setDepositAmount] = useState("");
   const [showEmailInput, setShowEmailInput] = useState(defaultShowEmailInput);
   const [emailValue, setEmailValue] = useState("");
-  const [depositError, setDepositError] = useState<string | null>(null);
-
   const isConnected = !!walletInfo?.address;
 
   useEffect(() => {
@@ -147,34 +108,6 @@ export default function WalletConnectModal({
     if (!open || isConnected || ucwGoogleReady || ucwGooglePreparing || ucwGoogleError) return;
     onPrepareGoogleLogin?.();
   }, [autoPrepareGoogleLogin, open, isConnected, ucwGoogleReady, ucwGooglePreparing, ucwGoogleError, onPrepareGoogleLogin]);
-
-  // Force tab back to balances when gateway deposit UI is hidden
-  useEffect(() => {
-    if (!showGatewayDeposit && activeTab === "topup") {
-      setActiveTab("balances");
-    }
-  }, [showGatewayDeposit, activeTab]);
-
-  const walletUsdc = asDecimal(ucwBalance?.walletUsdc ?? ucwBalance?.gatewayUsdc ?? "0");
-  const x402Balance = asDecimal(ucwBalance?.gatewayUsdc);
-  const pendingBatch = asDecimal(ucwBalance?.pendingBatchUsdc);
-  const plannedCostNum = asDecimal(plannedCost);
-  const needsTopUp = x402Balance < plannedCostNum;
-  const gatewayReady = isConnected && !needsTopUp;
-
-  // Recommended top-up: max(plannedCost - x402Balance, plannedCost)
-  const recommendedTopUp = Math.max(plannedCostNum - x402Balance, plannedCostNum);
-  const recommendedStr = recommendedTopUp > 0 ? recommendedTopUp.toFixed(6) : "0.000001";
-
-  const handleDeposit = useCallback(() => {
-    setDepositError(null);
-    try {
-      const amountAtomic = usdcToAtomicString(depositAmount || recommendedStr);
-      onDepositGateway(amountAtomic);
-    } catch (e: unknown) {
-      setDepositError(e instanceof Error ? e.message : "Invalid amount");
-    }
-  }, [depositAmount, recommendedStr, onDepositGateway]);
 
   if (!open) return null;
 
@@ -191,7 +124,6 @@ export default function WalletConnectModal({
           ×
         </button>
 
-        {/* ── Login options (not connected) ── */}
         {!isConnected ? (
           <div className="pl-wallet-content-v3">
             <div className="pl-login-stack-v3">
@@ -241,8 +173,7 @@ export default function WalletConnectModal({
                     onClick={() => {
                       if (emailValue.includes("@")) onConnectEmail(emailValue);
                     }}
-                    disabled={walletState === "connecting" || !emailValue.includes("@")}
-                  >
+                    disabled={walletState === "connecting" || !emailValue.includes("@")}>
                     Send OTP
                   </button>
                 </div>
@@ -265,29 +196,22 @@ export default function WalletConnectModal({
             </div>
           </div>
         ) : (
-          /* ── Connected: Balances / Top up tabs ── */
           <div className="pl-wallet-content-v3">
-            {/* Connected hero */}
             <div className="pl-connected-hero-v3">
               <div className="pl-connected-status-v3">
                 <span className="pl-connected-dot-v3">✓</span>
-                <span>
-                  {!showGatewayDeposit
-                    ? "Creator wallet connected"
-                    : needsReconnectToSign
-                      ? "Wallet found"
-                      : "Wallet connected"}
-                </span>
+                <span>{needsReconnectToSign ? "Creator Wallet found" : "Creator Wallet connected"}</span>
               </div>
+              <p className="muted" style={{ fontSize: 12, margin: "8px 0 0", textAlign: "center" }}>
+                Used for creator profile, source ownership, and monetization identity.
+              </p>
               {needsReconnectToSign && (
                 <button className="pl-primary-v3" onClick={onReconnect} style={{ marginTop: 8 }}>
                   {walletState === "connecting"
-                    ? "Preparing creator wallet login..."
+                    ? "Preparing Creator Wallet login..."
                     : ucwGoogleReady && authMethod === "google"
                       ? "Continue Google reconnect"
-                      : authMethod
-                        ? `Reconnect via ${authMethod} to sign`
-                        : "Reconnect to sign"}
+                      : "Reconnect Creator Wallet"}
                 </button>
               )}
               {error && (
@@ -297,175 +221,32 @@ export default function WalletConnectModal({
               )}
             </div>
 
-            {/* Tab bar — hide Top up x402 tab when gateway deposit is off */}
-            {showGatewayDeposit && (
-              <div className="pl-wallet-tabs-v3">
-                <button
-                  className={activeTab === "balances" ? "active" : ""}
-                  onClick={() => setActiveTab("balances")}
-                >
-                  Balances
-                </button>
-                <button
-                  className={activeTab === "topup" ? "active" : ""}
-                  onClick={() => setActiveTab("topup")}
-                >
-                  Top up x402
-                </button>
-              </div>
-            )}
-
-            {/* Tab 1: Balances */}
-            {activeTab === "balances" && (
-              <div className="pl-balance-tab">
-                <div className="pl-summary-card-v3">
-                  <InfoRow icon={<WalletIcon />} label="Wallet" value={shortAddr(walletInfo.address)} copyValue={walletInfo.address} />
-                  <InfoRow icon={<WalletIcon />} label="Type" value={walletTypeLabel(walletInfo.walletType)} />
-                  <InfoRow icon={<CoinsIcon />} label="Network" value={walletInfo.network || "Arc Testnet"} />
-
-                  {ucwBalance?.walletUsdc != null ? (
-                    <InfoRow icon={<CoinsIcon />} label="Wallet USDC" value={`${ucwBalance.walletUsdc} USDC`} />
-                  ) : (
-                    <InfoRow icon={<CoinsIcon />} label="Wallet USDC" value="not available" />
-                  )}
-
-                  {showGatewayDeposit && (
-                    <>
-                      <InfoRow icon={<GatewayIcon />} label="x402 Balance" value={`${x402Balance.toFixed(6)} USDC`} />
-                      <span className="muted" style={{ fontSize: 10, marginLeft: 28 }}>Powered by Circle Gateway</span>
-
-                      {pendingBatch > 0 && (
-                        <InfoRow icon={<PieIcon />} label="Pending Batch" value={`${pendingBatch.toFixed(6)} USDC`} />
-                      )}
-
-                      <InfoRow icon={<TrendIcon />} label="Planned Cost" value={`${plannedCostNum.toFixed(6)} USDC`} />
-                    </>
-                  )}
-                </div>
-
-                {/* Status + Actions — only when gateway deposit UI is shown */}
-                {showGatewayDeposit && (
-                  <>
-                    <div style={{ padding: "8px 0", fontSize: 13, fontWeight: 600 }}>
-                      {needsTopUp ? (
-                        <span style={{ color: "var(--warn, #f59e0b)" }}>⚠ Top up needed</span>
-                      ) : (
-                        <span style={{ color: "var(--success, #22c55e)" }}>✓ Ready to run</span>
-                      )}
-                    </div>
-
-                    {gatewayReady ? (
-                      <>
-                        <button
-                          className="pl-primary-v3"
-                          onClick={onApprove}
-                          disabled={walletState === "approving"}
-                        >
-                          {walletState === "approving" ? "Running…" : "Run with x402"}
-                        </button>
-                        <button
-                          className="pl-eoa-fallback-v3"
-                          onClick={() => setActiveTab("topup")}
-                          style={{ marginTop: 4 }}
-                        >
-                          Add more x402 Balance
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        className="pl-primary-v3"
-                        onClick={() => setActiveTab("topup")}
-                      >
-                        Top up x402 Balance
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-
-            {/* Tab 2: Top up x402 — only when gateway deposit is enabled */}
-            {showGatewayDeposit && activeTab === "topup" && (
-              <div className="pl-topup-tab">
-                <div className="pl-summary-card-v3">
-                  {ucwBalance?.walletUsdc != null ? (
-                    <InfoRow icon={<CoinsIcon />} label="Wallet USDC" value={`${ucwBalance.walletUsdc} USDC`} />
-                  ) : (
-                    <InfoRow icon={<CoinsIcon />} label="Wallet USDC" value="not available" />
-                  )}
-                  <InfoRow icon={<GatewayIcon />} label="x402 Balance" value={`${x402Balance.toFixed(6)} USDC`} />
-                  <InfoRow icon={<TrendIcon />} label="Planned Cost" value={`${plannedCostNum.toFixed(6)} USDC`} />
-                  <InfoRow icon={<PieIcon />} label="Recommended" value={`${recommendedStr} USDC`} />
-                </div>
-
-                {/* Amount input */}
-                <label className="pl-dcw-label" style={{ marginTop: 12 }}>Amount (USDC)</label>
-                <input
-                  className="pl-email-otp-input"
-                  type="text"
-                  inputMode="decimal"
-                  placeholder={recommendedStr}
-                  value={depositAmount}
-                  onChange={(e) => { setDepositAmount(e.target.value); setDepositError(null); }}
-                  onBlur={() => {
-                    // Format on blur
-                    const raw = depositAmount.trim();
-                    if (!raw) return;
-                    const n = Number(raw);
-                    if (Number.isFinite(n) && n > 0) {
-                      setDepositAmount(n.toFixed(6));
-                    }
-                  }}
-                  step={0.000001}
-                  min={0.000001}
-                />
-
-                {/* Deposit button — UCW only (real deposit) */}
-                {walletInfo.walletType === "circle_user_controlled" ? (
-                  <button
-                    className="pl-primary-v3"
-                    onClick={handleDeposit}
-                    disabled={!!depositStatus}
-                    style={{ marginTop: 8 }}
-                  >
-                    {depositStatus || "Top up x402 Balance"}
-                  </button>
+            <div className="pl-balance-tab">
+              <div className="pl-summary-card-v3">
+                <InfoRow icon={<WalletIcon />} label="Wallet" value={shortAddr(walletInfo.address)} copyValue={walletInfo.address} />
+                <InfoRow icon={<WalletIcon />} label="Type" value={walletTypeLabel(walletInfo.walletType)} />
+                <InfoRow icon={<CoinsIcon />} label="Network" value={walletInfo.network || "Arc Testnet"} />
+                {ucwBalance?.walletUsdc != null ? (
+                  <InfoRow icon={<CoinsIcon />} label="Wallet USDC" value={`${ucwBalance.walletUsdc} USDC`} />
                 ) : (
-                  /* DCW: honest disabled state — no real deposit endpoint yet */
-                  <div style={{ marginTop: 8 }}>
-                    <button className="pl-primary-v3" disabled style={{ opacity: 0.5 }}>
-                      Top up x402 Balance
-                    </button>
-                    <p className="muted" style={{ fontSize: 11, marginTop: 6 }}>
-                      DCW x402 Balance is required for auto-pay. DCW Gateway top-up is not wired yet in this build. Fund x402 Balance before auto-pay can run.
-                    </p>
-                  </div>
+                  <InfoRow icon={<CoinsIcon />} label="Wallet USDC" value="not available" />
                 )}
+              </div>
 
-                {/* Deposit stepper status */}
-                {depositStatus && (
-                  <div style={{ marginTop: 8, padding: "8px 12px", background: "var(--info-bg, #eff6ff)", borderRadius: 6, fontSize: 12 }}>
-                    {depositStatus}
-                  </div>
-                )}
-
-                {/* Error */}
-                {(depositError || error) && (
-                  <div className="pl-wallet-error-v3" style={{ marginTop: 8 }}>
-                    {depositError || error}
-                  </div>
-                )}
-
-                {/* Back to balances */}
+              <button className="pl-primary-v3" onClick={onClose}>
+                Close
+              </button>
+              {onDisconnect && (
                 <button
+                  type="button"
                   className="pl-eoa-fallback-v3"
-                  onClick={() => setActiveTab("balances")}
+                  onClick={onDisconnect}
                   style={{ marginTop: 8 }}
                 >
-                  ← Back to Balances
+                  Disconnect Creator Wallet
                 </button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
 
@@ -515,8 +296,6 @@ function InfoRow({
   );
 }
 
-// ── SVG Icon Components ──
-
 function Svg({ children }: { children: React.ReactNode }) {
   return (
     <svg
@@ -560,18 +339,6 @@ function WalletIcon() {
 
 function CoinsIcon() {
   return <Svg><circle cx="12" cy="12" r="9" /><path d="M12 7v10" /><path d="M15 9.5A3 3 0 0 0 12 8a3 3 0 0 0 0 6 3 3 0 0 1 0 6 3 3 0 0 1-3-1.5" /></Svg>;
-}
-
-function GatewayIcon() {
-  return <Svg><path d="M4 17a8 8 0 0 1 16 0" /><path d="M8 17a4 4 0 0 1 8 0" /><path d="M4 21h16" /><path d="M12 17v4" /></Svg>;
-}
-
-function PieIcon() {
-  return <Svg><path d="M21 12A9 9 0 1 1 12 3v9Z" /><path d="M12 3a9 9 0 0 1 9 9h-9Z" /></Svg>;
-}
-
-function TrendIcon() {
-  return <Svg><path d="m4 16 5-5 4 4 7-8" /><path d="M15 7h5v5" /></Svg>;
 }
 
 function CopyIcon() {

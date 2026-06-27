@@ -1,27 +1,24 @@
 /**
- * UCW API route — single endpoint for all Circle User-Controlled Wallet operations.
+ * UCW API route — Creator Wallet only.
  *
- * Actions:
- *   POST ?action=device-token        — create device token for social login
- *   POST ?action=initialize          — initialize user / create wallet challenge
- *   POST ?action=list-wallets        — list user wallets
- *   POST ?action=balance             — get wallet USDC balance
- *   POST ?action=sign-challenge      — create signTypedData challenge for x402
- *   POST ?action=deposit             — allowance-aware Gateway deposit (approve if needed)
- *   POST ?action=gateway-balance     — read Gateway deposited balance
- *   POST ?action=session-create      — create server-side session (httpOnly cookie)
- *   POST ?action=session-restore     — restore session state after OAuth redirect
- *   POST ?action=session-get-device  — get device token from session
- *   POST ?action=session-save-device — save device token to session
- *   POST ?action=session-save-login  — save userToken + finalize (init + list wallets)
- *   POST ?action=session-finalize-wallet — post-challenge: re-list wallets, store, fetch balance
- *   POST ?action=session-save-wallet — save walletId/walletAddress to session
- *   POST ?action=session-balance     — get wallet + Gateway balance from session
- *   POST ?action=session-destroy     — destroy session + clear cookie
+ * Supported actions:
+ *   POST ?action=device-token
+ *   POST ?action=email-device-token
+ *   POST ?action=create-user
+ *   POST ?action=user-token
+ *   POST ?action=session-create
+ *   POST ?action=session-restore
+ *   POST ?action=session-get-device
+ *   POST ?action=session-save-device
+ *   POST ?action=session-get-auth
+ *   POST ?action=session-save-login
+ *   POST ?action=session-finalize-wallet
+ *   POST ?action=session-save-wallet
+ *   POST ?action=session-balance
+ *   POST ?action=session-destroy
  *
- * Security: All sensitive tokens stored server-side in Supabase ucw_sessions.
- *           Frontend only holds httpOnly ucw_sid cookie.
- *           Legacy body-token actions (initialize, list-wallets, balance) are 403 in production.
+ * Security: All sensitive tokens are stored server-side in Supabase ucw_sessions.
+ *           Frontend only holds the httpOnly ucw_sid cookie.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -31,7 +28,6 @@ import {
   updateSession,
   deleteSession,
   refreshSession,
-  checkAllowance,
 } from "@/lib/paylabs/ucw";
 import {
   createDeviceToken,
@@ -41,11 +37,8 @@ import {
   initializeUser,
   listWallets,
   getWalletTokenBalance,
-  createSignTypedDataChallenge,
-  createApproveChallenge,
-  createDepositChallenge,
-  getGatewayBalance,
 } from "@/lib/paylabs/ucw";
+import { getSession as getDcwSession } from "@/lib/paylabs/auth/session";
 
 /** Parse body safely — empty POST bodies are valid for session actions */
 async function safeParseBody(req: NextRequest): Promise<Record<string, unknown>> {
@@ -124,87 +117,43 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(result);
       }
 
-      case "gateway-balance": {
-        const { address } = body as { address: string };
-        if (!address) return NextResponse.json({ error: "address required" }, { status: 400 });
-        const result = await getGatewayBalance(address);
-        return NextResponse.json(result);
-      }
-
       // -------------------------------------------------------------------
       // Session-bound actions (userToken/walletId from server session)
       // -------------------------------------------------------------------
-      case "sign-challenge": {
-        const sid = req.cookies.get("ucw_sid")?.value;
-        if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
-        const sess = await getSession(sid);
-        if (!sess?.userToken || !sess?.walletId) return NextResponse.json({ error: "No wallet in session" }, { status: 400 });
-        const { data } = body as { data: Record<string, unknown> };
-        if (!data) return NextResponse.json({ error: "data required" }, { status: 400 });
-        const result = await createSignTypedDataChallenge(sess.userToken, sess.walletId, data);
-        await refreshSession(sid);
-        const respSign = NextResponse.json(result);
-        respSign.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
-        return respSign;
-      }
-
-      case "check-allowance": {
-        const sid = req.cookies.get("ucw_sid")?.value;
-        if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
-        const sess = await getSession(sid);
-        if (!sess?.walletAddress) return NextResponse.json({ error: "No wallet in session" }, { status: 400 });
-        const { isAddress } = await import("viem");
-        if (!isAddress(sess.walletAddress)) return NextResponse.json({ error: "Invalid wallet address" }, { status: 400 });
-        const { amountAtomic: required } = body as { amountAtomic?: string };
-        if (required && (!/^\d+$/.test(required) || BigInt(required) <= BigInt(0))) {
-          return NextResponse.json({ error: "amountAtomic must be a positive integer string" }, { status: 400 });
-        }
-        const currentAllowance = await checkAllowance(sess.walletAddress);
-        const sufficient = required ? BigInt(currentAllowance) >= BigInt(required) : BigInt(currentAllowance) > BigInt(0);
-        await refreshSession(sid);
-        return NextResponse.json({ allowance: currentAllowance, sufficient });
-      }
-
-      case "deposit": {
-        const sid = req.cookies.get("ucw_sid")?.value;
-        if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
-        const sess = await getSession(sid);
-        if (!sess?.userToken || !sess?.walletId || !sess?.walletAddress) return NextResponse.json({ error: "No wallet in session" }, { status: 400 });
-        const { amountAtomic } = body as { amountAtomic: string };
-        if (!amountAtomic || !/^\d+$/.test(amountAtomic) || BigInt(amountAtomic) <= BigInt(0)) {
-          return NextResponse.json({ error: "amountAtomic must be a positive integer string" }, { status: 400 });
-        }
-        // Validate wallet address
-        const { isAddress } = await import("viem");
-        if (!isAddress(sess.walletAddress)) {
-          return NextResponse.json({ error: "Invalid wallet address in session" }, { status: 400 });
-        }
-        // On-chain allowance check
-        const currentAllowance = await checkAllowance(sess.walletAddress);
-
-        if (BigInt(currentAllowance) >= BigInt(amountAtomic)) {
-          // Allowance sufficient — create deposit challenge only
-          const deposit = await createDepositChallenge(sess.userToken, sess.walletId, amountAtomic);
-          await refreshSession(sid);
-          const resp = NextResponse.json({ step: "deposit_ready", depositChallengeId: deposit.challengeId ?? undefined });
-          resp.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
-          return resp;
-        }
-
-        // Allowance insufficient — return approve challenge only (bounded cap: amount × 10)
-        // Frontend must poll allowance after approve, then request deposit again
-        const approveCap = (BigInt(amountAtomic) * BigInt(10)).toString();
-        const approve = await createApproveChallenge(sess.userToken, sess.walletId, approveCap);
-        await refreshSession(sid);
-        const respDeposit = NextResponse.json({ step: "approve_required", approveChallengeId: approve.challengeId ?? undefined });
-        respDeposit.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
-        return respDeposit;
+      case "sign-challenge":
+      case "check-allowance":
+      case "deposit":
+      case "gateway-balance": {
+        return NextResponse.json(
+          {
+            error: "Creator Wallet does not support x402/Gateway actions. Use User Test Wallet for x402 payments.",
+            activeWalletMode: "ucw_creator_only",
+          },
+          { status: 410 },
+        );
       }
 
       // -------------------------------------------------------------------
       // Session management (httpOnly cookie, Supabase-backed)
       // -------------------------------------------------------------------
       case "session-create": {
+        const dcwSession = await getDcwSession();
+        if (dcwSession?.walletAddress) {
+          console.error("[UCW API]", {
+            action,
+            status: 409,
+            reason: "wallet_mode_conflict",
+            activeWalletMode: "dcw",
+          });
+          return NextResponse.json(
+            {
+              error: "User Test Wallet is already connected. Disconnect it before connecting Creator Wallet.",
+              activeWalletMode: "dcw",
+            },
+            { status: 409 },
+          );
+        }
+
         const sid = await createSession();
         const resp = NextResponse.json({ ok: true });
         resp.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
@@ -351,14 +300,11 @@ export async function POST(req: NextRequest) {
         const updatedWallet = await updateSession(sid, { walletId, walletAddress });
         if (!updatedWallet) return NextResponse.json({ error: "Session save wallet failed" }, { status: 500 });
 
-        // Fetch balances
-        const [balances, gw] = await Promise.all([
-          getWalletTokenBalance(walletId, session.userToken),
-          getGatewayBalance(walletAddress),
-        ]);
+        // Fetch wallet token balance only.
+        const balances = await getWalletTokenBalance(walletId, session.userToken);
         const usdc = balances.find((b) => b.token === "USDC")?.amount ?? "0";
 
-        const respFinalize = NextResponse.json({ ok: true, walletId, walletAddress, usdc, gateway: gw.balance });
+        const respFinalize = NextResponse.json({ ok: true, walletId, walletAddress, usdc });
         respFinalize.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
         return respFinalize;
       }
@@ -376,13 +322,10 @@ export async function POST(req: NextRequest) {
         if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
         const session = await getSession(sid);
         if (!session?.walletId || !session?.userToken) return NextResponse.json({ error: "No wallet in session" }, { status: 400 });
-        const [balances, gw] = await Promise.all([
-          getWalletTokenBalance(session.walletId, session.userToken),
-          session.walletAddress ? getGatewayBalance(session.walletAddress) : Promise.resolve({ balance: "0", domain: 26 }),
-        ]);
+        const balances = await getWalletTokenBalance(session.walletId, session.userToken);
         const usdc = balances.find((b) => b.token === "USDC")?.amount ?? "0";
         await refreshSession(sid);
-        const resp = NextResponse.json({ usdc, gateway: gw.balance, walletAddress: session.walletAddress });
+        const resp = NextResponse.json({ usdc, walletAddress: session.walletAddress });
         resp.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
         return resp;
       }

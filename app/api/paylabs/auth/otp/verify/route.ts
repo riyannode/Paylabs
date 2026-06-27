@@ -14,7 +14,27 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { hashOtp, OTP_MAX_ATTEMPTS } from "@/lib/paylabs/auth/otp";
 import { createSession, sessionCookieOptions } from "@/lib/paylabs/auth/session";
+
+import { getSession as getUcwSession } from "@/lib/paylabs/ucw";
 import { randomUUID } from "node:crypto";
+
+
+async function rejectIfCreatorWalletActive(req: NextRequest) {
+  const ucwSid = req.cookies.get("ucw_sid")?.value;
+  if (!ucwSid) return null;
+
+  const ucwSession = await getUcwSession(ucwSid);
+  if (!ucwSession?.walletAddress) return null;
+
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "Creator Wallet is already connected. Disconnect it before connecting User Test Wallet.",
+      activeWalletMode: "ucw",
+    },
+    { status: 409 },
+  );
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -101,6 +121,9 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Create session ───────────────────────────────────────
+    const walletModeConflict = await rejectIfCreatorWalletActive(req);
+    if (walletModeConflict) return walletModeConflict;
+
     const session = await createSession({
       sub: userId,
       email,
