@@ -9,6 +9,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, receipts });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "receipts_read_failed";
-    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+    console.error("[receipts-api] list failed:", msg);
+    return NextResponse.json({ ok: false, error: "receipts_read_failed" }, { status: 500 });
   }
 }

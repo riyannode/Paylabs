@@ -15,6 +15,7 @@ export async function GET(
     return NextResponse.json({ ok: true, run_id: runId, receipt });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "receipt_read_failed";
-    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+    console.error("[receipt-api] read failed:", msg);
+    return NextResponse.json({ ok: false, error: "receipt_read_failed" }, { status: 500 });
   }
 }
