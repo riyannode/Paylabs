@@ -43,6 +43,7 @@ type SafeRunResult = {
   assistantResponse: string | null;
   userVisibleReasoning: string | null;
   brainRationale: string | null;
+  sourceFinalAnswer: string | null;
   lockedNodes: string[];
   lockedServices: string[];
   tierDecisionReason: string | null;
@@ -76,20 +77,6 @@ function short(value?: string | null, chars = 6): string {
   return `${value.slice(0, chars)}…${value.slice(-chars)}`;
 }
 
-/** Detect deterministic source inventory answers that should be hidden from user.
- *  NOTE: "Latest activity found for ..." is a real source-grounded answer from
- *  buildSourceGroundedFinalAnswer() — do NOT suppress it. */
-function isSourceInventoryAnswer(value?: string | null): boolean {
-  if (!value) return false;
-  return (
-    /Found\s+\d+\s+(relevant\s+)?sources/i.test(value) ||
-    /Here are\s+\d+\s+latest sources/i.test(value) ||
-    /No (sufficiently )?relevant sources found/i.test(value) ||
-    /No relevant sources found for/i.test(value) ||
-    /\(Mode:\s*(db_fallback|rsshub_live|tavily_live|none)\)/i.test(value)
-  );
-}
-
 // Planned cost comes from backend /api/paylabs/quote. No frontend constants.
 
 function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
@@ -118,7 +105,6 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (agentTraceBrain?.assistant_response as string) ??
     (brainPlanning?.plan_rationale as string) ??
     (agentTraceBrain?.plan_rationale as string) ??
-    (!isSourceInventoryAnswer(rawFinalAnswer) ? rawFinalAnswer : null) ??
     (exitOutput?.final_summary as string) ??
     tieredSummaries?.final_summary ??
     "Run completed.";
@@ -128,10 +114,10 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     null;
   const brainRationale =
     (brainPlanning?.plan_rationale as string) ??
-    (brainPlanning?.tier_decision_reason as string) ??
-    (brainPlanning?.safe_summary as string) ??
     (agentTraceBrain?.plan_rationale as string) ??
+    (brainPlanning?.tier_decision_reason as string) ??
     (agentTraceBrain?.tier_decision_reason as string) ??
+    (brainPlanning?.safe_summary as string) ??
     (agentTraceBrain?.safe_summary as string) ??
     null;
 
@@ -186,6 +172,7 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     assistantResponse,
     userVisibleReasoning,
     brainRationale,
+    sourceFinalAnswer: rawFinalAnswer,
     lockedNodes: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_macro_nodes as string[]) ?? [],
     lockedServices: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_services as string[]) ?? [],
     tierDecisionReason: (brainPlanning?.tier_decision_reason as string) ?? null,
@@ -915,12 +902,46 @@ function BrainIcon() {
 
 function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () => void }) {
   const [rationaleOpen, setRationaleOpen] = useState(false);
+  const [sourceSummaryOpen, setSourceSummaryOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const rationaleText = result.userVisibleReasoning ?? result.brainRationale;
   return (
     <div className="pl-result-card">
       {result.assistantResponse && (
-        <div className="pl-assistant-answer">{result.assistantResponse}</div>
+        <div className="pl-assistant-answer">
+          <div className="pl-assistant-label">Brain answer</div>
+          <div>{result.assistantResponse}</div>
+        </div>
+      )}
+      {rationaleText && (
+        <div className="pl-rationale-block">
+          <button
+            className="pl-rationale-toggle"
+            onClick={() => setRationaleOpen(!rationaleOpen)}
+            type="button"
+          >
+            <span className="pl-rationale-title">LLM reasoning</span>
+            <span className="pl-rationale-caret">{rationaleOpen ? "▾" : "▸"}</span>
+          </button>
+          {rationaleOpen && (
+            <div className="pl-rationale-content">{rationaleText}</div>
+          )}
+        </div>
+      )}
+      {result.sourceFinalAnswer && result.sourceFinalAnswer !== result.assistantResponse && (
+        <div className="pl-source-summary-pill-wrap">
+          <button
+            className="pl-source-summary-pill"
+            onClick={() => setSourceSummaryOpen(!sourceSummaryOpen)}
+            type="button"
+          >
+            <span>Source summary</span>
+            <span>{sourceSummaryOpen ? "▾" : "▸"}</span>
+          </button>
+          {sourceSummaryOpen && (
+            <div className="pl-source-summary-content">{result.sourceFinalAnswer}</div>
+          )}
+        </div>
       )}
       {result.sourcesUsed.length > 0 && (
         <div className="pl-source-links-row">
@@ -929,20 +950,6 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
               Link {i + 1}
             </a>
           ))}
-        </div>
-      )}
-      {rationaleText && (
-        <div className="pl-rationale-block">
-          <button
-            className="pl-rationale-toggle"
-            onClick={() => setRationaleOpen(!rationaleOpen)}
-          >
-            <span className="pl-rationale-title">Reasoning</span>
-            <span className="pl-rationale-caret">{rationaleOpen ? "▾" : "▸"}</span>
-          </button>
-          {rationaleOpen && (
-            <pre className="pl-rationale-content">{rationaleText}</pre>
-          )}
         </div>
       )}
       <div className="pl-rationale-block">

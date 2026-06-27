@@ -862,6 +862,45 @@ a:hover { text-decoration: none; }
   word-break: break-word;
 }
 
+
+.pl-assistant-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted-foreground, var(--muted));
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pl-source-summary-pill-wrap {
+  margin-top: 8px;
+}
+
+.pl-source-summary-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-foreground, var(--muted));
+  cursor: pointer;
+}
+
+.pl-source-summary-content {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.02);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 .pl-sources-inline {
   background: transparent;
   border: 0;
