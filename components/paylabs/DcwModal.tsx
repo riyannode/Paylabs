@@ -35,6 +35,32 @@ function asDecimal(value?: string | null): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+const CIRCLE_FAUCET_URL = "https://faucet.circle.com/";
+
+async function copyToClipboard(value: string) {
+  if (!value) return false;
+
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    try {
+      const textArea = document.createElement("textarea");
+      textArea.value = value;
+      textArea.style.position = "fixed";
+      textArea.style.opacity = "0";
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(textArea);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
 function DcwInfoRow({
   label,
   value,
@@ -83,7 +109,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   const [activeTab, setActiveTab] = useState<"balances" | "topup">("balances");
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [showPasskeyForm, setShowPasskeyForm] = useState(false);
-  const [showManualFunding, setShowManualFunding] = useState(false);
+  const [walletCopied, setWalletCopied] = useState(false);
   const googleInitialized = useRef(false);
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
 
@@ -97,6 +123,17 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   const needsTopUp = x402Balance < plannedCostNum;
   const recommendedTopUp = Math.max(plannedCostNum - x402Balance, plannedCostNum);
   const recommendedStr = recommendedTopUp > 0 ? recommendedTopUp.toFixed(6) : "0.000001";
+  const walletAddress = wallet?.address ?? "";
+
+  async function handleCopyWalletAddress() {
+    if (!walletAddress) return;
+
+    const ok = await copyToClipboard(walletAddress);
+    if (!ok) return;
+
+    setWalletCopied(true);
+    window.setTimeout(() => setWalletCopied(false), 1800);
+  }
 
   // ── Refresh Balance ───────────────────────────────────────
   const refreshBalance = useCallback(async () => {
@@ -691,7 +728,20 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                 <span className="pl-connected-dot-v3" />
                 <span>PayLabs Wallet connected</span>
               </div>
-              <b className="data-mono">{shortAddr(wallet.address)}</b>
+              <div className="pl-wallet-connected-address-row">
+                <code className="pl-wallet-connected-address">
+                  {shortAddr(walletAddress)}
+                </code>
+                <button
+                  type="button"
+                  className={`pl-copy-pill ${walletCopied ? "pl-copy-pill-copied" : ""}`}
+                  onClick={handleCopyWalletAddress}
+                  disabled={!walletAddress}
+                  aria-label={walletCopied ? "Wallet address copied" : "Copy wallet address"}
+                >
+                  {walletCopied ? "✓ Copied" : "Copy"}
+                </button>
+              </div>
             </div>
 
             {/* Tab bar */}
@@ -714,7 +764,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
             {activeTab === "balances" && (
               <>
                 <div className="pl-summary-card-v3">
-                  <DcwInfoRow label="Wallet" copyValue={wallet.address}>
+                  <DcwInfoRow label="Wallet">
                     <span className="data-mono">{shortAddr(wallet.address)}</span>
                   </DcwInfoRow>
                   <DcwInfoRow label="Type" value="PayLabs Wallet" />
@@ -761,13 +811,6 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                     <button className="pl-primary-v3" onClick={onClose}>
                       Close
                     </button>
-                    <button
-                      className="pl-eoa-fallback-v3"
-                      onClick={() => setActiveTab("topup")}
-                      style={{ marginTop: 4 }}
-                    >
-                      Add more Gateway Balance
-                    </button>
                   </>
                 )}
 
@@ -797,9 +840,9 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                 </div>
 
                 {/* Deposit to Gateway */}
-                <div className="pl-summary-card-v3 pl-dcw-deposit-card">
-                  <h4 style={{ margin: "0 0 6px" }}>Deposit to Gateway</h4>
-                  <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
+                <div className="pl-deposit-panel-flat">
+                  <div className="pl-deposit-title">Deposit to Gateway</div>
+                  <p className="pl-deposit-helper">
                     Move USDC from your PayLabs Wallet into Gateway Balance for automatic x402 payments.
                   </p>
                   {balance.gatewayUsdc == null && (
@@ -807,8 +850,9 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                       ⚠ Gateway balance check failed. Refresh to retry.
                     </p>
                   )}
-                  <div className="pl-dcw-deposit-controls">
+                  <div className="pl-deposit-input-row">
                     <input
+                      className="pl-deposit-input"
                       type="number"
                       step="0.000001"
                       min="0"
@@ -816,23 +860,14 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                       value={depositAmount}
                       onChange={(e) => { setDepositAmount(e.target.value); setDepositError(null); }}
                       disabled={flowActive}
-                      style={{
-                        width: "100%",
-                        padding: "10px 12px",
-                        borderRadius: 10,
-                        border: "1px solid var(--border, #d8dee8)",
-                        background: "#fff",
-                        color: "inherit",
-                        fontSize: 14,
-                      }}
                     />
                     <button
-                      className="pl-primary-v3"
+                      type="button"
+                      className="pl-primary-v3 pl-deposit-button"
                       onClick={handleDeposit}
                       disabled={flowActive || !depositAmount}
-                      style={{ whiteSpace: "nowrap", opacity: flowActive || !depositAmount ? 0.5 : 1 }}
                     >
-                      {flowActive ? "Depositing…" : "Deposit to Gateway"}
+                      {flowActive ? "Depositing…" : "Deposit"}
                     </button>
                   </div>
                   {depositError && (
@@ -854,33 +889,32 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                   )}
                   {recommendedTopUp > 0 && (
                     <button
-                      className="pl-eoa-fallback-v3"
+                      type="button"
+                      className="pl-use-recommended-pill"
                       onClick={() => setDepositAmount(recommendedStr)}
                       disabled={flowActive}
-                      style={{ marginTop: 6, fontSize: 11 }}
                     >
                       Use recommended: {recommendedStr} USDC
                     </button>
                   )}
                 </div>
 
-                {/* Wallet address for manual funding */}
-                <button
-                  className="pl-eoa-fallback-v3"
-                  onClick={() => setShowManualFunding((value) => !value)}
-                  style={{ marginTop: 10 }}
-                >
-                  Need to fund wallet first?
-                </button>
-                {showManualFunding && (
-                  <div className="pl-summary-card-v3" style={{ marginTop: 8 }}>
-                    <DcwInfoRow label="Wallet address" value="Copy" copyValue={wallet.address} />
-                    <code className="pl-dcw-address-code">{wallet.address}</code>
-                    <p className="muted" style={{ fontSize: 11, marginTop: 8 }}>
-                      Send USDC on Arc Testnet to this wallet address.
-                    </p>
+                <div className="pl-faucet-card">
+                  <div>
+                    <div className="pl-faucet-title">Need test USDC?</div>
+                    <div className="pl-faucet-subtitle">
+                      Copy your wallet address above, then open Circle Faucet.
+                    </div>
                   </div>
-                )}
+                  <a
+                    className="pl-faucet-button"
+                    href={CIRCLE_FAUCET_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open Circle Faucet ↗
+                  </a>
+                </div>
 
                 <button className="pl-primary-v3" onClick={refreshBalance} style={{ marginTop: 12 }}>
                   Refresh Balance

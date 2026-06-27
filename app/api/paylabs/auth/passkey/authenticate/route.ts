@@ -21,11 +21,31 @@ import type { AuthenticationResponseJSON } from "@simplewebauthn/types";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { createSession, sessionCookieOptions } from "@/lib/paylabs/auth/session";
 
+import { getSession as getUcwSession } from "@/lib/paylabs/ucw";
+
 function getRpId(req: NextRequest): string {
   return process.env.NEXT_PUBLIC_APP_HOST || req.nextUrl.hostname || "localhost";
 }
 function getExpectedOrigin(req: NextRequest): string {
   return process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin || "http://localhost:3000";
+}
+
+
+async function rejectIfCreatorWalletActive(req: NextRequest) {
+  const ucwSid = req.cookies.get("ucw_sid")?.value;
+  if (!ucwSid) return null;
+
+  const ucwSession = await getUcwSession(ucwSid);
+  if (!ucwSession?.walletAddress) return null;
+
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "Creator Wallet is already connected. Disconnect it before connecting User Test Wallet.",
+      activeWalletMode: "ucw",
+    },
+    { status: 409 },
+  );
 }
 
 export async function POST(req: NextRequest) {
@@ -147,6 +167,9 @@ export async function POST(req: NextRequest) {
         .eq("type", "authentication");
 
       // Create session
+      const walletModeConflict = await rejectIfCreatorWalletActive(req);
+      if (walletModeConflict) return walletModeConflict;
+
       const session = await createSession({
         sub: user.id,
         email: user.email,

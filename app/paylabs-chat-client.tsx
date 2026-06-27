@@ -43,6 +43,7 @@ type SafeRunResult = {
   assistantResponse: string | null;
   userVisibleReasoning: string | null;
   brainRationale: string | null;
+  sourceFinalAnswer: string | null;
   lockedNodes: string[];
   lockedServices: string[];
   tierDecisionReason: string | null;
@@ -76,20 +77,6 @@ function short(value?: string | null, chars = 6): string {
   return `${value.slice(0, chars)}…${value.slice(-chars)}`;
 }
 
-/** Detect deterministic source inventory answers that should be hidden from user.
- *  NOTE: "Latest activity found for ..." is a real source-grounded answer from
- *  buildSourceGroundedFinalAnswer() — do NOT suppress it. */
-function isSourceInventoryAnswer(value?: string | null): boolean {
-  if (!value) return false;
-  return (
-    /Found\s+\d+\s+(relevant\s+)?sources/i.test(value) ||
-    /Here are\s+\d+\s+latest sources/i.test(value) ||
-    /No (sufficiently )?relevant sources found/i.test(value) ||
-    /No relevant sources found for/i.test(value) ||
-    /\(Mode:\s*(db_fallback|rsshub_live|tavily_live|none)\)/i.test(value)
-  );
-}
-
 // Planned cost comes from backend /api/paylabs/quote. No frontend constants.
 
 function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
@@ -113,12 +100,16 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (exitOutput?.final_answer as string) ??
     null;
 
-  const assistantResponse =
+  const brainAssistantResponse =
     (brainPlanning?.assistant_response as string) ??
     (agentTraceBrain?.assistant_response as string) ??
     (brainPlanning?.plan_rationale as string) ??
     (agentTraceBrain?.plan_rationale as string) ??
-    (!isSourceInventoryAnswer(rawFinalAnswer) ? rawFinalAnswer : null) ??
+    null;
+
+  const assistantResponse =
+    brainAssistantResponse ??
+    rawFinalAnswer ??
     (exitOutput?.final_summary as string) ??
     tieredSummaries?.final_summary ??
     "Run completed.";
@@ -128,10 +119,10 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     null;
   const brainRationale =
     (brainPlanning?.plan_rationale as string) ??
-    (brainPlanning?.tier_decision_reason as string) ??
-    (brainPlanning?.safe_summary as string) ??
     (agentTraceBrain?.plan_rationale as string) ??
+    (brainPlanning?.tier_decision_reason as string) ??
     (agentTraceBrain?.tier_decision_reason as string) ??
+    (brainPlanning?.safe_summary as string) ??
     (agentTraceBrain?.safe_summary as string) ??
     null;
 
@@ -186,6 +177,7 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     assistantResponse,
     userVisibleReasoning,
     brainRationale,
+    sourceFinalAnswer: rawFinalAnswer,
     lockedNodes: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_macro_nodes as string[]) ?? [],
     lockedServices: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_services as string[]) ?? [],
     tierDecisionReason: (brainPlanning?.tier_decision_reason as string) ?? null,
@@ -237,6 +229,19 @@ async function fetchDcwBalance(): Promise<UcwBalance> {
     gatewayError: data.gateway?.error ?? null,
     source: "dcw",
   };
+}
+
+
+async function hasActiveCreatorWalletSession() {
+  const resp = await fetch("/api/paylabs/wallet/ucw?action=session-restore", {
+    method: "POST",
+    credentials: "include",
+  });
+
+  if (!resp.ok) return false;
+
+  const data = await resp.json().catch(() => ({}));
+  return !!data?.hasUserToken && !!data?.walletAddress;
 }
 
 // ─── Main Component ─────────────────────────────────────────
@@ -314,6 +319,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [walletState, setWalletState] = useState<WalletState>("not_connected");
   const [walletInfo, setWalletInfo] = useState<WalletInfo | null>(null);
   const [walletError, setWalletError] = useState<string | null>(null);
+  const [walletModeError, setWalletModeError] = useState<string | null>(null);
   const [ucwBalance, setUcwBalance] = useState<UcwBalance | null>(null);
   const [walletCopied, setWalletCopied] = useState(false);
 
@@ -399,13 +405,30 @@ export default function PayLabsChatClient({ analytics }: Props) {
     };
   }, [planned]);
 
+
+  const openDcwWalletModal = useCallback(async () => {
+    setWalletModeError(null);
+
+    try {
+      const ucwActive = await hasActiveCreatorWalletSession();
+      if (ucwActive) {
+        setWalletModeError("Creator Wallet is connected. Disconnect it before connecting User Test Wallet.");
+        return;
+      }
+    } catch {
+      // Fail open for network/read errors; backend session guards still apply.
+    }
+
+    setDcwOpen(true);
+  }, []);
+
   // ── Submit chat ──
   const submitChat = useCallback(async () => {
     if (!prompt.trim()) return;
 
     // Run gating: must have wallet
     if (!walletInfo?.address) {
-      setDcwOpen(true);
+      openDcwWalletModal();
       return;
     }
 
@@ -415,7 +438,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
       const costNum = parseFloat(planned);
       if (x402Bal < costNum) {
         // Insufficient x402 balance — open DCW modal with top-up tab
-        setDcwOpen(true);
+        openDcwWalletModal();
         return;
       }
     }
@@ -619,7 +642,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
       setError(errMsg);
       setStatus("error");
     }
-  }, [prompt, budget, walletInfo, ucwBalance, planned]);
+  }, [prompt, budget, walletInfo, ucwBalance, planned, openDcwWalletModal]);
 
   const resetChat = useCallback(() => {
     setPrompt("");
@@ -645,8 +668,8 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
   // Reconnect — chat is DCW-only, just open DcwModal
   const reconnectByAuth = useCallback(() => {
-    setDcwOpen(true);
-  }, []);
+    openDcwWalletModal();
+  }, [openDcwWalletModal]);
 
   const copyWalletAddress = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
@@ -671,7 +694,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
           <button
             type="button"
             className={`pl-wallet-pill ${walletInfo?.address ? "connected" : ""}`}
-            onClick={() => setDcwOpen(true)}
+            onClick={openDcwWalletModal}
             title={walletInfo?.address || "Connect wallet"}
           >
             {walletInfo?.address ? (
@@ -732,6 +755,12 @@ export default function PayLabsChatClient({ analytics }: Props) {
             )}
           </button>
         </div>
+
+        {walletModeError && (
+          <div className="pl-wallet-error-v3" style={{ margin: "8px 0" }}>
+            {walletModeError}
+          </div>
+        )}
 
         <section className="pl-hero">
           <h1>Ask PayLabs</h1>
@@ -915,12 +944,46 @@ function BrainIcon() {
 
 function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () => void }) {
   const [rationaleOpen, setRationaleOpen] = useState(false);
+  const [sourceSummaryOpen, setSourceSummaryOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const rationaleText = result.userVisibleReasoning ?? result.brainRationale;
   return (
     <div className="pl-result-card">
       {result.assistantResponse && (
-        <div className="pl-assistant-answer">{result.assistantResponse}</div>
+        <div className="pl-assistant-answer">
+          <div className="pl-assistant-label">Answer</div>
+          <div>{result.assistantResponse}</div>
+        </div>
+      )}
+      {rationaleText && (
+        <div className="pl-rationale-block">
+          <button
+            className="pl-rationale-toggle"
+            onClick={() => setRationaleOpen(!rationaleOpen)}
+            type="button"
+          >
+            <span className="pl-rationale-title">LLM reasoning</span>
+            <span className="pl-rationale-caret">{rationaleOpen ? "▾" : "▸"}</span>
+          </button>
+          {rationaleOpen && (
+            <div className="pl-rationale-content">{rationaleText}</div>
+          )}
+        </div>
+      )}
+      {result.sourceFinalAnswer && result.sourceFinalAnswer !== result.assistantResponse && (
+        <div className="pl-source-summary-pill-wrap">
+          <button
+            className="pl-source-summary-pill"
+            onClick={() => setSourceSummaryOpen(!sourceSummaryOpen)}
+            type="button"
+          >
+            <span>Source summary</span>
+            <span>{sourceSummaryOpen ? "▾" : "▸"}</span>
+          </button>
+          {sourceSummaryOpen && (
+            <div className="pl-source-summary-content">{result.sourceFinalAnswer}</div>
+          )}
+        </div>
       )}
       {result.sourcesUsed.length > 0 && (
         <div className="pl-source-links-row">
@@ -929,20 +992,6 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
               Link {i + 1}
             </a>
           ))}
-        </div>
-      )}
-      {rationaleText && (
-        <div className="pl-rationale-block">
-          <button
-            className="pl-rationale-toggle"
-            onClick={() => setRationaleOpen(!rationaleOpen)}
-          >
-            <span className="pl-rationale-title">Reasoning</span>
-            <span className="pl-rationale-caret">{rationaleOpen ? "▾" : "▸"}</span>
-          </button>
-          {rationaleOpen && (
-            <pre className="pl-rationale-content">{rationaleText}</pre>
-          )}
         </div>
       )}
       <div className="pl-rationale-block">
