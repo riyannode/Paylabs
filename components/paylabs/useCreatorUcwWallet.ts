@@ -163,6 +163,8 @@ export function useCreatorUcwWallet() {
         const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
         const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
         if (!appId) throw new Error("Creator wallet login is not configured.");
+        const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+        if (!googleClientId) throw new Error("Google login client ID is not configured.");
 
         const sessionResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
         if (!sessionResp.ok) throw new Error("Creator wallet session failed.");
@@ -190,7 +192,7 @@ export function useCreatorUcwWallet() {
               deviceToken,
               deviceEncryptionKey,
               google: {
-                clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "",
+                clientId: googleClientId,
                 redirectUri: window.location.origin,
                 selectAccountPrompt: true,
               },
@@ -205,8 +207,9 @@ export function useCreatorUcwWallet() {
       } catch (e: unknown) {
         ucwGoogleReadyRef.current = false;
         setUcwGoogleReady(false);
-        const message = e instanceof Error ? e.message : "Creator wallet login preparation failed.";
-        setUcwGoogleError(message);
+        const message = e instanceof Error ? e.message : "unknown";
+        console.error("[creator-ucw] Google login setup failed", { message: message.slice(0, 300) });
+        setUcwGoogleError("Creator wallet login setup failed. Please retry.");
         throw e;
       } finally {
         setUcwGooglePreparing(false);
@@ -393,7 +396,7 @@ export function useCreatorUcwWallet() {
     if (walletState === "connecting") return;
 
     if (!ucwGoogleReadyRef.current || !ucwSdkRef.current) {
-      setWalletError("Preparing creator wallet login. Try again in a moment.");
+      setWalletError(null);
       prepareGoogleLogin().catch(() => {});
       return;
     }
