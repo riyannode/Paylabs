@@ -49,6 +49,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [activeTab, setActiveTab] = useState<"balances" | "topup">("balances");
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [showPasskeyForm, setShowPasskeyForm] = useState(false);
   const [showManualFunding, setShowManualFunding] = useState(false);
   const googleInitialized = useRef(false);
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
@@ -85,6 +86,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   // Check existing session on open
   useEffect(() => {
     if (!open) return;
+    setShowPasskeyForm(false);
     checkSession();
   }, [open]);
 
@@ -542,77 +544,51 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
               <div ref={googleButtonRef} className="pl-google-button-host" aria-busy={isGoogleLoading} />
 
               <button
-                className="pl-login-option-v3"
-                onClick={() => document.querySelector<HTMLInputElement>(".pl-dcw-email-section input")?.focus()}
+                className="pl-login-option-v3 pl-passkey-pill"
+                onClick={() => setShowPasskeyForm((value) => !value)}
+                aria-expanded={showPasskeyForm}
               >
                 <span className="pl-login-icon-v3"><PasskeyIcon /></span>
-                <b>Passkey</b>
+                <b>Use Passkey</b>
               </button>
             </div>
+
+            {showPasskeyForm && (
+              <div className="pl-dcw-email-section visible" style={{ marginTop: 8 }}>
+                <label className="pl-dcw-label">Email for passkey</label>
+                <input
+                  className="pl-email-otp-input"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && email.includes("@")) handlePasskeyRegister();
+                  }}
+                />
+                <button
+                  className="pl-primary-v3"
+                  onClick={handlePasskeyRegister}
+                  disabled={!email.includes("@") || isRegistering}
+                >
+                  {isRegistering ? "Creating passkey…" : "Register with Passkey"}
+                </button>
+                <button
+                  className="pl-eoa-fallback-v3"
+                  onClick={handlePasskeyAuthenticate}
+                  disabled={!email.includes("@")}
+                  style={{ marginTop: 4 }}
+                >
+                  Already have a passkey? Sign in
+                </button>
+              </div>
+            )}
 
             {error && (
               <p className="muted" style={{ fontSize: 12, color: "var(--danger, #ef4444)", textAlign: "center", marginTop: 4 }}>
                 {error}
               </p>
             )}
-
-            {/* Passkey section (collapsed by default) */}
-            <div className="pl-dcw-email-section visible" style={{ marginTop: 8 }}>
-              <label className="pl-dcw-label">Your email</label>
-              <input
-                className="pl-email-otp-input"
-                type="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && email.includes("@")) handlePasskeyRegister();
-                }}
-              />
-              <button
-                className="pl-primary-v3"
-                onClick={handlePasskeyRegister}
-                disabled={!email.includes("@") || isRegistering}
-              >
-                {isRegistering ? "Creating passkey…" : "🔐 Register with Passkey"}
-              </button>
-              <button
-                className="pl-eoa-fallback-v3"
-                onClick={handlePasskeyAuthenticate}
-                disabled={!email.includes("@")}
-                style={{ marginTop: 4 }}
-              >
-                Already have a passkey? Sign in
-              </button>
-              <div style={{ display: "grid", gap: 6, marginTop: 10 }}>
-                <button
-                  className="pl-eoa-fallback-v3"
-                  onClick={handleSendOtp}
-                  disabled={!email.includes("@") || isSendingOtp}
-                >
-                  {isSendingOtp ? "Sending code…" : otpSent ? "Send code again" : "Email OTP"}
-                </button>
-                {otpSent && (
-                  <>
-                    <input
-                      className="pl-email-otp-input"
-                      inputMode="numeric"
-                      maxLength={6}
-                      placeholder="6-digit code"
-                      value={otpCode}
-                      onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                    />
-                    <button
-                      className="pl-primary-v3"
-                      onClick={handleVerifyOtp}
-                      disabled={otpCode.length !== 6 || isVerifyingOtp}
-                    >
-                      {isVerifyingOtp ? "Verifying…" : "Verify OTP"}
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
           </div>
         )}
 
@@ -900,6 +876,8 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
         </p>
         <style jsx>{`
           .pl-google-button-host { width: 100%; min-height: 44px; display: grid; place-items: center; }
+          .pl-passkey-pill { width: 100%; }
+          .pl-dcw-email-section { width: 100%; }
           .pl-dcw-deposit-card { margin-top: 12px; background: #fff; }
           .pl-dcw-deposit-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; }
           .pl-dcw-address-code { display: block; overflow-wrap: anywhere; font-size: 12px; }
