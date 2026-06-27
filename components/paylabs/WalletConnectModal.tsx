@@ -53,6 +53,10 @@ type Props = {
   depositStatus?: string | null;
   debugLog?: string[];
   defaultShowEmailInput?: boolean;
+  ucwGooglePreparing?: boolean;
+  ucwGoogleReady?: boolean;
+  ucwGoogleError?: string | null;
+  onPrepareGoogleLogin?: () => void;
   /** Show Gateway deposit / x402 run UI. Default true. Set false for creator wallet. */
   showGatewayDeposit?: boolean;
 };
@@ -112,6 +116,10 @@ export default function WalletConnectModal({
   depositStatus,
   debugLog,
   defaultShowEmailInput = false,
+  ucwGooglePreparing = false,
+  ucwGoogleReady = false,
+  ucwGoogleError,
+  onPrepareGoogleLogin,
   showGatewayDeposit = true,
 }: Props) {
   const [activeTab, setActiveTab] = useState<"balances" | "topup">("balances");
@@ -120,11 +128,18 @@ export default function WalletConnectModal({
   const [emailValue, setEmailValue] = useState("");
   const [depositError, setDepositError] = useState<string | null>(null);
 
+  const isConnected = !!walletInfo?.address;
+
   useEffect(() => {
     if (defaultShowEmailInput) {
       setShowEmailInput(true);
     }
   }, [defaultShowEmailInput]);
+
+  useEffect(() => {
+    if (!open || isConnected || ucwGoogleReady || ucwGooglePreparing) return;
+    onPrepareGoogleLogin?.();
+  }, [open, isConnected, ucwGoogleReady, ucwGooglePreparing, onPrepareGoogleLogin]);
 
   // Force tab back to balances when gateway deposit UI is hidden
   useEffect(() => {
@@ -133,7 +148,6 @@ export default function WalletConnectModal({
     }
   }, [showGatewayDeposit, activeTab]);
 
-  const isConnected = !!walletInfo?.address;
   const walletUsdc = asDecimal(ucwBalance?.walletUsdc ?? ucwBalance?.gatewayUsdc ?? "0");
   const x402Balance = asDecimal(ucwBalance?.gatewayUsdc);
   const pendingBatch = asDecimal(ucwBalance?.pendingBatchUsdc);
@@ -177,22 +191,30 @@ export default function WalletConnectModal({
               <button
                 className="pl-login-option-v3"
                 onClick={onConnectGoogle}
-                disabled={walletState === "connecting"}
+                disabled={walletState === "connecting" || ucwGooglePreparing}
               >
                 <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
-                <b>Social</b>
+                <b>
+                  {walletState === "connecting"
+                    ? "Opening Circle sign-in..."
+                    : ucwGooglePreparing
+                      ? "Preparing wallet login..."
+                      : "Continue with Google"}
+                </b>
               </button>
 
-              <button
-                className="pl-login-option-v3"
-                onClick={() => setShowEmailInput(!showEmailInput)}
-                disabled={walletState === "connecting"}
-              >
-                <span className="pl-login-icon-v3"><MailIcon /></span>
-                <b>Email</b>
-              </button>
+              {showGatewayDeposit && (
+                <button
+                  className="pl-login-option-v3"
+                  onClick={() => setShowEmailInput(!showEmailInput)}
+                  disabled={walletState === "connecting"}
+                >
+                  <span className="pl-login-icon-v3"><MailIcon /></span>
+                  <b>Email</b>
+                </button>
+              )}
 
-              {showEmailInput && (
+              {showGatewayDeposit && showEmailInput && (
                 <div className="pl-email-input-row">
                   <input
                     className="pl-email-otp-input"
@@ -429,7 +451,7 @@ export default function WalletConnectModal({
           </div>
         )}
 
-        {error && !isConnected && <div className="pl-wallet-error-v3">{error}</div>}
+        {(error || ucwGoogleError) && !isConnected && <div className="pl-wallet-error-v3">{error || ucwGoogleError}</div>}
         {debugLog && debugLog.length > 0 && (
           <details className="pl-wallet-error-v3" style={{ marginTop: 8, fontSize: 11, fontFamily: "monospace", whiteSpace: "pre-wrap", maxHeight: 200, overflow: "auto" }}>
             <summary>Debug Log ({debugLog.length})</summary>

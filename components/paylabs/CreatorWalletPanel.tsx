@@ -19,6 +19,10 @@ export default function CreatorWalletPanel() {
     authMethod,
     depositStatus,
     defaultShowEmailInput,
+    ucwGooglePreparing,
+    ucwGoogleReady,
+    ucwGoogleError,
+    prepareGoogleLogin,
     connectGoogle,
     connectEmail,
     connectPin,
@@ -56,6 +60,10 @@ export default function CreatorWalletPanel() {
         authMethod={authMethod ?? undefined}
         depositStatus={depositStatus}
         defaultShowEmailInput={defaultShowEmailInput}
+        ucwGooglePreparing={ucwGooglePreparing}
+        ucwGoogleReady={ucwGoogleReady}
+        ucwGoogleError={ucwGoogleError}
+        onPrepareGoogleLogin={() => { prepareGoogleLogin().catch(() => {}); }}
         showGatewayDeposit={false}
       />
     </>
