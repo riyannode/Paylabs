@@ -532,6 +532,13 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
 
             // Terminal states — stop polling
             if (statusData.state === "complete" || statusData.state === "failed") {
+              if (statusData.state === "failed") {
+                const safeReason =
+                  typeof statusData.reason === "string"
+                    ? statusData.reason.slice(0, 180)
+                    : null;
+                setDepositError(safeReason || "Gateway deposit failed. Check details and retry.");
+              }
               if (pollRef.current) {
                 clearInterval(pollRef.current);
                 pollRef.current = null;
@@ -799,7 +806,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                       {depositState === "deposit_pending" && "Gateway deposit submitted..."}
                       {depositState === "deposit_complete" && "Gateway deposit submitted..."}
                       {depositState === "complete" && "Gateway Balance updated."}
-                      {depositState === "failed" && "Deposit failed. Check details and retry."}
+                      {depositState === "failed" && "Deposit failed."}
                       {!["approve_pending", "approve_complete", "deposit_pending", "deposit_complete", "complete", "failed"].includes(depositState) && `⏳ ${depositState}…`}
                     </p>
                   )}
