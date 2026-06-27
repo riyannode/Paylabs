@@ -73,6 +73,14 @@ function isTerminal(state: string): boolean {
   return TERMINAL_STATES.includes(state);
 }
 
+function parseDepositFlowId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 80) return null;
+  if (!/^[A-Za-z0-9-]+$/.test(trimmed)) return null;
+  return trimmed;
+}
+
 // ─── GET: Semantic state machine poll ────────────────────────
 
 export async function GET(req: NextRequest) {
@@ -85,6 +93,12 @@ export async function GET(req: NextRequest) {
     const approveTxId = req.nextUrl.searchParams.get("approveTxId");
     const depositTxId = req.nextUrl.searchParams.get("depositTxId");
     const amountUsdc = req.nextUrl.searchParams.get("amountUsdc");
+    const rawDepositFlowId = req.nextUrl.searchParams.get("depositFlowId");
+    const depositFlowId = parseDepositFlowId(rawDepositFlowId);
+
+    if (rawDepositFlowId && !depositFlowId) {
+      return NextResponse.json({ ok: false, error: "Invalid depositFlowId" }, { status: 400 });
+    }
 
     if (!approveTxId) {
       return NextResponse.json({ ok: false, error: "approveTxId parameter required" }, { status: 400 });
@@ -99,7 +113,7 @@ export async function GET(req: NextRequest) {
         approveTxId,
         depositTxId: null,
         state: "failed",
-        reason: `Approve tx ${approveState.state}: ${approveState.error || "no details"}`,
+        reason: "Approve transaction failed.",
         approveTxHash: approveState.txHash,
       });
     }
@@ -153,15 +167,18 @@ export async function GET(req: NextRequest) {
 
       const client = getDcwClient();
       const amountAtomic = String(Math.round(Number(amountUsdc) * 1_000_000));
+      const depositIdempotencyKey = depositFlowId
+        ? `paylabs-dcw-gateway-deposit:${session.sub}:${wallet.wallet_id}:${depositFlowId}:${approveTxId}:${amountAtomic}`
+        : `paylabs-dcw-gateway-deposit:${session.sub}:${wallet.wallet_id}:${approveTxId}:${amountAtomic}`;
 
       try {
         const depositResp = await client.createContractExecutionTransaction({
           walletId: wallet.wallet_id,
           contractAddress: GATEWAY_CONTRACT_ADDRESS,
           abiFunctionSignature: "deposit(address,uint256)",
-          abiParameters: [wallet.wallet_address, amountAtomic],
+          abiParameters: [USDC_CONTRACT_ADDRESS, amountAtomic],
           fee: { type: "level", config: { feeLevel: "MEDIUM" } },
-          idempotencyKey: crypto.randomUUID(),
+          idempotencyKey: depositIdempotencyKey,
         });
 
         const newDepositTxId = depositResp?.data?.id;
@@ -171,7 +188,7 @@ export async function GET(req: NextRequest) {
             approveTxId,
             depositTxId: null,
             state: "failed",
-            reason: "Deposit tx returned no ID from Circle",
+            reason: "Gateway deposit transaction failed.",
             approveTxHash: approveState.txHash,
           });
         }
@@ -191,7 +208,7 @@ export async function GET(req: NextRequest) {
           approveTxId,
           depositTxId: null,
           state: "failed",
-          reason: `Deposit submission failed: ${msg.slice(0, 200)}`,
+          reason: "Gateway deposit transaction failed.",
           approveTxHash: approveState.txHash,
         });
       }
@@ -206,7 +223,7 @@ export async function GET(req: NextRequest) {
         approveTxId,
         depositTxId,
         state: "failed",
-        reason: `Deposit tx ${depositState.state}: ${depositState.error || "no details"}`,
+        reason: "Gateway deposit transaction failed.",
         approveTxHash: approveState.txHash,
         depositTxHash: depositState.txHash,
       });
@@ -270,7 +287,8 @@ export async function GET(req: NextRequest) {
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+    console.error("[dcw/deposit-gateway] GET error:", msg);
+    return NextResponse.json({ ok: false, error: "Gateway deposit status check failed." }, { status: 500 });
   }
 }
 
@@ -285,6 +303,11 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => ({}));
     const amountUsdc = Number(body.amountUsdc);
+    const rawDepositFlowId = body.depositFlowId;
+    const depositFlowId = parseDepositFlowId(rawDepositFlowId);
+    if (rawDepositFlowId != null && !depositFlowId) {
+      return NextResponse.json({ ok: false, error: "Invalid depositFlowId" }, { status: 400 });
+    }
     if (!Number.isFinite(amountUsdc) || amountUsdc <= 0) {
       return NextResponse.json({ ok: false, error: "Valid amountUsdc required" }, { status: 400 });
     }
@@ -315,21 +338,33 @@ export async function POST(req: NextRequest) {
       }, { status: 500 });
     }
 
+    const approveIdempotencyKey = depositFlowId
+      ? `paylabs-dcw-gateway-approve:${session.sub}:${wallet.wallet_id}:${depositFlowId}:${amountAtomic}`
+      : `paylabs-dcw-gateway-approve:${session.sub}:${wallet.wallet_id}:${amountAtomic}`;
+
     // Step 1 ONLY: Approve USDC spending by Gateway contract
     // DO NOT submit deposit here — wait for approve COMPLETE via GET poll
-    const approveResp = await client.createContractExecutionTransaction({
-      walletId: wallet.wallet_id,
-      contractAddress: USDC_CONTRACT_ADDRESS,
-      abiFunctionSignature: "approve(address,uint256)",
-      abiParameters: [GATEWAY_CONTRACT_ADDRESS, amountAtomic],
-      fee: { type: "level", config: { feeLevel: "MEDIUM" } },
-      idempotencyKey: crypto.randomUUID(),
-    });
+    let approveTxId: string | undefined;
+    try {
+      const approveResp = await client.createContractExecutionTransaction({
+        walletId: wallet.wallet_id,
+        contractAddress: USDC_CONTRACT_ADDRESS,
+        abiFunctionSignature: "approve(address,uint256)",
+        abiParameters: [GATEWAY_CONTRACT_ADDRESS, amountAtomic],
+        fee: { type: "level", config: { feeLevel: "MEDIUM" } },
+        idempotencyKey: approveIdempotencyKey,
+      });
 
-    const approveTxId = approveResp?.data?.id;
+      approveTxId = approveResp?.data?.id;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[dcw/deposit-gateway] Approve submission failed:", msg);
+      return NextResponse.json({ ok: false, error: "Approve transaction failed." }, { status: 502 });
+    }
+
     if (!approveTxId) {
-      console.error("[dcw/deposit-gateway] Approve returned no tx id:", JSON.stringify(approveResp?.data));
-      return NextResponse.json({ ok: false, error: "Approve transaction failed to initiate" }, { status: 502 });
+      console.error("[dcw/deposit-gateway] Approve returned no tx id");
+      return NextResponse.json({ ok: false, error: "Approve transaction failed." }, { status: 502 });
     }
 
     return NextResponse.json({
@@ -344,6 +379,6 @@ export async function POST(req: NextRequest) {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[dcw/deposit-gateway] Error:", msg);
-    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+    return NextResponse.json({ ok: false, error: "Approve transaction failed." }, { status: 500 });
   }
 }
