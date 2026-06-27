@@ -562,14 +562,13 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   if (!open) return null;
 
   return (
-    <div className="pl-wallet-overlay-v3" onClick={onClose} style={{ zIndex: 1200, pointerEvents: "auto" }}>
-      <div className="pl-wallet-modal-v3 pl-dcw-modal" onClick={(e) => e.stopPropagation()} style={{ position: "relative", zIndex: 1201 }}>
+    <div className="pl-dcw-popover-overlay" onClick={onClose}>
+      <div className="pl-wallet-modal-v3 pl-dcw-modal pl-dcw-popover-modal" onClick={(e) => e.stopPropagation()}>
         <button className="pl-wallet-x-v3" onClick={onClose} aria-label="Close">×</button>
 
         <div className="pl-dcw-header">
-          <span className="pl-dcw-badge">DCW</span>
           <h3>PayLabs Wallet</h3>
-          <p className="muted">Deposit to gateway for automatic x402 payments.</p>
+          <p className="muted">Used for automatic x402 payments.</p>
         </div>
 
         {/* ── Step: Auth (Google + Passkey) ─────────────── */}
@@ -706,7 +705,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                 {/* Actions */}
                 {needsTopUp ? (
                   <button className="pl-primary-v3" onClick={() => setActiveTab("topup")}>
-                    Deposit to Gateway Balance
+                    Deposit to Gateway
                   </button>
                 ) : (
                   <>
@@ -859,10 +858,11 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
             </button>
           </div>
         )}
-        {/* ── Footer ──────────────────────────────────────── */}
-        <p className="muted" style={{ fontSize: 11, textAlign: "center", marginTop: 12 }}>
-          No manual approval per request.
-        </p>
+        {step === "deposit" && (
+          <p className="muted" style={{ fontSize: 11, textAlign: "center", marginTop: 12 }}>
+            Automatic x402 payments use your PayLabs Wallet balance.
+          </p>
+        )}
         <style jsx>{`
           .pl-google-button-host { width: 100%; min-height: 44px; display: grid; place-items: center; }
           .pl-passkey-pill { width: 100%; }
