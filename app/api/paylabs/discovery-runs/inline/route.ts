@@ -270,7 +270,11 @@ async function runX402Orchestration(params: {
   const tierResult = resolveAutoTier(routeTier, brainHint);
 
   if (!tierResult.ok) {
-    // auto tier requires valid Brain planner — fail closed
+    // auto tier: Brain LLM is mandatory — return direct error JSON, never successful run
+    console.error("[inline] Brain planner failed for auto tier", {
+      error: tierResult.error,
+      hasBrainPlanning: !!fullBrainPlanning,
+    });
     const failOutput = buildX402Output(discoveryRunId, "easy", userBudgetUsdc, "failed",
       [...safeProgressSummaries, `FAILED: ${tierResult.error}`], paymentGraph, null, null, tierResult.error);
     return { ...failOutput, _lockedPlan: null };
@@ -1311,6 +1315,7 @@ async function runX402Path(
       requested_route_tier: routeTier,
       route_tier: result._lockedPlan ? result.routeTier : (result.status === "failed" ? null : result.routeTier),
       effective_route_tier: result._lockedPlan ? result.routeTier : (result.status === "failed" ? null : result.routeTier),
+      brain_route_tier_hint: result.brainPlanning?.route_tier_hint ?? null,
       locked_execution_plan: result._lockedPlan
         ? {
             selected_macro_nodes: result._lockedPlan.selectedMacroNodes,
@@ -1330,6 +1335,7 @@ async function runX402Path(
       phases_completed: result.phasesCompleted,
       brain_planning: result.brainPlanning
         ? {
+            route_tier_hint: result.brainPlanning.route_tier_hint,
             safe_summary: result.brainPlanning.safe_brain_summary,
             assistant_response: result.brainPlanning.assistant_response,
             user_visible_reasoning: result.brainPlanning.user_visible_reasoning,

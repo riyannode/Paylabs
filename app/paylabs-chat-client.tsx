@@ -34,6 +34,7 @@ type SafeRunResult = {
   requestedTier: string | null;
   tier: string | null;
   effectiveTier: string | null;
+  brainRouteTierHint: string | null;
   entryPaymentStatus: string | null;
   plannedCostUsdc: number | null;
   paidEdges: number;
@@ -168,6 +169,7 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     requestedTier: (data?.requested_route_tier as string) ?? null,
     tier: (data?.effective_route_tier as string) ?? (data?.route_tier as string) ?? null,
     effectiveTier: (data?.effective_route_tier as string) ?? (data?.route_tier as string) ?? null,
+    brainRouteTierHint: (data?.brain_route_tier_hint as string) ?? (brainPlanning?.route_tier_hint as string) ?? null,
     entryPaymentStatus: (data?.entry_payment as Record<string, string>)?.status ?? null,
     plannedCostUsdc: (quote?.plannedCostUsdc as number) ?? (exitOutput?.planned_cost_usdc as number) ?? null,
     paidEdges,
@@ -486,8 +488,13 @@ export default function PayLabsChatClient({ analytics }: Props) {
              }),
            });
            const dcwData = await dcwResp.json();
-           if (!dcwResp.ok || !dcwData.ok) {
-             const errMsg = dcwData.error || `DCW payment failed (HTTP ${dcwResp.status})`;
+           // Check both top-level transport ok AND nested seller result ok
+           const sellerData = dcwData.data && typeof dcwData.data === "object"
+             ? (dcwData.data as Record<string, unknown>)
+             : null;
+           const sellerOk = sellerData ? (sellerData.ok !== false) : true;
+           if (!dcwResp.ok || !dcwData.ok || !sellerOk) {
+             const errMsg = (sellerData?.error as string) || dcwData.error || `DCW payment failed (HTTP ${dcwResp.status})`;
              setSigningPhase(null);
              finishAssistant({ status: "error", error: errMsg });
              setError(errMsg);
@@ -883,10 +890,22 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
               <span>Tier</span>
               <b style={{ textTransform: "capitalize" }}>{result.effectiveTier || result.tier || "—"}</b>
             </div>
-            {result.requestedTier && result.requestedTier !== result.effectiveTier && (
+            {result.requestedTier && (
               <div className="pl-result-pill">
                 <span>Requested</span>
                 <b style={{ textTransform: "capitalize" }}>{result.requestedTier}</b>
+              </div>
+            )}
+            {result.brainRouteTierHint && (
+              <div className="pl-result-pill">
+                <span>Brain selected</span>
+                <b style={{ textTransform: "capitalize" }}>{result.brainRouteTierHint}</b>
+              </div>
+            )}
+            {result.tierDecisionReason && (
+              <div className="pl-result-pill">
+                <span>Why</span>
+                <b>{result.tierDecisionReason}</b>
               </div>
             )}
             <div className="pl-result-pill">

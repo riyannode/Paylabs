@@ -405,7 +405,7 @@ Analyze this goal and produce a structured execution plan.`,
 
 async function validatePlanNode(state: BrainPlannerStateType) {
   if (state.error) {
-    // Brain planning failed — check if LLM required
+    // Brain planning failed — for auto tier this is fatal (no deterministic fallback)
     try {
       const { isLlmRequired } = await import("../../../ai/llm");
       if (isLlmRequired()) {
@@ -417,31 +417,67 @@ async function validatePlanNode(state: BrainPlannerStateType) {
       // ignore import error
     }
 
-    // Dev mode: continue with tier defaults
-    const defaultPhases = TIER_PHASE_MAP[state.routeTier] || TIER_PHASE_MAP.easy;
+    // Dev mode: continue with tier defaults only for non-auto tiers
+    if ((state.routeTier as string) !== "auto") {
+      const defaultPhases = TIER_PHASE_MAP[state.routeTier] || TIER_PHASE_MAP.easy;
+      return {
+        selectedMacroNodes: defaultPhases,
+        progressSummaries: ["Brain planning unavailable; using tier defaults"],
+      };
+    }
+
+    // Auto tier: Brain LLM is mandatory — fail closed
     return {
-      selectedMacroNodes: defaultPhases,
-      progressSummaries: ["Brain planning unavailable; using tier defaults"],
+      error: "Brain planner failed to choose route tier",
+      progressSummaries: ["Brain planner required for auto tier but planning failed"],
     };
   }
 
-  // Validate Brain selections against tier presets
+  // ── Resolve tier for validation: auto → use Brain's route_tier_hint ──
+  const VALID_TIERS = new Set(["easy", "normal", "advanced"]);
+  const resolvedTier = (state.routeTier as string) === "auto" ? state.routeTierHint : state.routeTier;
+
+  if ((state.routeTier as string) === "auto") {
+    if (!resolvedTier || !VALID_TIERS.has(resolvedTier)) {
+      return {
+        error: "Brain route_tier_hint required for auto tier",
+        progressSummaries: ["Brain route tier hint missing"],
+      };
+    }
+  }
+
+  if (!resolvedTier || !VALID_TIERS.has(resolvedTier)) {
+    return {
+      error: `Invalid resolved tier: "${resolvedTier}"`,
+      progressSummaries: [`Invalid tier for validation: "${resolvedTier}"`],
+    };
+  }
+
+  // Validate Brain selections against tier presets using resolved tier
   const selectedMacroNodes = state.selectedMacroNodes || [];
   const selectedServices = state.selectedServices || [];
   const maxRegistryChecks = state.maxRegistryChecks || 10;
   const maxSourceAccesses = state.maxSourceAccesses || 10;
 
   const executionPlan = validateAndLockExecutionPlan(
-    state.routeTier,
+    resolvedTier,
     selectedMacroNodes,
     selectedServices,
     maxRegistryChecks,
     maxSourceAccesses,
   );
 
-  // Update brainPlanning with validated cost
+  // Update brainPlanning with validated cost — preserve all LLM fields
   const updatedBrainPlanning = state.brainPlanning ? {
     ...state.brainPlanning,
+    // Preserve route_tier_hint from Brain LLM
+    route_tier_hint: state.brainPlanning.route_tier_hint,
+    // Preserve visible reasoning fields from Brain LLM
+    user_visible_reasoning: state.brainPlanning.user_visible_reasoning,
+    tier_decision_reason: state.brainPlanning.tier_decision_reason,
+    plan_rationale: state.brainPlanning.plan_rationale,
+    safe_brain_summary: state.brainPlanning.safe_brain_summary,
+    // Update cost and selections from locked execution plan
     planned_cost_usdc: executionPlan.plannedCostUsdc,
     planned_cost_breakdown: executionPlan.plannedCostBreakdown,
     selected_macro_nodes: executionPlan.selectedMacroNodes,
@@ -454,7 +490,7 @@ async function validatePlanNode(state: BrainPlannerStateType) {
     plannedCostUsdc: executionPlan.plannedCostUsdc,
     brainPlanning: updatedBrainPlanning,
     progressSummaries: [
-      `Execution plan locked: tier=${state.routeTier}, nodes=${executionPlan.selectedMacroNodes.length}, ` +
+      `Execution plan locked: tier=${resolvedTier}, nodes=${executionPlan.selectedMacroNodes.length}, ` +
       `services=${executionPlan.selectedServices.length}, plannedCost=${executionPlan.plannedCostUsdc.toFixed(6)} USDC`,
     ],
   };
