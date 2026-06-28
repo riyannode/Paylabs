@@ -261,8 +261,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
   // When settlementId exists but batch link is missing, poll the
   // batch resolver endpoint until the link appears or we give up.
   const batchPollRef = useRef<{ attempts: number; timer: ReturnType<typeof setTimeout> | null }>({ attempts: 0, timer: null });
-  // ── DCW async job polling ───────────────────────────────────
-  const dcwJobRef = useRef<{ jobId: string | null; timer: ReturnType<typeof setTimeout> | null; cancelled: boolean }>({ jobId: null, timer: null, cancelled: false });
+  // dcwJobRef removed — DCW paid flow is now synchronous (request-bound)
 
 
   useEffect(() => {
@@ -474,12 +473,9 @@ export default function PayLabsChatClient({ analytics }: Props) {
       if (walletInfo.walletType === "circle_developer_controlled") {
         setWalletState("approving");
          setSigningPhase("Starting DCW payment…");
-
-         // ── Fire-and-forget: POST to get jobId ──
-         dcwJobRef.current.cancelled = false;
-         let jobId: string;
+         // ── Synchronous: POST waits for full x402 flow, returns final result ──
          try {
-           const startResp = await fetch("/api/paylabs/dcw/run-paid", {
+           const dcwResp = await fetch("/api/paylabs/dcw/run-paid", {
              method: "POST",
              credentials: "include",
              headers: { "Content-Type": "application/json" },
@@ -489,153 +485,52 @@ export default function PayLabsChatClient({ analytics }: Props) {
                budgetUsdc: Number(budget),
              }),
            });
-           const startData = await startResp.json();
-           if (!startData.ok || !startData.jobId) {
-             throw new Error(startData.error || "Failed to start DCW job");
+           const dcwData = await dcwResp.json();
+           if (!dcwResp.ok || !dcwData.ok) {
+             const errMsg = dcwData.error || `DCW payment failed (HTTP ${dcwResp.status})`;
+             setSigningPhase(null);
+             finishAssistant({ status: "error", error: errMsg });
+             setError(errMsg);
+             setWalletState("failed");
+             setStatus("error");
+             return;
            }
-           jobId = startData.jobId;
-           dcwJobRef.current.jobId = jobId;
-         } catch (e: unknown) {
-           const msg = e instanceof Error ? e.message : "Failed to start payment.";
+           // ── Success — parse result ──
            setSigningPhase(null);
-           finishAssistant({ status: "error", error: msg });
-           setError(msg);
+           const dcwResultData =
+             dcwData.data && typeof dcwData.data === "object"
+               ? (dcwData.data as Record<string, unknown>)
+               : {};
+           const safeResult = toSafeRunResult({
+             ...dcwResultData,
+             entry_payment: dcwData.entry_payment ?? dcwResultData.entry_payment,
+             paymentMetadata: dcwData.paymentMetadata ?? dcwResultData.paymentMetadata,
+             entry_payment_explorer_url:
+               dcwData.entry_payment?.explorer_url ??
+               dcwData.paymentMetadata?.explorerUrl ??
+               dcwResultData.entry_payment_explorer_url ??
+               null,
+             entry_payment_batch_explorer_url:
+               dcwData.entry_payment?.batch_explorer_url ??
+               dcwData.paymentMetadata?.batchExplorerUrl ??
+               dcwResultData.entry_payment_batch_explorer_url ??
+               null,
+           });
+           setWalletState("paid");
+           finishAssistant({ status: "done", result: safeResult });
+           setResult(safeResult);
+           setStatus("done");
+           return;
+         } catch (e: unknown) {
+           const errMsg = e instanceof Error ? e.message : "DCW payment request failed.";
+           setSigningPhase(null);
+           finishAssistant({ status: "error", error: errMsg });
+           setError(errMsg);
            setWalletState("failed");
            setStatus("error");
            return;
          }
-
-         // ── Poll for job completion ──
-         const POLL_INTERVAL_MS = 3_000;
-         const MAX_POLL_ATTEMPTS = 120; // ~6 minutes max
-         let pollAttempts = 0;
-
-         const pollJob = (): Promise<void> =>
-           new Promise((resolve) => {
-             const tick = async () => {
-               if (dcwJobRef.current.cancelled) {
-                 setSigningPhase(null);
-                 finishAssistant({ status: "error", error: "Request cancelled." });
-                 setWalletState("ready_to_approve");
-                 setStatus("idle");
-                 resolve();
-                 return;
-               }
-
-               pollAttempts++;
-               if (pollAttempts > MAX_POLL_ATTEMPTS) {
-                 setSigningPhase(null);
-                 finishAssistant({ status: "error", error: "Payment timed out. The request may still complete — check your wallet." });
-                 setWalletState("failed");
-                 setStatus("error");
-                 resolve();
-                 return;
-               }
-
-               try {
-                 const pollResp = await fetch(
-                   `/api/paylabs/dcw/run-paid/status?jobId=${encodeURIComponent(jobId)}`,
-                   { credentials: "include" },
-                 );
-                 const pollData = await pollResp.json();
-
-                 if (!pollResp.ok || !pollData.ok) {
-                   // Job lost (cold start?) — retry a few times before giving up
-                   if (pollAttempts > 5) {
-                     setSigningPhase(null);
-                     finishAssistant({ status: "error", error: pollData.error || "Lost track of payment job." });
-                     setWalletState("failed");
-                     setStatus("error");
-                     resolve();
-                     return;
-                   }
-                 } else {
-                   // Update progress message
-                   if (pollData.progress) {
-                     setSigningPhase(pollData.progress);
-                   }
-
-                   if (pollData.status === "completed" && pollData.result) {
-                     // ── Success! ──
-                     setSigningPhase(null);
-                     const dcwResult = pollData.result;
-                     const dcwData =
-                       dcwResult.data && typeof dcwResult.data === "object"
-                         ? (dcwResult.data as Record<string, unknown>)
-                         : {};
-
-                     const safeResult = toSafeRunResult({
-                       ...dcwData,
-                       entry_payment: dcwResult.entry_payment ?? dcwData.entry_payment,
-                       paymentMetadata: dcwResult.paymentMetadata ?? dcwData.paymentMetadata,
-                       entry_payment_explorer_url:
-                         dcwResult.entry_payment?.explorer_url ??
-                         dcwResult.paymentMetadata?.explorerUrl ??
-                         dcwData.entry_payment_explorer_url ??
-                         null,
-                       entry_payment_batch_explorer_url:
-                         dcwResult.entry_payment?.batch_explorer_url ??
-                         dcwResult.paymentMetadata?.batchExplorerUrl ??
-                         dcwData.entry_payment_batch_explorer_url ??
-                         null,
-                     });
-                     setWalletState("paid");
-                     finishAssistant({ status: "done", result: safeResult });
-                     setResult(safeResult);
-                     setStatus("done");
-                     dcwJobRef.current.jobId = null;
-                     resolve();
-                     return;
-                   }
-
-                   if (pollData.status === "failed") {
-                     setSigningPhase(null);
-                     const errMsg = pollData.error || "DCW payment failed.";
-                     finishAssistant({ status: "error", error: errMsg });
-                     setError(errMsg);
-                     setWalletState("failed");
-                     setStatus("error");
-                     dcwJobRef.current.jobId = null;
-                     resolve();
-                     return;
-                   }
-
-                   if (pollData.status === "cancelled") {
-                     setSigningPhase(null);
-                     finishAssistant({ status: "error", error: "Request cancelled." });
-                     setWalletState("ready_to_approve");
-                     setStatus("idle");
-                     dcwJobRef.current.jobId = null;
-                     resolve();
-                     return;
-                   }
-                 }
-               } catch {
-                 // Network error — retry on next tick
-               }
-
-               // Schedule next poll (skip if cancelled)
-               if (!dcwJobRef.current.cancelled) {
-                 dcwJobRef.current.timer = setTimeout(tick, POLL_INTERVAL_MS);
-               }
-               };
-
-               // Start first poll immediately (no initial delay)
-               if (!dcwJobRef.current.cancelled) {
-               dcwJobRef.current.timer = setTimeout(tick, 100);
-               }
-               });
-
-         await pollJob();
-
-         // Cleanup
-         if (dcwJobRef.current.timer) {
-           clearTimeout(dcwJobRef.current.timer);
-           dcwJobRef.current.timer = null;
-         }
-         return;
        }
-
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message : "Network error.";
       finishAssistant({ status: "error", error: errMsg });
@@ -793,31 +688,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
                               <div className="pl-typing-dot" />
                               <div className="pl-typing-dot" />
                               {signingPhase && <span className="pl-signing-phase">{signingPhase}</span>}
-                              {signingPhase && dcwJobRef.current.jobId && (
-                                <button
-                                  type="button"
-                                  className="pl-cancel-btn"
-                                  onClick={() => {
-                                    dcwJobRef.current.cancelled = true;
-                                    if (dcwJobRef.current.timer) {
-                                      clearTimeout(dcwJobRef.current.timer);
-                                      dcwJobRef.current.timer = null;
-                                    }
-                                    // Fire-and-forget cancel to server
-                                    const jid = dcwJobRef.current.jobId;
-                                    if (jid) {
-                                      fetch("/api/paylabs/dcw/run-paid/cancel", {
-                                        method: "POST",
-                                        credentials: "include",
-                                        headers: { "Content-Type": "application/json" },
-                                        body: JSON.stringify({ jobId: jid }),
-                                      }).catch(() => {});
-                                    }
-                                  }}
-                                >
-                                  Cancel
-                                </button>
-                              )}
+                              {/* Cancel button removed — DCW paid flow is now synchronous */}
                             </div>
                           )}
                           {msg.status === "error" && (
