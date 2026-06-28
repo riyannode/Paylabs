@@ -72,6 +72,20 @@ function buildGoogleLoginConfig({
   };
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 function assertCreatorUcwRedirectOriginMatchesCurrentHost(origin: string) {
   const redirectHost = new URL(origin).host;
   if (redirectHost !== window.location.host) {
@@ -278,16 +292,24 @@ export function useCreatorUcwWallet() {
 
         let deviceId: string;
         try {
-          deviceId = await sdk.getDeviceId();
+          deviceId = await withTimeout(
+            sdk.getDeviceId(),
+            15_000,
+            "Creator Wallet device setup timed out. Please retry.",
+          );
         } catch (e: unknown) {
           logPrepareGoogle("get_device_id_failed", { message: safeDiagnosticMessage(e) });
           throw e;
         }
 
-        const dtResp = await fetch("/api/paylabs/wallet/ucw?action=device-token", {
-          method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ deviceId }),
-        });
+        const dtResp = await withTimeout(
+          fetch("/api/paylabs/wallet/ucw?action=device-token", {
+            method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ deviceId }),
+          }),
+          15_000,
+          "Creator Wallet device token request timed out. Please retry.",
+        );
         if (!dtResp.ok) {
           const detail = await safeResponseError(dtResp);
           logPrepareGoogle("device_token_failed", { status: dtResp.status });
@@ -295,10 +317,14 @@ export function useCreatorUcwWallet() {
         }
         const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
 
-        const saveDeviceResp = await fetch("/api/paylabs/wallet/ucw?action=session-save-device", {
-          method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ deviceId, deviceToken, deviceEncryptionKey }),
-        });
+        const saveDeviceResp = await withTimeout(
+          fetch("/api/paylabs/wallet/ucw?action=session-save-device", {
+            method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ deviceId, deviceToken, deviceEncryptionKey }),
+          }),
+          15_000,
+          "Creator Wallet device session request timed out. Please retry.",
+        );
         if (!saveDeviceResp.ok) {
           const detail = await safeResponseError(saveDeviceResp);
           logPrepareGoogle("session_save_device_failed", { status: saveDeviceResp.status });
@@ -517,17 +543,20 @@ export function useCreatorUcwWallet() {
   }, [prepareGoogleLogin]);
 
   // ── Connect via Google ──
-  const connectGoogle = useCallback(() => {
-    if (walletState === "connecting") return;
+  const connectGoogle = useCallback(async () => {
+    if (walletState === "connecting" || ucwGooglePreparing) return;
 
     setWalletError(null);
 
     if (!ucwGoogleReadyRef.current || !ucwSdkRef.current) {
-      prepareGoogleLogin().catch((e: unknown) => {
-        setWalletError(e instanceof Error ? e.message : "Creator Wallet login setup failed.");
-      });
-      setWalletError("Preparing Creator Wallet login. Click Continue with Google again after it is ready.");
-      return;
+      setWalletState("connecting");
+      try {
+        await prepareGoogleLogin();
+      } catch (e: unknown) {
+        setWalletState("not_connected");
+        setWalletError(e instanceof Error ? e.message : "Creator Wallet login setup failed. Please retry.");
+        return;
+      }
     }
 
     const started = startGoogleLogin(false);
@@ -535,7 +564,7 @@ export function useCreatorUcwWallet() {
       setWalletState("not_connected");
       setWalletError("Creator Wallet login was prepared but could not start. Please try again.");
     }
-  }, [walletState, prepareGoogleLogin, startGoogleLogin]);
+  }, [walletState, ucwGooglePreparing, prepareGoogleLogin, startGoogleLogin]);
 
   // ── Connect via Email OTP ──
   const connectEmail = useCallback(async (email: string) => {
