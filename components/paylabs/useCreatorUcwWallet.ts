@@ -196,8 +196,8 @@ export function useCreatorUcwWallet() {
 
       try {
         const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
-        if (!appId) throw new Error("Creator wallet login is not configured.");
-        if (!googleClientId) throw new Error("Google client ID is not configured.");
+        if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID is missing. Configure it to enable Creator Wallet Google login.");
+        if (!googleClientId) throw new Error("NEXT_PUBLIC_GOOGLE_CLIENT_ID is missing. Configure it to enable Creator Wallet Google login.");
 
         const sessionResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
         if (!sessionResp.ok) {
@@ -279,7 +279,7 @@ export function useCreatorUcwWallet() {
           hasGoogleClientId: !!googleClientId,
           origin,
         });
-        setUcwGoogleError("Creator Wallet login setup failed. Please retry.");
+        setUcwGoogleError(e instanceof Error ? e.message : "Creator Wallet login setup failed. Please retry.");
         throw e;
       } finally {
         setUcwGooglePreparing(false);
@@ -472,24 +472,23 @@ export function useCreatorUcwWallet() {
   }, [prepareGoogleLogin]);
 
   // ── Connect via Google ──
-  const connectGoogle = useCallback(async () => {
+  const connectGoogle = useCallback(() => {
     if (walletState === "connecting") return;
 
     setWalletError(null);
 
-    try {
-      if (!ucwGoogleReadyRef.current || !ucwSdkRef.current) {
-        await prepareGoogleLogin();
-      }
+    if (!ucwGoogleReadyRef.current || !ucwSdkRef.current) {
+      prepareGoogleLogin().catch((e: unknown) => {
+        setWalletError(e instanceof Error ? e.message : "Creator Wallet login setup failed.");
+      });
+      setWalletError("Preparing Creator Wallet login. Click Continue with Google again after it is ready.");
+      return;
+    }
 
-      const started = startGoogleLogin(false);
-      if (!started) {
-        setWalletState("not_connected");
-        setWalletError("Creator Wallet login was prepared but could not start. Please try again.");
-      }
-    } catch (e: unknown) {
+    const started = startGoogleLogin(false);
+    if (!started) {
       setWalletState("not_connected");
-      setWalletError(e instanceof Error ? e.message : "Creator Wallet login setup failed.");
+      setWalletError("Creator Wallet login was prepared but could not start. Please try again.");
     }
   }, [walletState, prepareGoogleLogin, startGoogleLogin]);
 
