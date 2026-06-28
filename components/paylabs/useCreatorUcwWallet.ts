@@ -43,6 +43,42 @@ function getCreatorUcwRedirectOrigin(): string {
   return new URL(configuredOrigin).origin;
 }
 
+type GoogleLoginConfigInput = {
+  appId: string;
+  googleClientId: string;
+  origin: string;
+  deviceToken: string;
+  deviceEncryptionKey: string;
+};
+
+function buildGoogleLoginConfig({
+  appId,
+  googleClientId,
+  origin,
+  deviceToken,
+  deviceEncryptionKey,
+}: GoogleLoginConfigInput) {
+  return {
+    appSettings: { appId },
+    loginConfigs: {
+      deviceToken,
+      deviceEncryptionKey,
+      google: {
+        clientId: googleClientId,
+        redirectUri: origin,
+        selectAccountPrompt: true,
+      },
+    },
+  };
+}
+
+function assertCreatorUcwRedirectOriginMatchesCurrentHost(origin: string) {
+  const redirectHost = new URL(origin).host;
+  if (redirectHost !== window.location.host) {
+    throw new Error(`Creator Wallet Google redirect origin (${redirectHost}) must match the current host (${window.location.host}). Update NEXT_PUBLIC_PAYLABS_UCW_REDIRECT_ORIGIN or NEXT_PUBLIC_PAYLABS_APP_URL for this preview deployment.`);
+  }
+}
+
 async function safeResponseError(resp: Response): Promise<string | number> {
   const err = (await resp.json().catch(() => ({}))) as { error?: string };
   const error = err.error;
@@ -217,6 +253,7 @@ export function useCreatorUcwWallet() {
         const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
         if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID is missing. Configure it to enable Creator Wallet Google login.");
         if (!googleClientId) throw new Error("NEXT_PUBLIC_GOOGLE_CLIENT_ID is missing. Configure it to enable Creator Wallet Google login.");
+        assertCreatorUcwRedirectOriginMatchesCurrentHost(origin);
 
         try {
           await createUcwSessionOrThrow();
@@ -226,14 +263,10 @@ export function useCreatorUcwWallet() {
         }
 
         let sdk: UcwSdk;
-        sdk = new W3SSdk({
-          configs: {
-            appSettings: { appId },
-            socialLoginConfig: {},
-          },
-          socialLoginCompleteCallback: (error: unknown, result: unknown) =>
-            handleGoogleLoginCallback(sdk, error, result),
-        } as unknown as ConstructorParameters<typeof W3SSdk>[0]);
+        sdk = new W3SSdk(
+          buildGoogleLoginConfig({ appId, googleClientId, origin, deviceToken: "", deviceEncryptionKey: "" }) as unknown as ConstructorParameters<typeof W3SSdk>[0],
+          (error: unknown, result: unknown) => handleGoogleLoginCallback(sdk, error, result),
+        );
 
         let deviceId: string;
         try {
@@ -266,18 +299,7 @@ export function useCreatorUcwWallet() {
 
         try {
           sdk.updateConfigs(
-            {
-              appSettings: { appId },
-              socialLoginConfig: {
-                deviceToken,
-                deviceEncryptionKey,
-                google: {
-                  clientId: googleClientId,
-                  redirectUri: origin,
-                  selectAccountPrompt: true,
-                },
-              },
-            } as unknown as Parameters<UcwSdk["updateConfigs"]>[0],
+            buildGoogleLoginConfig({ appId, googleClientId, origin, deviceToken, deviceEncryptionKey }) as unknown as Parameters<UcwSdk["updateConfigs"]>[0],
             (error: unknown, result: unknown) => handleGoogleLoginCallback(sdk, error, result),
           );
         } catch (e: unknown) {
@@ -404,18 +426,14 @@ export function useCreatorUcwWallet() {
 
           const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
           const origin = getCreatorUcwRedirectOrigin();
+          if (googleClientId) assertCreatorUcwRedirectOriginMatchesCurrentHost(origin);
           let callbackFired = false;
           let sdk: UcwSdk;
-          sdk = new W3SSdk({
-            configs: {
-              appSettings: { appId },
-              socialLoginConfig: {
-                deviceToken,
-                deviceEncryptionKey,
-                ...(googleClientId ? { google: { clientId: googleClientId, redirectUri: origin, selectAccountPrompt: true } } : {}),
-              },
-            },
-            socialLoginCompleteCallback: async (error: unknown, result: unknown) => {
+          sdk = new W3SSdk(
+            googleClientId
+              ? buildGoogleLoginConfig({ appId, googleClientId, origin, deviceToken, deviceEncryptionKey }) as unknown as ConstructorParameters<typeof W3SSdk>[0]
+              : { appSettings: { appId }, loginConfigs: { deviceToken, deviceEncryptionKey } } as unknown as ConstructorParameters<typeof W3SSdk>[0],
+            async (error: unknown, result: unknown) => {
               callbackFired = true;
               if (error) { setWalletState("not_connected"); setWalletError(`Login failed: ${error instanceof Error ? error.message : "Unknown"}`); return; }
               const { userToken, encryptionKey } = result as { userToken: string; encryptionKey: string };
@@ -436,7 +454,7 @@ export function useCreatorUcwWallet() {
               const cbs = { setWalletState, setWalletError, setUcwWalletId, setWalletInfo, setUcwBalance };
               await finalizeWalletAfterLogin(saveData, sdk, cbs, { userToken, encryptionKey });
             },
-          } as unknown as ConstructorParameters<typeof W3SSdk>[0]);
+          );
           ucwSdkRef.current = sdk;
 
           oauthTimeout = setTimeout(() => {
