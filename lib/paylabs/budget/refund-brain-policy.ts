@@ -25,12 +25,11 @@ import type {
   BrainRefundRecommendationAction,
 } from "../delegated-runtime/types";
 import type { BrainSafeRefundContext } from "./refund-reconciliation";
+import { z } from "zod";
 
 // ─── Zod Schema for Brain Refund Recommendation ─────────────
 
-const BrainRefundSchema = (() => {
-  const { z } = require("zod");
-  return z.object({
+const BrainRefundSchema = z.object({
     action: z.enum([
       "refund_not_required",
       "request_refund",
@@ -40,7 +39,6 @@ const BrainRefundSchema = (() => {
     safe_reason: z.string().min(1).max(500),
     requested_refund_usdc: z.number().min(0).nullable().optional(),
   });
-})();
 
 // ─── Brain Refund System Prompt ─────────────────────────────
 

@@ -22,12 +22,11 @@ import {
   TIER_PHASE_MAP,
   validateAndLockExecutionPlan,
 } from "../../delegated-runtime/state";
+import { z } from "zod";
 
 // ─── Zod Schema for Brain Planning ──────────────────────────
 
-const BrainPlanningSchema = (() => {
-  const { z } = require("zod");
-  return z.object({
+const BrainPlanningSchema = z.object({
     normalized_goal: z.string(),
     route_tier_hint: z.enum(["easy", "normal", "advanced"]),
     discovery_strategy: z.string(),
@@ -43,7 +42,6 @@ const BrainPlanningSchema = (() => {
     max_registry_checks: z.number().int().min(0).max(50),
     max_source_accesses: z.number().int().min(0).max(50),
   });
-})();
 
 const BRAIN_SYSTEM_PROMPT = `
 You are PayLabs Brain — the sole high-level planning intelligence in the PayLabs agentic runtime.
