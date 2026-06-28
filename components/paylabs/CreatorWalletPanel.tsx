@@ -71,8 +71,10 @@ export default function CreatorWalletPanel() {
     setDcwConflict(false);
     setOpen(true);
 
-    await prepareGoogleLogin().catch(() => {});
-  }, [prepareGoogleLogin]);
+    if (!walletInfo?.address) {
+      await prepareGoogleLogin().catch(() => {});
+    }
+  }, [prepareGoogleLogin, walletInfo?.address]);
 
   return (
     <>
