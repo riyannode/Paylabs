@@ -49,9 +49,10 @@ const AGENT_KEY_MAP: Record<string, string> = {
 const modelCache = new Map<string, ChatOpenAI>();
 
 function envOrDefault(suffix: string, fallback?: string): string | undefined {
-  const v = process.env[suffix];
-  if (v === undefined || v === "") return fallback;
-  return v;
+  const raw = process.env[suffix];
+  if (typeof raw !== "string") return fallback;
+  const trimmed = raw.trim();
+  return trimmed ? trimmed : fallback;
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -90,7 +91,8 @@ export function resolveConfig(agentName?: string): {
   const model = envOrDefault(`PAYLABS_TUTOR_MODEL_${agentKey}`) ?? envOrDefault("PAYLABS_TUTOR_MODEL_DEFAULT") ?? envOrDefault("PAYLABS_TUTOR_MODEL") ?? "gpt-4o-mini";
   const timeoutMs = resolveNumberConfig(agentKey, "PAYLABS_LLM_TIMEOUT_MS", 20000);
   const maxTokens = resolveNumberConfig(agentKey, "PAYLABS_LLM_MAX_TOKENS", 1024);
-  const streaming = resolveBooleanConfig(agentKey, "PAYLABS_LLM_STREAMING", false);
+  const defaultStreaming = provider.toLowerCase() === "openai" && !baseUrl;
+  const streaming = resolveBooleanConfig(agentKey, "PAYLABS_LLM_STREAMING", defaultStreaming);
 
   return { provider, apiKey, baseUrl, model, agentKey, timeoutMs, maxTokens, streaming };
 }
