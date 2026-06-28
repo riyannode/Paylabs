@@ -45,7 +45,26 @@ function getCreatorUcwRedirectOrigin(): string {
 
 async function safeResponseError(resp: Response): Promise<string | number> {
   const err = (await resp.json().catch(() => ({}))) as { error?: string };
-  return err.error || resp.status;
+  const error = err.error;
+  if (resp.status === 409 && error === "wallet_mode_conflict") {
+    return "User Test Wallet is connected. Switch to Creator Wallet first.";
+  }
+  if (resp.status === 401 && (!error || error === "No session" || error === "no_session")) {
+    return "Creator Wallet session expired. Reopen the modal and try again.";
+  }
+  return error || resp.status;
+}
+
+async function createUcwSessionOrThrow() {
+  const resp = await fetch("/api/paylabs/wallet/ucw?action=session-create", {
+    method: "POST",
+    credentials: "include",
+  });
+
+  if (!resp.ok) {
+    const detail = await safeResponseError(resp);
+    throw new Error(`Creator wallet session failed: ${detail}`);
+  }
 }
 
 type FinalizeCallbacks = {
@@ -199,11 +218,11 @@ export function useCreatorUcwWallet() {
         if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID is missing. Configure it to enable Creator Wallet Google login.");
         if (!googleClientId) throw new Error("NEXT_PUBLIC_GOOGLE_CLIENT_ID is missing. Configure it to enable Creator Wallet Google login.");
 
-        const sessionResp = await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
-        if (!sessionResp.ok) {
-          const detail = await safeResponseError(sessionResp);
-          logPrepareGoogle("session_create_failed", { status: sessionResp.status });
-          throw new Error(`Creator wallet session failed: ${detail}`);
+        try {
+          await createUcwSessionOrThrow();
+        } catch (e: unknown) {
+          logPrepareGoogle("session_create_failed");
+          throw e;
         }
 
         let sdk: UcwSdk;
@@ -502,7 +521,7 @@ export function useCreatorUcwWallet() {
       const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
       if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
 
-      await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
+      await createUcwSessionOrThrow();
       const sdk = new W3SSdk({ appSettings: { appId } });
       const deviceId = await sdk.getDeviceId();
       ucwSdkRef.current = sdk;
@@ -553,7 +572,7 @@ export function useCreatorUcwWallet() {
       const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
       if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
 
-      await fetch("/api/paylabs/wallet/ucw?action=session-create", { method: "POST", credentials: "include" });
+      await createUcwSessionOrThrow();
       const sdk = new W3SSdk({ appSettings: { appId } });
       const deviceId = await sdk.getDeviceId();
       ucwSdkRef.current = sdk;
