@@ -204,6 +204,14 @@ export function useCreatorUcwWallet() {
     }
   }, []);
 
+  const resetGooglePreparation = useCallback(() => {
+    clearLoginTimeout();
+    prepareGooglePromiseRef.current = null;
+    ucwGoogleReadyRef.current = false;
+    setUcwGoogleReady(false);
+    setUcwGoogleError(null);
+  }, [clearLoginTimeout]);
+
   const handleGoogleLoginCallback = useCallback(async (sdk: UcwSdk, error: unknown, result: unknown) => {
     clearLoginTimeout();
     if (error) {
@@ -539,6 +547,7 @@ export function useCreatorUcwWallet() {
       const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
       if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
 
+      resetGooglePreparation();
       await createUcwSessionOrThrow();
       const sdk = new W3SSdk({ appSettings: { appId } });
       const deviceId = await sdk.getDeviceId();
@@ -578,7 +587,7 @@ export function useCreatorUcwWallet() {
       setWalletState("not_connected");
       setWalletError(e instanceof Error ? e.message : "Email login failed.");
     }
-  }, [walletState]);
+  }, [walletState, resetGooglePreparation]);
 
   // ── Connect via PIN ──
   const connectPin = useCallback(async () => {
@@ -590,6 +599,7 @@ export function useCreatorUcwWallet() {
       const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
       if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID not configured");
 
+      resetGooglePreparation();
       await createUcwSessionOrThrow();
       const sdk = new W3SSdk({ appSettings: { appId } });
       const deviceId = await sdk.getDeviceId();
@@ -628,7 +638,7 @@ export function useCreatorUcwWallet() {
       setWalletState("not_connected");
       setWalletError(e instanceof Error ? e.message : "PIN login failed.");
     }
-  }, [walletState]);
+  }, [walletState, resetGooglePreparation]);
 
   const reconnectGoogle = useCallback(async () => {
     if (walletState === "connecting") return;
