@@ -146,7 +146,7 @@ export default function WalletConnectModal({
                 <button
                   className="pl-login-option-v3"
                   onClick={() => setShowEmailInput(!showEmailInput)}
-                  disabled={walletState === "connecting"}
+                  disabled={walletState === "connecting" || ucwGooglePreparing}
                 >
                   <span className="pl-login-icon-v3"><MailIcon /></span>
                   <b>Email</b>
@@ -173,7 +173,7 @@ export default function WalletConnectModal({
                     onClick={() => {
                       if (emailValue.includes("@")) onConnectEmail(emailValue);
                     }}
-                    disabled={walletState === "connecting" || !emailValue.includes("@")}>
+                    disabled={walletState === "connecting" || ucwGooglePreparing || !emailValue.includes("@")}>
                     Send OTP
                   </button>
                 </div>
@@ -182,7 +182,7 @@ export default function WalletConnectModal({
               <button
                 className="pl-login-option-v3"
                 onClick={onConnectPin}
-                disabled={walletState === "connecting"}
+                disabled={walletState === "connecting" || ucwGooglePreparing}
               >
                 <span className="pl-login-icon-v3"><LockIcon /></span>
                 <b>PIN</b>
