@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import WalletConnectModal from "./WalletConnectModal";
 import { useCreatorUcwWallet } from "./useCreatorUcwWallet";
 
-const DCW_CONFLICT_MESSAGE = "User Test Wallet is connected. Disconnect it before connecting Creator Wallet.";
 
 async function hasActiveUserTestWalletSession() {
   const resp = await fetch("/api/paylabs/auth/session", { credentials: "include" });
@@ -63,6 +62,20 @@ export default function CreatorWalletPanel() {
     setOpen(true);
   }, []);
 
+  const switchToCreatorWallet = useCallback(async () => {
+    await fetch("/api/paylabs/auth/session", {
+      method: "DELETE",
+      credentials: "include",
+    }).catch(() => {});
+
+    setDcwConflict(false);
+    setOpen(true);
+
+    if (!walletInfo?.address) {
+      await prepareGoogleLogin().catch(() => {});
+    }
+  }, [prepareGoogleLogin, walletInfo?.address]);
+
   return (
     <>
       <button
@@ -76,7 +89,15 @@ export default function CreatorWalletPanel() {
 
       {dcwConflict && (
         <div className="pl-wallet-error-v3" style={{ marginTop: 8 }}>
-          {DCW_CONFLICT_MESSAGE}
+          User Test Wallet is connected.
+          <button
+            type="button"
+            className="pl-primary-v3"
+            onClick={switchToCreatorWallet}
+            style={{ marginTop: 8 }}
+          >
+            Switch to Creator Wallet
+          </button>
         </div>
       )}
 
@@ -110,7 +131,7 @@ export default function CreatorWalletPanel() {
         ucwGoogleError={ucwGoogleError}
         onPrepareGoogleLogin={() => { prepareGoogleLogin().catch(() => {}); }}
         onRetryPrepareGoogleLogin={() => { retryPrepareGoogleLogin().catch(() => {}); }}
-        autoPrepareGoogleLogin={false}
+        autoPrepareGoogleLogin={true}
         showEmailLogin={false}
         onDisconnect={disconnect}
       />
