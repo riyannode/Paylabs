@@ -1,16 +1,19 @@
 /**
  * POST /api/paylabs/dcw/run-paid
  *
- * Execute a full paid discovery run via DCW wallet.
+ * Synchronous request-bound paid discovery run via DCW wallet.
+ * Executes the full x402 buyer→seller flow within the HTTP request lifecycle.
+ * No jobId, no async polling, no in-memory state.
+ *
  * REQUIRES valid session cookie.
  *
- * ASYNC PATTERN: Returns { jobId } immediately.
- *   - Client polls GET /api/paylabs/dcw/run-paid/status?jobId=... for progress
- *   - Client can cancel via POST /api/paylabs/dcw/run-paid/cancel { jobId }
- *
  * Body: { goal: string, routeTier?: string, budgetUsdc?: number }
- * Returns: { ok: true, jobId: string }
+ * Returns: { ok, status, data, error, paymentMetadata, freeResponse,
+ *            entry_payment, entry_payment_explorer_url,
+ *            entry_payment_batch_explorer_url }
  */
+
+export const maxDuration = 300; // safety margin for x402 handshake
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
@@ -18,8 +21,6 @@ import { getSession } from "@/lib/paylabs/auth/session";
 import { createDcwSigner } from "@/lib/paylabs/x402/dcw-signer-adapter";
 import { callPaidSeller } from "@/lib/paylabs/x402/buyer-transport";
 import { resolvePaylabsAppUrl } from "@/lib/paylabs/runtime/resolve-app-url";
-import { createJob, updateJob, getJob } from "@/lib/paylabs/dcw/job-store";
-import { randomUUID } from "node:crypto";
 
 // ─── Allowlisted internal seller URLs ────────────────────────
 function getAllowedSellerUrl(path: string): string | null {
@@ -48,19 +49,32 @@ function parseBudget(value: unknown): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-/**
- * Run the actual paid flow in the background.
- * Updates job status as it progresses.
- */
-async function executeRunPaid(jobId: string, session: { sub: string }) {
-  const job = getJob(jobId);
-  if (!job || job.status === "cancelled") return;
-
+export async function POST(req: NextRequest) {
   try {
-    updateJob(jobId, { status: "running", progress: "Looking up wallet…" });
+    // 1. Auth required
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ ok: false, error: "Authentication required" }, { status: 401 });
+    }
 
-    // 1. Look up DCW wallet
-    const { data: wallet } = await supabaseAdmin()
+    const body = await req.json();
+    const goal = (body.goal || "").trim();
+    if (!goal) {
+      return NextResponse.json({ ok: false, error: "Goal required" }, { status: 400 });
+    }
+
+    const routeTier = body.routeTier || "auto";
+    if (!ALLOWED_ROUTE_TIERS.has(routeTier)) {
+      return NextResponse.json({ ok: false, error: `Invalid route tier: ${routeTier}` }, { status: 400 });
+    }
+
+    const budgetUsdc = parseBudget(body.budgetUsdc ?? body.budget_usdc ?? body.budget);
+    if (budgetUsdc > SERVER_MAX_BUDGET_USDC) {
+      return NextResponse.json({ ok: false, error: `Budget exceeds server cap ${SERVER_MAX_BUDGET_USDC} USDC` }, { status: 400 });
+    }
+
+    // 2. Look up active DCW wallet
+    const { data: wallet, error: walletErr } = await supabaseAdmin()
       .from("paylabs_dcw_wallets")
       .select("wallet_id, wallet_address")
       .eq("id", session.sub)
@@ -69,53 +83,49 @@ async function executeRunPaid(jobId: string, session: { sub: string }) {
       .limit(1)
       .single();
 
-    if (!wallet?.wallet_id) {
-      updateJob(jobId, { status: "failed", error: "No DCW wallet. Create one first." });
-      return;
+    if (walletErr || !wallet?.wallet_id) {
+      return NextResponse.json({ ok: false, error: "No DCW wallet. Create one first." }, { status: 404 });
     }
 
-    if (getJob(jobId)?.status === "cancelled") return;
-    updateJob(jobId, { progress: "Checking Gateway balance…" });
-
-    // 2. Check Gateway balance
+    // 3. Check Gateway balance
     const { checkGatewayBalance } = await import("@/lib/paylabs/x402/gateway-balance");
     const gwBalance = await checkGatewayBalance({ depositor: wallet.wallet_address });
 
     if (!gwBalance.ok) {
-      updateJob(jobId, { status: "failed", error: `Gateway balance check failed: ${gwBalance.error || "unknown"}. Retry in a moment.` });
-      return;
+      return NextResponse.json(
+        { ok: false, error: `Gateway balance check failed: ${gwBalance.error || "unknown"}. Retry in a moment.` },
+        { status: 503 },
+      );
     }
 
     if (parseFloat(gwBalance.balanceUsdc || "0") <= 0) {
-      updateJob(jobId, { status: "failed", error: "Insufficient Gateway balance. Deposit USDC to your wallet first." });
-      return;
+      return NextResponse.json(
+        { ok: false, error: "Insufficient Gateway balance. Deposit USDC to your wallet first." },
+        { status: 402 },
+      );
     }
 
-    if (getJob(jobId)?.status === "cancelled") return;
-    updateJob(jobId, { progress: "Processing x402 payment…" });
-
-    // 3. Resolve seller URL
+    // 4. Resolve seller URL
     const sellerPath = "/api/paylabs/discovery-runs/inline";
     const sellerUrl = getAllowedSellerUrl(sellerPath);
     if (!sellerUrl) {
-      updateJob(jobId, { status: "failed", error: `Seller path not allowed: ${sellerPath}` });
-      return;
+      return NextResponse.json({ ok: false, error: `Seller path not allowed: ${sellerPath}` }, { status: 500 });
     }
 
-    // 4. Budget
-    const requestedBudget = parseBudget(job.request.budgetUsdc);
+    // 5. Budget
+    const requestedBudget = parseBudget(budgetUsdc);
     const userBudgetUsdc = requestedBudget > 0 ? requestedBudget : 0.01;
     const maxAmountUsdc = Math.min(userBudgetUsdc, SERVER_MAX_BUDGET_USDC).toFixed(6);
 
-    // 5. Execute paid request
+    // 6. Execute paid request — request-bound (synchronous)
     const dcwSigner = createDcwSigner();
 
     const result = await callPaidSeller(dcwSigner, {
       sellerUrl,
       method: "POST",
       body: {
-        goal: job.request.goal,
-        route_tier: job.request.routeTier,
+        goal,
+        route_tier: routeTier || "auto",
         user_wallet: wallet.wallet_address,
         budget_usdc: maxAmountUsdc,
       },
@@ -125,7 +135,6 @@ async function executeRunPaid(jobId: string, session: { sub: string }) {
       sellerServiceName: "discovery",
       maxAmountUsdc,
       requirePayment: true,
-      signal: job.abortController?.signal,
       recoverResultById: async (runId: string) => {
         const { data: run } = await supabaseAdmin()
           .from("paylabs_discovery_runs")
@@ -155,9 +164,7 @@ async function executeRunPaid(jobId: string, session: { sub: string }) {
       },
     });
 
-    if (getJob(jobId)?.status === "cancelled") return;
-
-    // 6. Build entry_payment shape
+    // 7. Build entry_payment shape
     const paymentMetadata = result.paymentMetadata ?? null;
     const resultData = result.data as Record<string, unknown> | null | undefined;
     const dataEntry = (resultData?.entry_payment as Record<string, unknown> | null | undefined) ?? null;
@@ -177,67 +184,18 @@ async function executeRunPaid(jobId: string, session: { sub: string }) {
       customer_wallet_type: "circle_developer_controlled" as const,
     };
 
-    updateJob(jobId, {
-      status: result.ok ? "completed" : "failed",
-      progress: result.ok ? "Done" : "Payment failed",
-      result: {
-        ok: result.ok,
-        status: result.status,
-        data: result.data,
-        error: result.error,
-        paymentMetadata,
-        freeResponse: result.freeResponse,
-        entry_payment: entryPayment,
-        entry_payment_explorer_url: entryPayment.explorer_url,
-        entry_payment_batch_explorer_url: entryPayment.batch_explorer_url,
-      },
-      error: result.ok ? null : (result.error || "Payment failed"),
-    });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(`[dcw/run-paid] Job ${jobId} error:`, msg);
-
-    // Don't overwrite cancelled status — abort() throws AbortError which lands here
-    if (getJob(jobId)?.status === "cancelled") return;
-
-    updateJob(jobId, { status: "failed", error: msg });
-  }
-}
-
-export async function POST(req: NextRequest) {
-  try {
-    // 1. Auth required
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ ok: false, error: "Authentication required" }, { status: 401 });
-    }
-
-    const body = await req.json();
-    const goal = (body.goal || "").trim();
-    if (!goal) {
-      return NextResponse.json({ ok: false, error: "Goal required" }, { status: 400 });
-    }
-
-    const routeTier = body.routeTier || "auto";
-    if (!ALLOWED_ROUTE_TIERS.has(routeTier)) {
-      return NextResponse.json({ ok: false, error: `Invalid route tier: ${routeTier}` }, { status: 400 });
-    }
-
-    const budgetUsdc = parseBudget(body.budgetUsdc ?? body.budget_usdc ?? body.budget);
-    if (budgetUsdc > SERVER_MAX_BUDGET_USDC) {
-      return NextResponse.json({ ok: false, error: `Budget exceeds server cap ${SERVER_MAX_BUDGET_USDC} USDC` }, { status: 400 });
-    }
-
-    // 2. Create async job
-    const jobId = randomUUID();
-    createJob(jobId, { goal, routeTier, budgetUsdc });
-
-    // 3. Fire and forget — run in background
-    //    Use void to explicitly discard the promise (no floating promise lint warning)
-    void executeRunPaid(jobId, session);
-
-    // 4. Return job ID immediately
-    return NextResponse.json({ ok: true, jobId });
+    // 8. Return final result directly
+    return NextResponse.json({
+      ok: result.ok,
+      status: result.status,
+      data: result.data,
+      error: result.error,
+      paymentMetadata,
+      freeResponse: result.freeResponse,
+      entry_payment: entryPayment,
+      entry_payment_explorer_url: entryPayment.explorer_url,
+      entry_payment_batch_explorer_url: entryPayment.batch_explorer_url,
+    }, { status: result.ok ? 200 : 502 });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[dcw/run-paid] Error:", msg);
