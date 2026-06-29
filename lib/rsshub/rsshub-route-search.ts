@@ -65,10 +65,14 @@ function scoreRoute(
     }
     // For short known entities (ai, ml, etc.), also match as route path segment prefix
     // e.g. "ai" matches /openai/, /aibase/ because "ai" is a meaningful prefix in the route path
+    // But ONLY if the route name or description also references the entity (prevents noise)
     else if (e.length <= 3 && /^\/[a-z]+\/?/.test(routePath)) {
       const pathSegments = routePath.split("/").filter(Boolean);
       const prefixMatch = pathSegments.some((seg) => seg.startsWith(e) && seg.length > e.length);
-      if (prefixMatch) {
+      // Require name/desc/category to also reference the entity to avoid unrelated prefix hits
+      const nameOrDescHasEntity = hasBoundaryTerm(routeName, e) || hasBoundaryTerm(routeDesc, e)
+        || routeCategories.some((c) => c.includes(e));
+      if (prefixMatch && nameOrDescHasEntity) {
         score += 12;
         matched.push(entity);
         reasons.push(`path_prefix:${entity}`);
