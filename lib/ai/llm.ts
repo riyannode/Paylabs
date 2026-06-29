@@ -122,6 +122,11 @@ export function getTutorModel(agentName?: string): ChatOpenAI | null {
   const cached = modelCache.get(cacheKey);
   if (cached) return cached;
 
+  // Force stream:false in request body for OpenAI-compatible providers (e.g. 9Router)
+  // 9Router defaults to SSE streaming when stream param is omitted;
+  // modelKwargs spreads AFTER stream in invocationParams(), so it overrides.
+  const forceNonStreamingBody = cfg.provider.toLowerCase() === "openai-compatible" || !!cfg.baseUrl;
+
   const model = new ChatOpenAI({
     model: cfg.model,
     apiKey: cfg.apiKey,
@@ -129,6 +134,7 @@ export function getTutorModel(agentName?: string): ChatOpenAI | null {
     maxTokens: cfg.maxTokens,
     timeout: cfg.timeoutMs,
     streaming: cfg.streaming,
+    ...(forceNonStreamingBody ? { modelKwargs: { stream: false } } : {}),
     ...(cfg.baseUrl ? { configuration: { baseURL: cfg.baseUrl } } : {}),
   });
 
