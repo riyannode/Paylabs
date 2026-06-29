@@ -207,6 +207,19 @@ async function runX402Orchestration(params: {
   const fullBrainPlanning = (paidBrainData?.brainPlanning as Record<string, unknown>) || null;
   const capturedBrainLlmDiag = (paidBrainData?.brainLlmDiag as Record<string, unknown>) || undefined;
 
+  // DIAGNOSTIC: always log paid Brain response shape (remove after E2E passes)
+  console.error("[inline] PAID_BRAIN_DIAGNOSTIC:", {
+    brainResult_ok: brainResult.ok,
+    brainResult_hasData: !!brainResult.data,
+    paidBrainData_keys: paidBrainData ? Object.keys(paidBrainData).slice(0, 15) : [],
+    paidBrainData_ok: paidBrainData?.ok,
+    paidBrainData_hasBrainPlanning: !!paidBrainData?.brainPlanning,
+    fullBrainPlanning_truthy: !!fullBrainPlanning,
+    fullBrainPlanning_keys: fullBrainPlanning ? Object.keys(fullBrainPlanning).slice(0, 10) : [],
+    route_tier_hint: fullBrainPlanning?.route_tier_hint,
+    paidBrainData_error: paidBrainData?.error ? String(paidBrainData.error).slice(0, 100) : null,
+  });
+
   // Safe diagnostics (gated — no raw LLM, no secrets)
   if (process.env.NODE_ENV !== "production") {
     const VALID_TIER_SET = new Set(["easy", "normal", "advanced"]);
