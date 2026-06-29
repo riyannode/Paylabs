@@ -107,9 +107,17 @@ function scoreTopicItem(
   entityTerms: string[],
   negativeFilters: string[],
   sourcePreferences: string[]
-): { score: number; entityHit: boolean; recencyBonus: number } {
+): {
+  score: number;
+  entityHit: boolean;
+  contentEntityHit: boolean;
+  structuralEntityHit: boolean;
+  recencyBonus: number;
+} {
   let score = 0;
   let entityHit = false;
+  let contentEntityHit = false;   // title or summary match
+  let structuralEntityHit = false; // url/routePath/domain/publisher/author match only
   const title = fields.title.toLowerCase();
   const summary = fields.summary.toLowerCase();
   const publisher = fields.publisher.toLowerCase();
@@ -118,17 +126,19 @@ function scoreTopicItem(
   const sourceUrl = fields.source_url.toLowerCase();
   const routePath = fields.route_path.toLowerCase();
 
-  // 1. Entity match (strongest signal)
+  // 1. Entity match — track location for scoring tiers
   for (const entity of entityTerms) {
     const lower = entity.toLowerCase();
     if (!lower) continue;
     let matched = false;
-    if (hasEntityTerm(title, lower)) { score += 20; matched = true; }
-    else if (hasEntityTerm(summary, lower)) { score += 8; matched = true; }
-    else if (hasEntityTerm(sourceUrl, lower)) { score += 16; matched = true; }
-    else if (hasEntityTerm(routePath, lower)) { score += 14; matched = true; }
-    else if (hasEntityTerm(authorName, lower)) { score += 6; matched = true; }
-    else if (hasEntityTerm(domain, lower)) { score += 4; matched = true; }
+    // Content matches (strong signal)
+    if (hasEntityTerm(title, lower)) { score += 20; matched = true; contentEntityHit = true; }
+    else if (hasEntityTerm(summary, lower)) { score += 8; matched = true; contentEntityHit = true; }
+    // Structural matches (weak signal — helps but shouldn't dominate)
+    else if (hasEntityTerm(sourceUrl, lower)) { score += 4; matched = true; structuralEntityHit = true; }
+    else if (hasEntityTerm(routePath, lower)) { score += 3; matched = true; structuralEntityHit = true; }
+    else if (hasEntityTerm(authorName, lower)) { score += 3; matched = true; structuralEntityHit = true; }
+    else if (hasEntityTerm(domain, lower)) { score += 2; matched = true; structuralEntityHit = true; }
     if (matched) entityHit = true;
   }
 
@@ -173,39 +183,53 @@ function scoreTopicItem(
     }
   }
 
-  return { score: Math.max(0, score), entityHit, recencyBonus };
+  return { score: Math.max(0, score), entityHit, contentEntityHit, structuralEntityHit, recencyBonus };
 }
 
 /**
  * Compute final relevance_score for a topic candidate.
  *
- * - entityHit + high score → up to 0.85
- * - entityHit or high local_score → 0.50–0.75
- * - routeTopicHit only (no entity/keyword) → 0.35–0.55 (conservative)
- * - recency bonus lifts score slightly
+ * Scoring tiers:
+ * - contentEntityHit (title/summary match) + high localScore → 0.65–0.90
+ * - entityHit with only structural match (url/routePath/domain) → 0.45–0.65
+ * - keyword score >= 3 → 0.40–0.65
+ * - routeTopicHit only → 0.35–0.48
+ *
+ * Rules:
+ * - routeTopicHit-only never outranks contentEntityHit
+ * - URL/routePath-only entity hit never reaches 0.95
  */
-function computeRelevanceScore(
-  localScore: number,
-  entityHit: boolean,
-  routeTopicHit: boolean,
-  recencyBonus: number
-): number {
-  if (entityHit && localScore >= 15) {
-    // Strong entity match in title/summary
-    return Math.min(0.70 + (localScore - 15) * 0.01 + recencyBonus * 0.02, 0.95);
+function computeRelevanceScore({
+  localScore,
+  entityHit,
+  contentEntityHit,
+  structuralEntityHit,
+  routeTopicHit,
+  recencyBonus,
+}: {
+  localScore: number;
+  entityHit: boolean;
+  contentEntityHit: boolean;
+  structuralEntityHit: boolean;
+  routeTopicHit: boolean;
+  recencyBonus: number;
+}): number {
+  if (contentEntityHit && localScore >= 10) {
+    // Strong content match: title or summary contains entity term
+    return Math.min(0.65 + (localScore - 10) * 0.01 + recencyBonus * 0.02, 0.90);
   }
-  if (entityHit || localScore >= 8) {
-    // Entity hit or strong keyword overlap
-    return Math.min(0.50 + localScore * 0.015 + recencyBonus * 0.02, 0.80);
+  if (entityHit && localScore >= 3) {
+    // Entity hit but only structural (url/routePath/domain) — cap at 0.65
+    return Math.min(0.45 + localScore * 0.01 + recencyBonus * 0.02, 0.65);
   }
   if (localScore >= 3) {
-    // Moderate keyword match
+    // Moderate keyword match (no entity hit)
     return Math.min(0.40 + localScore * 0.02 + recencyBonus * 0.02, 0.65);
   }
   if (routeTopicHit) {
     // Route-level match only: item from correct topic route but no entity/keyword hit
-    // Conservative: 0.35 base + recency lifts it
-    return Math.min(0.35 + recencyBonus * 0.03, 0.55);
+    // Conservative: never outrank content entity matches
+    return Math.min(0.35 + recencyBonus * 0.03, 0.48);
   }
   return 0.30;
 }
@@ -377,7 +401,7 @@ export async function fetchTopicRoutesLiveSources(input: {
           }
 
           // Score the item
-          const { score: local_score, entityHit, recencyBonus } = scoreTopicItem(
+          const { score: local_score, entityHit, contentEntityHit, structuralEntityHit, recencyBonus } = scoreTopicItem(
             {
               title: item.title || "",
               summary: item.summary || "",
@@ -401,12 +425,14 @@ export async function fetchTopicRoutesLiveSources(input: {
           }
 
           // Compute meaningful relevance_score
-          const relevanceScore = computeRelevanceScore(
-            local_score,
+          const relevanceScore = computeRelevanceScore({
+            localScore: local_score,
             entityHit,
+            contentEntityHit,
+            structuralEntityHit,
             routeTopicHit,
-            recencyBonus
-          );
+            recencyBonus,
+          });
 
           const feedItemId = `topic:${route.path}:${sourceUrl.slice(0, 80)}`;
 
