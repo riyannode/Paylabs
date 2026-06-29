@@ -214,17 +214,19 @@ async function runX402Orchestration(params: {
   const flatHint = (paidBrainData?.brainPlanning as Record<string, unknown>)?.route_tier_hint;
   const nestedData = (paidBrainData as Record<string, unknown>)?.data as Record<string, unknown> | undefined;
   const nestedHint = (nestedData?.brainPlanning as Record<string, unknown>)?.route_tier_hint;
-  console.error("[inline] PAID_BRAIN_DIAGNOSTIC:", {
-    brainResult_ok: brainResult.ok,
-    brainResult_hasData: !!brainResult.data,
-    paidBrainData_keys: diagKeys,
-    paidBrainData_ok: paidBrainData?.ok,
-    has_brainPlanning: hasBrainPlanning,
-    has_data_brainPlanning: hasNestedBrainPlanning,
-    flat_route_tier_hint: flatHint ?? "MISSING",
-    nested_route_tier_hint: nestedHint ?? "MISSING",
-    paidBrainData_error: paidBrainData?.error ? String(paidBrainData.error).slice(0, 100) : null,
-  });
+  if (process.env.NODE_ENV !== "production") {
+    console.error("[inline] PAID_BRAIN_DIAGNOSTIC:", {
+      brainResult_ok: brainResult.ok,
+      brainResult_hasData: !!brainResult.data,
+      paidBrainData_keys: diagKeys,
+      paidBrainData_ok: paidBrainData?.ok,
+      has_brainPlanning: hasBrainPlanning,
+      has_data_brainPlanning: hasNestedBrainPlanning,
+      flat_route_tier_hint: flatHint ?? "MISSING",
+      nested_route_tier_hint: nestedHint ?? "MISSING",
+      paidBrainData_error: paidBrainData?.error ? String(paidBrainData.error).slice(0, 100) : null,
+    });
+  }
 
   // ── Extract Brain planning: flat first, then nested fallback ──
   let fullBrainPlanning: Record<string, unknown> | null = null;
@@ -297,10 +299,12 @@ async function runX402Orchestration(params: {
       [...safeProgressSummaries, `FAILED: ${tierResult.error}`], paymentGraph, fullBrainPlanning, null, tierResult.error);
 
     // Safe diagnostic: trace capturedBrainLlmDiag (no secrets, no raw LLM)
-    console.error("[inline] auto-tier fail brain_diag_check:", {
-      hasCaptured: capturedBrainLlmDiag !== undefined && capturedBrainLlmDiag !== null,
-      capturedKeys: capturedBrainLlmDiag ? Object.keys(capturedBrainLlmDiag) : [],
-    });
+    if (process.env.NODE_ENV !== "production") {
+      console.error("[inline] auto-tier fail brain_diag_check:", {
+        hasCaptured: capturedBrainLlmDiag !== undefined && capturedBrainLlmDiag !== null,
+        capturedKeys: capturedBrainLlmDiag ? Object.keys(capturedBrainLlmDiag) : [],
+      });
+    }
 
     // Store agent_trace with _brain_diag on fail path (before returning)
     try {
@@ -1268,10 +1272,12 @@ async function runX402Path(
       .eq("id", discoveryRunId);
 
     // Safe diagnostic: trace main agent_trace brain_diag (no secrets)
-    console.error("[inline] main trace brain_diag_check:", {
-      hasResultBrainLlmDiag: result._brainLlmDiag !== undefined && result._brainLlmDiag !== null,
-      resultKeys: result._brainLlmDiag ? Object.keys(result._brainLlmDiag) : [],
-    });
+    if (process.env.NODE_ENV !== "production") {
+      console.error("[inline] main trace brain_diag_check:", {
+        hasResultBrainLlmDiag: result._brainLlmDiag !== undefined && result._brainLlmDiag !== null,
+        resultKeys: result._brainLlmDiag ? Object.keys(result._brainLlmDiag) : [],
+      });
+    }
 
     // ── Build exit output ──
     const { buildExitOutput } = await import("@/lib/paylabs/delegated-runtime/exit-output");
