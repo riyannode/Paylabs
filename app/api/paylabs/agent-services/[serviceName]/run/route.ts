@@ -177,7 +177,16 @@ async function executeX402SellerPath(
     );
   }
 
-  const sellerAddress = (process.env[walletEnvName] || "").trim();
+  let sellerAddress = (process.env[walletEnvName] || "").trim();
+
+  // Fallback: signal_scout_basics → signal_scout seller wallet
+  if (!sellerAddress && walletEnvName === "PAYLABS_SERVICE_SIGNAL_SCOUT_BASICS_SELLER_WALLET_ADDRESS") {
+    sellerAddress = (process.env.PAYLABS_SERVICE_SIGNAL_SCOUT_SELLER_WALLET_ADDRESS || "").trim();
+    if (sellerAddress) {
+      console.log(`[x402-seller-fallback] signal_scout_basics: using signal_scout seller wallet env`);
+    }
+  }
+
   if (!sellerAddress || !/^0x[a-fA-F0-9]{40}$/.test(sellerAddress)) {
     return NextResponse.json(
       { ok: false, error: "Service x402 config error: invalid seller wallet address" },
