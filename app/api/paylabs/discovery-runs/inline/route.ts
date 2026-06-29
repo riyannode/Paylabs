@@ -221,16 +221,22 @@ async function runX402Orchestration(params: {
     const diagHint = planResult.brainPlanning?.route_tier_hint;
     const diagHintStr: string | undefined = diagHint;
     const diagHintValid = diagHintStr !== undefined && VALID_TIER_SET.has(diagHintStr);
-    if (process.env.NODE_ENV !== "production") {
-      console.debug("[inline] Brain planner diagnostics", {
-        planResult_ok: planResult.ok,
-        hasBrainPlanning: !!planResult.brainPlanning,
-        planResult_error: planResult.error ? planResult.error.slice(0, 160) : null,
-        route_tier_hint_present: diagHintStr !== undefined && diagHintStr !== null,
-        route_tier_hint_value: diagHintValid ? diagHintStr : (diagHintStr === null ? "null" : diagHintStr === undefined ? "none" : "invalid"),
-        selected_macro_nodes_count: planResult.brainPlanning?.selected_macro_nodes?.length ?? 0,
-        selected_services_count: planResult.brainPlanning?.selected_services?.length ?? 0,
-      });
+    // Always log safe diagnostics (no raw LLM, no secrets)
+    console.log("[inline] Brain planner diagnostics", {
+      planResult_ok: planResult.ok,
+      hasBrainPlanning: !!planResult.brainPlanning,
+      planResult_error: planResult.error ? planResult.error.slice(0, 160) : null,
+      route_tier_hint_present: diagHintStr !== undefined && diagHintStr !== null,
+      route_tier_hint_value: diagHintValid ? diagHintStr : (diagHintStr === null ? "null" : diagHintStr === undefined ? "none" : "invalid"),
+      selected_macro_nodes_count: planResult.brainPlanning?.selected_macro_nodes?.length ?? 0,
+      selected_services_count: planResult.brainPlanning?.selected_services?.length ?? 0,
+      meta_mode: planResult.error?.includes("repair") ? "repair" : "standard",
+    });
+
+    // When Brain planner fails, store safe error so downstream can propagate it
+    if (!planResult.ok) {
+      const safeErr = planResult.error ? planResult.error.slice(0, 200) : "Brain planner returned ok=false";
+      fullBrainPlanning = { error: safeErr, route_tier_hint: null } as Record<string, unknown>;
     }
 
     if (planResult.ok && planResult.brainPlanning) {
