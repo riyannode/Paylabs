@@ -567,9 +567,14 @@ async function runX402Orchestration(params: {
         const normalizedGoal = resolvedBrainData
           ? String((resolvedBrainData as Record<string, unknown>).normalized_goal || "")
           : "";
+        // Extract entity_terms from discovery_planner state for source relevance filtering
+        const entityTerms = (dData.entityTerms as string[])
+          || (dData.entity_terms as string[])
+          || [];
         const resolverResult = await resolveSources({
           rankedCandidates,
           normalizedGoal,
+          entityTerms,
         });
         if (resolverResult.ok) {
           sourceContext = resolverResult.sourceContext;

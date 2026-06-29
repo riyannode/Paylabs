@@ -198,7 +198,7 @@ function isDomainOrSubdomain(input: string, baseDomain: string): boolean {
   return hostname === normalizedBase || hostname.endsWith(`.${normalizedBase}`);
 }
 
-function filterByRelevance(sources: SourceItem[], normalizedGoal: string): SourceItem[] {
+function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entityTerms?: string[]): SourceItem[] {
   if (sources.length === 0) return sources;
 
   const goalLower = normalizedGoal.toLowerCase();
@@ -206,10 +206,12 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string): Sourc
 
   // Extract entity patterns (owner/repo, product names)
   const ownerRepoMatch = goalLower.match(/(\w[\w-]*)\s*\/\s*(\w[\w-]*)/);
-  const entityTerms: string[] = [];
+  const entityPatterns: string[] = entityTerms
+    ? entityTerms.map((e) => e.toLowerCase()).filter((e) => e.length > 0)
+    : [];
   if (ownerRepoMatch) {
-    entityTerms.push(ownerRepoMatch[1].toLowerCase());
-    entityTerms.push(ownerRepoMatch[2].toLowerCase());
+    entityPatterns.push(ownerRepoMatch[1].toLowerCase());
+    entityPatterns.push(ownerRepoMatch[2].toLowerCase());
   }
 
   // Domain-specific intent — use word boundaries to avoid "report" matching "repo"
@@ -224,9 +226,9 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string): Sourc
     const url = (src.url || "").toLowerCase();
     const combined = `${title} ${summary} ${domain} ${routePath} ${url}`;
 
-    // Entity terms: at least ONE must appear
-    if (entityTerms.length > 0) {
-      const hasEntity = entityTerms.some((et) => combined.includes(et));
+    // Entity terms: at least ONE must appear (includes short meaningful tokens like x402, ai)
+    if (entityPatterns.length > 0) {
+      const hasEntity = entityPatterns.some((et) => combined.includes(et));
       if (!hasEntity) return false;
     }
 
@@ -240,7 +242,8 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string): Sourc
     }
 
     // General keyword match: at least ONE query term must appear
-    if (terms.length > 0 && !isGitHubIntent) {
+    // Skip this gate if entity patterns already matched (avoid double-filtering)
+    if (terms.length > 0 && !isGitHubIntent && entityPatterns.length === 0) {
       const hasKeyword = terms.some((t) => combined.includes(t));
       if (!hasKeyword) return false;
     }
@@ -265,7 +268,8 @@ export async function resolveSources(
   try {
     const rawSources = await enrichRankedCandidates(input.rankedCandidates, maxSources);
     // Apply relevance filter: reject sources that don't match the query
-    const sources = filterByRelevance(rawSources, input.normalizedGoal);
+    // Pass entity_terms so short meaningful tokens (x402, ai, usdc) are used in matching
+    const sources = filterByRelevance(rawSources, input.normalizedGoal, input.entityTerms);
     const sourceConfidence = computeSourceConfidence(sources);
     const sourceSelectionSummary = buildSelectionSummary(
       sources,

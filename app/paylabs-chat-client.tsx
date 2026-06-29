@@ -108,9 +108,11 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (agentTraceBrain?.plan_rationale as string) ??
     null;
 
+  // Prioritize source-grounded answer over Brain Planner output
+  // Brain Planner's assistant_response is generic planning text — sourceFinalAnswer is grounded
   const assistantResponse =
-    brainAssistantResponse ??
     rawFinalAnswer ??
+    brainAssistantResponse ??
     (exitOutput?.final_summary as string) ??
     tieredSummaries?.final_summary ??
     "Run completed.";
@@ -118,13 +120,14 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (brainPlanning?.user_visible_reasoning as string) ??
     (agentTraceBrain?.user_visible_reasoning as string) ??
     null;
+  // Route reasoning priority: tier_decision_reason first (explains why Easy/Normal/Advanced was chosen)
   const brainRationale =
-    (brainPlanning?.plan_rationale as string) ??
-    (agentTraceBrain?.plan_rationale as string) ??
     (brainPlanning?.tier_decision_reason as string) ??
     (agentTraceBrain?.tier_decision_reason as string) ??
-    (brainPlanning?.safe_summary as string) ??
-    (agentTraceBrain?.safe_summary as string) ??
+    (brainPlanning?.plan_rationale as string) ??
+    (agentTraceBrain?.plan_rationale as string) ??
+    (brainPlanning?.user_visible_reasoning as string) ??
+    (agentTraceBrain?.user_visible_reasoning as string) ??
     null;
 
   // Extract sources from source_context.sources_used or fallback to exit_output.sources_used
@@ -824,7 +827,16 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
   const [rationaleOpen, setRationaleOpen] = useState(false);
   const [sourceSummaryOpen, setSourceSummaryOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const rationaleText = result.userVisibleReasoning ?? result.brainRationale;
+  // Filter out generic processing text from route reasoning
+  const GENERIC_PATTERNS = [
+    /i am processing/i, /i will gather/i, /saya sedang memproses/i,
+    /processing your request/i, /gathering information/i, /searching for/i,
+    /i'll look/i, /let me find/i, /memproses permintaan/i,
+  ];
+  const isGenericText = (text: string | null): boolean =>
+    !!text && GENERIC_PATTERNS.some((p) => p.test(text)) && text.length < 120;
+  const rawRationale = result.userVisibleReasoning ?? result.brainRationale;
+  const rationaleText = isGenericText(rawRationale) ? null : rawRationale;
   return (
     <div className="pl-result-card">
       {result.assistantResponse && (
@@ -840,7 +852,7 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
             onClick={() => setRationaleOpen(!rationaleOpen)}
             type="button"
           >
-            <span className="pl-rationale-title">LLM reasoning</span>
+            <span className="pl-rationale-title">Route reasoning</span>
             <span className="pl-rationale-caret">{rationaleOpen ? "▾" : "▸"}</span>
           </button>
           {rationaleOpen && (

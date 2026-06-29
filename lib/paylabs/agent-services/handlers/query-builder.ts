@@ -24,6 +24,13 @@ const QueryBuilderSchema = z.object({
   safe_summary: z.string(),
 });
 
+// Meaningful short tokens — extracted as entity terms when present in goal
+const MEANINGFUL_SHORT_TOKENS = new Set([
+  "ai", "ml", "llm", "btc", "eth", "sol", "nft", "dao", "dex",
+  "api", "usdc", "x402", "evm", "l2", "cefi", "gpt", "cv",
+  "waf", "aws", "cdns",
+]);
+
 // ─── Deterministic Query Expansion ──────────────────────────
 
 function runDeterministicQueryBuilder(
@@ -37,10 +44,26 @@ function runDeterministicQueryBuilder(
 } {
   const goal = normalizedGoal.trim().toLowerCase();
 
-  // Extract entity terms: capitalized words, quoted phrases, and topics
+  // Extract entity terms: capitalized words, quoted phrases, meaningful tokens, and topics
   const entityTerms: string[] = [...topics];
   const quotedPhrases = normalizedGoal.match(/"([^"]+)"/g)?.map((p) => p.replace(/"/g, "")) || [];
   entityTerms.push(...quotedPhrases);
+
+  // Extract capitalized words (2+ chars, not first word of sentence)
+  const words = normalizedGoal.split(/\s+/);
+  for (const w of words) {
+    if (/^[A-Z][A-Za-z0-9_-]+$/.test(w) && w.length > 1) {
+      entityTerms.push(w);
+    }
+  }
+
+  // Extract meaningful short tokens that appear in the goal
+  const goalWords = goal.split(/[^a-z0-9]+/).filter(Boolean);
+  for (const gw of goalWords) {
+    if (MEANINGFUL_SHORT_TOKENS.has(gw) && !entityTerms.some((e) => e.toLowerCase() === gw)) {
+      entityTerms.push(gw);
+    }
+  }
 
   // Build expanded queries from goal
   const expandedQueries: string[] = [normalizedGoal];

@@ -89,6 +89,12 @@ const TOPIC_KEYWORDS: Array<{ keywords: string[]; category: "ai" | "crypto"; sub
   { keywords: ["crypto regulation", "crypto policy", "sec crypto", "crypto law"], category: "crypto", subcategory: "policy" },
   { keywords: ["crypto company", "crypto startup", "crypto funding", "crypto investment"], category: "crypto", subcategory: "companies" },
   { keywords: ["stablecoin", "usdc", "usdt", "dai"], category: "crypto" },
+  { keywords: ["x402", "nanopayment", "nanopayments", "payment protocol", "micropayment", "pay-per-request"], category: "crypto", subcategory: "news" },
+  { keywords: ["circle", "circle financial", "circle usdc", "circle gateway", "circle wallet"], category: "crypto", subcategory: "news" },
+  { keywords: ["gateway", "gateway wallet", "gateway deposit", "unified balance"], category: "crypto", subcategory: "ecosystems" },
+  { keywords: ["arc", "arc blockchain", "arc testnet", "arc layer"], category: "crypto", subcategory: "ecosystems" },
+  { keywords: ["aws waf", "cloudflare", "bot monetization", "api monetization"], category: "crypto", subcategory: "news" },
+  { keywords: ["ai agent payment", "ai agent wallet", "agent commerce", "agentic payment"], category: "crypto", subcategory: "news" },
 ];
 
 // ─── Public API ─────────────────────────────────────────────

@@ -52,6 +52,8 @@ export interface SourceResolverInput {
   intentType?: string;
   /** Brain's constraints */
   constraints?: string[];
+  /** Entity terms for relevance filtering (x402, ai, usdc, etc.) */
+  entityTerms?: string[];
   /** Max sources to return (default 10) */
   maxSources?: number;
 }
