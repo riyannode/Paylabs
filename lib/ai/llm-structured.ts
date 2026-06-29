@@ -304,7 +304,6 @@ export async function generateStructuredJson<T>(
       if (process.env.PAYLABS_LLM_DEBUG === "true") {
         const dbg = result as unknown as Record<string, unknown>;
         const dbgContent = dbg?.content;
-        const dbgAk = dbg?.additional_kwargs as Record<string, unknown> | undefined;
         const expectedKeys = getExpectedKeys(schema);
         let receivedKeys: string[] = [];
         if (jsonStr) {
@@ -324,7 +323,6 @@ export async function generateStructuredJson<T>(
           expected_keys: expectedKeys,
           received_keys: receivedKeys,
           content_length: typeof dbgContent === "string" ? dbgContent.length : Array.isArray(dbgContent) ? dbgContent.length : "n/a",
-          has_reasoning: !!dbgAk?.reasoning_content,
           json_found: !!jsonStr,
         });
       }
@@ -338,14 +336,16 @@ export async function generateStructuredJson<T>(
         const hasReasoning = !!ak?.reasoning_content;
 
         if (hasEmptyContent && hasReasoning) {
-          // Log for debugging MiMo response structure
+          // Safe diagnostics: no raw reasoning_content
           console.log("[llm-structured] MiMo empty content + reasoning_content detected", {
             agent: agentName,
             reasoning_type: typeof ak?.reasoning_content,
             reasoning_length: typeof ak?.reasoning_content === "string" ? (ak.reasoning_content as string).length : 0,
-            reasoning_preview: typeof ak?.reasoning_content === "string" ? (ak.reasoning_content as string).substring(0, 200) : "not-string",
-            msg_keys: Object.keys(msg || {}),
-            ak_keys: Object.keys(ak || {}),
+            provider: modelConfig.provider,
+            model: modelName,
+            mode: "llm_structured_json_extract",
+            content_length: typeof content === "string" ? content.length : "n/a",
+            json_found: false,
           });
           lastError = "MiMo returned reasoning_content with empty content — no JSON extractable";
           break;
@@ -368,17 +368,74 @@ export async function generateStructuredJson<T>(
       const parsed = schema.safeParse(parsedJson);
       if (!parsed.success) {
         const issuePaths = parsed.error.issues.map(i => i.path.join("."));
-        lastError = `Zod validation failed: ${parsed.error.issues.map(i => i.message).join("; ")}`;
-        if (process.env.PAYLABS_LLM_DEBUG === "true") {
-          console.log("[llm-structured] validation:", {
-            provider: modelConfig.provider,
-            model: modelName,
-            agent_name: agentName,
-            attempt,
-            validation_issue_paths: issuePaths,
-            content_length: jsonStr.length,
-          });
+        const expectedKeys = getExpectedKeys(schema);
+        let receivedKeys: string[] = [];
+        try {
+          if (parsedJson && typeof parsedJson === "object" && !Array.isArray(parsedJson)) {
+            receivedKeys = Object.keys(parsedJson);
+          }
+        } catch { /* ignore */ }
+
+        // Always log safe validation diagnostics (no raw response, no secrets)
+        console.log("[llm-structured] Zod validation failed:", {
+          provider: modelConfig.provider,
+          model: modelName,
+          agent_name: agentName,
+          attempt,
+          max_tokens: modelConfig.maxTokens,
+          timeout_ms: modelConfig.timeoutMs,
+          streaming: modelConfig.streaming,
+          mode: "llm_structured_json_extract",
+          json_found: true,
+          received_keys: receivedKeys,
+          expected_keys: expectedKeys,
+          validation_issue_paths: issuePaths,
+          content_length: jsonStr.length,
+        });
+
+        // ── Repair attempt: ask model to fix the JSON for the failing paths ──
+        if (attempt === 0) {
+          try {
+            const repairSystemPrompt = "You must return valid JSON matching the schema exactly. Fix the validation errors below. Return ONLY the corrected JSON object. No markdown. No commentary. No extra keys.";
+            const repairUserPrompt = `The previous JSON response failed Zod validation.\n\nReceived keys: ${JSON.stringify(receivedKeys)}\nExpected keys: ${JSON.stringify(expectedKeys)}\nValidation errors: ${parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join("; ")}\n\nReturn the corrected JSON matching the schema exactly. Do not omit any required fields. Do not add fields outside the schema.`;
+            const repairMessages: BaseMessage[] = [
+              new SystemMessage(repairSystemPrompt),
+              new HumanMessage(repairUserPrompt),
+            ];
+
+            const repairResult = await (model as ChatOpenAI).invoke(repairMessages);
+            const repairJsonStr = extractJsonFromResponse(repairResult);
+
+            if (repairJsonStr) {
+              const repairParsed = schema.safeParse(JSON.parse(repairJsonStr));
+              if (repairParsed.success) {
+                console.log("[llm-structured] repair succeeded", {
+                  agent_name: agentName,
+                  provider: modelConfig.provider,
+                  model: modelName,
+                  attempt: attempt + 1,
+                });
+                const meta = buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, attempt + 1, "llm_structured_repair");
+                return { ok: true, data: repairParsed.data as T, meta };
+              }
+              console.log("[llm-structured] repair also failed Zod", {
+                agent_name: agentName,
+                repair_issue_paths: repairParsed.error.issues.map(i => i.path.join(".")),
+              });
+            } else {
+              console.log("[llm-structured] repair: no JSON extractable", {
+                agent_name: agentName,
+              });
+            }
+          } catch (repairErr: unknown) {
+            console.log("[llm-structured] repair attempt error:", {
+              agent_name: agentName,
+              error: repairErr instanceof Error ? repairErr.message.slice(0, 100) : String(repairErr).slice(0, 100),
+            });
+          }
         }
+
+        lastError = `Zod validation failed: ${parsed.error.issues.map(i => i.message).join("; ")}`;
         if (attempt === 0) continue;
         break;
       }

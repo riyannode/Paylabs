@@ -255,9 +255,12 @@ async function runX402Orchestration(params: {
       };
     }
   } catch (e: unknown) {
+    const brainErr = e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200);
     console.error("[inline] Brain planner failed after x402 settle", {
-      error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200),
+      error: brainErr,
     });
+    // Store safe error so downstream can propagate it (no raw LLM output)
+    fullBrainPlanning = { error: brainErr } as Record<string, unknown>;
   }
 
   // Use full planning output if available, fallback to brainData (x402 response)
@@ -1163,6 +1166,7 @@ async function runX402Path(
           phases_completed: result.phasesCompleted,
           brain_planning: result.brainPlanning
             ? {
+                route_tier_hint: result.brainPlanning.route_tier_hint,
                 safe_summary: result.brainPlanning.safe_brain_summary,
                 assistant_response: result.brainPlanning.assistant_response,
                 user_visible_reasoning: result.brainPlanning.user_visible_reasoning,
@@ -1172,7 +1176,9 @@ async function runX402Path(
                 selected_services: result.brainPlanning.selected_services,
                 planned_cost_usdc: result.brainPlanning.planned_cost_usdc,
               }
-            : null,
+            : result.error
+              ? { route_tier_hint: null, error: result.error.slice(0, 200) }
+              : null,
           payment_graph: result.paymentGraph.map((e) => ({
             buyer: e.buyer,
             seller: e.seller,
