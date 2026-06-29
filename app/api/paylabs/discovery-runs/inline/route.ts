@@ -1428,6 +1428,12 @@ async function runX402Path(
             content_length: null,
             safe_error: null,
           },
+      // TEMP DIAGNOSTIC: trace brainLlmDiag propagation (remove before merge)
+      _brain_diag_debug: {
+        result_has_brainLlmDiag: result._brainLlmDiag !== undefined && result._brainLlmDiag !== null,
+        result_brainLlmDiag_type: typeof result._brainLlmDiag,
+        result_brainLlmDiag_keys: result._brainLlmDiag ? Object.keys(result._brainLlmDiag as Record<string, unknown>) : [],
+      },
       locked_execution_plan: result._lockedPlan
         ? {
             selected_macro_nodes: result._lockedPlan.selectedMacroNodes,

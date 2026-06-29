@@ -197,6 +197,8 @@ export async function POST(req: NextRequest) {
       entry_payment_explorer_url: entryPayment.explorer_url,
       entry_payment_batch_explorer_url: entryPayment.batch_explorer_url,
       _brain_diag: (resultData?._brain_diag as Record<string, unknown>) ?? null,
+      // TEMP DIAGNOSTIC (remove before merge)
+      _brain_diag_debug: (resultData as Record<string, unknown>)?._brain_diag_debug ?? null,
     }, { status: result.ok ? 200 : 502 });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
