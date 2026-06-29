@@ -101,6 +101,9 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (exitOutput?.final_answer as string) ??
     null;
 
+  // Prioritize source-grounded answer over Brain Planner output
+  // But detect no-source fallback so we don't show "No sufficiently relevant sources..." as the answer
+  const isNoSourceFallback = /no sufficiently relevant sources found|no relevant sources found|no matching live rsshub sources|no sufficiently relevant live sources were found|did not attach source links/i.test(rawFinalAnswer || "");
   const brainAssistantResponse =
     (brainPlanning?.assistant_response as string) ??
     (agentTraceBrain?.assistant_response as string) ??
@@ -108,9 +111,18 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (agentTraceBrain?.plan_rationale as string) ??
     null;
 
+  // Block generic Brain planning text from being shown as the Answer
+  // Anchored to sentence-start or preceded by planning indicators to avoid
+  // matching legitimate answers like "binary searching for" or "looking for jobs"
+  const GENERIC_ANSWER_RE = /^(i will find|i will search|i am processing|let me find|i'll look|i'll search|saya akan mencari|saya sedang memproses|mohon tunggu sebentar|gathering information|i'm searching for|i'm looking for|saya sedang mencari)/i;
+  const isGenericBrainAnswer = !!brainAssistantResponse && GENERIC_ANSWER_RE.test(brainAssistantResponse) && brainAssistantResponse.length < 200;
+
+  const NO_SOURCE_FALLBACK_MSG = "No sufficiently relevant live sources were found for this query. The route completed with basic discovery, but PayLabs did not attach source links because no source passed the relevance gate.";
+
   const assistantResponse =
-    brainAssistantResponse ??
-    rawFinalAnswer ??
+    (rawFinalAnswer && !isNoSourceFallback ? rawFinalAnswer : null) ??
+    (brainAssistantResponse && !isGenericBrainAnswer ? brainAssistantResponse : null) ??
+    (isNoSourceFallback || isGenericBrainAnswer ? NO_SOURCE_FALLBACK_MSG : null) ??
     (exitOutput?.final_summary as string) ??
     tieredSummaries?.final_summary ??
     "Run completed.";
@@ -118,13 +130,14 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (brainPlanning?.user_visible_reasoning as string) ??
     (agentTraceBrain?.user_visible_reasoning as string) ??
     null;
+  // Route reasoning priority: tier_decision_reason first (explains why Easy/Normal/Advanced was chosen)
   const brainRationale =
-    (brainPlanning?.plan_rationale as string) ??
-    (agentTraceBrain?.plan_rationale as string) ??
     (brainPlanning?.tier_decision_reason as string) ??
     (agentTraceBrain?.tier_decision_reason as string) ??
-    (brainPlanning?.safe_summary as string) ??
-    (agentTraceBrain?.safe_summary as string) ??
+    (brainPlanning?.plan_rationale as string) ??
+    (agentTraceBrain?.plan_rationale as string) ??
+    (brainPlanning?.user_visible_reasoning as string) ??
+    (agentTraceBrain?.user_visible_reasoning as string) ??
     null;
 
   // Extract sources from source_context.sources_used or fallback to exit_output.sources_used
@@ -824,7 +837,16 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
   const [rationaleOpen, setRationaleOpen] = useState(false);
   const [sourceSummaryOpen, setSourceSummaryOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const rationaleText = result.userVisibleReasoning ?? result.brainRationale;
+  // Filter out generic processing text from route reasoning
+  const GENERIC_PATTERNS = [
+    /i am processing/i, /i will gather/i, /saya sedang memproses/i,
+    /processing your request/i, /gathering information/i, /searching for/i,
+    /i'll look/i, /let me find/i, /memproses permintaan/i,
+  ];
+  const isGenericText = (text: string | null): boolean =>
+    !!text && GENERIC_PATTERNS.some((p) => p.test(text)) && text.length < 120;
+  const rationaleCandidates = [result.brainRationale, result.userVisibleReasoning].filter(Boolean) as string[];
+  const rationaleText = rationaleCandidates.find((text) => !isGenericText(text)) ?? null;
   return (
     <div className="pl-result-card">
       {result.assistantResponse && (
@@ -840,7 +862,7 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
             onClick={() => setRationaleOpen(!rationaleOpen)}
             type="button"
           >
-            <span className="pl-rationale-title">LLM reasoning</span>
+            <span className="pl-rationale-title">Route reasoning</span>
             <span className="pl-rationale-caret">{rationaleOpen ? "▾" : "▸"}</span>
           </button>
           {rationaleOpen && (

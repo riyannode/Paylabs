@@ -9,6 +9,7 @@
 
 import type { RsshubCatalogRoute } from "./rsshub-catalog";
 import { getRsshubCatalog } from "./rsshub-catalog";
+import { hasBoundaryTerm } from "@/lib/paylabs/sources/source-term-matching";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -45,58 +46,73 @@ function scoreRoute(
   const routeNsUrl = normalizeLower(route.namespaceUrl);
   const routeCategories = route.categories.map(normalizeLower);
 
-  // 1. Exact entity match (strongest signal)
+  // 1. Exact entity match (strongest signal) — boundary-aware for short tokens
   for (const entity of entityTerms) {
     const e = normalizeLower(entity);
     if (!e) continue;
 
     // Exact name match
-    if (routeName === e || routeName.includes(e)) {
+    if (routeName === e || hasBoundaryTerm(routeName, e)) {
       score += 20;
       matched.push(entity);
       reasons.push(`name:${entity}`);
     }
-    // Path contains entity
-    else if (routePath.includes(e)) {
+    // Path contains entity (boundary-aware)
+    else if (hasBoundaryTerm(routePath, e)) {
       score += 15;
       matched.push(entity);
       reasons.push(`path:${entity}`);
     }
-    // Example contains entity (strong only if entity is specific)
-    else if (routeExample.includes(e) && e.length > 3) {
+    // For short known entities (ai, ml, etc.), also match as route path segment prefix
+    // e.g. "ai" matches /openai/, /aibase/ because "ai" is a meaningful prefix in the route path
+    // But ONLY if the route name or description also references the entity (prevents noise)
+    else if (e.length <= 3 && /^\/[a-z]+\/?/.test(routePath)) {
+      const pathSegments = routePath.split("/").filter(Boolean);
+      const prefixMatch = pathSegments.some((seg) => seg.startsWith(e) && seg.length > e.length);
+      // Require name/desc/category to also reference the entity to avoid unrelated prefix hits
+      const nameOrDescHasEntity = hasBoundaryTerm(routeName, e) || hasBoundaryTerm(routeDesc, e)
+        || routeCategories.some((c) => c.includes(e));
+      if (prefixMatch && nameOrDescHasEntity) {
+        score += 12;
+        matched.push(entity);
+        reasons.push(`path_prefix:${entity}`);
+      }
+    }
+    // Example contains entity (strong only if entity is specific, boundary-aware)
+    else if (hasBoundaryTerm(routeExample, e) && e.length > 3) {
       score += 12;
       matched.push(entity);
       reasons.push(`example:${entity}`);
     }
-    // Namespace URL contains entity
-    else if (routeNsUrl.includes(e)) {
+    // Namespace URL contains entity (boundary-aware)
+    else if (hasBoundaryTerm(routeNsUrl, e)) {
       score += 10;
       matched.push(entity);
       reasons.push(`nsurl:${entity}`);
     }
-    // Description contains entity
-    else if (routeDesc.includes(e)) {
+    // Description contains entity (boundary-aware)
+    else if (hasBoundaryTerm(routeDesc, e)) {
       score += 5;
       matched.push(entity);
       reasons.push(`desc:${entity}`);
     }
   }
 
-  // 2. General term match (weaker)
+  // 2. General term match (weaker) — boundary-aware for short tokens
   for (const term of terms) {
     const t = normalizeLower(term);
     if (!t || t.length < 3) continue;
     // Skip if already matched as entity
     if (matched.some((m) => normalizeLower(m).includes(t))) continue;
 
-    if (routeName.includes(t)) {
+    if (hasBoundaryTerm(routeName, t)) {
       score += 8;
       matched.push(term);
       reasons.push(`name_term:${term}`);
-    } else if (routePath.includes(t)) {
+    } else if (hasBoundaryTerm(routePath, t)) {
       score += 5;
       matched.push(term);
-    } else if (routeDesc.includes(t)) {
+    } else if (hasBoundaryTerm(routeDesc, t)) {
       score += 2;
     }
   }

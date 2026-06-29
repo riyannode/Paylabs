@@ -567,9 +567,29 @@ async function runX402Orchestration(params: {
         const normalizedGoal = resolvedBrainData
           ? String((resolvedBrainData as Record<string, unknown>).normalized_goal || "")
           : "";
+        // Extract entity_terms from discovery_planner state for source relevance filtering
+        // Try macro-node data first, then query_builder child evaluation
+        let entityTerms = (dData.entityTerms as string[])
+          || (dData.entity_terms as string[])
+          || [];
+        // If not found in macro-node data, check query_builder child evaluation
+        if (entityTerms.length === 0) {
+          const childEvals = dData.serviceEvaluations as Array<{
+            serviceName: string; output?: Record<string, unknown>;
+          }> | undefined;
+          if (childEvals) {
+            const qbEval = childEvals.find((e) => e.serviceName === "query_builder" && e.output);
+            if (qbEval?.output) {
+              entityTerms = (qbEval.output.entity_terms as string[])
+                || (qbEval.output.entityTerms as string[])
+                || [];
+            }
+          }
+        }
         const resolverResult = await resolveSources({
           rankedCandidates,
           normalizedGoal,
+          entityTerms,
         });
         if (resolverResult.ok) {
           sourceContext = resolverResult.sourceContext;

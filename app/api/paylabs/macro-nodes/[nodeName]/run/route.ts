@@ -214,7 +214,16 @@ async function executeMacroNode(
       for (const pe of graphResult.paymentEdges) {
         state.paymentEdges.push(pe);
       }
-      result = { ok: graphResult.ok, rankedCandidates: graphResult.rankedCandidates, easySummary: graphResult.easySummary, retrieval_mode: graphResult.retrievalMode };
+      result = {
+        ok: graphResult.ok,
+        rankedCandidates: graphResult.rankedCandidates,
+        easySummary: graphResult.easySummary,
+        retrieval_mode: graphResult.retrievalMode,
+        entityTerms: graphResult.entityTerms || [],
+        expandedQueries: graphResult.expandedQueries || [],
+        negativeFilters: graphResult.negativeFilters || [],
+        sourcePreferences: graphResult.sourcePreferences || [],
+      };
 
     } else if (nodeName === "payment_decision") {
       const { runPaymentDecisionGraph } = await import("@/lib/paylabs/langgraph/macro-nodes/payment-decision-graph");
