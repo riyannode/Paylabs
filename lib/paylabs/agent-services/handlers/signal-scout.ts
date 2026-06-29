@@ -314,6 +314,7 @@ export const signalScoutHandler: ServiceHandler = async (
 
   // ── Step 2: Merge topic candidates with live results ──
   // Topic routes take priority (appear first), dedupe by source_url
+  // Filter out generic catch-all sources (Wikipedia current-events) when topic routes return domain-specific results
   type MergedCandidate = {
     feed_item_id: string;
     title: string;
@@ -334,18 +335,35 @@ export const signalScoutHandler: ServiceHandler = async (
   };
   const mergedLive: MergedCandidate[] = [];
 
+  // Generic catch-all routes that should be filtered when topic routes return domain-specific results
+  const GENERIC_CATCH_ALL_PATTERNS = [
+    /\/wiki.*current.events/i,
+    /\/wiki.*in.the.news/i,
+    /en\.wikipedia\.org.*current/i,
+  ];
+
   if (topicResult.candidates.length > 0) {
     const seenUrls = new Set<string>();
+    const hasDomainSpecificTopics = topicResult.candidates.some(
+      (tc) => tc.topic_category === "ai" || tc.topic_category === "crypto"
+    );
     for (const tc of topicResult.candidates) {
       seenUrls.add(tc.source_url.toLowerCase());
       mergedLive.push(tc);
     }
     if (liveResults) {
       for (const lr of liveResults) {
-        if (!seenUrls.has(lr.source_url.toLowerCase())) {
-          seenUrls.add(lr.source_url.toLowerCase());
-          mergedLive.push(lr);
+        if (seenUrls.has(lr.source_url.toLowerCase())) continue;
+        // Filter out generic catch-all sources when domain-specific topic routes exist
+        if (hasDomainSpecificTopics) {
+          const url = lr.source_url.toLowerCase();
+          const routePath = (lr.route_path || "").toLowerCase();
+          if (GENERIC_CATCH_ALL_PATTERNS.some((p) => p.test(url) || p.test(routePath))) {
+            continue;
+          }
         }
+        seenUrls.add(lr.source_url.toLowerCase());
+        mergedLive.push(lr);
       }
     }
   } else if (liveResults) {

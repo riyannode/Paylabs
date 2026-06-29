@@ -101,8 +101,8 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (exitOutput?.final_answer as string) ??
     null;
 
-  // Prioritize source-grounded answer over Brain Planner output
-  // But detect no-source fallback so we don't show "No sufficiently relevant sources..." as the answer
+  // Prioritize Brain LLM answer over deterministic source-grounded answer.
+  // brainAssistantResponse is a natural LLM answer; rawFinalAnswer is a deterministic source list.
   const isNoSourceFallback = /no sufficiently relevant sources found|no relevant sources found|no matching live rsshub sources|no sufficiently relevant live sources were found|did not attach source links/i.test(rawFinalAnswer || "");
   const brainAssistantResponse =
     (brainPlanning?.assistant_response as string) ??
@@ -120,8 +120,8 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
   const NO_SOURCE_FALLBACK_MSG = "No sufficiently relevant live sources were found for this query. The route completed with basic discovery, but PayLabs did not attach source links because no source passed the relevance gate.";
 
   const assistantResponse =
-    (rawFinalAnswer && !isNoSourceFallback ? rawFinalAnswer : null) ??
     (brainAssistantResponse && !isGenericBrainAnswer ? brainAssistantResponse : null) ??
+    (rawFinalAnswer && !isNoSourceFallback ? rawFinalAnswer : null) ??
     (isNoSourceFallback || isGenericBrainAnswer ? NO_SOURCE_FALLBACK_MSG : null) ??
     (exitOutput?.final_summary as string) ??
     tieredSummaries?.final_summary ??
