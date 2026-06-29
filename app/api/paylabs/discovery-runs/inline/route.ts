@@ -289,6 +289,35 @@ async function runX402Orchestration(params: {
     });
     const failOutput = buildX402Output(discoveryRunId, "easy", userBudgetUsdc, "failed",
       [...safeProgressSummaries, `FAILED: ${tierResult.error}`], paymentGraph, fullBrainPlanning, null, tierResult.error);
+
+    // Store agent_trace with _brain_diag on fail path (before returning)
+    try {
+      await supabaseAdmin().from("paylabs_discovery_runs").update({
+        status: "failed",
+        error_summary: tierResult.error?.slice(0, 500) || null,
+        agent_trace: {
+          execution_origin: "vercel_inline",
+          execution_mode: "x402_orchestration",
+          brain_planning: fullBrainPlanning || null,
+          _brain_diag: capturedBrainLlmDiag
+            ? {
+                error_code: (capturedBrainLlmDiag as Record<string, unknown>).error_code ?? null,
+                error_safe: (capturedBrainLlmDiag as Record<string, unknown>).error_safe ?? null,
+                provider: (capturedBrainLlmDiag as Record<string, unknown>).provider ?? "unknown",
+                model: (capturedBrainLlmDiag as Record<string, unknown>).model ?? "unknown",
+                agent_name: (capturedBrainLlmDiag as Record<string, unknown>).agent_name ?? "unknown",
+                mode: (capturedBrainLlmDiag as Record<string, unknown>).mode ?? "unknown",
+                json_found: (capturedBrainLlmDiag as Record<string, unknown>).json_found ?? null,
+                parse_ok: (capturedBrainLlmDiag as Record<string, unknown>).parse_ok ?? null,
+                validation_ok: (capturedBrainLlmDiag as Record<string, unknown>).validation_ok ?? null,
+              }
+            : null,
+        },
+      }).eq("id", discoveryRunId);
+    } catch (e) {
+      console.error("[inline] Failed to store agent_trace on fail path", e);
+    }
+
     return { ...failOutput, _lockedPlan: null, _brainLlmDiag: capturedBrainLlmDiag };
   }
   const effectiveRouteTier = tierResult.tier;
@@ -1209,6 +1238,19 @@ async function runX402Path(
             settled_service_fees_usdc: result.budgetSnapshot.settledServiceFeesUsdc,
             estimated_service_fees_usdc: result.budgetSnapshot.estimatedServiceFeesUsdc,
           },
+          _brain_diag: result._brainLlmDiag
+            ? {
+                error_code: (result._brainLlmDiag as Record<string, unknown>).error_code ?? null,
+                error_safe: (result._brainLlmDiag as Record<string, unknown>).error_safe ?? null,
+                provider: (result._brainLlmDiag as Record<string, unknown>).provider ?? "unknown",
+                model: (result._brainLlmDiag as Record<string, unknown>).model ?? "unknown",
+                agent_name: (result._brainLlmDiag as Record<string, unknown>).agent_name ?? "unknown",
+                mode: (result._brainLlmDiag as Record<string, unknown>).mode ?? "unknown",
+                json_found: (result._brainLlmDiag as Record<string, unknown>).json_found ?? null,
+                parse_ok: (result._brainLlmDiag as Record<string, unknown>).parse_ok ?? null,
+                validation_ok: (result._brainLlmDiag as Record<string, unknown>).validation_ok ?? null,
+              }
+            : null,
         },
       })
       .eq("id", discoveryRunId);
