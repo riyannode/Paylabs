@@ -11,7 +11,7 @@
  *
  * Tier behavior:
  *   easy: Discovery Planner only
- *   normal: Discovery Planner + Payment Decision
+ *   normal: Discovery Planner + Payment Decision + Settlement Memory creator payout
  *   advanced: all three phases
  */
 
@@ -256,7 +256,7 @@ export async function executeDelegatedDiscoveryRun(
     setMacroPhaseStatus(state, "settlement_memory", "completed");
     addProgressSummary(
       state,
-      `Settlement completed: ${settlementResult.routedItems.length} routed, ${settlementResult.failedItems.length} failed. Mode: audit-only.`
+      `Settlement completed: ${settlementResult.routedItems.length} routed, ${settlementResult.failedItems.length} failed. Mode: creator-distribution.`
     );
 
     markOrchestratorComplete(state, "completed");

@@ -105,13 +105,26 @@ function resolveSellerUrl(serviceEndpointPath: string): string {
 /**
  * Resolve the seller wallet address from the service config env var.
  * Fails closed if env var is missing or empty.
+ *
+ * Fallback: if the service-specific env var is not set, check the
+ * parent service's env var (e.g. signal_scout_basics → signal_scout).
+ * This provides backward compatibility when both services share the same seller.
  */
-function resolveSellerWallet(config: { sellerWalletAddressEnv?: string }): string {
+function resolveSellerWallet(config: { sellerWalletAddressEnv?: string; serviceName?: string }): string {
   const envName = config.sellerWalletAddressEnv;
   if (!envName) {
     throw new Error("config_error: sellerWalletAddressEnv not configured for this service");
   }
-  const address = (process.env[envName] || "").trim();
+  let address = (process.env[envName] || "").trim();
+
+  // Fallback: signal_scout_basics → signal_scout seller wallet
+  if (!address && envName === "PAYLABS_SERVICE_SIGNAL_SCOUT_BASICS_SELLER_WALLET_ADDRESS") {
+    address = (process.env.PAYLABS_SERVICE_SIGNAL_SCOUT_SELLER_WALLET_ADDRESS || "").trim();
+    if (address) {
+      console.log(`[x402-fallback] signal_scout_basics: using signal_scout seller wallet env`);
+    }
+  }
+
   if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
     throw new Error(
       `config_error: ${envName} must be a valid EVM address (got: "${address || "empty"}")`
@@ -123,13 +136,26 @@ function resolveSellerWallet(config: { sellerWalletAddressEnv?: string }): strin
 /**
  * Resolve the buyer DCW wallet ID from the service config env var.
  * Fails closed if env var is missing or empty.
+ *
+ * Fallback: if the service-specific env var is not set, check the
+ * parent service's env var (e.g. signal_scout_basics → signal_scout).
+ * This provides backward compatibility when both services share the same buyer.
  */
 function resolveBuyerWalletId(config: { buyerWalletIdEnv?: string }): string {
   const envName = config.buyerWalletIdEnv;
   if (!envName) {
     throw new Error("config_error: buyerWalletIdEnv not configured for this service");
   }
-  const walletId = (process.env[envName] || "").trim();
+  let walletId = (process.env[envName] || "").trim();
+
+  // Fallback: signal_scout_basics → signal_scout buyer wallet
+  if (!walletId && envName === "PAYLABS_SERVICE_SIGNAL_SCOUT_BASICS_BUYER_WALLET_ID") {
+    walletId = (process.env.PAYLABS_SERVICE_SIGNAL_SCOUT_BUYER_WALLET_ID || "").trim();
+    if (walletId) {
+      console.log(`[x402-fallback] signal_scout_basics: using signal_scout buyer wallet env`);
+    }
+  }
+
   if (!walletId) {
     throw new Error(`config_error: ${envName} must be set for x402-enabled services`);
   }
