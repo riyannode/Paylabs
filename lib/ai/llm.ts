@@ -127,6 +127,18 @@ export function getTutorModel(agentName?: string): ChatOpenAI | null {
   // modelKwargs spreads AFTER stream in invocationParams(), so it overrides.
   const forceNonStreamingBody = cfg.provider.toLowerCase() === "openai-compatible" || !!cfg.baseUrl;
 
+  if (agentName === "brain_planner") {
+    console.log("[llm] brain_planner config:", {
+      provider: cfg.provider,
+      providerLower: cfg.provider.toLowerCase(),
+      baseUrl: cfg.baseUrl ? "(present)" : "(missing)",
+      forceNonStreamingBody,
+      apiKeyLen: cfg.apiKey?.length ?? 0,
+      maxTokens: cfg.maxTokens,
+      streaming: cfg.streaming,
+    });
+  }
+
   const model = new ChatOpenAI({
     model: cfg.model,
     apiKey: cfg.apiKey,
