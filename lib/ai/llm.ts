@@ -105,8 +105,8 @@ function buildCacheKey(cfg: {
   timeoutMs: number;
   maxTokens: number;
   streaming: boolean;
-}): string {
-  return `${cfg.provider}:${cfg.baseUrl || "default"}:${cfg.model}:${cfg.agentKey}:${cfg.timeoutMs}:${cfg.maxTokens}:${cfg.streaming}`;
+}, forceNonStreaming?: boolean): string {
+  return `${cfg.provider}:${cfg.baseUrl || "default"}:${cfg.model}:${cfg.agentKey}:${cfg.timeoutMs}:${cfg.maxTokens}:${cfg.streaming}:${forceNonStreaming ? "nostream" : "std"}`;
 }
 
 export function getTutorModel(agentName?: string): ChatOpenAI | null {
@@ -118,14 +118,20 @@ export function getTutorModel(agentName?: string): ChatOpenAI | null {
     return null;
   }
 
-  const cacheKey = buildCacheKey(cfg);
-  const cached = modelCache.get(cacheKey);
-  if (cached) return cached;
-
   // Force stream:false in request body for OpenAI-compatible providers (e.g. 9Router)
   // 9Router defaults to SSE streaming when stream param is omitted;
   // modelKwargs spreads AFTER stream in invocationParams(), so it overrides.
   const forceNonStreamingBody = cfg.provider.toLowerCase() === "openai-compatible" || !!cfg.baseUrl;
+
+  // Include forceNonStreaming in cache key to avoid stale model from warm instances
+  const cacheKey = buildCacheKey(cfg, forceNonStreamingBody);
+  const cached = modelCache.get(cacheKey);
+  if (cached) {
+    if (agentName === "brain_planner") {
+      console.log("[llm] brain_planner CACHE HIT (model reused)");
+    }
+    return cached;
+  }
 
   if (agentName === "brain_planner") {
     console.log("[llm] brain_planner config:", {
