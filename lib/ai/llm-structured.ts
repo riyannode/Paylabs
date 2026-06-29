@@ -300,30 +300,27 @@ export async function generateStructuredJson<T>(
       const result = await (model as ChatOpenAI).invoke(strategyMessages);
       const jsonStr = extractJsonFromResponse(result);
 
-      // Safe debug: no content preview, no full prompt, no secrets
-      if (process.env.PAYLABS_LLM_DEBUG === "true") {
-        const dbg = result as unknown as Record<string, unknown>;
-        const dbgContent = dbg?.content;
+      // Always log safe diagnostics for brain_planner (no raw output, no secrets)
+      if (agentName === "brain_planner") {
+        const msg = result as unknown as Record<string, unknown>;
+        const content = msg?.content as string | unknown;
         const expectedKeys = getExpectedKeys(schema);
         let receivedKeys: string[] = [];
         if (jsonStr) {
           try {
-            const parsed = JSON.parse(jsonStr);
-            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-              receivedKeys = Object.keys(parsed);
-            }
+            const p = JSON.parse(jsonStr);
+            if (p && typeof p === "object" && !Array.isArray(p)) receivedKeys = Object.keys(p);
           } catch { /* ignore */ }
         }
-        console.log("[llm-structured] response:", {
+        console.log("[llm-structured] brain_planner invoke result:", {
           provider: modelConfig.provider,
           model: modelName,
-          agent_name: agentName,
-          mode: "llm_structured_json_extract",
           attempt,
+          content_type: typeof content,
+          content_length: typeof content === "string" ? content.length : "n/a",
+          json_found: !!jsonStr,
           expected_keys: expectedKeys,
           received_keys: receivedKeys,
-          content_length: typeof dbgContent === "string" ? dbgContent.length : Array.isArray(dbgContent) ? dbgContent.length : "n/a",
-          json_found: !!jsonStr,
         });
       }
 
