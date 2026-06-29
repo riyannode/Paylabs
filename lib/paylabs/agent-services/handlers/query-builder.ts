@@ -103,14 +103,14 @@ export const queryBuilderHandler: ServiceHandler = async (
     brain_normalized_goal?: string;
   };
 
-  // Deterministic mode (default)
-  if (shouldRunServiceAsDeterministic("query_builder")) {
-    // Use brain_normalized_goal as base if present
-    const baseGoal = brain_normalized_goal || normalized_goal || "";
-    const det = runDeterministicQueryBuilder(baseGoal, topics || []);
+  // Merge Brain query variants with deterministic expansion as baseline
+  const baseGoal = brain_normalized_goal || normalized_goal || "";
+  const det = runDeterministicQueryBuilder(baseGoal, topics || []);
+  const brainVariants = (brain_query_variants || []).map((q: string) => q.trim()).filter(Boolean);
 
+  // ── Deterministic mode: Brain variants primary, deterministic second ──
+  if (shouldRunServiceAsDeterministic("query_builder")) {
     // Merge Brain query variants first, deterministic second
-    const brainVariants = (brain_query_variants || []).map((q: string) => q.trim()).filter(Boolean);
     const merged = [...brainVariants, ...det.expanded_queries];
 
     // Dedupe case-insensitively, trim, cap to 7
@@ -160,7 +160,7 @@ export const queryBuilderHandler: ServiceHandler = async (
     };
   }
 
-  // LLM mode
+  // ── LLM mode: use Brain variants as primary input, LLM refines/expands ──
   const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
   const { toInternalRouteTier } = await import("./helpers");
 
@@ -174,6 +174,12 @@ company names
 URLs/domains
 version numbers
 technical terms
+dates
+source names (e.g. CoinDesk, TechCrunch)
+
+You may refine or expand the Brain query variants to improve source discovery coverage.
+If Brain query variants are provided, use them as your primary input and refine them — do NOT discard them.
+
 Build query variants for source discovery only. Do not choose final sources. Do not invent URLs. Do not invent titles. Do not set prices. Do not choose wallets. Do not execute payments. Do not settle payments.
 Query rules:
 Prefer exact-match queries over broad generic queries.
@@ -185,30 +191,45 @@ Avoid duplicate queries.
 Avoid generic filler queries.
 negative_filters should remove obvious noise only. source_preferences should be short tags such as official, credible, recent, primary_source, technical, documentation.
 safe_summary must be 1 short sentence. It must not mention internal chain-of-thought, payment internals, wallets, x402, Gateway, or settlement.
-Return JSON only. No markdown. No commentary. No extra keys. The first character must be "{".`;
+Return JSON only. No markdown. No commentary. No extra keys. The first character must be "{"`;
+
+  const brainVariantsText = brainVariants.length > 0
+    ? `\nBrain query variants (use as primary, refine/expand):\n${brainVariants.map((q: string) => `- "${q}"`).join("\n")}`
+    : "";
 
   const result = await generateStructuredJson<z.infer<typeof QueryBuilderSchema>>({
     agentName: "query_builder",
     routeTier: toInternalRouteTier(routeTier || "easy"),
     systemPrompt: SYSTEM_PROMPT,
-    userPrompt: `Goal: "${normalized_goal || ""}"\nTopics: ${JSON.stringify(topics || [])}\nRoute: ${routeTier || "easy"}`,
+    userPrompt: `Goal: "${normalized_goal || ""}"\nTopics: ${JSON.stringify(topics || [])}${brainVariantsText}\nDiscovery strategy: ${brain_discovery_strategy || "none"}\nRoute: ${routeTier || "easy"}`,
     schema: QueryBuilderSchema,
   });
 
   if (!result.ok) {
-    // Fallback: deterministic
-    const det = runDeterministicQueryBuilder(normalized_goal || "", topics || []);
+    // Fallback: use Brain's LLM-generated variants as primary, deterministic second
+    const fallbackMerged = [...brainVariants, ...det.expanded_queries];
+    const seen = new Set<string>();
+    const deduped: string[] = [];
+    for (const q of fallbackMerged) {
+      const key = q.toLowerCase().trim();
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        deduped.push(q.trim());
+      }
+    }
+    const fallbackQueries = deduped.slice(0, 7);
+
     return {
       ok: true,
       serviceName: "query_builder",
       data: {
-        expanded_queries: det.expanded_queries,
+        expanded_queries: fallbackQueries,
         entity_terms: det.entity_terms,
         negative_filters: det.negative_filters,
         source_preferences: det.source_preferences,
-        safe_query_summary: `Built ${det.expanded_queries.length} queries (LLM failed, deterministic fallback).`,
+        safe_query_summary: `Built ${fallbackQueries.length} queries (LLM failed, ${brainVariants.length > 0 ? "Brain variants + " : ""}deterministic fallback).`,
       },
-      safeSummary: `Built ${det.expanded_queries.length} queries (LLM failed, deterministic fallback).`,
+      safeSummary: `Built ${fallbackQueries.length} queries (LLM failed, ${brainVariants.length > 0 ? "Brain variants + " : ""}deterministic fallback).`,
       settled: false,
       error: null,
     };

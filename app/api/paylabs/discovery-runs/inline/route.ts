@@ -68,6 +68,7 @@ async function callBrainX402(dcwSigner: import("@/lib/paylabs/x402/buyer-transpo
   routeTier: string;
   userBudgetUsdc: number;
   discoveryRunId: string;
+  userWallet?: string;
 }): Promise<X402CallResult> {
   const { callPaidSeller } = await import("@/lib/paylabs/x402/buyer-transport");
 
@@ -178,6 +179,7 @@ async function runX402Orchestration(params: {
     routeTier,
     userBudgetUsdc,
     discoveryRunId,
+    userWallet,
   });
 
   if (!brainResult.ok || !brainResult.data) {
@@ -198,82 +200,141 @@ async function runX402Orchestration(params: {
     explorerUrl: brainResult.paymentMetadata?.explorerUrl ?? null,
   });
 
-  const brainData = brainResult.data.data as Record<string, unknown> | undefined;
-  const executionPlan = brainResult.data.executionPlan as {
-    selectedMacroNodes?: string[];
-    selectedServices?: string[];
-  } | undefined;
+  // ── Use paid Brain endpoint response as source of truth ──
+  // brain/run now runs Brain LLM internally after x402 settlement.
+  // No redundant runBrainPlannerGraph() call here.
+  const paidBrainData = brainResult.data;
 
-  // ── Brain LLM Planning (after x402 settle, direct call — no HTTP timeout) ──
-  let fullBrainPlanning: Record<string, unknown> | null = null;
-  try {
-    const { runBrainPlannerGraph } = await import("@/lib/paylabs/langgraph/brain/brain-planner-graph");
-    const planResult = await runBrainPlannerGraph({
-      discoveryRunId,
-      userGoal,
-      routeTier,
-      userBudgetUsdc,
-      userWallet,
-    });
-
-    // ── Safe diagnostics: Brain planner result (no raw LLM, no secrets) ──
-    const VALID_TIER_SET = new Set(["easy", "normal", "advanced"]);
-    const diagHint = planResult.brainPlanning?.route_tier_hint;
-    const diagHintStr: string | undefined = diagHint;
-    const diagHintValid = diagHintStr !== undefined && VALID_TIER_SET.has(diagHintStr);
-    if (process.env.NODE_ENV !== "production") {
-      console.debug("[inline] Brain planner diagnostics", {
-        planResult_ok: planResult.ok,
-        hasBrainPlanning: !!planResult.brainPlanning,
-        planResult_error: planResult.error ? planResult.error.slice(0, 160) : null,
-        route_tier_hint_present: diagHintStr !== undefined && diagHintStr !== null,
-        route_tier_hint_value: diagHintValid ? diagHintStr : (diagHintStr === null ? "null" : diagHintStr === undefined ? "none" : "invalid"),
-        selected_macro_nodes_count: planResult.brainPlanning?.selected_macro_nodes?.length ?? 0,
-        selected_services_count: planResult.brainPlanning?.selected_services?.length ?? 0,
-      });
-    }
-
-    if (planResult.ok && planResult.brainPlanning) {
-      const bp = planResult.brainPlanning;
-      fullBrainPlanning = {
-        normalized_goal: bp.normalized_goal,
-        route_tier_hint: bp.route_tier_hint,
-        discovery_strategy: bp.discovery_strategy,
-        suggested_query_variants: bp.suggested_query_variants,
-        service_execution_plan: bp.service_execution_plan,
-        safe_brain_summary: bp.safe_brain_summary,
-        assistant_response: bp.assistant_response,
-        user_visible_reasoning: bp.user_visible_reasoning,
-        tier_decision_reason: bp.tier_decision_reason,
-        plan_rationale: bp.plan_rationale,
-        selected_macro_nodes: bp.selected_macro_nodes,
-        selected_services: bp.selected_services,
-        max_registry_checks: bp.max_registry_checks,
-        max_source_accesses: bp.max_source_accesses,
-        planned_cost_usdc: bp.planned_cost_usdc,
-        planned_cost_breakdown: bp.planned_cost_breakdown,
-      };
-    }
-  } catch (e: unknown) {
-    console.error("[inline] Brain planner failed after x402 settle", {
-      error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200),
+  // DIAGNOSTIC: trace response shape (always log — remove after E2E passes)
+  // Supports both flat (paidBrainData.brainPlanning) and nested (paidBrainData.data.brainPlanning)
+  const diagKeys = paidBrainData ? Object.keys(paidBrainData).slice(0, 15) : [];
+  const hasBrainPlanning = !!paidBrainData?.brainPlanning;
+  const hasNestedBrainPlanning = !!(paidBrainData as Record<string, unknown>)?.data
+    && !!((paidBrainData as Record<string, unknown>).data as Record<string, unknown>)?.brainPlanning;
+  const flatHint = (paidBrainData?.brainPlanning as Record<string, unknown>)?.route_tier_hint;
+  const nestedData = (paidBrainData as Record<string, unknown>)?.data as Record<string, unknown> | undefined;
+  const nestedHint = (nestedData?.brainPlanning as Record<string, unknown>)?.route_tier_hint;
+  if (process.env.NODE_ENV !== "production") {
+    console.error("[inline] PAID_BRAIN_DIAGNOSTIC:", {
+      brainResult_ok: brainResult.ok,
+      brainResult_hasData: !!brainResult.data,
+      paidBrainData_keys: diagKeys,
+      paidBrainData_ok: paidBrainData?.ok,
+      has_brainPlanning: hasBrainPlanning,
+      has_data_brainPlanning: hasNestedBrainPlanning,
+      flat_route_tier_hint: flatHint ?? "MISSING",
+      nested_route_tier_hint: nestedHint ?? "MISSING",
+      paidBrainData_error: paidBrainData?.error ? String(paidBrainData.error).slice(0, 100) : null,
     });
   }
 
-  // Use full planning output if available, fallback to brainData (x402 response)
-  const resolvedBrainData = fullBrainPlanning || brainData || null;
+  // ── Extract Brain planning: flat first, then nested fallback ──
+  let fullBrainPlanning: Record<string, unknown> | null = null;
+  let capturedBrainLlmDiag: Record<string, unknown> | undefined = undefined;
 
-  // ── Auto-tier resolution: "auto" → Brain's route_tier_hint ──
-  const brainHint = resolvedBrainData
-    ? (resolvedBrainData as Record<string, unknown>).route_tier_hint as string | undefined
-    : undefined;
+  if (hasBrainPlanning) {
+    // Standard path: brain/run returns brainPlanning at top level
+    fullBrainPlanning = paidBrainData.brainPlanning as Record<string, unknown>;
+    capturedBrainLlmDiag = paidBrainData.brainLlmDiag as Record<string, unknown> | undefined;
+  } else if (hasNestedBrainPlanning) {
+    // Fallback: in case callPaidSeller wraps response in .data
+    fullBrainPlanning = nestedData!.brainPlanning as Record<string, unknown>;
+    capturedBrainLlmDiag = nestedData!.brainLlmDiag as Record<string, unknown> | undefined;
+  }
+
+  // Safe diagnostics (gated — no raw LLM, no secrets)
+  if (process.env.NODE_ENV !== "production") {
+    const VALID_TIER_SET = new Set(["easy", "normal", "advanced"]);
+    const diagHint = fullBrainPlanning?.route_tier_hint as string | undefined;
+    console.log("[inline] Paid Brain response diagnostics", {
+      brain_ok: paidBrainData?.ok,
+      hasBrainPlanning: !!fullBrainPlanning,
+      brain_error: paidBrainData?.error ? String(paidBrainData.error).slice(0, 160) : null,
+      route_tier_hint_present: diagHint !== undefined && diagHint !== null,
+      route_tier_hint_value: diagHint && VALID_TIER_SET.has(diagHint) ? diagHint : (diagHint === null ? "null" : diagHint === undefined ? "none" : "invalid"),
+      selected_macro_nodes_count: (paidBrainData?.selectedMacroNodes as unknown[])?.length ?? 0,
+      selected_services_count: (paidBrainData?.selectedServices as unknown[])?.length ?? 0,
+    });
+  }
+
+  // Fail closed if Brain endpoint returned ok=false
+  if (!paidBrainData?.ok || !fullBrainPlanning) {
+    const brainErr = paidBrainData?.error
+      ? String(paidBrainData.error).slice(0, 200)
+      : "Brain endpoint returned no planning data";
+    console.error("[inline] Paid Brain endpoint failed", { error: brainErr });
+    const failOutput = buildX402Output(discoveryRunId, routeTier, userBudgetUsdc, "failed",
+      [...safeProgressSummaries, `FAILED: Brain paid endpoint failed: ${brainErr}`], paymentGraph, null, null, brainErr);
+    return { ...failOutput, _lockedPlan: null, _brainLlmDiag: capturedBrainLlmDiag };
+  }
+
+  const resolvedBrainData = fullBrainPlanning;
+
+  // ── Fail closed: if auto tier, require valid route_tier_hint ──
+  const VALID_TIERS = new Set(["easy", "normal", "advanced"]);
+  const brainHint = resolvedBrainData?.route_tier_hint as string | undefined;
+  if ((routeTier as string) === "auto" && (!brainHint || !VALID_TIERS.has(brainHint))) {
+    const hintErr = `Brain paid response has no valid route_tier_hint: got "${brainHint || "none"}"`;
+    console.error("[inline] FAIL_CLOSED: invalid route_tier_hint", {
+      route_tier_hint: brainHint ?? "null",
+      paidBrainData_ok: paidBrainData?.ok,
+      hasBrainPlanning: !!resolvedBrainData,
+    });
+    const failOutput = buildX402Output(discoveryRunId, routeTier, userBudgetUsdc, "failed",
+      [...safeProgressSummaries, `FAILED: ${hintErr}`], paymentGraph, resolvedBrainData, null, hintErr);
+    return { ...failOutput, _lockedPlan: null, _brainLlmDiag: capturedBrainLlmDiag };
+  }
+
+  // ── Auto-tier resolution: "auto" already handled by fail-closed above ──
+  // For explicit tiers (easy/normal/advanced), resolveAutoTier returns as-is
   const tierResult = resolveAutoTier(routeTier, brainHint);
 
   if (!tierResult.ok) {
-    // auto tier requires valid Brain planner — fail closed
+    // auto tier: Brain LLM is mandatory — return direct error JSON, never successful run
+    console.error("[inline] Brain planner failed for auto tier", {
+      error: tierResult.error,
+      hasBrainPlanning: !!fullBrainPlanning,
+    });
     const failOutput = buildX402Output(discoveryRunId, "easy", userBudgetUsdc, "failed",
-      [...safeProgressSummaries, `FAILED: ${tierResult.error}`], paymentGraph, null, null, tierResult.error);
-    return { ...failOutput, _lockedPlan: null };
+      [...safeProgressSummaries, `FAILED: ${tierResult.error}`], paymentGraph, fullBrainPlanning, null, tierResult.error);
+
+    // Safe diagnostic: trace capturedBrainLlmDiag (no secrets, no raw LLM)
+    if (process.env.NODE_ENV !== "production") {
+      console.error("[inline] auto-tier fail brain_diag_check:", {
+        hasCaptured: capturedBrainLlmDiag !== undefined && capturedBrainLlmDiag !== null,
+        capturedKeys: capturedBrainLlmDiag ? Object.keys(capturedBrainLlmDiag) : [],
+      });
+    }
+
+    // Store agent_trace with _brain_diag on fail path (before returning)
+    try {
+      await supabaseAdmin().from("paylabs_discovery_runs").update({
+        status: "failed",
+        error_summary: tierResult.error?.slice(0, 500) || null,
+        agent_trace: {
+          execution_origin: "vercel_inline",
+          execution_mode: "x402_orchestration",
+          brain_planning: fullBrainPlanning || null,
+          _brain_diag: capturedBrainLlmDiag
+            ? {
+                error_code: (capturedBrainLlmDiag as Record<string, unknown>).error_code ?? null,
+                error_safe: (capturedBrainLlmDiag as Record<string, unknown>).error_safe ?? null,
+                provider: (capturedBrainLlmDiag as Record<string, unknown>).provider ?? "unknown",
+                model: (capturedBrainLlmDiag as Record<string, unknown>).model ?? "unknown",
+                agent_name: (capturedBrainLlmDiag as Record<string, unknown>).agent_name ?? "unknown",
+                mode: (capturedBrainLlmDiag as Record<string, unknown>).mode ?? "unknown",
+                json_found: (capturedBrainLlmDiag as Record<string, unknown>).json_found ?? null,
+                parse_ok: (capturedBrainLlmDiag as Record<string, unknown>).parse_ok ?? null,
+                validation_ok: (capturedBrainLlmDiag as Record<string, unknown>).validation_ok ?? null,
+              }
+            : null,
+        },
+      }).eq("id", discoveryRunId);
+    } catch (e) {
+      console.error("[inline] Failed to store agent_trace on fail path", e);
+    }
+
+    return { ...failOutput, _lockedPlan: null, _brainLlmDiag: capturedBrainLlmDiag };
   }
   const effectiveRouteTier = tierResult.tier;
 
@@ -536,7 +597,7 @@ async function runX402Orchestration(params: {
 
   const outResult = buildX402Output(discoveryRunId, effectiveRouteTier, userBudgetUsdc, "completed",
     safeProgressSummaries, paymentGraph, resolvedBrainData || null, macroNodeResults, null, sourceContext, lockedPlan);
-  return { ...outResult, _lockedPlan: lockedPlan };
+  return { ...outResult, _lockedPlan: lockedPlan, _brainLlmDiag: capturedBrainLlmDiag };
 }
 
 function buildX402Output(
@@ -1159,6 +1220,7 @@ async function runX402Path(
           phases_completed: result.phasesCompleted,
           brain_planning: result.brainPlanning
             ? {
+                route_tier_hint: result.brainPlanning.route_tier_hint,
                 safe_summary: result.brainPlanning.safe_brain_summary,
                 assistant_response: result.brainPlanning.assistant_response,
                 user_visible_reasoning: result.brainPlanning.user_visible_reasoning,
@@ -1168,7 +1230,9 @@ async function runX402Path(
                 selected_services: result.brainPlanning.selected_services,
                 planned_cost_usdc: result.brainPlanning.planned_cost_usdc,
               }
-            : null,
+            : result.error
+              ? { route_tier_hint: null, error: result.error.slice(0, 200) }
+              : null,
           payment_graph: result.paymentGraph.map((e) => ({
             buyer: e.buyer,
             seller: e.seller,
@@ -1190,9 +1254,30 @@ async function runX402Path(
             settled_service_fees_usdc: result.budgetSnapshot.settledServiceFeesUsdc,
             estimated_service_fees_usdc: result.budgetSnapshot.estimatedServiceFeesUsdc,
           },
+          _brain_diag: result._brainLlmDiag
+            ? {
+                error_code: (result._brainLlmDiag as Record<string, unknown>).error_code ?? null,
+                error_safe: (result._brainLlmDiag as Record<string, unknown>).error_safe ?? null,
+                provider: (result._brainLlmDiag as Record<string, unknown>).provider ?? "unknown",
+                model: (result._brainLlmDiag as Record<string, unknown>).model ?? "unknown",
+                agent_name: (result._brainLlmDiag as Record<string, unknown>).agent_name ?? "unknown",
+                mode: (result._brainLlmDiag as Record<string, unknown>).mode ?? "unknown",
+                json_found: (result._brainLlmDiag as Record<string, unknown>).json_found ?? null,
+                parse_ok: (result._brainLlmDiag as Record<string, unknown>).parse_ok ?? null,
+                validation_ok: (result._brainLlmDiag as Record<string, unknown>).validation_ok ?? null,
+              }
+            : null,
         },
       })
       .eq("id", discoveryRunId);
+
+    // Safe diagnostic: trace main agent_trace brain_diag (no secrets)
+    if (process.env.NODE_ENV !== "production") {
+      console.error("[inline] main trace brain_diag_check:", {
+        hasResultBrainLlmDiag: result._brainLlmDiag !== undefined && result._brainLlmDiag !== null,
+        resultKeys: result._brainLlmDiag ? Object.keys(result._brainLlmDiag) : [],
+      });
+    }
 
     // ── Build exit output ──
     const { buildExitOutput } = await import("@/lib/paylabs/delegated-runtime/exit-output");
@@ -1311,6 +1396,50 @@ async function runX402Path(
       requested_route_tier: routeTier,
       route_tier: result._lockedPlan ? result.routeTier : (result.status === "failed" ? null : result.routeTier),
       effective_route_tier: result._lockedPlan ? result.routeTier : (result.status === "failed" ? null : result.routeTier),
+      brain_route_tier_hint: result.brainPlanning?.route_tier_hint ?? null,
+      _brain_diag: result._brainLlmDiag
+        ? {
+            error_code: (result._brainLlmDiag as Record<string, unknown>).error_code ?? null,
+            error_safe: (result._brainLlmDiag as Record<string, unknown>).error_safe ?? null,
+            provider: (result._brainLlmDiag as Record<string, unknown>).provider ?? "unknown",
+            model: (result._brainLlmDiag as Record<string, unknown>).model ?? "unknown",
+            agent_name: (result._brainLlmDiag as Record<string, unknown>).agent_name ?? "unknown",
+            mode: (result._brainLlmDiag as Record<string, unknown>).mode ?? "unknown",
+            max_tokens: (result._brainLlmDiag as Record<string, unknown>).max_tokens ?? null,
+            timeout_ms: (result._brainLlmDiag as Record<string, unknown>).timeout_ms ?? null,
+            streaming: (result._brainLlmDiag as Record<string, unknown>).streaming ?? null,
+            force_non_streaming_body: (result._brainLlmDiag as Record<string, unknown>).force_non_streaming_body ?? null,
+            json_found: (result._brainLlmDiag as Record<string, unknown>).json_found ?? null,
+            parse_ok: (result._brainLlmDiag as Record<string, unknown>).parse_ok ?? null,
+            validation_ok: (result._brainLlmDiag as Record<string, unknown>).validation_ok ?? null,
+            received_keys: (result._brainLlmDiag as Record<string, unknown>).received_keys ?? null,
+            expected_keys: (result._brainLlmDiag as Record<string, unknown>).expected_keys ?? null,
+            validation_issue_paths: (result._brainLlmDiag as Record<string, unknown>).validation_issue_paths ?? null,
+            content_type: (result._brainLlmDiag as Record<string, unknown>).content_type ?? null,
+            content_length: (result._brainLlmDiag as Record<string, unknown>).content_length ?? null,
+            safe_error: ((result._brainLlmDiag as Record<string, unknown>).error_safe as string)?.slice(0, 220) ?? null,
+          }
+        : {
+            error_code: null,
+            error_safe: null,
+            provider: "unknown",
+            model: "unknown",
+            agent_name: "unknown",
+            mode: "unknown",
+            max_tokens: null,
+            timeout_ms: null,
+            streaming: null,
+            force_non_streaming_body: null,
+            json_found: null,
+            parse_ok: null,
+            validation_ok: null,
+            received_keys: null,
+            expected_keys: null,
+            validation_issue_paths: null,
+            content_type: null,
+            content_length: null,
+            safe_error: null,
+          },
       locked_execution_plan: result._lockedPlan
         ? {
             selected_macro_nodes: result._lockedPlan.selectedMacroNodes,
@@ -1330,6 +1459,8 @@ async function runX402Path(
       phases_completed: result.phasesCompleted,
       brain_planning: result.brainPlanning
         ? {
+            route_tier_hint: result.brainPlanning.route_tier_hint,
+            error: ((result.brainPlanning as unknown as Record<string, unknown>).error as string) ?? null,
             safe_summary: result.brainPlanning.safe_brain_summary,
             assistant_response: result.brainPlanning.assistant_response,
             user_visible_reasoning: result.brainPlanning.user_visible_reasoning,

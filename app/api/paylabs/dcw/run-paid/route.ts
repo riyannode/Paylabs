@@ -158,6 +158,7 @@ export async function POST(req: NextRequest) {
           payment_graph: agentTrace.payment_graph || null,
           quote: agentTrace.quote || null,
           exit_output: agentTrace.exit_output || null,
+          _brain_diag: agentTrace._brain_diag || null,
           _recovered: true,
           _recovery_source: "supabase_poll",
         };
@@ -195,6 +196,7 @@ export async function POST(req: NextRequest) {
       entry_payment: entryPayment,
       entry_payment_explorer_url: entryPayment.explorer_url,
       entry_payment_batch_explorer_url: entryPayment.batch_explorer_url,
+      _brain_diag: (resultData?._brain_diag as Record<string, unknown>) ?? null,
     }, { status: result.ok ? 200 : 502 });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
