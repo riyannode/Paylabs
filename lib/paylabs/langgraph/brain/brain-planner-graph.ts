@@ -132,6 +132,17 @@ Analyze this goal and produce a structured execution plan.`,
       schema: BrainPlanningSchema,
     });
 
+    // Safe diagnostic: trace generateStructuredJson result (no raw LLM, no secrets)
+    const rAny = result as unknown as Record<string, unknown>;
+    console.error("[brain-planner] generateStructuredJson result:", {
+      ok: rAny.ok,
+      code: rAny.code || null,
+      hasData: !!rAny.data,
+      hasMeta: !!rAny.meta,
+      metaKeys: rAny.meta ? Object.keys(rAny.meta as Record<string, unknown>) : [],
+      route_tier_hint: rAny.ok && rAny.data ? ((rAny.data as Record<string, unknown>).route_tier_hint ?? null) : null,
+    });
+
     if (!result.ok) {
       // Safe error detail: code + first 220 chars of error (no secrets, no raw LLM)
       const safeErrorClass = result.code || "unknown";
@@ -438,6 +449,15 @@ export async function runBrainPlannerGraph(
     const selectedMacroNodes = result.selectedMacroNodes || [];
     const safeBrainSummary = result.safeBrainSummary || "Brain planning completed";
     const finalSummary = `Brain: ${safeBrainSummary}. Phases: ${selectedMacroNodes.join(", ")}. Cost: ${(result.plannedCostUsdc || 0).toFixed(6)} USDC.`;
+
+    // Safe diagnostic: trace graph state brainLlmDiag (no secrets)
+    const hasBrainDiag = (result as Record<string, unknown>).brainLlmDiag !== undefined && (result as Record<string, unknown>).brainLlmDiag !== null;
+    console.error("[brain-graph] final state brainLlmDiag:", {
+      hasBrainDiag,
+      brainDiagKeys: hasBrainDiag ? Object.keys((result as Record<string, unknown>).brainLlmDiag as Record<string, unknown>) : [],
+      hasError: !!result.error,
+      hasBrainPlanning: !!result.brainPlanning,
+    });
 
     return {
       ok: !result.error,
