@@ -101,6 +101,9 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (exitOutput?.final_answer as string) ??
     null;
 
+  // Prioritize source-grounded answer over Brain Planner output
+  // But detect no-source fallback so we don't show "No sufficiently relevant sources..." as the answer
+  const isNoSourceFallback = /no sufficiently relevant sources found|no relevant sources found|no matching live rsshub sources/i.test(rawFinalAnswer || "");
   const brainAssistantResponse =
     (brainPlanning?.assistant_response as string) ??
     (agentTraceBrain?.assistant_response as string) ??
@@ -108,11 +111,10 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (agentTraceBrain?.plan_rationale as string) ??
     null;
 
-  // Prioritize source-grounded answer over Brain Planner output
-  // Brain Planner's assistant_response is generic planning text — sourceFinalAnswer is grounded
   const assistantResponse =
-    rawFinalAnswer ??
+    (rawFinalAnswer && !isNoSourceFallback ? rawFinalAnswer : null) ??
     brainAssistantResponse ??
+    (isNoSourceFallback ? rawFinalAnswer : null) ??
     (exitOutput?.final_summary as string) ??
     tieredSummaries?.final_summary ??
     "Run completed.";
@@ -835,8 +837,8 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
   ];
   const isGenericText = (text: string | null): boolean =>
     !!text && GENERIC_PATTERNS.some((p) => p.test(text)) && text.length < 120;
-  const rawRationale = result.brainRationale ?? result.userVisibleReasoning;
-  const rationaleText = isGenericText(rawRationale) ? null : rawRationale;
+  const rationaleCandidates = [result.brainRationale, result.userVisibleReasoning].filter(Boolean) as string[];
+  const rationaleText = rationaleCandidates.find((text) => !isGenericText(text)) ?? null;
   return (
     <div className="pl-result-card">
       {result.assistantResponse && (

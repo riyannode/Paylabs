@@ -41,6 +41,26 @@ const SignalScoutSchema = z.object({
   safe_summary: z.string(),
 });
 
+// ─── Boundary-aware entity matching ────────────────────────
+const MEANINGFUL_SHORT_TOKENS_SCOUT = new Set([
+  "ai", "ml", "llm", "btc", "eth", "sol", "nft", "dao", "dex",
+  "api", "usdc", "x402", "evm", "l2", "cefi", "gpt", "cv",
+]);
+
+function escapeRegexScout(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Boundary-aware entity matching: short tokens must not match inside other words */
+function hasEntityTermScout(text: string, term: string): boolean {
+  const t = term.toLowerCase().trim();
+  if (!t) return false;
+  if (t.length <= 3 || MEANINGFUL_SHORT_TOKENS_SCOUT.has(t)) {
+    return new RegExp(`(^|[^a-z0-9])${escapeRegexScout(t)}([^a-z0-9]|$)`, "i").test(text);
+  }
+  return text.includes(t);
+}
+
 // ─── Deterministic Signal Scoring ───────────────────────────
 
 function scoreItemDeterministic(
@@ -61,10 +81,10 @@ function scoreItemDeterministic(
   for (const entity of entityTerms) {
     const lower = entity.toLowerCase();
     if (!lower) continue;
-    if (title.includes(lower)) score += 10;
-    else if (summary.includes(lower)) score += 4;
-    else if (authorName.includes(lower)) score += 3;
-    else if (domain.includes(lower)) score += 2;
+    if (hasEntityTermScout(title, lower)) score += 10;
+    else if (hasEntityTermScout(summary, lower)) score += 4;
+    else if (hasEntityTermScout(authorName, lower)) score += 3;
+    else if (hasEntityTermScout(domain, lower)) score += 2;
   }
 
   // 2. Keyword overlap with queries

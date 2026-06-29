@@ -91,13 +91,27 @@ const TOPIC_KEYWORDS: Array<{ keywords: string[]; category: "ai" | "crypto"; sub
   { keywords: ["stablecoin", "usdc", "usdt", "dai"], category: "crypto" },
   { keywords: ["x402", "nanopayment", "nanopayments", "payment protocol", "micropayment", "pay-per-request"], category: "crypto", subcategory: "news" },
   { keywords: ["circle", "circle financial", "circle usdc", "circle gateway", "circle wallet"], category: "crypto", subcategory: "news" },
-  { keywords: ["gateway", "gateway wallet", "gateway deposit", "unified balance"], category: "crypto", subcategory: "ecosystems" },
-  { keywords: ["arc", "arc blockchain", "arc testnet", "arc layer"], category: "crypto", subcategory: "ecosystems" },
+  { keywords: ["circle gateway", "gateway wallet", "gateway deposit", "unified balance", "x402 gateway"], category: "crypto", subcategory: "ecosystems" },
+  { keywords: ["arc blockchain", "arc testnet", "arc layer", "arc network", "arclayer", "arc x402"], category: "crypto", subcategory: "ecosystems" },
   { keywords: ["aws waf", "cloudflare", "bot monetization", "api monetization"], category: "crypto", subcategory: "news" },
   { keywords: ["ai agent payment", "ai agent wallet", "agent commerce", "agentic payment"], category: "crypto", subcategory: "news" },
 ];
 
 // ─── Public API ─────────────────────────────────────────────
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Boundary-aware keyword matching: single-word keywords must not match inside other words */
+function keywordMatches(allText: string, keyword: string): boolean {
+  const kw = keyword.toLowerCase().trim();
+  if (!kw) return false;
+  // Multi-word keywords: plain substring match is fine
+  if (kw.includes(" ")) return allText.includes(kw);
+  // Single-word keywords: require word boundary (not inside "said", "research", "paid" etc.)
+  return new RegExp(`(^|[^a-z0-9])${escapeRegex(kw)}([^a-z0-9]|$)`, "i").test(allText);
+}
 
 /**
  * Detect topics from user query and entity terms.
@@ -112,7 +126,7 @@ export function detectTopics(
   const seen = new Set<string>();
 
   for (const entry of TOPIC_KEYWORDS) {
-    const matched = entry.keywords.some((kw) => allText.includes(kw.toLowerCase()));
+    const matched = entry.keywords.some((kw) => keywordMatches(allText, kw));
     if (matched) {
       const key = `${entry.category}:${entry.subcategory || "*"}`;
       if (!seen.has(key)) {

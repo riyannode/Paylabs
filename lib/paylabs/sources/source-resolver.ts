@@ -198,6 +198,21 @@ function isDomainOrSubdomain(input: string, baseDomain: string): boolean {
   return hostname === normalizedBase || hostname.endsWith(`.${normalizedBase}`);
 }
 
+function escapeRegexLocal(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Boundary-aware entity matching: short tokens must not match inside other words */
+function hasTerm(text: string, term: string): boolean {
+  const t = term.toLowerCase().trim();
+  if (!t) return false;
+  // Short tokens (<=3 chars) or known abbreviations: require word boundary
+  if (t.length <= 3 || ["ai", "ml", "llm", "btc", "eth", "sol", "nft", "dao", "dex", "api", "usdc", "x402", "evm", "l2", "cefi", "gpt", "cv", "waf", "aws", "cdns"].includes(t)) {
+    return new RegExp(`(^|[^a-z0-9])${escapeRegexLocal(t)}([^a-z0-9]|$)`, "i").test(text);
+  }
+  return text.includes(t);
+}
+
 function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entityTerms?: string[]): SourceItem[] {
   if (sources.length === 0) return sources;
 
@@ -228,7 +243,7 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entity
 
     // Entity terms: at least ONE must appear (includes short meaningful tokens like x402, ai)
     if (entityPatterns.length > 0) {
-      const hasEntity = entityPatterns.some((et) => combined.includes(et));
+      const hasEntity = entityPatterns.some((et) => hasTerm(combined, et));
       if (!hasEntity) return false;
     }
 

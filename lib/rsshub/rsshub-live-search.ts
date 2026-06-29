@@ -77,6 +77,27 @@ function sanitizeUrl(url: string): string {
   }
 }
 
+// ─── Boundary-aware entity matching ────────────────────────
+
+function escapeRegexRsshub(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const SHORT_TOKENS_RSSHUB = new Set([
+  "ai", "ml", "llm", "btc", "eth", "sol", "nft", "dao", "dex",
+  "api", "usdc", "x402", "evm", "l2", "cefi", "gpt", "cv",
+]);
+
+/** Boundary-aware entity matching: short tokens must not match inside other words */
+function hasEntityTermRsshub(text: string, term: string): boolean {
+  const t = term.toLowerCase().trim();
+  if (!t) return false;
+  if (t.length <= 3 || SHORT_TOKENS_RSSHUB.has(t)) {
+    return new RegExp(`(^|[^a-z0-9])${escapeRegexRsshub(t)}([^a-z0-9]|$)`, "i").test(text);
+  }
+  return text.includes(t);
+}
+
 /**
  * Score a feed item against user intent.
  * Priority: exact entity in title > title keyword > domain > summary > recency.
@@ -101,20 +122,20 @@ function scoreItem(
   for (const entity of entityTerms) {
     const e = entity.toLowerCase();
     if (!e) continue;
-    if (title.includes(e)) {
+    if (hasEntityTermRsshub(title, e)) {
       score += 20;
       matched.push(entity);
-    } else if (summary.includes(e)) {
+    } else if (hasEntityTermRsshub(summary, e)) {
       score += 8;
       matched.push(entity);
-    } else if (domain.includes(e)) {
+    } else if (hasEntityTermRsshub(domain, e)) {
       score += 5;
       matched.push(entity);
-    } else if (urlPath.includes(e)) {
+    } else if (hasEntityTermRsshub(urlPath, e)) {
       // Entity in source URL path (e.g. /riyannode/Paylabs in URL)
       score += 12;
       matched.push(entity);
-    } else if (rPath.includes(e)) {
+    } else if (hasEntityTermRsshub(rPath, e)) {
       // Entity in route path
       score += 10;
       matched.push(entity);
