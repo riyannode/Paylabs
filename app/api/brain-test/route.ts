@@ -13,11 +13,6 @@ export const maxDuration = 30;
 
 export async function GET() {
   try {
-    // Gate: not for production
-    if (process.env.NODE_ENV === "production") {
-      return NextResponse.json({ ok: false, error: "Disabled in production" }, { status: 404 });
-    }
-
     const { getTutorModel, getTutorModelConfig, getTutorModelName, isLlmRequired } = await import("@/lib/ai/llm");
     const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
 
