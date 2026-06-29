@@ -1440,14 +1440,6 @@ async function runX402Path(
             content_length: null,
             safe_error: null,
           },
-      // TEMP DIAGNOSTIC removed — brainLlmDiag now comes from paid Brain endpoint
-      _brain_diag_debug: result._brainLlmDiag
-        ? {
-            source: "paid_brain_endpoint",
-            hasDiag: true,
-            diagKeys: Object.keys(result._brainLlmDiag as Record<string, unknown>),
-          }
-        : { source: "paid_brain_endpoint", hasDiag: false, diagKeys: [] },
       locked_execution_plan: result._lockedPlan
         ? {
             selected_macro_nodes: result._lockedPlan.selectedMacroNodes,
