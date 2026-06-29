@@ -14,7 +14,11 @@ export async function GET() {
     const model = getTutorModel(agentName);
     
     // Safe diagnostics (no secrets)
-    const runtimeConfig = {
+    const NATIVE_STRUCTURED_PROVIDERS = new Set(["openai", "anthropic", "mimo"]);
+    const supportsNative = NATIVE_STRUCTURED_PROVIDERS.has(modelConfig.provider.toLowerCase());
+    const structuredMode = supportsNative ? "llm_structured_native" : "llm_structured_json_extract";
+
+    const runtimeConfig: Record<string, unknown> = {
       provider: modelConfig.provider,
       model: modelName,
       agentKey: modelConfig.agentKey,
@@ -26,13 +30,9 @@ export async function GET() {
       timeoutMs: modelConfig.timeoutMs,
       llmRequired: isLlmRequired(),
       modelAvailable: !!model,
+      supportsNativeStructured: supportsNative,
+      structuredMode,
     };
-    
-    // Check supportsNativeStructured
-    const NATIVE_STRUCTURED_PROVIDERS = new Set(["openai", "anthropic", "mimo"]);
-    const supportsNative = NATIVE_STRUCTURED_PROVIDERS.has(modelConfig.provider.toLowerCase());
-    runtimeConfig.supportsNativeStructured = supportsNative;
-    runtimeConfig.structuredMode = supportsNative ? "llm_structured_native" : "llm_structured_json_extract";
     
     if (!model) {
       return NextResponse.json({ ok: false, error: "No LLM model", runtimeConfig }, { status: 500 });
