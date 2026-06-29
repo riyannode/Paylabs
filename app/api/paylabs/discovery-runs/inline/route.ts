@@ -290,6 +290,12 @@ async function runX402Orchestration(params: {
     const failOutput = buildX402Output(discoveryRunId, "easy", userBudgetUsdc, "failed",
       [...safeProgressSummaries, `FAILED: ${tierResult.error}`], paymentGraph, fullBrainPlanning, null, tierResult.error);
 
+    // Safe diagnostic: trace capturedBrainLlmDiag (no secrets, no raw LLM)
+    console.error("[inline] auto-tier fail brain_diag_check:", {
+      hasCaptured: capturedBrainLlmDiag !== undefined && capturedBrainLlmDiag !== null,
+      capturedKeys: capturedBrainLlmDiag ? Object.keys(capturedBrainLlmDiag) : [],
+    });
+
     // Store agent_trace with _brain_diag on fail path (before returning)
     try {
       await supabaseAdmin().from("paylabs_discovery_runs").update({
@@ -1254,6 +1260,12 @@ async function runX402Path(
         },
       })
       .eq("id", discoveryRunId);
+
+    // Safe diagnostic: trace main agent_trace brain_diag (no secrets)
+    console.error("[inline] main trace brain_diag_check:", {
+      hasResultBrainLlmDiag: result._brainLlmDiag !== undefined && result._brainLlmDiag !== null,
+      resultKeys: result._brainLlmDiag ? Object.keys(result._brainLlmDiag) : [],
+    });
 
     // ── Build exit output ──
     const { buildExitOutput } = await import("@/lib/paylabs/delegated-runtime/exit-output");
