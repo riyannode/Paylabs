@@ -179,6 +179,14 @@ Analyze this goal and produce a structured execution plan.`,
         progressSummaries: [
           `Brain planning failed — invalid route_tier_hint: "${data.route_tier_hint}"`,
         ],
+        brainLlmDiag: {
+          ...(result.meta as Record<string, unknown> || {}),
+          error_code: "INVALID_TIER_HINT",
+          error_safe: `got "${data.route_tier_hint}"`,
+          json_found: true,
+          parse_ok: true,
+          validation_ok: false,
+        },
       };
     }
 
@@ -243,6 +251,15 @@ Analyze this goal and produce a structured execution plan.`,
     return {
       error: `Brain planning unavailable: ${msg}`,
       progressSummaries: [`Brain planning error: ${msg}`],
+      brainLlmDiag: {
+        error_code: "BRAIN_GRAPH_ERROR",
+        error_safe: msg.slice(0, 220),
+        json_found: null,
+        parse_ok: null,
+        validation_ok: null,
+        provider: "unknown",
+        model: "unknown",
+      },
     };
   }
 }

@@ -52,7 +52,7 @@ function hashPrompt(prompt: string): string {
 function buildMeta(
   agentName: string,
   routeTier: RouteTier,
-  modelConfig: { provider: string; model: string; baseUrl?: string; apiKeyPresent: boolean; agentKey: string; timeoutMs: number; maxTokens: number },
+  modelConfig: { provider: string; model: string; baseUrl?: string; apiKeyPresent: boolean; agentKey: string; timeoutMs: number; maxTokens: number; streaming?: boolean; forceNonStreamingBody?: boolean },
   modelName: string,
   promptHash: string,
   retryCount: number,
@@ -71,6 +71,8 @@ function buildMeta(
     api_key_present: modelConfig.apiKeyPresent,
     timeout_ms: modelConfig.timeoutMs,
     max_tokens: modelConfig.maxTokens,
+    streaming: modelConfig.streaming ?? null,
+    force_non_streaming_body: modelConfig.forceNonStreamingBody ?? null,
   };
 }
 
@@ -250,6 +252,7 @@ export async function generateStructuredJson<T>(
   ];
 
   let lastError = "";
+  let lastDiag: Record<string, unknown> = {};
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     // Strategy 1: Try native structured output for supported providers
@@ -300,8 +303,8 @@ export async function generateStructuredJson<T>(
       const result = await (model as ChatOpenAI).invoke(strategyMessages);
       const jsonStr = extractJsonFromResponse(result);
 
-      // Always log safe diagnostics for brain_planner (no raw output, no secrets)
-      if (agentName === "brain_planner") {
+      // Safe diagnostics for brain_planner (gated — no raw output, no secrets)
+      if (agentName === "brain_planner" && process.env.NODE_ENV !== "production") {
         const msg = result as unknown as Record<string, unknown>;
         const content = msg?.content as string | unknown;
         const expectedKeys = getExpectedKeys(schema);
@@ -322,6 +325,14 @@ export async function generateStructuredJson<T>(
           expected_keys: expectedKeys,
           received_keys: receivedKeys,
         });
+        lastDiag = {
+          ...lastDiag,
+          json_found: !!jsonStr,
+          content_type: typeof content,
+          content_length: typeof content === "string" ? content.length : null,
+          received_keys: receivedKeys,
+          expected_keys: expectedKeys,
+        };
       }
 
       if (!jsonStr) {
@@ -344,6 +355,7 @@ export async function generateStructuredJson<T>(
             content_length: typeof content === "string" ? content.length : "n/a",
             json_found: false,
           });
+          lastDiag = { ...lastDiag, json_found: false, parse_ok: false, error_code: "MIMO_EMPTY_CONTENT" };
           lastError = "MiMo returned reasoning_content with empty content — no JSON extractable";
           break;
         }
@@ -373,22 +385,34 @@ export async function generateStructuredJson<T>(
           }
         } catch { /* ignore */ }
 
-        // Always log safe validation diagnostics (no raw response, no secrets)
-        console.log("[llm-structured] Zod validation failed:", {
-          provider: modelConfig.provider,
-          model: modelName,
-          agent_name: agentName,
-          attempt,
-          max_tokens: modelConfig.maxTokens,
-          timeout_ms: modelConfig.timeoutMs,
-          streaming: modelConfig.streaming,
-          mode: "llm_structured_json_extract",
+        // Safe validation diagnostics (gated — no raw response, no secrets)
+        if (process.env.NODE_ENV !== "production") {
+          console.log("[llm-structured] Zod validation failed:", {
+            provider: modelConfig.provider,
+            model: modelName,
+            agent_name: agentName,
+            attempt,
+            max_tokens: modelConfig.maxTokens,
+            timeout_ms: modelConfig.timeoutMs,
+            streaming: modelConfig.streaming,
+            mode: "llm_structured_json_extract",
+            json_found: true,
+            received_keys: receivedKeys,
+            expected_keys: expectedKeys,
+            validation_issue_paths: issuePaths,
+            content_length: jsonStr.length,
+          });
+        }
+        lastDiag = {
+          ...lastDiag,
           json_found: true,
+          parse_ok: true,
+          validation_ok: false,
+          validation_issue_paths: issuePaths,
           received_keys: receivedKeys,
           expected_keys: expectedKeys,
-          validation_issue_paths: issuePaths,
           content_length: jsonStr.length,
-        });
+        };
 
         // ── Repair attempt: ask model to fix the JSON for the failing paths ──
         if (attempt === 0) {
@@ -464,10 +488,17 @@ export async function generateStructuredJson<T>(
     ? "LLM_STRUCTURED_OUTPUT_PARSE_FAILED"
     : "LLM_VALIDATION_FAILED";
 
+  // Merge lastDiag into meta for diagnostic propagation
+  const metaWithDiag = { ...meta, ...lastDiag, error_code: code, error_safe: lastError.slice(0, 220) };
+
   if (required) {
-    // Throw for critical agents when LLM is required
-    throw new Error(`PAYLABS_LLM_REQUIRED=true but ${agentName} failed after ${maxAttempts} attempts: ${lastError}`);
+    if (agentName !== "brain_planner") {
+      // Throw for non-brain LLM-required agents (preserve existing behavior)
+      throw new Error(`PAYLABS_LLM_REQUIRED=true but ${agentName} failed after ${maxAttempts} attempts: ${lastError}`);
+    }
+    // brain_planner: return ok:false with meta so caller gets diagnostics
+    return { ok: false, code, error: `Failed after ${maxAttempts} attempts: ${lastError}`, meta: metaWithDiag };
   }
 
-  return { ok: false, code, error: `Failed after ${maxAttempts} attempts: ${lastError}`, meta };
+  return { ok: false, code, error: `Failed after ${maxAttempts} attempts: ${lastError}`, meta: metaWithDiag };
 }

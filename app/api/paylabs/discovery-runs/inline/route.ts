@@ -223,17 +223,18 @@ async function runX402Orchestration(params: {
     const diagHint = planResult.brainPlanning?.route_tier_hint;
     const diagHintStr: string | undefined = diagHint;
     const diagHintValid = diagHintStr !== undefined && VALID_TIER_SET.has(diagHintStr);
-    // Always log safe diagnostics (no raw LLM, no secrets)
-    console.log("[inline] Brain planner diagnostics", {
-      planResult_ok: planResult.ok,
-      hasBrainPlanning: !!planResult.brainPlanning,
-      planResult_error: planResult.error ? planResult.error.slice(0, 160) : null,
-      route_tier_hint_present: diagHintStr !== undefined && diagHintStr !== null,
-      route_tier_hint_value: diagHintValid ? diagHintStr : (diagHintStr === null ? "null" : diagHintStr === undefined ? "none" : "invalid"),
-      selected_macro_nodes_count: planResult.brainPlanning?.selected_macro_nodes?.length ?? 0,
-      selected_services_count: planResult.brainPlanning?.selected_services?.length ?? 0,
-      meta_mode: planResult.error?.includes("repair") ? "repair" : "standard",
-    });
+    // Safe diagnostics (gated — no raw LLM, no secrets)
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[inline] Brain planner diagnostics", {
+        planResult_ok: planResult.ok,
+        hasBrainPlanning: !!planResult.brainPlanning,
+        planResult_error: planResult.error ? planResult.error.slice(0, 160) : null,
+        route_tier_hint_present: diagHintStr !== undefined && diagHintStr !== null,
+        route_tier_hint_value: diagHintValid ? diagHintStr : (diagHintStr === null ? "null" : diagHintStr === undefined ? "none" : "invalid"),
+        selected_macro_nodes_count: planResult.brainPlanning?.selected_macro_nodes?.length ?? 0,
+        selected_services_count: planResult.brainPlanning?.selected_services?.length ?? 0,
+      });
+    }
 
     // When Brain planner fails, store safe error so downstream can propagate it
     if (!planResult.ok) {

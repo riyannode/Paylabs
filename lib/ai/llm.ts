@@ -126,24 +126,7 @@ export function getTutorModel(agentName?: string): ChatOpenAI | null {
   // Include forceNonStreaming in cache key to avoid stale model from warm instances
   const cacheKey = buildCacheKey(cfg, forceNonStreamingBody);
   const cached = modelCache.get(cacheKey);
-  if (cached) {
-    if (agentName === "brain_planner") {
-      console.log("[llm] brain_planner CACHE HIT (model reused)");
-    }
-    return cached;
-  }
-
-  if (agentName === "brain_planner") {
-    console.log("[llm] brain_planner config:", {
-      provider: cfg.provider,
-      providerLower: cfg.provider.toLowerCase(),
-      baseUrl: cfg.baseUrl ? "(present)" : "(missing)",
-      forceNonStreamingBody,
-      apiKeyLen: cfg.apiKey?.length ?? 0,
-      maxTokens: cfg.maxTokens,
-      streaming: cfg.streaming,
-    });
-  }
+  if (cached) return cached;
 
   const model = new ChatOpenAI({
     model: cfg.model,
@@ -173,8 +156,10 @@ export function getTutorModelConfig(agentName?: string): {
   timeoutMs: number;
   maxTokens: number;
   streaming: boolean;
+  forceNonStreamingBody: boolean;
 } {
   const cfg = resolveConfig(agentName);
+  const forceNonStreamingBody = cfg.provider.toLowerCase() === "openai-compatible" || !!cfg.baseUrl;
   return {
     provider: cfg.provider,
     model: cfg.model,
@@ -184,6 +169,7 @@ export function getTutorModelConfig(agentName?: string): {
     timeoutMs: cfg.timeoutMs,
     maxTokens: cfg.maxTokens,
     streaming: cfg.streaming,
+    forceNonStreamingBody,
   };
 }
 
