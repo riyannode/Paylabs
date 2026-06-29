@@ -66,7 +66,14 @@ export function hasBoundaryTerm(text: string, term: string): boolean {
   if (!t) return false;
   // Short tokens (<=3 chars): always require boundary
   if (t.length <= 3) {
-    return new RegExp(`(^|[^a-z0-9])${escapeRegex(t)}([^a-z0-9]|$)`, "i").test(text);
+    const matched = new RegExp(`(^|[^a-z0-9])${escapeRegex(t)}([^a-z0-9]|$)`, "i").test(text);
+    if (matched) return true;
+    // For short alpha tokens, also try dotted acronym variant (us → U.S., ai → A.I.)
+    if (t.length >= 2 && /^[a-z]+$/i.test(t)) {
+      const dotted = t.split("").join(".");
+      if (new RegExp(`(^|[^a-z0-9])${escapeRegex(dotted)}([^a-z0-9]|$)`, "i").test(text)) return true;
+    }
+    return false;
   }
   // Longer tokens: plain includes is fine
   return text.toLowerCase().includes(t);
@@ -105,7 +112,16 @@ export function keywordMatches(allText: string, keyword: string): boolean {
   }
 
   // Single word: boundary match
-  return new RegExp(`(^|[^a-z0-9])${escapeRegex(kw)}([^a-z0-9]|$)`, "i").test(allText);
+  const matched = new RegExp(`(^|[^a-z0-9])${escapeRegex(kw)}([^a-z0-9]|$)`, "i").test(allText);
+  if (matched) return true;
+
+  // For short tokens (2-3 chars), also try dotted acronym variant (US → U.S.)
+  if (kw.length <= 3 && kw.length >= 2 && /^[a-z]+$/i.test(kw)) {
+    const dotted = kw.split("").join(".");
+    if (new RegExp(`(^|[^a-z0-9])${escapeRegex(dotted)}([^a-z0-9]|$)`, "i").test(allText)) return true;
+  }
+
+  return false;
 }
 
 /**

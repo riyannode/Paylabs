@@ -63,6 +63,17 @@ function scoreRoute(
       matched.push(entity);
       reasons.push(`path:${entity}`);
     }
+    // For short known entities (ai, ml, etc.), also match as route path segment prefix
+    // e.g. "ai" matches /openai/, /aibase/ because "ai" is a meaningful prefix in the route path
+    else if (e.length <= 3 && /^\/[a-z]+\/?/.test(routePath)) {
+      const pathSegments = routePath.split("/").filter(Boolean);
+      const prefixMatch = pathSegments.some((seg) => seg.startsWith(e) && seg.length > e.length);
+      if (prefixMatch) {
+        score += 12;
+        matched.push(entity);
+        reasons.push(`path_prefix:${entity}`);
+      }
+    }
     // Example contains entity (strong only if entity is specific, boundary-aware)
     else if (hasBoundaryTerm(routeExample, e) && e.length > 3) {
       score += 12;

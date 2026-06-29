@@ -112,7 +112,7 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     null;
 
   // Block generic Brain planning text from being shown as the Answer
-  const GENERIC_ANSWER_RE = /(^|\b)(i will find|i will search|i am processing|let me find|i'll look|i'll search|saya akan mencari|saya sedang|mohon tunggu sebentar|memproses|gathering information|searching for|looking for)/i;
+  const GENERIC_ANSWER_RE = /(^|\b)(i will find|i will search|i am processing|let me find|i'll look|i'll search|saya akan mencari|saya sedang memproses|mohon tunggu sebentar|gathering information|searching for|looking for)/i;
   const isGenericBrainAnswer = !!brainAssistantResponse && GENERIC_ANSWER_RE.test(brainAssistantResponse) && brainAssistantResponse.length < 200;
 
   const NO_SOURCE_FALLBACK_MSG = "No sufficiently relevant live sources were found for this query. The route completed with basic discovery, but PayLabs did not attach source links because no source passed the relevance gate.";

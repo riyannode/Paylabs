@@ -49,10 +49,23 @@ function runDeterministicQueryBuilder(
   const quotedPhrases = normalizedGoal.match(/"([^"]+)"/g)?.map((p) => p.replace(/"/g, "")) || [];
   entityTerms.push(...quotedPhrases);
 
-  // Extract capitalized words (2+ chars, not first word of sentence)
+  // Extract capitalized words (2+ chars, not first word of sentence, not imperative verbs)
+  const SENTENCE_OPENER_VERBS = new Set([
+    "Compare", "Explain", "Describe", "Analyze", "Find", "Show", "List",
+    "Tell", "Give", "Check", "Search", "Look", "Help", "What", "How",
+    "Why", "Who", "When", "Where", "Is", "Are", "Can", "Could",
+    "Should", "Would", "Will", "Do", "Does", "Did",
+  ]);
   const words = normalizedGoal.split(/\s+/);
-  for (const w of words) {
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
     if (/^[A-Z][A-Za-z0-9_-]+$/.test(w) && w.length > 1) {
+      // Skip sentence opener verbs (first word or common imperative starters)
+      if (i === 0 && SENTENCE_OPENER_VERBS.has(w)) continue;
+      if (SENTENCE_OPENER_VERBS.has(w)) continue;
+      // Skip very short capitalized tokens (2 chars) that are likely acronyms like "US"
+      // — these cause hard gate issues with dotted variants (U.S.)
+      if (w.length <= 2) continue;
       entityTerms.push(w);
     }
   }
