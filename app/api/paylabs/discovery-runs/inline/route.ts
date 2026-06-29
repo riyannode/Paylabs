@@ -285,7 +285,7 @@ async function runX402Orchestration(params: {
       hasBrainPlanning: !!fullBrainPlanning,
     });
     const failOutput = buildX402Output(discoveryRunId, "easy", userBudgetUsdc, "failed",
-      [...safeProgressSummaries, `FAILED: ${tierResult.error}`], paymentGraph, null, null, tierResult.error);
+      [...safeProgressSummaries, `FAILED: ${tierResult.error}`], paymentGraph, fullBrainPlanning, null, tierResult.error);
     return { ...failOutput, _lockedPlan: null };
   }
   const effectiveRouteTier = tierResult.tier;
@@ -1348,6 +1348,7 @@ async function runX402Path(
       brain_planning: result.brainPlanning
         ? {
             route_tier_hint: result.brainPlanning.route_tier_hint,
+            error: ((result.brainPlanning as unknown as Record<string, unknown>).error as string) ?? null,
             safe_summary: result.brainPlanning.safe_brain_summary,
             assistant_response: result.brainPlanning.assistant_response,
             user_visible_reasoning: result.brainPlanning.user_visible_reasoning,
