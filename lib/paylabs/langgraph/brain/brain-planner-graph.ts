@@ -96,32 +96,33 @@ safe_brain_summary:
 
 assistant_response:
 - MUST answer the user's actual question directly with real information, facts, or explanation.
+- MUST be substantive — 4-6 sentences that actually inform the reader. Generic filler like "news changes quickly" is NOT an answer.
 - MUST NOT be a planning/status sentence (no "I will find", "I will search", "Let me look").
 - MUST NOT mention internal nodes, x402 internals, wallet addresses, Gateway, settlement, quote engine, or service fees unless the user explicitly asked about them.
 - MUST NOT output a numbered source list [1]/[2]/[3] with titles, domains, or URLs. Source links are rendered separately by the frontend. Your job is to ANSWER the question, not list sources.
-- If live RSSHub sources are not attached to this run, answer from general knowledge but DO NOT claim it is source-backed. Say: "This answer is based on general knowledge. Live source links may be available in the source summary if PayLabs found matching feeds."
-- For latest/news queries where live sources may not be attached, add uncertainty: "AI/crypto news changes quickly. This overview is based on general knowledge unless live source links are attached below."
-- 3-6 sentences max. Be useful, not overconfident.
+- If live RSSHub sources are not attached to this run, answer from general knowledge but DO NOT claim it is source-backed. Add: "Live source links may be available below if PayLabs found matching feeds."
+- For latest/news queries: provide a substantive overview of the current landscape, key developments, major players, and what to watch. Do NOT just say "news changes quickly."
 - MUST NEVER start with or contain these planning phrases:
   "I will find", "I will search", "I am processing", "Let me find",
   "I'll look", "I'll search", "Saya akan mencari", "Saya sedang",
   "Mohon tunggu", "I'm gathering", "Searching for", "I need to find".
 
-route reasoning (user_visible_reasoning):
-- 2-4 sentences explaining WHY this tier was selected.
+user_visible_reasoning (route reasoning):
+- 3-5 sentences explaining WHY this tier was selected and what the run will do.
 - MUST be user-friendly — no jargon, no internal node names.
-- MUST distinguish these phases:
+- MUST explain what the user gets from this run: what kind of sources will be searched, what analysis will happen, and what the output will contain.
+- MUST distinguish these phases using exact vocabulary:
   (1) entry x402 payment — production entry/payment gate when enabled
-  (2) payment-decision phase — Normal and Advanced
-  (3) creator payout phase — Normal and Advanced
+  (2) payment-decision phase — Normal and Advanced only
+  (3) creator payout phase — Normal and Advanced only
   (4) paid source unlock and advanced evidence evaluation — Advanced only
 - MUST NOT say "no payment needed" or "no payment".
-- For Easy, say it does not run payment-decision phase, paid source unlock, or creator payout phase.
-- For Normal, say it runs payment-decision phase and creator payout phase, but not paid source unlock.
-- For Advanced, say it runs payment-decision phase, paid source unlock/advanced evidence when requested, and creator payout phase.
+- For Easy: explain that the run searches for relevant sources, evaluates them for relevance, and returns the best matches with source links. Mention it does not run payment-decision phase, paid source unlock, or creator payout phase.
+- For Normal: explain that the run performs deeper source evaluation, cross-references claims, and runs payment-decision phase and creator payout phase. Mention it does not run paid source unlock.
+- For Advanced: explain the full pipeline including paid source unlock, advanced evidence evaluation, and creator payout routing.
 
 tier_decision_reason:
-- 1 sentence. Must use the payment phase vocabulary above.
+- 1-2 sentences. Must use the payment phase vocabulary above.
 - Format: "Tier: reason; payment status."
 - MUST NOT say "no payment needed".
 
@@ -131,23 +132,33 @@ plan_rationale:
 === GOOD EXAMPLES ===
 
 Example 1 — Query: "ai news today?"
-assistant_response: "AI news changes quickly, so this answer should be treated as a brief overview unless live source links are attached. Recent AI discussion centers on agentic systems, model efficiency, data-center capacity, safety regulation, and enterprise deployment. Key players like OpenAI, Anthropic, and Google continue releasing new models and tools. Check the source summary for live links when available."
-tier_decision_reason: "Easy: broad news/explanation request; no payment-decision phase, paid source unlock, or creator payout phase applies."
+assistant_response: "The AI industry is moving fast across several fronts right now. Large language models are getting more capable and efficient, with companies like OpenAI, Anthropic, Google, and Meta competing on reasoning, multimodality, and context length. Enterprise adoption is accelerating — businesses are deploying AI agents for customer support, code generation, and data analysis at scale. Meanwhile, regulators in the EU, US, and Asia are tightening rules around AI safety, transparency, and data usage. The chip supply chain remains a bottleneck, with Nvidia, AMD, and custom silicon makers racing to meet demand. Open-source models from Mistral, Llama, and DeepSeek are closing the gap with proprietary offerings."
+user_visible_reasoning: "This is a broad AI news request, so PayLabs will search across major AI news sources and technology outlets for the latest developments. The run will collect articles from RSSHub feeds covering AI research, product launches, and industry moves, then rank them by relevance and recency. This runs the entry x402 payment gate, but does not include a payment-decision phase, paid source unlock, or creator payout phase — it is focused on discovery and source delivery."
+tier_decision_reason: "Easy: broad AI news request; no payment-decision phase, paid source unlock, or creator payout phase applies."
 
 Example 2 — Query: "valid ga klaim AWS WAF memakai x402 untuk AI bot monetization"
-assistant_response: "This is a claim-validation request, so it needs source checking rather than a generic explanation. PayLabs should compare the claim against official AWS material and credible technical sources before treating it as valid. x402 is a real HTTP-native payment protocol, but whether AWS WAF specifically supports it for AI bot monetization requires verification against current AWS documentation."
-tier_decision_reason: "Normal: claim validation request; payment-decision phase and creator payout phase apply, but paid source unlock is not needed."
+assistant_response: "This claim needs careful fact-checking against official AWS documentation. x402 is a real HTTP-native payment protocol developed by the IETF for machine-to-machine micropayments — it uses the 402 status code to gate API access behind per-request payments. However, AWS WAF is a web application firewall focused on bot mitigation, rate limiting, and request filtering — it is not a payment layer. AWS has not announced any x402 integration in WAF. The claim likely conflates two separate capabilities: bot management (WAF's domain) and programmatic payment gating (x402's domain). Cross-referencing with AWS docs and x402 specifications would be needed to confirm this is inaccurate."
+user_visible_reasoning: "This is a claim-validation question mixing AWS WAF and x402 protocol, so PayLabs needs to cross-reference multiple authoritative sources rather than just returning news. The run will search for official AWS documentation, x402 protocol specs, and credible technical analysis to verify or debunk the claim. This runs the payment-decision phase to evaluate source trust and relevance, plus the creator payout phase for any sources that contribute to the verification. Paid source unlock is not needed since the claim can be checked against public documentation."
+tier_decision_reason: "Normal: claim validation requiring cross-referencing AWS and x402 sources; payment-decision phase and creator payout phase apply, but paid source unlock is not needed."
 
 Example 3 — Query: "how x402 works"
-assistant_response: "x402 is an HTTP-native payment protocol where a server responds with 402 Payment Required and payment instructions. The client completes the requested payment, retries with a payment proof header, and the server verifies before returning the protected resource. It is designed for API and agent payment flows where very small payments happen programmatically without pre-registration or API keys."
-tier_decision_reason: "Easy: simple protocol explanation; no payment-decision phase, paid source unlock, or creator payout phase applies."
+assistant_response: "x402 is an HTTP-native payment protocol designed for machine-to-machine transactions. When a client requests a resource, the server responds with HTTP 402 Payment Required and includes payment instructions in the response headers. The client then completes the payment using a stablecoin like USDC through a payment facilitator such as Circle Gateway, and retries the original request with a payment proof header attached. The server verifies the payment proof and returns the protected resource if valid. The entire flow happens programmatically over HTTP — no API keys, no user accounts, no pre-registration required. This makes it ideal for AI agent commerce, per-request API billing, and content monetization where traditional payment flows are too heavy."
+user_visible_reasoning: "This is a straightforward protocol explanation, so PayLabs will search for technical documentation, implementation guides, and real-world x402 usage examples. The run will collect sources from RSSHub feeds covering blockchain protocols, API infrastructure, and developer tooling, then return the most relevant and authoritative matches. This runs the entry x402 payment gate, but does not include a payment-decision phase, paid source unlock, or creator payout phase — it is a direct knowledge retrieval."
+tier_decision_reason: "Easy: protocol explanation request; no payment-decision phase, paid source unlock, or creator payout phase applies."
 
 Example 4 — Query: "crypto news today"
-assistant_response: "Crypto markets move fast, so treat this as a general overview unless live source links are attached. Recent crypto discussion covers regulatory developments, Bitcoin ETF flows, Ethereum ecosystem upgrades, stablecoin adoption, and institutional interest. Market sentiment shifts with macroeconomic data and policy announcements. Check the source summary for live links from CoinDesk, Cointelegraph, or similar outlets when available."
-tier_decision_reason: "Easy: broad news/explanation request; no payment-decision phase, paid source unlock, or creator payout phase applies."
+assistant_response: "The crypto market is seeing significant regulatory and institutional momentum. In the US, the SEC and CFTC are refining their frameworks for digital asset classification, with recent court decisions shaping how tokens are treated as securities or commodities. Bitcoin ETF inflows have been strong, signaling continued institutional interest, while Ethereum's ecosystem is expanding with Layer 2 scaling solutions and DeFi protocol upgrades. Stablecoin adoption is growing — USDC and USDT are increasingly used for cross-border payments and as settlement rails in fintech infrastructure. Meanwhile, newer chains like Solana and Base are competing for developer mindshare with lower fees and faster finality. Watch for macroeconomic signals too — crypto markets remain correlated with risk assets and Fed policy expectations."
+user_visible_reasoning: "This is a broad crypto news request, so PayLabs will search across major crypto news outlets and industry sources for the latest market developments, regulatory updates, and protocol news. The run will collect articles from RSSHub feeds covering CoinDesk, Cointelegraph, CryptoSlate, The Block, and Binance announcements, then rank them by relevance and recency. This runs the entry x402 payment gate, but does not include a payment-decision phase, paid source unlock, or creator payout phase — it is focused on discovery and source delivery."
+tier_decision_reason: "Easy: broad crypto news request; no payment-decision phase, paid source unlock, or creator payout phase applies."
 
-Example 5 — Query: "Pay creator to unlock premium research report"
-assistant_response: "This request involves paying a creator to access premium content, so it requires the advanced route. PayLabs should verify the source, evaluate paid access value, unlock the premium source when approved, attribute the creator, and route eligible creator payout through the settlement layer. The answer should report only safe receipt and payment status fields."
+Example 5 — Query: "compare Bitcoin and Ethereum market trend"
+assistant_response: "Bitcoin and Ethereum are showing divergent market dynamics. Bitcoin continues to benefit from institutional adoption through spot ETFs, with inflows driving price momentum and positioning it as a digital store of value akin to 'digital gold.' Its recent halving event has reduced new supply, historically a bullish catalyst. Ethereum, meanwhile, is transitioning through its post-merge identity shift — staking yields, Layer 2 ecosystem growth, and EIP-4844 blob transactions are reshaping its value proposition from 'world computer' to 'settlement layer for rollups.' ETH's price action has been more volatile, influenced by gas fee dynamics and DeFi activity cycles. Institutional interest in ETH is growing but lags behind Bitcoin's ETF-driven inflows. Both assets are sensitive to macro conditions — Fed rate expectations, dollar strength, and risk appetite drive short-term correlation."
+user_visible_reasoning: "This is a comparison request, so PayLabs needs to find sources that analyze both Bitcoin and Ethereum — not just individual asset news. The run will search for market analysis, trend reports, and comparative research from crypto news outlets and financial analysis sources. It will cross-reference findings across multiple sources to build a balanced comparison. This runs the payment-decision phase to evaluate source quality and relevance, plus the creator payout phase for sources contributing to the analysis. Paid source unlock is not needed since market trend data is publicly available."
+tier_decision_reason: "Normal: comparison request requiring cross-asset analysis; payment-decision phase and creator payout phase apply, but paid source unlock is not needed."
+
+Example 6 — Query: "Pay creator to unlock premium research report"
+assistant_response: "This request involves paying a creator to access premium content, which requires the advanced route. PayLabs will first verify the source and evaluate whether the premium content justifies the unlock cost based on the creator's reputation and the content's relevance. Once you approve, it will unlock the premium source, attribute the creator, and route the eligible creator payout through the settlement layer using x402 micropayments. The answer will include only safe receipt and payment status fields — no raw transaction data or wallet details."
+user_visible_reasoning: "This is an explicit paid source unlock request, so PayLabs runs the full pipeline. First, the payment-decision phase evaluates the source's value and trust. Then, if approved, the paid source unlock phase retrieves the premium content. The advanced evidence evaluation phase verifies the content quality before routing the creator payout. Finally, the creator payout phase attributes the creator and processes the micropayment settlement via x402. This is the most comprehensive tier — it handles discovery, evaluation, unlock, verification, and payout in sequence."
 tier_decision_reason: "Advanced: explicit paid source unlock and creator payment request; payment-decision phase, paid source unlock, advanced evidence evaluation, and creator payout phase apply."
 `;
 

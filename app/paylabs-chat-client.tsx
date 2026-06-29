@@ -130,14 +130,14 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (brainPlanning?.user_visible_reasoning as string) ??
     (agentTraceBrain?.user_visible_reasoning as string) ??
     null;
-  // Route reasoning priority: tier_decision_reason first (explains why Easy/Normal/Advanced was chosen)
+  // Route reasoning priority: user_visible_reasoning first (detailed explanation), then tier_decision_reason (short)
   const brainRationale =
+    (brainPlanning?.user_visible_reasoning as string) ??
+    (agentTraceBrain?.user_visible_reasoning as string) ??
     (brainPlanning?.tier_decision_reason as string) ??
     (agentTraceBrain?.tier_decision_reason as string) ??
     (brainPlanning?.plan_rationale as string) ??
     (agentTraceBrain?.plan_rationale as string) ??
-    (brainPlanning?.user_visible_reasoning as string) ??
-    (agentTraceBrain?.user_visible_reasoning as string) ??
     null;
 
   // Extract sources from source_context.sources_used or fallback to exit_output.sources_used
