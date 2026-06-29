@@ -206,6 +206,7 @@ async function runX402Orchestration(params: {
 
   // ── Brain LLM Planning (after x402 settle, direct call — no HTTP timeout) ──
   let fullBrainPlanning: Record<string, unknown> | null = null;
+  let capturedBrainLlmDiag: Record<string, unknown> | undefined = undefined;
   try {
     const { runBrainPlannerGraph } = await import("@/lib/paylabs/langgraph/brain/brain-planner-graph");
     const planResult = await runBrainPlannerGraph({
@@ -216,6 +217,7 @@ async function runX402Orchestration(params: {
       userWallet,
     });
 
+    capturedBrainLlmDiag = planResult.brainLlmDiag ?? undefined;
     // ── Safe diagnostics: Brain planner result (no raw LLM, no secrets) ──
     const VALID_TIER_SET = new Set(["easy", "normal", "advanced"]);
     const diagHint = planResult.brainPlanning?.route_tier_hint;
@@ -286,7 +288,7 @@ async function runX402Orchestration(params: {
     });
     const failOutput = buildX402Output(discoveryRunId, "easy", userBudgetUsdc, "failed",
       [...safeProgressSummaries, `FAILED: ${tierResult.error}`], paymentGraph, fullBrainPlanning, null, tierResult.error);
-    return { ...failOutput, _lockedPlan: null };
+    return { ...failOutput, _lockedPlan: null, _brainLlmDiag: capturedBrainLlmDiag };
   }
   const effectiveRouteTier = tierResult.tier;
 
@@ -549,7 +551,7 @@ async function runX402Orchestration(params: {
 
   const outResult = buildX402Output(discoveryRunId, effectiveRouteTier, userBudgetUsdc, "completed",
     safeProgressSummaries, paymentGraph, resolvedBrainData || null, macroNodeResults, null, sourceContext, lockedPlan);
-  return { ...outResult, _lockedPlan: lockedPlan };
+  return { ...outResult, _lockedPlan: lockedPlan, _brainLlmDiag: capturedBrainLlmDiag };
 }
 
 function buildX402Output(
