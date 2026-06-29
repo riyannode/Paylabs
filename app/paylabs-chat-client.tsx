@@ -835,7 +835,7 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
   ];
   const isGenericText = (text: string | null): boolean =>
     !!text && GENERIC_PATTERNS.some((p) => p.test(text)) && text.length < 120;
-  const rawRationale = result.userVisibleReasoning ?? result.brainRationale;
+  const rawRationale = result.brainRationale ?? result.userVisibleReasoning;
   const rationaleText = isGenericText(rawRationale) ? null : rawRationale;
   return (
     <div className="pl-result-card">
