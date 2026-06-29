@@ -18,6 +18,7 @@ import { z } from "zod";
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 import { shouldRunServiceAsDeterministic } from "../execution-mode";
+import { fetchTopicRoutesLiveSources } from "@/lib/rsshub/rsshub-topic-live-search";
 
 const SignalScoutSchema = z.object({
   ranked_sources: z.array(z.object({
@@ -278,36 +279,112 @@ export const signalScoutHandler: ServiceHandler = async (
     routeTier?: DelegatedRouteTier;
   };
 
-  // ── Step 1: Try live RSSHub search first ──
+  // ── Step 1: Try live RSSHub search + topic routes in parallel ──
   const liveEnabled = process.env.PAYLABS_RSSHUB_LIVE_ENABLED !== "false";
   const sourceDiscoveryMode = process.env.PAYLABS_SOURCE_DISCOVERY_MODE || "live_then_db";
   const dbFallbackEnabled = process.env.PAYLABS_DB_FALLBACK_ENABLED !== "false";
   const liveOnly = sourceDiscoveryMode === "live_only" || !dbFallbackEnabled;
 
   let liveResults: Awaited<ReturnType<typeof runLiveSearch>> = null;
+  let topicResult: Awaited<ReturnType<typeof fetchTopicRoutesLiveSources>> = {
+    candidates: [],
+    diagnostics: { detected_topics: 0, topic_routes_count: 0, topic_routes_fetched: 0, topic_items_fetched: 0, topic_items_accepted: 0, topic_items_rejected: 0, topic_candidates_count: 0 },
+  };
 
   if (liveEnabled) {
-    liveResults = await runLiveSearch(
-      expanded_queries || [],
-      entity_terms || [],
-      negative_filters || [],
-      routeTier || "easy"
-    );
+    const [liveRes, topicRes] = await Promise.all([
+      runLiveSearch(
+        expanded_queries || [],
+        entity_terms || [],
+        negative_filters || [],
+        routeTier || "easy"
+      ),
+      fetchTopicRoutesLiveSources({
+        userGoal: (expanded_queries || []).join(" ") || (entity_terms || []).join(" "),
+        entityTerms: entity_terms || [],
+        expandedQueries: expanded_queries || [],
+        negativeFilters: negative_filters || [],
+        sourcePreferences: source_preferences || [],
+        callerTag: "signal_scout",
+      }),
+    ]);
+    liveResults = liveRes;
+    topicResult = topicRes;
   }
 
-  // ── Step 2: If live search returned results, use them ──
-  if (liveResults && liveResults.length > 0) {
+  // ── Step 2: Merge topic candidates with live results ──
+  // Topic routes take priority (appear first), dedupe by source_url
+  type MergedCandidate = {
+    feed_item_id: string;
+    title: string;
+    publisher: string;
+    source_kind: string;
+    provider: string;
+    source_url: string;
+    domain: string | null;
+    summary: string;
+    author: string;
+    published_at: string | null;
+    route_path: string | null;
+    rsshub_feed_url: string | null;
+    docs_url: string | null;
+    rank: number;
+    relevance_score: number;
+    reason: string;
+  };
+  const mergedLive: MergedCandidate[] = [];
+
+  if (topicResult.candidates.length > 0) {
+    const seenUrls = new Set<string>();
+    for (const tc of topicResult.candidates) {
+      seenUrls.add(tc.source_url.toLowerCase());
+      mergedLive.push(tc);
+    }
+    if (liveResults) {
+      for (const lr of liveResults) {
+        if (!seenUrls.has(lr.source_url.toLowerCase())) {
+          seenUrls.add(lr.source_url.toLowerCase());
+          mergedLive.push(lr);
+        }
+      }
+    }
+  } else if (liveResults) {
+    mergedLive.push(...liveResults);
+  }
+
+  // Re-rank merged candidates: sort by relevance_score descending, assign rank 1..N
+  mergedLive.sort((a, b) => {
+    if (b.relevance_score !== a.relevance_score) return b.relevance_score - a.relevance_score;
+    // Tiebreak: prefer candidates with higher raw relevance (topic candidates already scored)
+    return 0;
+  });
+  mergedLive.forEach((c, i) => { c.rank = i + 1; });
+
+  // Determine source strategy
+  const hasTopicResults = topicResult.candidates.length > 0;
+  const hasLiveResults = liveResults && liveResults.length > 0;
+  const sourceStrategy = hasTopicResults && hasLiveResults
+    ? "rsshub_live_plus_topic"
+    : hasTopicResults
+      ? "rsshub_topic_live"
+      : "rsshub_live";
+
+  // ── Step 3: If merged live results exist, use them ──
+  if (mergedLive.length > 0) {
     return {
       ok: true,
       serviceName: "signal_scout",
       data: {
-        ranked_candidates: liveResults,
-        top_candidates: liveResults.slice(0, 3).map((r) => r.feed_item_id),
-        quick_relevance_notes: liveResults.slice(0, 5).map((r) => r.reason),
-        safe_signal_summary: `Live RSSHub: ${liveResults.length} source(s) found from ${liveResults.filter((s) => s.source_kind === "rsshub_live").length} route(s).`,
+        ranked_candidates: mergedLive,
+        top_candidates: mergedLive.slice(0, 3).map((r) => r.feed_item_id),
+        quick_relevance_notes: mergedLive.slice(0, 5).map((r) => r.reason),
+        safe_signal_summary: `Live RSSHub: ${mergedLive.length} source(s) found${hasTopicResults ? `, ${topicResult.candidates.length} from topic routes` : ""}.`,
         retrieval_mode: "rsshub_live",
+        source_strategy: sourceStrategy,
+        topic_routes_count: topicResult.diagnostics.topic_routes_count,
+        topic_candidates_count: topicResult.candidates.length,
       },
-      safeSummary: `Live RSSHub: ${liveResults.length} source(s) found.`,
+      safeSummary: `Live RSSHub: ${mergedLive.length} source(s) found.`,
       settled: false,
       error: null,
     };

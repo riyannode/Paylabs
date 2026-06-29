@@ -890,6 +890,7 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
           {result.sourcesUsed.slice(0, 3).map((s, i) => (
             <a key={s.url} href={s.url} target="_blank" rel="noopener noreferrer" title={s.title}>
               Link {i + 1}
+              <span className="pl-source-link-meta">{s.title || s.domain || ""}</span>
             </a>
           ))}
         </div>

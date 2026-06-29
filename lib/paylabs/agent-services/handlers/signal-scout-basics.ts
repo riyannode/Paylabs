@@ -18,7 +18,7 @@
 
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
-import { resolveTopicRoutes } from "@/lib/rsshub/topic-routes";
+import { fetchTopicRoutesLiveSources } from "@/lib/rsshub/rsshub-topic-live-search";
 
 // ─── Stopwords — generic words that should never count as relevance signals ──
 const STOPWORDS = new Set([
@@ -272,186 +272,8 @@ async function searchRsshubLive(
   }
 }
 
-// ─── Topic Route Fetching ───────────────────────────────────
-
-/**
- * Build ordered list of RSSHub base URLs (same logic as rsshub-live-search).
- */
-function getTopicBaseUrls(): string[] {
-  const primary =
-    process.env.PAYLABS_RSSHUB_BASE_URL || "https://rsshub.rssforever.com";
-  const fallbacks = (process.env.PAYLABS_RSSHUB_FALLBACK_BASE_URLS || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const urls = [primary, ...fallbacks]
-    .map((u) => u.replace(/\/+$/, ""))
-    .filter((u) => /^https?:\/\//.test(u));
-  return [...new Set(urls)];
-}
-
-/**
- * Fetch a single topic route with multi-instance fallback.
- */
-async function fetchTopicRouteItems(
-  routePath: string,
-  maxItems: number
-): Promise<{
-  ok: boolean;
-  items: Array<{
-    title: string;
-    summary: string;
-    canonical_url: string;
-    publisher: string;
-    author_name: string;
-    published_at: string | null;
-    tags: string[];
-  }>;
-  feedUrl: string | null;
-}> {
-  const { fetchRoute } = await import("@/lib/rsshub/rsshub-client");
-  const baseUrls = getTopicBaseUrls();
-
-  for (const baseUrl of baseUrls) {
-    try {
-      const result = await fetchRoute(baseUrl, routePath, maxItems);
-      if (result.ok && result.items.length > 0) {
-        return {
-          ok: true,
-          items: result.items,
-          feedUrl: `${baseUrl.replace(/\/+$/, "")}${routePath}`,
-        };
-      }
-    } catch {
-      continue;
-    }
-  }
-  return { ok: false, items: [], feedUrl: null };
-}
-
-/**
- * Fetch topic routes directly (all static paths, no param resolution needed).
- * Runs in parallel with regular live search.
- */
-async function fetchTopicRoutesLive(
-  userGoal: string,
-  entityTerms: string[],
-  expandedQueries: string[],
-  negativeFilters: string[],
-  sourcePreferences: string[]
-): Promise<RankedCandidate[]> {
-  try {
-    const topicRoutes = resolveTopicRoutes(userGoal, entityTerms, 8);
-    if (topicRoutes.length === 0) return [];
-
-    const maxItemsPerRoute =
-      Number(process.env.PAYLABS_RSSHUB_LIVE_MAX_ITEMS_PER_ROUTE) || 10;
-
-    // Fetch all topic routes concurrently (max 4 at a time)
-    const concurrency = 4;
-    const allCandidates: RankedCandidate[] = [];
-    let index = 0;
-
-    async function worker() {
-      while (index < topicRoutes.length) {
-        const i = index++;
-        const route = topicRoutes[i];
-        const result = await fetchTopicRouteItems(route.path, maxItemsPerRoute);
-
-        if (!result.ok || result.items.length === 0) continue;
-
-        for (const item of result.items) {
-          const { score: local_score, entityHit } = scoreItem(
-            {
-              title: item.title,
-              summary: item.summary,
-              publisher: item.publisher,
-              author_name: item.author_name,
-              domain: (() => {
-                try {
-                  return new URL(item.canonical_url).hostname;
-                } catch {
-                  return "";
-                }
-              })(),
-              source_url: item.canonical_url,
-              route_path: route.path,
-            } as Record<string, unknown>,
-            expandedQueries,
-            entityTerms,
-            negativeFilters,
-            sourcePreferences
-          );
-
-          // Item-level relevance gate: min score >= 3
-          const MIN_SCORE = 3;
-          if (local_score < MIN_SCORE && !entityHit) continue;
-
-          const sourceUrl = item.canonical_url || "";
-          if (!sourceUrl || !/^https?:\/\//.test(sourceUrl)) continue;
-
-          // Negative filter check
-          const titleLower = (item.title || "").toLowerCase();
-          const summaryLower = (item.summary || "").toLowerCase();
-          const isNegative = negativeFilters.some(
-            (nf) =>
-              nf.length > 2 &&
-              (titleLower.includes(nf.toLowerCase()) ||
-                summaryLower.includes(nf.toLowerCase()))
-          );
-          if (isNegative) continue;
-
-          const feedItemId = `topic:${route.path}:${sourceUrl.slice(0, 80)}`;
-
-          allCandidates.push({
-            feed_item_id: feedItemId,
-            title: item.title || "(untitled)",
-            publisher: item.publisher || route.label,
-            source_kind: "rsshub_live",
-            provider: "rsshub",
-            source_url: sourceUrl,
-            domain: (() => {
-              try {
-                return new URL(sourceUrl).hostname;
-              } catch {
-                return null;
-              }
-            })(),
-            summary: (item.summary || "").slice(0, 500),
-            author: item.author_name || "",
-            published_at: item.published_at || null,
-            route_path: route.path,
-            rsshub_feed_url: result.feedUrl || "",
-            docs_url: `https://docs.rsshub.app/routes#${encodeURIComponent(route.path.split("/")[1])}`,
-            rank: 0,
-            relevance_score: 0,
-            reason: `topic:${route.category}/${route.subcategory}`,
-          });
-        }
-      }
-    }
-
-    const workers = Array.from(
-      { length: Math.min(concurrency, topicRoutes.length) },
-      () => worker()
-    );
-    await Promise.all(workers);
-
-    console.log(JSON.stringify({
-      log: "[signal_scout_basics] topic_routes_fetched",
-      topic_count: topicRoutes.length,
-      candidates: allCandidates.length,
-      categories: [...new Set(topicRoutes.map((r) => r.category))],
-    }));
-
-    return allCandidates;
-  } catch (err: unknown) {
-    console.warn("[signal_scout_basics] topic route fetch failed", {
-      error: err instanceof Error ? err.message.slice(0, 100) : String(err).slice(0, 100),
-    });
-    return [];
-  }
-}
+// ─── Topic Route Fetching (delegated to shared helper) ──────
+// fetchTopicRoutesLiveSources imported from @/lib/rsshub/rsshub-topic-live-search
 
 // ─── Handler ────────────────────────────────────────────────
 
@@ -501,23 +323,25 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
   }
 
   // ── Step 1: Run regular live search + topic routes in parallel ──
-  const [liveResult, topicCandidates] = await Promise.all([
+  const [liveResult, topicResult] = await Promise.all([
     searchRsshubLive(
       expanded_queries || [],
       entity_terms || [],
       negative_filters || [],
       routeTier || "easy"
     ),
-    fetchTopicRoutesLive(
-      (expanded_queries || []).join(" ") || (entity_terms || []).join(" "),
-      entity_terms || [],
-      expanded_queries || [],
-      negative_filters || [],
-      source_preferences || []
-    ),
+    fetchTopicRoutesLiveSources({
+      userGoal: (expanded_queries || []).join(" ") || (entity_terms || []).join(" "),
+      entityTerms: entity_terms || [],
+      expandedQueries: expanded_queries || [],
+      negativeFilters: negative_filters || [],
+      sourcePreferences: source_preferences || [],
+      callerTag: "signal_scout_basics",
+    }),
   ]);
 
   const { candidates: liveResults, diagnostics } = liveResult;
+  const topicCandidates = topicResult.candidates;
 
   // ── Step 2: Merge topic candidates with regular live results ──
   // Dedupe by source_url — topic routes take priority (appear first)
@@ -541,7 +365,7 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
 
   // ── Step 3: Rescore with deterministic keyword match + item-level gate ──
   // Update diagnostics with topic route count
-  diagnostics.topic_routes_count = topicCandidates.length;
+  diagnostics.topic_routes_count = topicResult.diagnostics.topic_routes_count;
 
   if (merged.length > 0) {
     const MIN_SCORE = 3; // Minimum raw score to be considered relevant
@@ -577,8 +401,13 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
         quick_relevance_notes: rescored.slice(0, 5).map((r) => r.reason),
         safe_signal_summary: `[basic] Live RSSHub: ${rescored.length} source(s) found${topicCandidates.length > 0 ? `, ${topicCandidates.length} from topic routes` : ""}.`,
         retrieval_mode: "rsshub_live",
-        source_strategy: topicCandidates.length > 0 ? "topic_routes" : "catalog",
-        topic_routes_count: topicCandidates.length,
+        source_strategy: topicResult.candidates.length > 0 && liveResults.length > 0
+          ? "topic_routes_plus_catalog"
+          : topicResult.candidates.length > 0
+            ? "topic_routes"
+            : "catalog",
+        topic_routes_count: topicResult.diagnostics.topic_routes_count,
+        topic_candidates_count: topicResult.candidates.length,
         live_diagnostics: diagnostics,
       },
       safeSummary: `[basic] Live RSSHub: ${rescored.length} source(s) found.`,

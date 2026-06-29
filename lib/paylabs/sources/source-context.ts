@@ -35,6 +35,9 @@ export async function buildSourceContextFromResult(
       relevance_score: number;
     }>;
     retrieval_mode?: string;
+    source_strategy?: string;
+    topic_routes_count?: number;
+    topic_candidates_count?: number;
   };
 
   const rankedCandidates = signalData.ranked_candidates;
@@ -70,6 +73,9 @@ export async function buildSourceContextFromResult(
   return {
     ...resolverResult.sourceContext,
     retrieval_mode: retrievalMode || inferRetrievalMode(resolverResult.sourceContext),
+    source_strategy: signalData.source_strategy,
+    topic_routes_count: signalData.topic_routes_count,
+    topic_candidates_count: signalData.topic_candidates_count,
   };
 }
 

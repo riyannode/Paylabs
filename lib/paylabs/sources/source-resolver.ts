@@ -229,7 +229,9 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entity
     const domain = (src.domain || "").toLowerCase();
     const routePath = (src.route_path || "").toLowerCase();
     const url = (src.url || "").toLowerCase();
-    const combined = `${title} ${summary} ${domain} ${routePath} ${url}`;
+    const reason = (src.reason || "").toLowerCase();
+    // Include reason in combined text so topic_route:ai/openai helps entity matching
+    const combined = `${title} ${summary} ${domain} ${routePath} ${url} ${reason}`;
 
     // Entity terms: at least ONE must appear (includes short meaningful tokens like x402, ai)
     if (entityPatterns.length > 0) {
