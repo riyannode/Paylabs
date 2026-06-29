@@ -204,21 +204,41 @@ async function runX402Orchestration(params: {
   // brain/run now runs Brain LLM internally after x402 settlement.
   // No redundant runBrainPlannerGraph() call here.
   const paidBrainData = brainResult.data;
-  const fullBrainPlanning = (paidBrainData?.brainPlanning as Record<string, unknown>) || null;
-  const capturedBrainLlmDiag = (paidBrainData?.brainLlmDiag as Record<string, unknown>) || undefined;
 
-  // DIAGNOSTIC: always log paid Brain response shape (remove after E2E passes)
+  // DIAGNOSTIC: trace response shape (always log — remove after E2E passes)
+  // Supports both flat (paidBrainData.brainPlanning) and nested (paidBrainData.data.brainPlanning)
+  const diagKeys = paidBrainData ? Object.keys(paidBrainData).slice(0, 15) : [];
+  const hasBrainPlanning = !!paidBrainData?.brainPlanning;
+  const hasNestedBrainPlanning = !!(paidBrainData as Record<string, unknown>)?.data
+    && !!((paidBrainData as Record<string, unknown>).data as Record<string, unknown>)?.brainPlanning;
+  const flatHint = (paidBrainData?.brainPlanning as Record<string, unknown>)?.route_tier_hint;
+  const nestedData = (paidBrainData as Record<string, unknown>)?.data as Record<string, unknown> | undefined;
+  const nestedHint = (nestedData?.brainPlanning as Record<string, unknown>)?.route_tier_hint;
   console.error("[inline] PAID_BRAIN_DIAGNOSTIC:", {
     brainResult_ok: brainResult.ok,
     brainResult_hasData: !!brainResult.data,
-    paidBrainData_keys: paidBrainData ? Object.keys(paidBrainData).slice(0, 15) : [],
+    paidBrainData_keys: diagKeys,
     paidBrainData_ok: paidBrainData?.ok,
-    paidBrainData_hasBrainPlanning: !!paidBrainData?.brainPlanning,
-    fullBrainPlanning_truthy: !!fullBrainPlanning,
-    fullBrainPlanning_keys: fullBrainPlanning ? Object.keys(fullBrainPlanning).slice(0, 10) : [],
-    route_tier_hint: fullBrainPlanning?.route_tier_hint,
+    has_brainPlanning: hasBrainPlanning,
+    has_data_brainPlanning: hasNestedBrainPlanning,
+    flat_route_tier_hint: flatHint ?? "MISSING",
+    nested_route_tier_hint: nestedHint ?? "MISSING",
     paidBrainData_error: paidBrainData?.error ? String(paidBrainData.error).slice(0, 100) : null,
   });
+
+  // ── Extract Brain planning: flat first, then nested fallback ──
+  let fullBrainPlanning: Record<string, unknown> | null = null;
+  let capturedBrainLlmDiag: Record<string, unknown> | undefined = undefined;
+
+  if (hasBrainPlanning) {
+    // Standard path: brain/run returns brainPlanning at top level
+    fullBrainPlanning = paidBrainData.brainPlanning as Record<string, unknown>;
+    capturedBrainLlmDiag = paidBrainData.brainLlmDiag as Record<string, unknown> | undefined;
+  } else if (hasNestedBrainPlanning) {
+    // Fallback: in case callPaidSeller wraps response in .data
+    fullBrainPlanning = nestedData!.brainPlanning as Record<string, unknown>;
+    capturedBrainLlmDiag = nestedData!.brainLlmDiag as Record<string, unknown> | undefined;
+  }
 
   // Safe diagnostics (gated — no raw LLM, no secrets)
   if (process.env.NODE_ENV !== "production") {
@@ -248,10 +268,23 @@ async function runX402Orchestration(params: {
 
   const resolvedBrainData = fullBrainPlanning;
 
-  // ── Auto-tier resolution: "auto" → Brain's route_tier_hint ──
-  const brainHint = resolvedBrainData
-    ? (resolvedBrainData as Record<string, unknown>).route_tier_hint as string | undefined
-    : undefined;
+  // ── Fail closed: if auto tier, require valid route_tier_hint ──
+  const VALID_TIERS = new Set(["easy", "normal", "advanced"]);
+  const brainHint = resolvedBrainData?.route_tier_hint as string | undefined;
+  if ((routeTier as string) === "auto" && (!brainHint || !VALID_TIERS.has(brainHint))) {
+    const hintErr = `Brain paid response has no valid route_tier_hint: got "${brainHint || "none"}"`;
+    console.error("[inline] FAIL_CLOSED: invalid route_tier_hint", {
+      route_tier_hint: brainHint ?? "null",
+      paidBrainData_ok: paidBrainData?.ok,
+      hasBrainPlanning: !!resolvedBrainData,
+    });
+    const failOutput = buildX402Output(discoveryRunId, routeTier, userBudgetUsdc, "failed",
+      [...safeProgressSummaries, `FAILED: ${hintErr}`], paymentGraph, resolvedBrainData, null, hintErr);
+    return { ...failOutput, _lockedPlan: null, _brainLlmDiag: capturedBrainLlmDiag };
+  }
+
+  // ── Auto-tier resolution: "auto" already handled by fail-closed above ──
+  // For explicit tiers (easy/normal/advanced), resolveAutoTier returns as-is
   const tierResult = resolveAutoTier(routeTier, brainHint);
 
   if (!tierResult.ok) {
