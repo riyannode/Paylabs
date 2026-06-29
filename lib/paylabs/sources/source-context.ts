@@ -53,11 +53,15 @@ export async function buildSourceContextFromResult(
   const intentType = extractIntentType(result);
   const constraints = extractConstraints(result);
 
+  // Extract entity_terms from query_builder evaluation (Fix: non-x402 path entity propagation)
+  const entityTerms = extractEntityTerms(result);
+
   const resolverResult = await resolveSources({
     rankedCandidates,
     normalizedGoal,
     intentType,
     constraints,
+    entityTerms,
   });
 
   if (!resolverResult.ok) return null;
@@ -96,4 +100,23 @@ function extractConstraints(result: OrchestratorOutput): string[] {
   );
   if (!intentEval?.output) return [];
   return ((intentEval.output as { constraints?: string[] }).constraints) || [];
+}
+
+function extractEntityTerms(result: OrchestratorOutput): string[] {
+  // Try query_builder evaluation first
+  const qbEval = result.serviceEvaluations.find(
+    (e) => e.serviceName === "query_builder" && e.output
+  );
+  if (qbEval?.output) {
+    const data = qbEval.output as Record<string, unknown>;
+    const terms = (data.entity_terms as string[]) || (data.entityTerms as string[]) || [];
+    if (terms.length > 0) return terms;
+  }
+  // Fallback: try brainPlanning
+  const brainTerms = (result.brainPlanning as unknown as Record<string, unknown>);
+  if (brainTerms) {
+    const terms = (brainTerms.entity_terms as string[]) || (brainTerms.entityTerms as string[]) || [];
+    if (terms.length > 0) return terms;
+  }
+  return [];
 }

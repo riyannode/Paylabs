@@ -15,6 +15,7 @@ import type {
   SourceResolverInput,
   SourceResolverOutput,
 } from "./types";
+import { sanitizeEntityTerms, hasBoundaryTerm } from "./source-term-matching";
 
 // ─── Whitelist: safe columns only ─────────────────────────
 // NEVER include source_payload, normalized_sha256, content_sha256,
@@ -198,20 +199,9 @@ function isDomainOrSubdomain(input: string, baseDomain: string): boolean {
   return hostname === normalizedBase || hostname.endsWith(`.${normalizedBase}`);
 }
 
-function escapeRegexLocal(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+/* escapeRegexLocal removed — now using shared hasBoundaryTerm from source-term-matching */
 
-/** Boundary-aware entity matching: short tokens must not match inside other words */
-function hasTerm(text: string, term: string): boolean {
-  const t = term.toLowerCase().trim();
-  if (!t) return false;
-  // Short tokens (<=3 chars) or known abbreviations: require word boundary
-  if (t.length <= 3 || ["ai", "ml", "llm", "btc", "eth", "sol", "nft", "dao", "dex", "api", "usdc", "x402", "evm", "l2", "cefi", "gpt", "cv", "waf", "aws", "cdns"].includes(t)) {
-    return new RegExp(`(^|[^a-z0-9])${escapeRegexLocal(t)}([^a-z0-9]|$)`, "i").test(text);
-  }
-  return text.includes(t);
-}
+/* hasTerm now uses shared hasBoundaryTerm from source-term-matching */
 
 function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entityTerms?: string[]): SourceItem[] {
   if (sources.length === 0) return sources;
@@ -221,9 +211,9 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entity
 
   // Extract entity patterns (owner/repo, product names)
   const ownerRepoMatch = goalLower.match(/(\w[\w-]*)\s*\/\s*(\w[\w-]*)/);
-  const entityPatterns: string[] = entityTerms
-    ? entityTerms.map((e) => e.toLowerCase()).filter((e) => e.length > 0)
-    : [];
+  // Sanitize entity terms: remove constraints, stopwords, non-entities (Fix #1 — P1)
+  const sanitizedEntityPatterns = sanitizeEntityTerms(entityTerms || []);
+  const entityPatterns: string[] = sanitizedEntityPatterns.map((e) => e.toLowerCase());
   if (ownerRepoMatch) {
     entityPatterns.push(ownerRepoMatch[1].toLowerCase());
     entityPatterns.push(ownerRepoMatch[2].toLowerCase());
@@ -243,7 +233,7 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entity
 
     // Entity terms: at least ONE must appear (includes short meaningful tokens like x402, ai)
     if (entityPatterns.length > 0) {
-      const hasEntity = entityPatterns.some((et) => hasTerm(combined, et));
+      const hasEntity = entityPatterns.some((et) => hasBoundaryTerm(combined, et));
       if (!hasEntity) return false;
     }
 
@@ -284,13 +274,19 @@ export async function resolveSources(
     const rawSources = await enrichRankedCandidates(input.rankedCandidates, maxSources);
     // Apply relevance filter: reject sources that don't match the query
     // Pass entity_terms so short meaningful tokens (x402, ai, usdc) are used in matching
+    const rawEntityCount = (input.entityTerms || []).length;
     const sources = filterByRelevance(rawSources, input.normalizedGoal, input.entityTerms);
+    const sanitizedEntityCount = sanitizeEntityTerms(input.entityTerms || []).length;
     const sourceConfidence = computeSourceConfidence(sources);
+    // Safe diagnostic: entity term counts (no raw secrets)
+    const entityDiagnostic = rawEntityCount > 0
+      ? ` entity_terms_raw_count=${rawEntityCount} entity_terms_sanitized_count=${sanitizedEntityCount}`
+      : "";
     const sourceSelectionSummary = buildSelectionSummary(
       sources,
       input.normalizedGoal,
       input.intentType
-    );
+    ) + entityDiagnostic;
 
     return {
       ok: true,
