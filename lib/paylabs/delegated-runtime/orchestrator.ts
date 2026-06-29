@@ -49,6 +49,9 @@ export async function executeDelegatedDiscoveryRun(
   // ── Brain Planning (LangGraph) ──
   const brainResult = await runBrainPlanning(input);
 
+  // Store brain LLM diagnostics for safe propagation to API response
+  (state as unknown as Record<string, unknown>)._brainLlmDiag = (brainResult as Record<string, unknown>).brainLlmDiag ?? null;
+
   // When route_tier is "auto", use Brain's recommendation
   let resolvedTier = input.routeTier;
   if (brainResult.ok && input.routeTier === ("auto" as unknown as string)) {
@@ -269,7 +272,7 @@ export async function executeDelegatedDiscoveryRun(
 
 async function runBrainPlanning(
   input: OrchestratorInput
-): Promise<{ ok: true; data: BrainPlanningOutput } | { ok: false; error: string }> {
+): Promise<{ ok: true; data: BrainPlanningOutput; brainLlmDiag?: Record<string, unknown> } | { ok: false; error: string; brainLlmDiag?: Record<string, unknown> }> {
   try {
     const { runBrainPlannerGraph } = await import("../langgraph/brain/brain-planner-graph");
     const result = await runBrainPlannerGraph({
@@ -281,9 +284,9 @@ async function runBrainPlanning(
     });
 
     if (result.ok && result.brainPlanning) {
-      return { ok: true, data: result.brainPlanning };
+      return { ok: true, data: result.brainPlanning, brainLlmDiag: result.brainLlmDiag };
     }
-    return { ok: false, error: result.error || "Brain planning failed" };
+    return { ok: false, error: result.error || "Brain planning failed", brainLlmDiag: result.brainLlmDiag };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, error: `Brain graph error: ${msg}` };
@@ -313,6 +316,7 @@ function buildOutput(state: ReturnType<typeof createOrchestratorState>): Orchest
     tieredSummaries: buildTieredSummaries(state),
     easyToNormalHandoff: state.easyToNormalHandoff,
     creatorDistribution: ((state as unknown) as Record<string, unknown>)._creatorDistribution as OrchestratorOutput["creatorDistribution"],
+    _brainLlmDiag: ((state as unknown) as Record<string, unknown>)._brainLlmDiag as Record<string, unknown> | undefined,
     error: state.error,
   };
 }

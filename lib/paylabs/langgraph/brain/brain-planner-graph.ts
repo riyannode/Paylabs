@@ -133,12 +133,24 @@ Analyze this goal and produce a structured execution plan.`,
     });
 
     if (!result.ok) {
-      // Safe error detail: code + first 160 chars of error (no secrets, no raw LLM)
+      // Safe error detail: code + first 220 chars of error (no secrets, no raw LLM)
       const safeErrorClass = result.code || "unknown";
-      const safeErrorMsg = result.error ? result.error.slice(0, 160) : "unknown";
+      const safeErrorMsg = result.error ? result.error.slice(0, 220) : "unknown";
       return {
         error: `Brain planning LLM call failed: [${safeErrorClass}] ${safeErrorMsg}`,
         progressSummaries: [`Brain planning failed — ${safeErrorClass}: ${safeErrorMsg}`],
+        brainLlmDiag: {
+          error_code: result.code ?? "unknown",
+          error_safe: safeErrorMsg,
+          provider: (result.meta as Record<string, unknown>)?.provider ?? "unknown",
+          model: (result.meta as Record<string, unknown>)?.model ?? "unknown",
+          agent_name: (result.meta as Record<string, unknown>)?.agent_name ?? "unknown",
+          mode: (result.meta as Record<string, unknown>)?.mode ?? "unknown",
+          max_tokens: (result.meta as Record<string, unknown>)?.max_tokens ?? null,
+          timeout_ms: (result.meta as Record<string, unknown>)?.timeout_ms ?? null,
+          streaming: (result.meta as Record<string, unknown>)?.streaming ?? null,
+          force_non_streaming_body: (result.meta as Record<string, unknown>)?.force_non_streaming_body ?? null,
+        },
       };
     }
 
@@ -210,6 +222,21 @@ Analyze this goal and produce a structured execution plan.`,
         `${data.service_execution_plan.length} services planned, ` +
         `${data.suggested_query_variants.length} query variants`,
       ],
+      brainLlmDiag: {
+        provider: (result.meta as Record<string, unknown>)?.provider ?? "unknown",
+        model: (result.meta as Record<string, unknown>)?.model ?? "unknown",
+        agent_name: (result.meta as Record<string, unknown>)?.agent_name ?? "unknown",
+        mode: (result.meta as Record<string, unknown>)?.mode ?? "unknown",
+        max_tokens: (result.meta as Record<string, unknown>)?.max_tokens ?? null,
+        timeout_ms: (result.meta as Record<string, unknown>)?.timeout_ms ?? null,
+        streaming: (result.meta as Record<string, unknown>)?.streaming ?? null,
+        force_non_streaming_body: (result.meta as Record<string, unknown>)?.force_non_streaming_body ?? null,
+        json_found: true,
+        parse_ok: true,
+        validation_ok: true,
+        error_code: null,
+        error_safe: null,
+      },
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -363,6 +390,8 @@ export interface RunBrainPlannerGraphOutput {
   finalSummary: string;
   progressSummaries: string[];
   error: string | null;
+  /** Safe diagnostic metadata from generateStructuredJson (no secrets, no raw LLM) */
+  brainLlmDiag?: Record<string, unknown>;
 }
 
 /**
@@ -402,6 +431,7 @@ export async function runBrainPlannerGraph(
       finalSummary,
       progressSummaries: result.progressSummaries || [],
       error: result.error || null,
+      brainLlmDiag: (result as Record<string, unknown>).brainLlmDiag as Record<string, unknown> | undefined,
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
