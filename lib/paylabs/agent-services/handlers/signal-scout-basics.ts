@@ -38,6 +38,26 @@ const MEANINGFUL_SHORT_TOKENS = new Set([
   "api", "usdc", "x402", "evm", "l2", "cefi", "gpt", "cv",
 ]);
 
+// ─── Boundary-aware entity matching ────────────────────────
+const MEANINGFUL_SHORT_TOKENS_LOCAL = new Set([
+  "ai", "ml", "llm", "btc", "eth", "sol", "nft", "dao", "dex",
+  "api", "usdc", "x402", "evm", "l2", "cefi", "gpt", "cv",
+]);
+
+function escapeRegexLocal(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Boundary-aware entity matching: short tokens must not match inside other words */
+function hasEntityTerm(text: string, term: string): boolean {
+  const t = term.toLowerCase().trim();
+  if (!t) return false;
+  if (t.length <= 3 || MEANINGFUL_SHORT_TOKENS_LOCAL.has(t)) {
+    return new RegExp(`(^|[^a-z0-9])${escapeRegexLocal(t)}([^a-z0-9]|$)`, "i").test(text);
+  }
+  return text.includes(t);
+}
+
 // ─── Deterministic Scoring ─────────────────────────────────
 
 function scoreItem(
@@ -63,13 +83,13 @@ function scoreItem(
     const lower = entity.toLowerCase();
     if (!lower) continue;
     let matched = false;
-    if (title.includes(lower)) { score += 20; matched = true; }
-    else if (summary.includes(lower)) { score += 8; matched = true; }
-    else if (sourceUrl.includes(lower)) { score += 16; matched = true; }
-    else if (routePath.includes(lower)) { score += 14; matched = true; }
-    else if (urlPath.includes(lower)) { score += 12; matched = true; }
-    else if (authorName.includes(lower)) { score += 6; matched = true; }
-    else if (domain.includes(lower)) { score += 4; matched = true; }
+    if (hasEntityTerm(title, lower)) { score += 20; matched = true; }
+    else if (hasEntityTerm(summary, lower)) { score += 8; matched = true; }
+    else if (hasEntityTerm(sourceUrl, lower)) { score += 16; matched = true; }
+    else if (hasEntityTerm(routePath, lower)) { score += 14; matched = true; }
+    else if (hasEntityTerm(urlPath, lower)) { score += 12; matched = true; }
+    else if (hasEntityTerm(authorName, lower)) { score += 6; matched = true; }
+    else if (hasEntityTerm(domain, lower)) { score += 4; matched = true; }
     if (matched) entityHit = true;
   }
 

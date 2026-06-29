@@ -123,7 +123,7 @@ export function buildSourceGroundedFinalAnswer(
 
   // No sources found
   if (!sourcesUsed || sourcesUsed.length === 0) {
-    return "No sufficiently relevant sources found for this query. Try a more specific query or a different topic.";
+    return "No sufficiently relevant live sources were found for this query. The route completed with basic discovery, but PayLabs did not attach source links because no source passed the relevance gate.";
   }
 
   // Check entity intent match
