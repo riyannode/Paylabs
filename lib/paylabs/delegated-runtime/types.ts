@@ -393,5 +393,7 @@ export interface OrchestratorOutput {
     /** Service provider share result from creator_payout_router */
     serviceShareResult?: PlatformShareResult | null;
   };
+  /** Safe brain LLM diagnostics (no secrets, no raw output) */
+  _brainLlmDiag?: Record<string, unknown>;
   error: string | null;
 }

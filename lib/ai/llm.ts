@@ -105,8 +105,8 @@ function buildCacheKey(cfg: {
   timeoutMs: number;
   maxTokens: number;
   streaming: boolean;
-}): string {
-  return `${cfg.provider}:${cfg.baseUrl || "default"}:${cfg.model}:${cfg.agentKey}:${cfg.timeoutMs}:${cfg.maxTokens}:${cfg.streaming}`;
+}, forceNonStreaming?: boolean): string {
+  return `${cfg.provider}:${cfg.baseUrl || "default"}:${cfg.model}:${cfg.agentKey}:${cfg.timeoutMs}:${cfg.maxTokens}:${cfg.streaming}:${forceNonStreaming ? "nostream" : "std"}`;
 }
 
 export function getTutorModel(agentName?: string): ChatOpenAI | null {
@@ -118,7 +118,13 @@ export function getTutorModel(agentName?: string): ChatOpenAI | null {
     return null;
   }
 
-  const cacheKey = buildCacheKey(cfg);
+  // Force stream:false in request body for OpenAI-compatible providers (e.g. 9Router)
+  // 9Router defaults to SSE streaming when stream param is omitted;
+  // modelKwargs spreads AFTER stream in invocationParams(), so it overrides.
+  const forceNonStreamingBody = cfg.provider.toLowerCase() === "openai-compatible" || !!cfg.baseUrl;
+
+  // Include forceNonStreaming in cache key to avoid stale model from warm instances
+  const cacheKey = buildCacheKey(cfg, forceNonStreamingBody);
   const cached = modelCache.get(cacheKey);
   if (cached) return cached;
 
@@ -129,6 +135,7 @@ export function getTutorModel(agentName?: string): ChatOpenAI | null {
     maxTokens: cfg.maxTokens,
     timeout: cfg.timeoutMs,
     streaming: cfg.streaming,
+    ...(forceNonStreamingBody ? { modelKwargs: { stream: false } } : {}),
     ...(cfg.baseUrl ? { configuration: { baseURL: cfg.baseUrl } } : {}),
   });
 
@@ -149,8 +156,10 @@ export function getTutorModelConfig(agentName?: string): {
   timeoutMs: number;
   maxTokens: number;
   streaming: boolean;
+  forceNonStreamingBody: boolean;
 } {
   const cfg = resolveConfig(agentName);
+  const forceNonStreamingBody = cfg.provider.toLowerCase() === "openai-compatible" || !!cfg.baseUrl;
   return {
     provider: cfg.provider,
     model: cfg.model,
@@ -160,6 +169,7 @@ export function getTutorModelConfig(agentName?: string): {
     timeoutMs: cfg.timeoutMs,
     maxTokens: cfg.maxTokens,
     streaming: cfg.streaming,
+    forceNonStreamingBody,
   };
 }
 

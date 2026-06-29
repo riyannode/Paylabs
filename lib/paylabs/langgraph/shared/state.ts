@@ -478,6 +478,9 @@ export const BrainPlannerState = Annotation.Root({
   // Brain planning output (full)
   brainPlanning: Annotation<BrainPlanningOutput | undefined>,
 
+  // Brain LLM diagnostics (safe: no raw output, no secrets)
+  brainLlmDiag: Annotation<Record<string, unknown> | undefined>,
+
   // Error tracking
   error: Annotation<string | undefined>,
 });
