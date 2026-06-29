@@ -68,6 +68,7 @@ async function callBrainX402(dcwSigner: import("@/lib/paylabs/x402/buyer-transpo
   routeTier: string;
   userBudgetUsdc: number;
   discoveryRunId: string;
+  userWallet?: string;
 }): Promise<X402CallResult> {
   const { callPaidSeller } = await import("@/lib/paylabs/x402/buyer-transport");
 
@@ -178,6 +179,7 @@ async function runX402Orchestration(params: {
     routeTier,
     userBudgetUsdc,
     discoveryRunId,
+    userWallet,
   });
 
   if (!brainResult.ok || !brainResult.data) {
@@ -198,82 +200,40 @@ async function runX402Orchestration(params: {
     explorerUrl: brainResult.paymentMetadata?.explorerUrl ?? null,
   });
 
-  const brainData = brainResult.data.data as Record<string, unknown> | undefined;
-  const executionPlan = brainResult.data.executionPlan as {
-    selectedMacroNodes?: string[];
-    selectedServices?: string[];
-  } | undefined;
+  // ── Use paid Brain endpoint response as source of truth ──
+  // brain/run now runs Brain LLM internally after x402 settlement.
+  // No redundant runBrainPlannerGraph() call here.
+  const paidBrainData = brainResult.data;
+  const fullBrainPlanning = (paidBrainData?.brainPlanning as Record<string, unknown>) || null;
+  const capturedBrainLlmDiag = (paidBrainData?.brainLlmDiag as Record<string, unknown>) || undefined;
 
-  // ── Brain LLM Planning (after x402 settle, direct call — no HTTP timeout) ──
-  let fullBrainPlanning: Record<string, unknown> | null = null;
-  let capturedBrainLlmDiag: Record<string, unknown> | undefined = undefined;
-  try {
-    const { runBrainPlannerGraph } = await import("@/lib/paylabs/langgraph/brain/brain-planner-graph");
-    const planResult = await runBrainPlannerGraph({
-      discoveryRunId,
-      userGoal,
-      routeTier,
-      userBudgetUsdc,
-      userWallet,
-    });
-
-    capturedBrainLlmDiag = planResult.brainLlmDiag ?? undefined;
-    // ── Safe diagnostics: Brain planner result (no raw LLM, no secrets) ──
+  // Safe diagnostics (gated — no raw LLM, no secrets)
+  if (process.env.NODE_ENV !== "production") {
     const VALID_TIER_SET = new Set(["easy", "normal", "advanced"]);
-    const diagHint = planResult.brainPlanning?.route_tier_hint;
-    const diagHintStr: string | undefined = diagHint;
-    const diagHintValid = diagHintStr !== undefined && VALID_TIER_SET.has(diagHintStr);
-    // Safe diagnostics (gated — no raw LLM, no secrets)
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[inline] Brain planner diagnostics", {
-        planResult_ok: planResult.ok,
-        hasBrainPlanning: !!planResult.brainPlanning,
-        planResult_error: planResult.error ? planResult.error.slice(0, 160) : null,
-        route_tier_hint_present: diagHintStr !== undefined && diagHintStr !== null,
-        route_tier_hint_value: diagHintValid ? diagHintStr : (diagHintStr === null ? "null" : diagHintStr === undefined ? "none" : "invalid"),
-        selected_macro_nodes_count: planResult.brainPlanning?.selected_macro_nodes?.length ?? 0,
-        selected_services_count: planResult.brainPlanning?.selected_services?.length ?? 0,
-      });
-    }
-
-    // When Brain planner fails, store safe error so downstream can propagate it
-    if (!planResult.ok) {
-      const safeErr = planResult.error ? planResult.error.slice(0, 200) : "Brain planner returned ok=false";
-      fullBrainPlanning = { error: safeErr, route_tier_hint: null } as Record<string, unknown>;
-    }
-
-    if (planResult.ok && planResult.brainPlanning) {
-      const bp = planResult.brainPlanning;
-      fullBrainPlanning = {
-        normalized_goal: bp.normalized_goal,
-        route_tier_hint: bp.route_tier_hint,
-        discovery_strategy: bp.discovery_strategy,
-        suggested_query_variants: bp.suggested_query_variants,
-        service_execution_plan: bp.service_execution_plan,
-        safe_brain_summary: bp.safe_brain_summary,
-        assistant_response: bp.assistant_response,
-        user_visible_reasoning: bp.user_visible_reasoning,
-        tier_decision_reason: bp.tier_decision_reason,
-        plan_rationale: bp.plan_rationale,
-        selected_macro_nodes: bp.selected_macro_nodes,
-        selected_services: bp.selected_services,
-        max_registry_checks: bp.max_registry_checks,
-        max_source_accesses: bp.max_source_accesses,
-        planned_cost_usdc: bp.planned_cost_usdc,
-        planned_cost_breakdown: bp.planned_cost_breakdown,
-      };
-    }
-  } catch (e: unknown) {
-    const brainErr = e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200);
-    console.error("[inline] Brain planner failed after x402 settle", {
-      error: brainErr,
+    const diagHint = fullBrainPlanning?.route_tier_hint as string | undefined;
+    console.log("[inline] Paid Brain response diagnostics", {
+      brain_ok: paidBrainData?.ok,
+      hasBrainPlanning: !!fullBrainPlanning,
+      brain_error: paidBrainData?.error ? String(paidBrainData.error).slice(0, 160) : null,
+      route_tier_hint_present: diagHint !== undefined && diagHint !== null,
+      route_tier_hint_value: diagHint && VALID_TIER_SET.has(diagHint) ? diagHint : (diagHint === null ? "null" : diagHint === undefined ? "none" : "invalid"),
+      selected_macro_nodes_count: (paidBrainData?.selectedMacroNodes as unknown[])?.length ?? 0,
+      selected_services_count: (paidBrainData?.selectedServices as unknown[])?.length ?? 0,
     });
-    // Store safe error so downstream can propagate it (no raw LLM output)
-    fullBrainPlanning = { error: brainErr } as Record<string, unknown>;
   }
 
-  // Use full planning output if available, fallback to brainData (x402 response)
-  const resolvedBrainData = fullBrainPlanning || brainData || null;
+  // Fail closed if Brain endpoint returned ok=false
+  if (!paidBrainData?.ok || !fullBrainPlanning) {
+    const brainErr = paidBrainData?.error
+      ? String(paidBrainData.error).slice(0, 200)
+      : "Brain endpoint returned no planning data";
+    console.error("[inline] Paid Brain endpoint failed", { error: brainErr });
+    const failOutput = buildX402Output(discoveryRunId, routeTier, userBudgetUsdc, "failed",
+      [...safeProgressSummaries, `FAILED: Brain paid endpoint failed: ${brainErr}`], paymentGraph, null, null, brainErr);
+    return { ...failOutput, _lockedPlan: null, _brainLlmDiag: capturedBrainLlmDiag };
+  }
+
+  const resolvedBrainData = fullBrainPlanning;
 
   // ── Auto-tier resolution: "auto" → Brain's route_tier_hint ──
   const brainHint = resolvedBrainData
@@ -1428,12 +1388,14 @@ async function runX402Path(
             content_length: null,
             safe_error: null,
           },
-      // TEMP DIAGNOSTIC: trace brainLlmDiag propagation (remove before merge)
-      _brain_diag_debug: {
-        result_has_brainLlmDiag: result._brainLlmDiag !== undefined && result._brainLlmDiag !== null,
-        result_brainLlmDiag_type: typeof result._brainLlmDiag,
-        result_brainLlmDiag_keys: result._brainLlmDiag ? Object.keys(result._brainLlmDiag as Record<string, unknown>) : [],
-      },
+      // TEMP DIAGNOSTIC removed — brainLlmDiag now comes from paid Brain endpoint
+      _brain_diag_debug: result._brainLlmDiag
+        ? {
+            source: "paid_brain_endpoint",
+            hasDiag: true,
+            diagKeys: Object.keys(result._brainLlmDiag as Record<string, unknown>),
+          }
+        : { source: "paid_brain_endpoint", hasDiag: false, diagKeys: [] },
       locked_execution_plan: result._lockedPlan
         ? {
             selected_macro_nodes: result._lockedPlan.selectedMacroNodes,
