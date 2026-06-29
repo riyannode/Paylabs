@@ -11,6 +11,8 @@
  * No LLM. No secrets. No raw payload exposure.
  */
 
+import { keywordMatches, sanitizeEntityTerms } from "@/lib/paylabs/sources/source-term-matching";
+
 // ─── Types ──────────────────────────────────────────────────
 
 export interface TopicRoute {
@@ -89,9 +91,22 @@ const TOPIC_KEYWORDS: Array<{ keywords: string[]; category: "ai" | "crypto"; sub
   { keywords: ["crypto regulation", "crypto policy", "sec crypto", "crypto law"], category: "crypto", subcategory: "policy" },
   { keywords: ["crypto company", "crypto startup", "crypto funding", "crypto investment"], category: "crypto", subcategory: "companies" },
   { keywords: ["stablecoin", "usdc", "usdt", "dai"], category: "crypto" },
+  // x402/nanopayment: qualified phrases only
+  { keywords: ["x402", "nanopayment", "nanopayments", "micropayment", "pay-per-request"], category: "crypto", subcategory: "news" },
+  // Circle: qualified phrases only (bare "circle" removed — false positive on geometry queries)
+  { keywords: ["circle usdc", "circle gateway", "circle financial", "circle stablecoin", "circle x402", "circle wallet"], category: "crypto", subcategory: "news" },
+  // Gateway: qualified phrases only (bare "gateway" removed — false positive on AWS API Gateway etc.)
+  { keywords: ["circle gateway", "gateway wallet", "gateway deposit", "unified balance", "x402 gateway"], category: "crypto", subcategory: "ecosystems" },
+  // Arc: qualified phrases only (bare "arc" removed — false positive on research, search, March)
+  { keywords: ["arc blockchain", "arc testnet", "arc layer", "arc network", "arclayer", "arc x402"], category: "crypto", subcategory: "ecosystems" },
+  // Cloudflare/AWS: qualified phrases only (bare "cloudflare" removed — false positive on CDN/WAF queries)
+  { keywords: ["cloudflare x402", "cloudflare bot monetization", "cloudflare payment", "cloudflare ai bot", "cloudflare pay per request", "aws waf x402", "aws waf ai traffic monetization", "aws ai traffic monetization", "aws bot monetization"], category: "crypto", subcategory: "news" },
+  { keywords: ["ai agent payment", "ai agent wallet", "agent commerce", "agentic payment"], category: "crypto", subcategory: "news" },
 ];
 
 // ─── Public API ─────────────────────────────────────────────
+
+/* escapeRegex and keywordMatches removed — using shared keywordMatches from source-term-matching */
 
 /**
  * Detect topics from user query and entity terms.
@@ -101,12 +116,14 @@ export function detectTopics(
   userGoal: string,
   entityTerms: string[]
 ): Array<{ category: "ai" | "crypto"; subcategory?: string }> {
-  const allText = [userGoal, ...entityTerms].join(" ").toLowerCase();
+  // Sanitize entity terms before topic detection
+  const sanitizedTerms = sanitizeEntityTerms(entityTerms);
+  const allText = [userGoal, ...sanitizedTerms].join(" ").toLowerCase();
   const matches: Array<{ category: "ai" | "crypto"; subcategory?: string }> = [];
   const seen = new Set<string>();
 
   for (const entry of TOPIC_KEYWORDS) {
-    const matched = entry.keywords.some((kw) => allText.includes(kw.toLowerCase()));
+    const matched = entry.keywords.some((kw) => keywordMatches(allText, kw));
     if (matched) {
       const key = `${entry.category}:${entry.subcategory || "*"}`;
       if (!seen.has(key)) {

@@ -15,6 +15,7 @@ import type {
   SourceResolverInput,
   SourceResolverOutput,
 } from "./types";
+import { sanitizeEntityTerms, hasBoundaryTerm } from "./source-term-matching";
 
 // ─── Whitelist: safe columns only ─────────────────────────
 // NEVER include source_payload, normalized_sha256, content_sha256,
@@ -198,7 +199,11 @@ function isDomainOrSubdomain(input: string, baseDomain: string): boolean {
   return hostname === normalizedBase || hostname.endsWith(`.${normalizedBase}`);
 }
 
-function filterByRelevance(sources: SourceItem[], normalizedGoal: string): SourceItem[] {
+/* escapeRegexLocal removed — now using shared hasBoundaryTerm from source-term-matching */
+
+/* hasTerm now uses shared hasBoundaryTerm from source-term-matching */
+
+function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entityTerms?: string[]): SourceItem[] {
   if (sources.length === 0) return sources;
 
   const goalLower = normalizedGoal.toLowerCase();
@@ -206,10 +211,12 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string): Sourc
 
   // Extract entity patterns (owner/repo, product names)
   const ownerRepoMatch = goalLower.match(/(\w[\w-]*)\s*\/\s*(\w[\w-]*)/);
-  const entityTerms: string[] = [];
+  // Sanitize entity terms: remove constraints, stopwords, non-entities (Fix #1 — P1)
+  const sanitizedEntityPatterns = sanitizeEntityTerms(entityTerms || []);
+  const entityPatterns: string[] = sanitizedEntityPatterns.map((e) => e.toLowerCase());
   if (ownerRepoMatch) {
-    entityTerms.push(ownerRepoMatch[1].toLowerCase());
-    entityTerms.push(ownerRepoMatch[2].toLowerCase());
+    entityPatterns.push(ownerRepoMatch[1].toLowerCase());
+    entityPatterns.push(ownerRepoMatch[2].toLowerCase());
   }
 
   // Domain-specific intent — use word boundaries to avoid "report" matching "repo"
@@ -224,9 +231,9 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string): Sourc
     const url = (src.url || "").toLowerCase();
     const combined = `${title} ${summary} ${domain} ${routePath} ${url}`;
 
-    // Entity terms: at least ONE must appear
-    if (entityTerms.length > 0) {
-      const hasEntity = entityTerms.some((et) => combined.includes(et));
+    // Entity terms: at least ONE must appear (includes short meaningful tokens like x402, ai)
+    if (entityPatterns.length > 0) {
+      const hasEntity = entityPatterns.some((et) => hasBoundaryTerm(combined, et));
       if (!hasEntity) return false;
     }
 
@@ -240,7 +247,8 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string): Sourc
     }
 
     // General keyword match: at least ONE query term must appear
-    if (terms.length > 0 && !isGitHubIntent) {
+    // Skip this gate if entity patterns already matched (avoid double-filtering)
+    if (terms.length > 0 && !isGitHubIntent && entityPatterns.length === 0) {
       const hasKeyword = terms.some((t) => combined.includes(t));
       if (!hasKeyword) return false;
     }
@@ -265,13 +273,20 @@ export async function resolveSources(
   try {
     const rawSources = await enrichRankedCandidates(input.rankedCandidates, maxSources);
     // Apply relevance filter: reject sources that don't match the query
-    const sources = filterByRelevance(rawSources, input.normalizedGoal);
+    // Pass entity_terms so short meaningful tokens (x402, ai, usdc) are used in matching
+    const rawEntityCount = (input.entityTerms || []).length;
+    const sources = filterByRelevance(rawSources, input.normalizedGoal, input.entityTerms);
+    const sanitizedEntityCount = sanitizeEntityTerms(input.entityTerms || []).length;
     const sourceConfidence = computeSourceConfidence(sources);
+    // Safe diagnostic: entity term counts (no raw secrets)
+    const entityDiagnostic = rawEntityCount > 0
+      ? ` entity_terms_raw_count=${rawEntityCount} entity_terms_sanitized_count=${sanitizedEntityCount}`
+      : "";
     const sourceSelectionSummary = buildSelectionSummary(
       sources,
       input.normalizedGoal,
       input.intentType
-    );
+    ) + entityDiagnostic;
 
     return {
       ok: true,

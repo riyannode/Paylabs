@@ -304,6 +304,10 @@ export interface RunDiscoveryPlannerGraphOutput {
   paymentEdges: DiscoveryPlannerStateType["paymentEdges"];
   progressSummaries: string[];
   retrievalMode?: string;
+  entityTerms?: string[];
+  expandedQueries?: string[];
+  negativeFilters?: string[];
+  sourcePreferences?: string[];
   error: string | null;
 }
 
@@ -404,6 +408,10 @@ export async function runDiscoveryPlannerGraph(
       paymentEdges: result.paymentEdges || [],
       progressSummaries: result.progressSummaries || [],
       retrievalMode: result.retrievalMode,
+      entityTerms: result.entityTerms || [],
+      expandedQueries: result.expandedQueries || [],
+      negativeFilters: result.negativeFilters || [],
+      sourcePreferences: result.sourcePreferences || [],
       error: result.error || null,
     };
   } catch (e: unknown) {
