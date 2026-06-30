@@ -34,19 +34,20 @@ function logPrepareGoogle(step: string, details: Record<string, unknown> = {}) {
   console.error(`[creator-ucw] ${step}`, { step, ...details });
 }
 
-function getCreatorUcwRedirectOrigin(): string {
+function getCreatorUcwRedirectUri(): string {
   const configuredOrigin =
     process.env.NEXT_PUBLIC_PAYLABS_UCW_REDIRECT_ORIGIN ||
     process.env.NEXT_PUBLIC_PAYLABS_APP_URL ||
     window.location.origin;
 
-  return new URL(configuredOrigin).origin;
+  const origin = new URL(configuredOrigin).origin;
+  return `${origin}/creator-dashboard`;
 }
 
 type GoogleLoginConfigInput = {
   appId: string;
   googleClientId: string;
-  origin: string;
+  redirectUri: string;
   deviceToken: string;
   deviceEncryptionKey: string;
 };
@@ -54,7 +55,7 @@ type GoogleLoginConfigInput = {
 function buildGoogleLoginConfig({
   appId,
   googleClientId,
-  origin,
+  redirectUri,
   deviceToken,
   deviceEncryptionKey,
 }: GoogleLoginConfigInput) {
@@ -65,7 +66,7 @@ function buildGoogleLoginConfig({
       deviceEncryptionKey,
       google: {
         clientId: googleClientId,
-        redirectUri: origin,
+        redirectUri,
         selectAccountPrompt: true,
       },
     },
@@ -86,10 +87,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
-function assertCreatorUcwRedirectOriginMatchesCurrentHost(origin: string) {
-  const redirectHost = new URL(origin).host;
+function assertCreatorUcwRedirectUriMatchesCurrentHost(redirectUri: string) {
+  const redirectHost = new URL(redirectUri).host;
   if (redirectHost !== window.location.host) {
-    throw new Error(`Creator Wallet Google redirect origin (${redirectHost}) must match the current host (${window.location.host}). Update NEXT_PUBLIC_PAYLABS_UCW_REDIRECT_ORIGIN or NEXT_PUBLIC_PAYLABS_APP_URL for this preview deployment.`);
+    throw new Error(`Creator Wallet Google redirect host (${redirectHost}) must match the current host (${window.location.host}). Update NEXT_PUBLIC_PAYLABS_UCW_REDIRECT_ORIGIN or NEXT_PUBLIC_PAYLABS_APP_URL for this preview deployment.`);
   }
 }
 
@@ -263,19 +264,19 @@ export function useCreatorUcwWallet() {
       setUcwGoogleError(null);
       const appId = process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
       const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-      const origin = getCreatorUcwRedirectOrigin();
+      const redirectUri = getCreatorUcwRedirectUri();
 
       logPrepareGoogle("prepare_google_start", {
         hasCircleAppId: !!appId,
         hasGoogleClientId: !!googleClientId,
-        origin,
+        redirectUri,
       });
 
       try {
         const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
         if (!appId) throw new Error("NEXT_PUBLIC_CIRCLE_APP_ID is missing. Configure it to enable Creator Wallet Google login.");
         if (!googleClientId) throw new Error("NEXT_PUBLIC_GOOGLE_CLIENT_ID is missing. Configure it to enable Creator Wallet Google login.");
-        assertCreatorUcwRedirectOriginMatchesCurrentHost(origin);
+        assertCreatorUcwRedirectUriMatchesCurrentHost(redirectUri);
 
         try {
           await createUcwSessionOrThrow();
@@ -286,7 +287,7 @@ export function useCreatorUcwWallet() {
 
         let sdk: UcwSdk;
         sdk = new W3SSdk(
-          buildGoogleLoginConfig({ appId, googleClientId, origin, deviceToken: "", deviceEncryptionKey: "" }) as unknown as ConstructorParameters<typeof W3SSdk>[0],
+          buildGoogleLoginConfig({ appId, googleClientId, redirectUri, deviceToken: "", deviceEncryptionKey: "" }) as unknown as ConstructorParameters<typeof W3SSdk>[0],
           (error: unknown, result: unknown) => handleGoogleLoginCallback(sdk, error, result),
         );
 
@@ -333,7 +334,7 @@ export function useCreatorUcwWallet() {
 
         try {
           sdk.updateConfigs(
-            buildGoogleLoginConfig({ appId, googleClientId, origin, deviceToken, deviceEncryptionKey }) as unknown as Parameters<UcwSdk["updateConfigs"]>[0],
+            buildGoogleLoginConfig({ appId, googleClientId, redirectUri, deviceToken, deviceEncryptionKey }) as unknown as Parameters<UcwSdk["updateConfigs"]>[0],
             (error: unknown, result: unknown) => handleGoogleLoginCallback(sdk, error, result),
           );
         } catch (e: unknown) {
@@ -344,7 +345,7 @@ export function useCreatorUcwWallet() {
         ucwSdkRef.current = sdk;
         ucwGoogleReadyRef.current = true;
         setUcwGoogleReady(true);
-        logPrepareGoogle("prepare_google_ready", { origin });
+        logPrepareGoogle("prepare_google_ready", { redirectUri });
       } catch (e: unknown) {
         ucwGoogleReadyRef.current = false;
         setUcwGoogleReady(false);
@@ -352,7 +353,7 @@ export function useCreatorUcwWallet() {
           message: safeDiagnosticMessage(e),
           hasCircleAppId: !!appId,
           hasGoogleClientId: !!googleClientId,
-          origin,
+          redirectUri,
         });
         setUcwGoogleError(e instanceof Error ? e.message : "Creator Wallet login setup failed. Please retry.");
         throw e;
@@ -440,12 +441,14 @@ export function useCreatorUcwWallet() {
           return;
         }
 
-        // Device token but no user token + no OAuth hash → stale session
+        // Device token but no user token + no OAuth hash → incomplete login
+        // Do NOT destroy the session — user may have been redirected to wrong
+        // route, or OAuth hash was lost. Allow retry via Connect button.
         if (data.hasDeviceToken && !data.hasUserToken) {
           const hasOAuthHash = window.location.hash.includes("access_token") || window.location.hash.includes("id_token");
           if (!hasOAuthHash) {
-            fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST", credentials: "include" }).catch(() => {});
             setWalletState("not_connected");
+            setWalletError("Creator Wallet login was not completed. Please try connecting again.");
             return;
           }
           // OAuth redirect in progress — restore SDK
@@ -459,13 +462,13 @@ export function useCreatorUcwWallet() {
           const { deviceToken, deviceEncryptionKey } = (await dtResp.json()) as { deviceToken: string; deviceEncryptionKey: string };
 
           const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-          const origin = getCreatorUcwRedirectOrigin();
-          if (googleClientId) assertCreatorUcwRedirectOriginMatchesCurrentHost(origin);
+          const redirectUri = getCreatorUcwRedirectUri();
+          if (googleClientId) assertCreatorUcwRedirectUriMatchesCurrentHost(redirectUri);
           let callbackFired = false;
           let sdk: UcwSdk;
           sdk = new W3SSdk(
             googleClientId
-              ? buildGoogleLoginConfig({ appId, googleClientId, origin, deviceToken, deviceEncryptionKey }) as unknown as ConstructorParameters<typeof W3SSdk>[0]
+              ? buildGoogleLoginConfig({ appId, googleClientId, redirectUri, deviceToken, deviceEncryptionKey }) as unknown as ConstructorParameters<typeof W3SSdk>[0]
               : { appSettings: { appId }, loginConfigs: { deviceToken, deviceEncryptionKey } } as unknown as ConstructorParameters<typeof W3SSdk>[0],
             async (error: unknown, result: unknown) => {
               callbackFired = true;
@@ -495,7 +498,6 @@ export function useCreatorUcwWallet() {
             if (!callbackFired && !cancelled) {
               setWalletState("not_connected");
               setWalletError("Login timed out. Please try again.");
-              fetch("/api/paylabs/wallet/ucw?action=session-destroy", { method: "POST", credentials: "include" }).catch(() => {});
             }
           }, 10000);
         }
