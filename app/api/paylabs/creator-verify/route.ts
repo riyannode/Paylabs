@@ -385,6 +385,15 @@ async function verifyWellKnownJson(claim: CreatorClaim): Promise<VerifyResult> {
 /** Validate GitHub owner/repo chars: alphanumeric, hyphen, underscore, dot only. */
 const GITHUB_OWNER_REPO_RE = /^[A-Za-z0-9_.-]{1,100}$/;
 
+/**
+ * Derive the public proof URL for a claim.
+ * Format: NEXT_PUBLIC_APP_URL/creator-proof/<claim_id>/<proof_nonce>
+ */
+function getProofUrl(claimId: string, proofNonce: string): string {
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || "https://paylabs.dev").replace(/\/+$/, "");
+  return `${baseUrl}/creator-proof/${claimId}/${proofNonce}`;
+}
+
 async function verifyGithubRepoFile(claim: CreatorClaim): Promise<VerifyResult> {
   const sourceUrl = claim.source_url;
   if (!sourceUrl) {
@@ -468,6 +477,71 @@ async function verifyGithubRepoFile(claim: CreatorClaim): Promise<VerifyResult> 
   };
 }
 
+/**
+ * Hosted Link Backlink Verification
+ *
+ * Fetches the creator's registered source_url (profile page, bio link, etc.)
+ * and checks if the page body contains the exact PayLabs proof URL.
+ *
+ * Proof URL: NEXT_PUBLIC_APP_URL/creator-proof/<claim_id>/<proof_nonce>
+ *
+ * The creator pastes this URL into their public profile/bio/README.
+ * Verification confirms they control the source URL.
+ */
+async function verifyHostedLinkBacklink(claim: CreatorClaim): Promise<VerifyResult> {
+  const sourceUrl = claim.source_url;
+  if (!sourceUrl) {
+    return { ok: false, proof_status: "failed", proof_error: "source_url missing from claim", evidence_hash: null };
+  }
+
+  // SSRF: validate host is public before fetching
+  let hostname: string;
+  try {
+    hostname = new URL(sourceUrl).hostname;
+  } catch {
+    return { ok: false, proof_status: "failed", proof_error: "Invalid source_url", evidence_hash: null };
+  }
+
+  const hostCheck = await assertPublicHost(hostname);
+  if (!hostCheck.ok) {
+    return { ok: false, proof_status: "failed", proof_error: hostCheck.error ?? "proof_internal_target_blocked", evidence_hash: null };
+  }
+
+  // Build expected proof URL
+  const proofUrl = getProofUrl(claim.id, claim.proof_nonce || "");
+
+  // Fetch the source URL (creator's profile page)
+  const fetched = await fetchProofRaw(sourceUrl);
+
+  if (!fetched.ok || !fetched.body) {
+    return {
+      ok: false,
+      proof_status: "failed",
+      proof_error: fetched.error || "proof_fetch_failed",
+      evidence_hash: null,
+    };
+  }
+
+  const evidenceHash = sha256(fetched.body);
+
+  // Check if the page body contains the exact proof URL
+  if (!fetched.body.includes(proofUrl)) {
+    return {
+      ok: false,
+      proof_status: "failed",
+      proof_error: `Proof URL not found on page. Add ${proofUrl} to your profile/bio/page.`,
+      evidence_hash: evidenceHash,
+    };
+  }
+
+  return {
+    ok: true,
+    proof_status: "verified",
+    proof_error: null,
+    evidence_hash: evidenceHash,
+  };
+}
+
 // ─── POST ─────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -500,11 +574,15 @@ export async function POST(req: NextRequest) {
 
   // Already verified
   if (typedClaim.claim_status === "verified" && typedClaim.proof_status === "verified") {
-    return NextResponse.json({
+    const response: Record<string, unknown> = {
       ok: true,
       proof_status: "verified",
       message: "Claim is already verified.",
-    });
+    };
+    if (typedClaim.proof_method === "hosted_link_backlink" && typedClaim.proof_nonce) {
+      response.proof_url = getProofUrl(typedClaim.id, typedClaim.proof_nonce);
+    }
+    return NextResponse.json(response);
   }
 
   // Locked statuses — cannot re-verify
@@ -532,6 +610,8 @@ export async function POST(req: NextRequest) {
     result = await verifyGithubRepoFile(typedClaim);
   } else if (typedClaim.proof_method === "well_known_json") {
     result = await verifyWellKnownJson(typedClaim);
+  } else if (typedClaim.proof_method === "hosted_link_backlink") {
+    result = await verifyHostedLinkBacklink(typedClaim);
   } else {
     return NextResponse.json({
       ok: false,
@@ -604,17 +684,25 @@ export async function POST(req: NextRequest) {
   }
 
   if (result.ok) {
-    return NextResponse.json({
+    const response: Record<string, unknown> = {
       ok: true,
       proof_status: "verified",
       message: "Source verified! Your creator wallet is now eligible for payouts.",
-    });
+    };
+    return NextResponse.json(response);
   }
 
-  return NextResponse.json({
+  const response: Record<string, unknown> = {
     ok: false,
     proof_status: result.proof_status,
     error: result.proof_error,
     message: result.proof_error ?? "Verification failed. Check your proof file and try again.",
-  });
+  };
+
+  // Include proof URL for hosted_link_backlink so UI can display it
+  if (typedClaim.proof_method === "hosted_link_backlink" && typedClaim.proof_nonce) {
+    response.proof_url = getProofUrl(typedClaim.id, typedClaim.proof_nonce);
+  }
+
+  return NextResponse.json(response);
 }

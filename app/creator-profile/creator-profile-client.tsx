@@ -32,6 +32,14 @@ type ProfileResponse = {
   error?: string;
 };
 
+type VerifyResponse = {
+  ok?: boolean;
+  proof_status?: string;
+  error?: string;
+  message?: string;
+  proof_url?: string;
+};
+
 function deriveDomain(value: string): string {
   try {
     const url = new URL(value);
@@ -103,6 +111,10 @@ function platformLabel(platform?: string | null): string {
   if (platform === "vercel") return "Vercel";
   if (platform === "netlify") return "Netlify";
   if (platform === "rss_publisher") return "RSS Publisher";
+  if (platform === "twitter") return "X / Twitter";
+  if (platform === "youtube") return "YouTube";
+  if (platform === "medium") return "Medium";
+  if (platform === "substack") return "Substack";
   return "Website";
 }
 
@@ -125,6 +137,7 @@ export default function CreatorProfileClient() {
   const [verifying, setVerifying] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [proofUrl, setProofUrl] = useState<string | null>(null);
 
   const sourceDomain = useMemo(() => deriveDomain(sourceUrl), [sourceUrl]);
   const currentClaim = claims[0];
@@ -159,6 +172,14 @@ export default function CreatorProfileClient() {
   useEffect(() => {
     loadProfile();
   }, []);
+
+  // Derive proof URL for hosted_link_backlink claims
+  useEffect(() => {
+    if (currentClaim?.proof_method === "hosted_link_backlink" && currentClaim?.proof_nonce && currentClaim?.id) {
+      const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || window.location.origin).replace(/\/+$/, "");
+      setProofUrl(`${baseUrl}/creator-proof/${currentClaim.id}/${currentClaim.proof_nonce}`);
+    }
+  }, [currentClaim?.proof_method, currentClaim?.proof_nonce, currentClaim?.id]);
 
   async function submitClaim(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -199,12 +220,14 @@ export default function CreatorProfileClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ claim_id: currentClaim.id }),
       });
-      const data = (await resp.json().catch(() => ({}))) as { ok?: boolean; proof_status?: string; error?: string; message?: string };
+      const data = (await resp.json().catch(() => ({}))) as VerifyResponse;
       if (!resp.ok) {
         setError(data.error ?? data.message ?? "Verification failed.");
+        if (data.proof_url) setProofUrl(data.proof_url);
         return;
       }
       setMessage(data.message ?? "Verification completed.");
+      if (data.proof_url) setProofUrl(data.proof_url);
       await loadProfile();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Verification request failed.");
@@ -313,6 +336,19 @@ export default function CreatorProfileClient() {
                   </div>
                   <div style={{ fontWeight: 600, marginBottom: 8 }}>Contents:</div>
                   <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify({ creator_wallet: walletAddress, creator_name: currentClaim.creator_name, nonce: currentClaim.proof_nonce }, null, 2)}</pre>
+                </div>
+              )}
+
+              {currentClaim.proof_method === "hosted_link_backlink" && (
+                <div style={{ background: "var(--surface)", borderRadius: 10, padding: "12px 16px", fontSize: 13, lineHeight: 1.6 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 8 }}>Add this verification link to your public profile, bio, or page:</div>
+                  <div style={{ background: "var(--bg, #0a0a0a)", borderRadius: 8, padding: "10px 12px", fontFamily: "monospace", fontSize: 12, wordBreak: "break-all", color: "#2563eb", marginBottom: 12 }}>
+                    {proofUrl || `Loading verification URL...`}
+                  </div>
+                  <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                    Paste this link into your public profile bio, README, about page, or any public page at <strong>{currentClaim.source_domain}</strong>.
+                    Then click Verify to confirm ownership.
+                  </p>
                 </div>
               )}
 

@@ -74,21 +74,31 @@ function generateNonce(): string {
 // ─── Scope Detection ──────────────────────────────────────────
 
 type ClaimScope = "exact_url" | "domain" | "host" | "github_repo" | "manual";
-type SourcePlatform = "domain" | "github" | "vercel" | "netlify" | "github_pages" | "rss_publisher" | "unsupported";
+type SourcePlatform = "domain" | "github" | "vercel" | "netlify" | "github_pages" | "rss_publisher" | "twitter" | "youtube" | "medium" | "substack" | "unsupported";
+
+const SOCIAL_HOSTS: Record<string, SourcePlatform> = {
+  "twitter.com": "twitter",
+  "x.com": "twitter",
+  "youtube.com": "youtube",
+  "www.youtube.com": "youtube",
+  "youtu.be": "youtube",
+  "medium.com": "medium",
+};
 
 function detectSourcePlatform(hostname: string): SourcePlatform {
-  if (hostname === "github.com") return "github";
+  if (hostname === "github.com" || hostname === "www.github.com") return "github";
   if (hostname.endsWith(".github.io")) return "github_pages";
   if (hostname.endsWith(".vercel.app")) return "vercel";
   if (hostname.endsWith(".netlify.app")) return "netlify";
-  return "domain";
+  if (hostname.endsWith(".substack.com")) return "substack";
+  return SOCIAL_HOSTS[hostname] || "domain";
 }
 
 function detectClaimScope(url: string, hostname: string): { scope: ClaimScope; scopeKey: string; platform: SourcePlatform } {
   const platform = detectSourcePlatform(hostname);
 
   // GitHub repo: https://github.com/owner/repo or deeper
-  if (hostname === "github.com") {
+  if (hostname === "github.com" || hostname === "www.github.com") {
     const parts = new URL(url).pathname.split("/").filter(Boolean);
     if (parts.length >= 2) {
       const owner = parts[0];
@@ -101,20 +111,26 @@ function detectClaimScope(url: string, hostname: string): { scope: ClaimScope; s
     }
   }
 
-  // GitHub Pages: https://user.github.io/* → domain-level claim
-  if (hostname.endsWith(".github.io")) {
+  // Tenant hosts (shared platform subdomains): host-level claim
+  // *.github.io, *.vercel.app, *.netlify.app, *.substack.com
+  if (
+    hostname.endsWith(".github.io") ||
+    hostname.endsWith(".vercel.app") ||
+    hostname.endsWith(".netlify.app") ||
+    hostname.endsWith(".substack.com")
+  ) {
     return {
-      scope: "domain",
-      scopeKey: `domain:${hostname}`,
-      platform: "github_pages",
+      scope: "host",
+      scopeKey: `host:${hostname}`,
+      platform,
     };
   }
 
-  // Vercel/Netlify: domain-level claim
-  if (hostname.endsWith(".vercel.app") || hostname.endsWith(".netlify.app")) {
+  // Social platforms (twitter, youtube, medium): host-level claim
+  if (platform !== "domain") {
     return {
-      scope: "domain",
-      scopeKey: `domain:${hostname}`,
+      scope: "host",
+      scopeKey: `host:${hostname}`,
       platform,
     };
   }
@@ -127,8 +143,10 @@ function detectClaimScope(url: string, hostname: string): { scope: ClaimScope; s
   };
 }
 
-function resolveProofMethod(platform: SourcePlatform): "well_known_json" | "github_repo_file" | "manual_review" {
+function resolveProofMethod(platform: SourcePlatform): "well_known_json" | "github_repo_file" | "hosted_link_backlink" | "manual_review" {
   if (platform === "github") return "github_repo_file";
+  // Social platforms and platforms that can't host .well-known files
+  if (["twitter", "youtube", "medium", "substack"].includes(platform)) return "hosted_link_backlink";
   return "well_known_json";
 }
 

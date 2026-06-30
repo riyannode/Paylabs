@@ -14,6 +14,7 @@
 import { createHash } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { fetchRoute, type NormalizedFeedItem } from "./rsshub-client";
+import { resolveCreatorClaimsBatch, type ResolvedClaim } from "@/lib/paylabs/creator-distribution/claim-resolver";
 
 export interface SyncSummary {
   sync_started_at: string;
@@ -138,11 +139,38 @@ export async function syncRsshub(
     // Monetization gate: only verified + monetized routes get wallet + prices
     const monetized = isRouteMonetized(route);
 
+    // Batch resolve claims for all items in this route
+    const itemUrls = result.items.map((item) => item.canonical_url);
+    let claimMap: Map<string, ResolvedClaim | null> = new Map();
+    try {
+      claimMap = await resolveCreatorClaimsBatch(itemUrls);
+    } catch (e) {
+      // Resolver failure should not block sync — log and continue with route-level wallet
+      console.error(`[rsshub-sync] claim resolver failed for route ${route.title}:`, e);
+    }
+
     for (const item of result.items) {
       const normalizedSha = computeNormalizedSha(item);
       const contentSha = computeContentSha(item);
 
-      const row = {
+      // Resolve creator from claim (takes priority over route wallet)
+      const resolvedClaim = claimMap.get(item.canonical_url);
+
+      // Determine creator_wallet and claim_status
+      let creatorWallet: string | null = null;
+      let feedClaimStatus = "unclaimed";
+
+      if (resolvedClaim) {
+        // Verified claim found — use claim wallet
+        creatorWallet = resolvedClaim.creator_wallet;
+        feedClaimStatus = "verified";
+      } else if (monetized) {
+        // No claim but route is monetized — use route wallet
+        creatorWallet = route.creator_wallet;
+        feedClaimStatus = "verified"; // route-level verification
+      }
+
+      const row: Record<string, unknown> = {
         rsshub_route_id: route.id,
         canonical_url: item.canonical_url,
         title: item.title,
@@ -153,14 +181,16 @@ export async function syncRsshub(
         tags: item.tags,
         normalized_sha256: normalizedSha,
         content_sha256: contentSha,
-        // Monetization gate: wallet and prices only for verified+monetized routes
-        creator_wallet: monetized ? route.creator_wallet : null,
-        is_monetized: monetized,
-        price_per_citation_usdc: monetized ? route.default_price_per_citation_usdc : 0,
-        price_per_unlock_usdc: monetized ? route.default_price_per_unlock_usdc : 0,
+        creator_wallet: creatorWallet,
+        is_monetized: monetized || !!resolvedClaim,
+        price_per_citation_usdc: (monetized || resolvedClaim) ? route.default_price_per_citation_usdc : 0,
+        price_per_unlock_usdc: (monetized || resolvedClaim) ? route.default_price_per_unlock_usdc : 0,
         source_payload: item.raw,
         is_active: true,
       };
+
+      // Set claim_status column if it exists (migration 12)
+      row.claim_status = feedClaimStatus;
 
       const { error: upsertError } = await supabaseAdmin()
         .from("paylabs_feed_items")

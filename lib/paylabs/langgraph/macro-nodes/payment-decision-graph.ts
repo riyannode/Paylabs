@@ -63,6 +63,32 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
   // Load feed items for metadata (wallet, price, claim status)
   const { getFeedItemById } = await import("../../../ai/tools");
 
+  // Collect live source URLs for batch claim resolution
+  const liveSourceUrls: string[] = [];
+  for (const card of sourceCards.slice(0, 10)) {
+    const isLiveSource = card.source_kind === "rsshub_live" ||
+      card.source_kind === "tavily_live" ||
+      card.feed_item_id.startsWith("rsshub_live:") ||
+      card.feed_item_id.startsWith("tavily_live:");
+    if (isLiveSource && card.source_url) {
+      liveSourceUrls.push(card.source_url);
+    }
+  }
+
+  // Batch resolve claims for live sources
+  let liveClaimsMap: Map<string, { creator_wallet: string; claim_id: string } | null> = new Map();
+  if (liveSourceUrls.length > 0) {
+    try {
+      const { resolveCreatorClaimsBatch } = await import("../../creator-distribution/claim-resolver");
+      const resolved = await resolveCreatorClaimsBatch(liveSourceUrls);
+      for (const [url, claim] of resolved) {
+        liveClaimsMap.set(url, claim ? { creator_wallet: claim.creator_wallet, claim_id: claim.claim_id } : null);
+      }
+    } catch {
+      // Resolver failure should not block payment decision
+    }
+  }
+
   const candidateMeta: PaymentDecisionStateType["candidateMeta"] = [];
   for (const card of sourceCards.slice(0, 10)) {
     // Skip DB lookup for live source IDs (rsshub_live:*, tavily_live:*)
@@ -73,16 +99,19 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
       card.feed_item_id.startsWith("tavily_live:");
 
     if (isLiveSource) {
-      // Live sources: use card data directly, always non-monetized/unclaimed
+      // Live sources: check claim resolver for verified creator
+      const resolvedClaim = card.source_url ? liveClaimsMap.get(card.source_url) : null;
+      const hasVerifiedClaim = !!resolvedClaim;
+
       candidateMeta.push({
         feed_item_id: card.feed_item_id,
         source_url: card.source_url || "",
         source_title: card.title || "",
         publisher: card.publisher || "",
-        creator_wallet: null,
-        claim_status: "unclaimed",
+        creator_wallet: resolvedClaim?.creator_wallet || null,
+        claim_status: hasVerifiedClaim ? "verified" : "unclaimed",
         source_kind: card.source_kind || (card.feed_item_id.startsWith("rsshub_live:") ? "rsshub_live" : "tavily_live"),
-        is_live: true,  // skip paid approval — no creator to pay
+        is_live: !hasVerifiedClaim,  // verified live sources are NOT treated as unclaimed live
       });
       continue;
     }

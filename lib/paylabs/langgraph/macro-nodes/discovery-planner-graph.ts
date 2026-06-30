@@ -370,16 +370,40 @@ export async function runDiscoveryPlannerGraph(
     const rankedCandidates = result.rankedCandidates || [];
     const sourceCards: SafeSourceCard[] = [];
     const maxSourceCards = Number(process.env.PAYLABS_SOURCE_CONTEXT_MAX_SOURCES) || 20;
+
+    // Collect live source URLs for batch claim resolution
+    const liveSourceUrls: string[] = [];
+    for (const candidate of rankedCandidates.slice(0, maxSourceCards)) {
+      if (candidate.source_kind === "rsshub_live" || candidate.source_kind === "tavily_live") {
+        if (candidate.source_url) liveSourceUrls.push(candidate.source_url);
+      }
+    }
+
+    // Batch resolve claims for live sources
+    let liveClaimsMap: Map<string, { creator_wallet: string; claim_id: string } | null> = new Map();
+    if (liveSourceUrls.length > 0) {
+      try {
+        const { resolveCreatorClaimsBatch } = await import("../../creator-distribution/claim-resolver");
+        const resolved = await resolveCreatorClaimsBatch(liveSourceUrls);
+        for (const [url, claim] of resolved) {
+          liveClaimsMap.set(url, claim ? { creator_wallet: claim.creator_wallet, claim_id: claim.claim_id } : null);
+        }
+      } catch {
+        // Resolver failure should not block discovery
+      }
+    }
+
     for (const candidate of rankedCandidates.slice(0, maxSourceCards)) {
       // Live candidate: has source_url directly
       if (candidate.source_kind === "rsshub_live" || candidate.source_kind === "tavily_live") {
+        const resolvedClaim = candidate.source_url ? liveClaimsMap.get(candidate.source_url) : null;
         sourceCards.push({
           feed_item_id: candidate.feed_item_id,
           title: candidate.title || "",
           source_url: candidate.source_url || "",
           publisher: candidate.publisher || "",
-          claim_status: "unclaimed",
-          creator_wallet: null,
+          claim_status: resolvedClaim ? "verified" : "unclaimed",
+          creator_wallet: resolvedClaim?.creator_wallet || null,
           source_kind: candidate.source_kind,
           provider: candidate.provider,
         });
