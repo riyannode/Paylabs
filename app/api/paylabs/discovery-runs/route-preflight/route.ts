@@ -54,28 +54,6 @@ export async function POST(req: NextRequest) {
     const userWallet = (body.user_wallet || "").trim().toLowerCase();
     const budgetUsdc = Number(body.budget_usdc) || 0.01;
 
-    // ── Validate required fields ────────────────────────────
-    if (!goal) {
-      return NextResponse.json(
-        { ok: false, error: "goal is required" },
-        { status: 400 },
-      );
-    }
-
-    if (!userWallet || !/^0x[a-fA-F0-9]{40}$/.test(userWallet)) {
-      return NextResponse.json(
-        { ok: false, error: "user_wallet must be a valid EVM address" },
-        { status: 400 },
-      );
-    }
-
-    if (budgetUsdc <= 0) {
-      return NextResponse.json(
-        { ok: false, error: "budget_usdc must be positive" },
-        { status: 400 },
-      );
-    }
-
     // ── Retry detection ─────────────────────────────────────
     const customerPaymentSignature =
       req.headers.get("payment-signature") ||
@@ -98,6 +76,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // On first request (no retryRunId), goal and wallet are required
+    if (!retryRunId) {
+      if (!goal) {
+        return NextResponse.json(
+          { ok: false, error: "goal is required" },
+          { status: 400 },
+        );
+      }
+      if (!userWallet || !/^0x[a-fA-F0-9]{40}$/.test(userWallet)) {
+        return NextResponse.json(
+          { ok: false, error: "user_wallet must be a valid EVM address" },
+          { status: 400 },
+        );
+      }
+      if (budgetUsdc <= 0) {
+        return NextResponse.json(
+          { ok: false, error: "budget_usdc must be positive" },
+          { status: 400 },
+        );
+      }
+    }
+
     // ── Import x402 primitives ──────────────────────────────
     const {
       buildCustomerEntryChallenge,
@@ -110,7 +110,6 @@ export async function POST(req: NextRequest) {
 
     const {
       ROUTE_PREFLIGHT_ROUTING_FEE_USDC,
-      ROUTE_PREFLIGHT_ROUTING_FEE_ATOMIC,
       runRouteOnlyBrainPreflight,
       buildRoutePreflightResponse,
       buildRoutePreflightPaymentMeta,
@@ -120,22 +119,49 @@ export async function POST(req: NextRequest) {
 
     // ── Create or reuse discovery run row ───────────────────
     let discoveryRunId: string;
+    let resolvedGoal = goal;
+    let resolvedWallet = userWallet;
+    let resolvedBudget = budgetUsdc;
 
     if (retryRunId) {
-      // Paid retry: reuse existing row
-      discoveryRunId = retryRunId;
+      // Paid retry: load existing row (same pattern as inline route)
+      const { data: existingRun, error: existingErr } = await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .select("id,user_wallet,goal,budget_usdc,agent_trace,status")
+        .eq("id", retryRunId)
+        .single();
+
+      if (existingErr || !existingRun) {
+        return NextResponse.json(
+          { ok: false, error: "invalid_run_id: discovery run not found" },
+          { status: 404 },
+        );
+      }
+
+      // Wallet mismatch: body user_wallet differs from DB stored wallet
+      if (userWallet && existingRun.user_wallet?.toLowerCase() !== userWallet) {
+        return NextResponse.json(
+          { ok: false, error: "run_wallet_mismatch" },
+          { status: 403 },
+        );
+      }
+
+      discoveryRunId = existingRun.id;
+      resolvedGoal = existingRun.goal || goal;
+      resolvedWallet = existingRun.user_wallet?.toLowerCase() || userWallet;
+      resolvedBudget = Number(existingRun.budget_usdc) || budgetUsdc;
     } else {
       // First request: create new row
       const now = new Date().toISOString();
       const { data: runRow, error: runErr } = await supabaseAdmin()
         .from("paylabs_discovery_runs")
         .insert({
-          user_goal: goal.slice(0, 2000),
-          user_wallet: userWallet,
+          goal: resolvedGoal.slice(0, 2000),
+          user_wallet: resolvedWallet,
           route_tier: "auto",
           status: "preflight_pending",
           started_at: now,
-          budget_usdc: budgetUsdc,
+          budget_usdc: resolvedBudget,
           runner_id: "route-preflight",
         })
         .select("id")
@@ -233,15 +259,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verify payer matches user wallet (skip if Gateway doesn't return payer)
+    // Payer check: reject only if payer exists and differs from stored wallet.
+    // If payer is null/undefined (ARC-TESTNET returns null), skip check — same as inline route.
     const payer = entryResult.payer?.toLowerCase();
-    if (payer && payer !== userWallet) {
+    if (payer && payer !== resolvedWallet) {
       await supabaseAdmin()
         .from("paylabs_discovery_runs")
         .update({
           status: "preflight_payer_mismatch",
           completed_at: new Date().toISOString(),
-          error_summary: `route_preflight_payer_mismatch: expected=${userWallet} got=${payer}`,
+          error_summary: `route_preflight_payer_mismatch: expected=${resolvedWallet} got=${payer}`,
         })
         .eq("id", discoveryRunId);
 
@@ -258,12 +285,19 @@ export async function POST(req: NextRequest) {
     try {
       preflightResult = await runRouteOnlyBrainPreflight({
         discoveryRunId,
-        userGoal: goal,
-        userBudgetUsdc: budgetUsdc,
-        userWallet,
+        userGoal: resolvedGoal,
+        userBudgetUsdc: resolvedBudget,
+        userWallet: resolvedWallet,
       });
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message.slice(0, 300) : String(e).slice(0, 300);
+
+      // Merge existing agent_trace — preserve prior payment metadata
+      const { data: traceOnBrainFail } = await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .select("agent_trace")
+        .eq("id", discoveryRunId)
+        .single();
 
       await supabaseAdmin()
         .from("paylabs_discovery_runs")
@@ -272,6 +306,7 @@ export async function POST(req: NextRequest) {
           completed_at: new Date().toISOString(),
           error_summary: errMsg.slice(0, 500),
           agent_trace: {
+            ...((traceOnBrainFail?.agent_trace as Record<string, unknown>) || {}),
             auto_tier_preflight: {
               status: "brain_failed",
               error: errMsg.slice(0, 300),
