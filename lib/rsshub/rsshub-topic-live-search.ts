@@ -391,7 +391,7 @@ export async function fetchTopicRoutesLiveSources(input: {
     expandedQueries,
     negativeFilters,
     sourcePreferences,
-    maxRoutes = 8,
+    maxRoutes = 12,
     maxItemsPerRoute: inputMaxItems,
     callerTag = "topic_live",
   } = input;

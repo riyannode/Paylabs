@@ -91,6 +91,7 @@ const TOPIC_KEYWORDS: Array<{ keywords: string[]; category: "ai" | "crypto"; sub
   // AI — specific
   { keywords: ["openai", "chatgpt", "gpt-4", "gpt-5", "dall-e", "sora", "whisper", "gpt"], category: "ai", subcategory: "openai" },
   { keywords: ["llm", "large language model", "language model", "foundation model", "transformer"], category: "ai", subcategory: "llm" },
+  { keywords: ["ai research", "llm research", "machine learning research", "research paper", "research papers", "latest llm research", "llm paper", "llm papers", "ml research", "deep learning research"], category: "ai", subcategory: "research" },
   { keywords: ["ai assistant", "ai chatbot", "copilot", "ai helper"], category: "ai", subcategory: "assistants" },
   { keywords: ["ai automation", "automated", "workflow automation", "ai workflow"], category: "ai", subcategory: "automation" },
   { keywords: ["claude", "anthropic", "gemini", "google ai", "midjourney", "stable diffusion", "ai image", "ai video", "ai audio"], category: "ai" },
@@ -158,7 +159,7 @@ export function detectTopics(
  */
 export function getTopicRoutes(
   topics: Array<{ category: "ai" | "crypto"; subcategory?: string }>,
-  maxRoutes = 8
+  maxRoutes = 12
 ): TopicRoute[] {
   if (topics.length === 0) return [];
 
@@ -207,7 +208,7 @@ export function getTopicRoutes(
 export function resolveTopicRoutes(
   userGoal: string,
   entityTerms: string[],
-  maxRoutes = 8
+  maxRoutes = 12
 ): TopicRoute[] {
   const topics = detectTopics(userGoal, entityTerms);
   return getTopicRoutes(topics, maxRoutes);
