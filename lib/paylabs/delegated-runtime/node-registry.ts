@@ -155,11 +155,12 @@ export function getMacroNodeAllocationUsdcForTier(
 }
 
 /**
- * Get total allocation for a macro-node — base fee ONLY.
- * Child services are paid as separate edges (no double counting).
+ * Get static macro-node allocation: base fee + configured child budget.
+ * Prefer getMacroNodeAllocationUsdcForTier() for tier-aware billing.
  */
-export function getMacroNodeAllocationUsdc(_nodeName: MacroNodePhase): number {
-  return MACRO_NODE_FEE_USDC;
+export function getMacroNodeAllocationUsdc(nodeName: MacroNodePhase): number {
+  const config = MACRO_NODES[nodeName];
+  return MACRO_NODE_FEE_USDC + config.childServices.length * CHILD_SERVICE_FEE_USDC;
 }
 
 /**

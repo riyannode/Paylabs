@@ -18,7 +18,7 @@
 //   run_budget_controller → Brain (treasury 0.000003 USDC via Circle x402)
 //   Brain → discovery_planner (macro allocation 0.000004 USDC via Circle x402)
 //   Brain → payment_decision (macro allocation 0.000006 USDC via Circle x402)
-//   Brain → settlement_memory (macro allocation 0.000002 USDC via Circle x402)
+//   Brain → settlement_memory (macro allocation 0.000003 normal / 0.000004 advanced via Circle x402)
 //   Each macro-node → child services (0.000001 USDC each, per-child Circle x402)
 
 export const maxDuration = 300;
