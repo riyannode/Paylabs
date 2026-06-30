@@ -36,6 +36,16 @@ const MAX_REDIRECTS = 3;
 /** Unlocked claim statuses that verification can mutate. */
 const UNLOCKED_STATUSES = ["unclaimed", "unknown"];
 
+/** Detect if hostname is a tenant host (shared platform subdomain). */
+function isTenantHost(hostname: string): boolean {
+  return (
+    hostname.endsWith(".github.io") ||
+    hostname.endsWith(".vercel.app") ||
+    hostname.endsWith(".netlify.app") ||
+    hostname.endsWith(".substack.com")
+  );
+}
+
 // ─── SSRF Protection ──────────────────────────────────────────
 
 const PRIVATE_IPV4_RANGES: Array<[number, number]> = [
@@ -349,7 +359,7 @@ async function fetchHostedProofPage(
 
     if (!res.ok) return { ok: false, body: null, error: safeHttpError(res.status) };
 
-    return readHostedBody(res, proofMarkers);
+    return await readHostedBody(res, proofMarkers);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes("abort")) return { ok: false, body: null, error: "proof_fetch_timeout" };
@@ -394,7 +404,7 @@ async function fetchHostedRedirect(
     }
 
     if (!res.ok) return { ok: false, body: null, error: safeHttpError(res.status) };
-    return readHostedBody(res, proofMarkers);
+    return await readHostedBody(res, proofMarkers);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes("abort")) return { ok: false, body: null, error: "proof_fetch_timeout" };
@@ -591,8 +601,8 @@ async function verifyGithubRepoFile(claim: CreatorClaim): Promise<VerifyResult> 
 
     const parts = parsedUrl.pathname.split("/").filter(Boolean);
     if (parts.length < 2) throw new Error("Invalid GitHub URL");
-    owner = parts[0];
-    repo = parts[1].replace(/\.git$/, "");
+    owner = parts[0].toLowerCase();
+    repo = parts[1].replace(/\.git$/, "").toLowerCase();
   } catch {
     return { ok: false, proof_status: "failed", proof_error: "Cannot parse GitHub owner/repo", evidence_hash: null };
   }
@@ -817,10 +827,15 @@ export async function POST(req: NextRequest) {
 
   // If proof passed, check for scope conflict before marking verified.
   if (result.ok && typedClaim.claim_scope_key) {
+    // For tenant hosts, check both host:<host> and legacy domain:<host> keys
+    const scopeKeysToCheck = typedClaim.source_domain && isTenantHost(typedClaim.source_domain)
+      ? [`host:${typedClaim.source_domain}`, `domain:${typedClaim.source_domain}`]
+      : [typedClaim.claim_scope_key];
+
     const { data: conflict } = await supabase
       .from("paylabs_creator_claims")
       .select("id, creator_wallet, claim_status")
-      .eq("claim_scope_key", typedClaim.claim_scope_key)
+      .in("claim_scope_key", scopeKeysToCheck)
       .eq("claim_status", "verified")
       .neq("id", claimId)
       .limit(1);

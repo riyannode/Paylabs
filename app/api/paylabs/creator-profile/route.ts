@@ -147,8 +147,8 @@ function detectClaimScope(url: string, hostname: string): { scope: ClaimScope; s
   if (hostname === "github.com" || hostname === "www.github.com") {
     const parts = new URL(url).pathname.split("/").filter(Boolean);
     if (parts.length >= 2) {
-      const owner = parts[0];
-      const repo = parts[1].replace(/\.git$/, "");
+      const owner = parts[0].toLowerCase();
+      const repo = parts[1].replace(/\.git$/, "").toLowerCase();
       return {
         scope: "github_repo",
         scopeKey: `github_repo:${owner}/${repo}`,

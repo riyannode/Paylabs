@@ -48,8 +48,8 @@ function parseSourceUrl(url: string): ParsedSource | null {
     // GitHub repo detection
     if (hostname === "github.com" || hostname === "www.github.com") {
       if (parts.length >= 2) {
-        const owner = parts[0];
-        const repo = parts[1].replace(/\.git$/, "");
+        const owner = parts[0].toLowerCase();
+        const repo = parts[1].replace(/\.git$/, "").toLowerCase();
         if (/^[A-Za-z0-9_.-]{1,100}$/.test(owner) && /^[A-Za-z0-9_.-]{1,100}$/.test(repo)) {
           return { hostname, pathname, owner, repo, platformProfileKey: null };
         }
@@ -307,11 +307,15 @@ export async function resolveCreatorClaimsBatch(
   const allScopeKeys = [...new Set([...uniqueGithubKeys, ...uniquePlatformProfileKeys, ...uniqueHostKeys, ...uniqueDomainKeys])];
 
   if (allScopeKeys.length > 0) {
-    const { data } = await db
+    const { data, error: scopeKeyError } = await db
       .from("paylabs_creator_claims")
       .select("id, creator_wallet, creator_name, claim_scope_key, canonical_url")
       .in("claim_scope_key", allScopeKeys)
       .eq("claim_status", "verified");
+
+    if (scopeKeyError) {
+      throw new Error(`claim-resolver: scope_key query failed: ${scopeKeyError.message}`);
+    }
 
     if (data) {
       for (const claim of data) {
@@ -327,11 +331,15 @@ export async function resolveCreatorClaimsBatch(
   const unmatchedCanonicalUrls = uniqueCanonicalUrls.filter((url) => !claimsByCanonicalUrl.has(url));
 
   if (unmatchedCanonicalUrls.length > 0) {
-    const { data } = await db
+    const { data, error: canonicalUrlError } = await db
       .from("paylabs_creator_claims")
       .select("id, creator_wallet, creator_name, claim_scope_key, canonical_url")
       .in("canonical_url", unmatchedCanonicalUrls)
       .eq("claim_status", "verified");
+
+    if (canonicalUrlError) {
+      throw new Error(`claim-resolver: canonical_url query failed: ${canonicalUrlError.message}`);
+    }
 
     if (data) {
       for (const claim of data) {
