@@ -20,6 +20,11 @@ import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 import { shouldRunServiceAsDeterministic } from "../execution-mode";
 import { fetchTopicRoutesLiveSources } from "@/lib/rsshub/rsshub-topic-live-search";
 import { detectTopics } from "@/lib/rsshub/topic-routes";
+import {
+  passesAiSourceGuard,
+  passesCryptoSourceGuard,
+  isGenericCatchAllSource,
+} from "@/lib/rsshub/topic-source-guards";
 
 const SignalScoutSchema = z.object({
   ranked_sources: z.array(z.object({
@@ -337,17 +342,12 @@ export const signalScoutHandler: ServiceHandler = async (
   };
   const mergedLive: MergedCandidate[] = [];
 
-  // Generic catch-all routes that should be filtered when topic routes return domain-specific results
-  const GENERIC_CATCH_ALL_PATTERNS = [
-    /\/wiki.*current.events/i,
-    /\/wiki.*in.the.news/i,
-    /en\.wikipedia\.org.*current/i,
-  ];
-
-  // Detect if query is AI/crypto topic — used for Wikipedia guard even when topic routes return 0
+  // Detect if query is AI/crypto topic — used for guards even when topic routes return 0
   const userGoalText = (expanded_queries || []).join(" ") || (entity_terms || []).join(" ");
   const detectedTopics = detectTopics(userGoalText, entity_terms || []);
-  const queryHasDomainTopic = detectedTopics.some((t) => t.category === "ai" || t.category === "crypto");
+  const queryHasAiTopic = detectedTopics.some((t) => t.category === "ai");
+  const queryHasCryptoTopic = detectedTopics.some((t) => t.category === "crypto");
+  const queryHasDomainTopic = queryHasAiTopic || queryHasCryptoTopic;
 
   if (topicResult.candidates.length > 0) {
     const seenUrls = new Set<string>();
@@ -361,27 +361,41 @@ export const signalScoutHandler: ServiceHandler = async (
     if (liveResults) {
       for (const lr of liveResults) {
         if (seenUrls.has(lr.source_url.toLowerCase())) continue;
+        const url = lr.source_url.toLowerCase();
+        const routePath = (lr.route_path || "").toLowerCase();
+        const domain = (lr.domain || "").toLowerCase();
+        const title = (lr.title || "").toLowerCase();
+        const summary = (lr.summary || "").toLowerCase();
         // Filter out generic catch-all sources when domain-specific topic routes exist
-        if (hasDomainSpecificTopics) {
-          const url = lr.source_url.toLowerCase();
-          const routePath = (lr.route_path || "").toLowerCase();
-          if (GENERIC_CATCH_ALL_PATTERNS.some((p) => p.test(url) || p.test(routePath))) {
-            continue;
-          }
+        if (hasDomainSpecificTopics && isGenericCatchAllSource({ domain, routePath, url })) {
+          continue;
+        }
+        // Domain guard: reject non-topic sources from wrong domains for AI/crypto queries
+        if (queryHasAiTopic && !passesAiSourceGuard({ domain, routePath, title, summary })) {
+          continue;
+        }
+        if (queryHasCryptoTopic && !passesCryptoSourceGuard({ domain, routePath, title, summary })) {
+          continue;
         }
         seenUrls.add(lr.source_url.toLowerCase());
         mergedLive.push(lr);
       }
     }
   } else if (liveResults) {
-    // Even when topic routes return 0, filter Wikipedia/current-events if query is AI/crypto
+    // Even when topic routes return 0, filter by domain guard for AI/crypto queries
     if (queryHasDomainTopic) {
       for (const lr of liveResults) {
         const url = lr.source_url.toLowerCase();
         const routePath = (lr.route_path || "").toLowerCase();
-        if (GENERIC_CATCH_ALL_PATTERNS.some((p) => p.test(url) || p.test(routePath))) {
-          continue;
-        }
+        const domain = (lr.domain || "").toLowerCase();
+        const title = (lr.title || "").toLowerCase();
+        const summary = (lr.summary || "").toLowerCase();
+        // Reject generic catch-all
+        if (isGenericCatchAllSource({ domain, routePath, url })) continue;
+        // Domain guard for AI queries
+        if (queryHasAiTopic && !passesAiSourceGuard({ domain, routePath, title, summary })) continue;
+        // Domain guard for crypto queries
+        if (queryHasCryptoTopic && !passesCryptoSourceGuard({ domain, routePath, title, summary })) continue;
         mergedLive.push(lr);
       }
     } else {

@@ -19,6 +19,12 @@
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 import { fetchTopicRoutesLiveSources } from "@/lib/rsshub/rsshub-topic-live-search";
+import { detectTopics } from "@/lib/rsshub/topic-routes";
+import {
+  passesAiSourceGuard,
+  passesCryptoSourceGuard,
+  isGenericCatchAllSource,
+} from "@/lib/rsshub/topic-source-guards";
 
 // ─── Stopwords — generic words that should never count as relevance signals ──
 const STOPWORDS = new Set([
@@ -368,16 +374,14 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
   // Update diagnostics with topic route count
   diagnostics.topic_routes_count = topicResult.diagnostics.topic_routes_count;
 
+  // Detect query topics for domain guard on non-topic candidates
+  const queryGoalText = (expanded_queries || []).join(" ") || (entity_terms || []).join(" ");
+  const detectedTopics = detectTopics(queryGoalText, entity_terms || []);
+  const queryHasAiTopic = detectedTopics.some((t) => t.category === "ai");
+  const queryHasCryptoTopic = detectedTopics.some((t) => t.category === "crypto");
+
   if (merged.length > 0) {
     const MIN_SCORE = 3; // Minimum raw score to be considered relevant
-
-    // Generic catch-all routes that should be filtered when topic routes exist
-    const GENERIC_CATCH_ALL_PATTERNS = [
-      /\/wiki.*current.events/i,
-      /\/wiki.*in.the.news/i,
-      /en\.wikipedia\.org.*current/i,
-    ];
-    const hasDomainSpecificTopics = topicCandidates.length > 0;
 
     const rescored = merged
       .map((item) => {
@@ -391,18 +395,27 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
         return { ...item, local_score, entityHit };
       })
       // Filter: topic candidates pass unconditionally; non-topic need entity/keyword gate
-      // Also reject Wikipedia current-events when domain-specific topic routes exist
+      // Also reject Wikipedia current-events and wrong-domain sources for AI/crypto queries
       .filter((item) => {
-        // Reject generic catch-all when topic routes returned domain-specific results
-        if (hasDomainSpecificTopics) {
-          const url = (item.source_url || "").toLowerCase();
-          const routePath = (item.route_path || "").toLowerCase();
-          if (GENERIC_CATCH_ALL_PATTERNS.some((p) => p.test(url) || p.test(routePath))) {
-            return false;
-          }
+        const url = (item.source_url || "").toLowerCase();
+        const routePath = (item.route_path || "").toLowerCase();
+        const domain = (item.domain || "").toLowerCase();
+        const title = (item.title || "").toLowerCase();
+        const summary = (item.summary || "").toLowerCase();
+
+        // Reject generic catch-all (Wikipedia current-events) for AI/crypto queries
+        if ((queryHasAiTopic || queryHasCryptoTopic) && isGenericCatchAllSource({ domain, routePath, url })) {
+          return false;
         }
         // Topic candidates already passed topic-level acceptance — keep them
         if (item._isTopicCandidate) return true;
+        // Non-topic candidates: apply domain guard for AI/crypto queries
+        if (queryHasAiTopic && !passesAiSourceGuard({ domain, routePath, title, summary })) {
+          return false;
+        }
+        if (queryHasCryptoTopic && !passesCryptoSourceGuard({ domain, routePath, title, summary })) {
+          return false;
+        }
         // Non-topic candidates need entity match OR keyword score
         return item.entityHit || item.local_score >= MIN_SCORE;
       })

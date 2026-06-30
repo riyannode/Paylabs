@@ -17,6 +17,11 @@ import type {
 } from "./types";
 import { sanitizeEntityTerms, hasBoundaryTerm } from "./source-term-matching";
 import { detectTopics } from "@/lib/rsshub/topic-routes";
+import {
+  passesAiSourceGuard,
+  passesCryptoSourceGuard,
+  isGenericCatchAllSource,
+} from "@/lib/rsshub/topic-source-guards";
 
 // ─── Topic-aware source validation ────────────────────────
 
@@ -255,9 +260,11 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entity
   const isGitHubIntent = /\bgithub\b/i.test(goalLower) || /\brepo(s|sitory|sitories)?\b/i.test(goalLower) || !!ownerRepoMatch;
   const isNewsIntent = goalLower.includes("news") || goalLower.includes("latest") || goalLower.includes("update");
 
-  // Resolver-level guard: reject Wikipedia/current-events for AI/crypto topic queries
+  // Resolver-level guard: detect AI/crypto topic queries
   const _detectedTopics = detectTopics(normalizedGoal, entityTerms || []);
-  const _queryHasDomainTopic = _detectedTopics.some((t) => t.category === "ai" || t.category === "crypto");
+  const _queryHasAiTopic = _detectedTopics.some((t) => t.category === "ai");
+  const _queryHasCryptoTopic = _detectedTopics.some((t) => t.category === "crypto");
+  const _queryHasDomainTopic = _queryHasAiTopic || _queryHasCryptoTopic;
 
   const filtered = sources.filter((src) => {
     const title = (src.title || "").toLowerCase();
@@ -270,12 +277,17 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entity
     const combined = `${title} ${summary} ${domain} ${routePath} ${url} ${reason}`;
 
     // Wikipedia/current-events guard: reject generic catch-all for AI/crypto queries
-    if (_queryHasDomainTopic) {
-      const isWikipediaCatchAll =
-        /\/wiki.*current.events/i.test(routePath) ||
-        /\/wiki.*in.the.news/i.test(routePath) ||
-        (/en\.wikipedia\.org/i.test(domain) && /current/i.test(routePath));
-      if (isWikipediaCatchAll) return false;
+    if (_queryHasDomainTopic && isGenericCatchAllSource({ domain, routePath, url })) {
+      return false;
+    }
+
+    // Resolver-level AI domain guard: reject wrong-domain sources for AI queries
+    if (_queryHasAiTopic && !passesAiSourceGuard({ domain, routePath, title, summary })) {
+      return false;
+    }
+    // Resolver-level crypto domain guard: reject wrong-domain sources for crypto queries
+    if (_queryHasCryptoTopic && !passesCryptoSourceGuard({ domain, routePath, title, summary })) {
+      return false;
     }
 
     // Entity terms: at least ONE must appear (includes short meaningful tokens like x402, ai)
