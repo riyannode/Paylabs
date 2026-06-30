@@ -36,6 +36,21 @@ const MAX_REDIRECTS = 3;
 /** Unlocked claim statuses that verification can mutate. */
 const UNLOCKED_STATUSES = ["unclaimed", "unknown"];
 
+/** Canonical host aliases — redirects between these are allowed for hosted-link verification. */
+const CANONICAL_HOST_ALIASES: Record<string, string[]> = {
+  "twitter.com": ["x.com"],
+  "x.com": ["twitter.com"],
+  "youtube.com": ["www.youtube.com"],
+  "www.youtube.com": ["youtube.com"],
+  "medium.com": ["www.medium.com"],
+  "www.medium.com": ["medium.com"],
+};
+
+function isAllowedHostRedirect(from: string, to: string): boolean {
+  if (from === to) return true;
+  return CANONICAL_HOST_ALIASES[from]?.includes(to) ?? false;
+}
+
 /** Detect if hostname is a tenant host (shared platform subdomain). */
 function isTenantHost(hostname: string): boolean {
   return (
@@ -344,8 +359,8 @@ async function fetchHostedProofPage(
       // Must stay HTTPS
       if (redirectUrl.protocol !== "https:") return { ok: false, body: null, error: "proof_redirect_blocked" };
 
-      // Must stay on same hostname
-      if (redirectUrl.hostname !== expectedHost) return { ok: false, body: null, error: "proof_redirect_blocked" };
+      // Must stay on same hostname (or canonical alias like twitter.com↔x.com)
+      if (!isAllowedHostRedirect(expectedHost, redirectUrl.hostname)) return { ok: false, body: null, error: "proof_redirect_blocked" };
 
       // No userinfo
       if (redirectUrl.username || redirectUrl.password) return { ok: false, body: null, error: "proof_redirect_blocked" };
@@ -394,7 +409,7 @@ async function fetchHostedRedirect(
       let redirectUrl: URL;
       try { redirectUrl = new URL(location, url); } catch { return { ok: false, body: null, error: "proof_redirect_blocked" }; }
       if (redirectUrl.protocol !== "https:") return { ok: false, body: null, error: "proof_redirect_blocked" };
-      if (redirectUrl.hostname !== expectedHost) return { ok: false, body: null, error: "proof_redirect_blocked" };
+      if (!isAllowedHostRedirect(expectedHost, redirectUrl.hostname)) return { ok: false, body: null, error: "proof_redirect_blocked" };
       if (redirectUrl.username || redirectUrl.password) return { ok: false, body: null, error: "proof_redirect_blocked" };
 
       const hostCheck = await assertPublicHost(redirectUrl.hostname);

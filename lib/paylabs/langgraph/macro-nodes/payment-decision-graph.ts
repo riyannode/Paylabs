@@ -114,17 +114,21 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
     if (isLiveSource) {
       // Live sources: check claim resolver for verified creator
       const resolvedClaim = card.source_url ? liveClaimsMap.get(card.source_url) : null;
-      const hasVerifiedClaim = !!resolvedClaim;
+
+      // Fall back to card's existing claim data when resolver misses
+      // (discovery may have already resolved the claim)
+      const wallet = resolvedClaim?.creator_wallet || card.creator_wallet || null;
+      const status = resolvedClaim ? "verified" : (card.claim_status || "unclaimed");
 
       candidateMeta.push({
         feed_item_id: card.feed_item_id,
         source_url: card.source_url || "",
         source_title: card.title || "",
         publisher: card.publisher || "",
-        creator_wallet: resolvedClaim?.creator_wallet || null,
-        claim_status: hasVerifiedClaim ? "verified" : "unclaimed",
+        creator_wallet: wallet,
+        claim_status: status,
         source_kind: card.source_kind || (card.feed_item_id.startsWith("rsshub_live:") ? "rsshub_live" : "tavily_live"),
-        is_live: !hasVerifiedClaim,  // verified live sources are NOT treated as unclaimed live
+        is_live: !resolvedClaim && status !== "verified",  // verified live sources are NOT treated as unclaimed live
       });
       continue;
     }
