@@ -416,7 +416,7 @@ export async function runDiscoveryPlannerGraph(
           title: String(feedItem?.title || candidate.title || ""),
           source_url: String(feedItem?.canonical_url || ""),
           publisher: String(feedItem?.publisher || candidate.publisher || ""),
-          claim_status: String(feedItem?.verification_status || "unclaimed"),
+          claim_status: String(feedItem?.claim_status || feedItem?.verification_status || "unclaimed"),
           creator_wallet: feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : null,
         });
       }

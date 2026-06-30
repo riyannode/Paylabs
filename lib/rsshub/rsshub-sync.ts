@@ -202,7 +202,7 @@ export async function syncRsshub(
         );
       } else {
         itemsUpserted++;
-        if (monetized) {
+        if (monetized || resolvedClaim) {
           monetizedItems++;
         } else {
           unmonetizedItems++;

@@ -394,6 +394,15 @@ function getProofUrl(claimId: string, proofNonce: string): string {
   return `${baseUrl}/creator-proof/${claimId}/${proofNonce}`;
 }
 
+/**
+ * Derive the proof text string for hosted_link_backlink.
+ * This is a deterministic text the creator can paste anywhere.
+ * Format: paylabs-v1 claim=<claim_id> wallet=<creator_wallet_lowercase> nonce=<proof_nonce>
+ */
+function getProofText(claimId: string, creatorWallet: string, proofNonce: string): string {
+  return `paylabs-v1 claim=${claimId} wallet=${creatorWallet.toLowerCase()} nonce=${proofNonce}`;
+}
+
 async function verifyGithubRepoFile(claim: CreatorClaim): Promise<VerifyResult> {
   const sourceUrl = claim.source_url;
   if (!sourceUrl) {
@@ -481,12 +490,12 @@ async function verifyGithubRepoFile(claim: CreatorClaim): Promise<VerifyResult> 
  * Hosted Link Backlink Verification
  *
  * Fetches the creator's registered source_url (profile page, bio link, etc.)
- * and checks if the page body contains the exact PayLabs proof URL.
+ * and checks if the page body contains EITHER:
+ * - The exact PayLabs proof URL (NEXT_PUBLIC_APP_URL/creator-proof/<id>/<nonce>)
+ * - The exact proof text (paylabs-v1 claim=<id> wallet=<wallet> nonce=<nonce>)
  *
- * Proof URL: NEXT_PUBLIC_APP_URL/creator-proof/<claim_id>/<proof_nonce>
- *
- * The creator pastes this URL into their public profile/bio/README.
- * Verification confirms they control the source URL.
+ * Stores only SHA-256 evidence hash. No raw body.
+ * Uses safe error codes — no full URLs in proof_error.
  */
 async function verifyHostedLinkBacklink(claim: CreatorClaim): Promise<VerifyResult> {
   const sourceUrl = claim.source_url;
@@ -507,8 +516,9 @@ async function verifyHostedLinkBacklink(claim: CreatorClaim): Promise<VerifyResu
     return { ok: false, proof_status: "failed", proof_error: hostCheck.error ?? "proof_internal_target_blocked", evidence_hash: null };
   }
 
-  // Build expected proof URL
+  // Build expected proof markers
   const proofUrl = getProofUrl(claim.id, claim.proof_nonce || "");
+  const proofText = getProofText(claim.id, claim.creator_wallet, claim.proof_nonce || "");
 
   // Fetch the source URL (creator's profile page)
   const fetched = await fetchProofRaw(sourceUrl);
@@ -524,12 +534,12 @@ async function verifyHostedLinkBacklink(claim: CreatorClaim): Promise<VerifyResu
 
   const evidenceHash = sha256(fetched.body);
 
-  // Check if the page body contains the exact proof URL
-  if (!fetched.body.includes(proofUrl)) {
+  // Check if the page body contains the proof URL OR the proof text
+  if (!fetched.body.includes(proofUrl) && !fetched.body.includes(proofText)) {
     return {
       ok: false,
       proof_status: "failed",
-      proof_error: `Proof URL not found on page. Add ${proofUrl} to your profile/bio/page.`,
+      proof_error: "proof_link_not_found",
       evidence_hash: evidenceHash,
     };
   }
@@ -581,6 +591,7 @@ export async function POST(req: NextRequest) {
     };
     if (typedClaim.proof_method === "hosted_link_backlink" && typedClaim.proof_nonce) {
       response.proof_url = getProofUrl(typedClaim.id, typedClaim.proof_nonce);
+      response.proof_text = getProofText(typedClaim.id, typedClaim.creator_wallet, typedClaim.proof_nonce);
     }
     return NextResponse.json(response);
   }
@@ -699,9 +710,10 @@ export async function POST(req: NextRequest) {
     message: result.proof_error ?? "Verification failed. Check your proof file and try again.",
   };
 
-  // Include proof URL for hosted_link_backlink so UI can display it
+  // Include proof URL and proof text for hosted_link_backlink so UI can display them
   if (typedClaim.proof_method === "hosted_link_backlink" && typedClaim.proof_nonce) {
     response.proof_url = getProofUrl(typedClaim.id, typedClaim.proof_nonce);
+    response.proof_text = getProofText(typedClaim.id, typedClaim.creator_wallet, typedClaim.proof_nonce);
   }
 
   return NextResponse.json(response);

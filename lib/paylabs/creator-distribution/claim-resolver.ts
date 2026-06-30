@@ -5,10 +5,11 @@
  * Used by RSSHub sync and runtime live source enrichment.
  *
  * Resolution priority (first match wins):
- * 1. github_repo:<owner>/<repo>  — exact GitHub repo match
- * 2. host:<exact-host>           — tenant hosts (*.vercel.app, *.netlify.app, *.github.io)
- * 3. domain:<hostname>           — domain-level claim (fallback)
- * 4. Exact canonical_url match   — last resort
+ * 1. github_repo:<owner>/<repo>        — exact GitHub repo match
+ * 2. platform_profile:<platform>:<handle> — social profile match
+ * 3. host:<exact-host>                 — tenant hosts (*.vercel.app, *.netlify.app, *.github.io, *.substack.com)
+ * 4. domain:<hostname>                 — domain-level claim (fallback)
+ * 5. Exact canonical_url match         — last resort
  *
  * Also supports legacy domain:<host> keys for tenant hosts during transition.
  *
@@ -24,35 +25,62 @@ export interface ResolvedClaim {
   creator_wallet: string;
   creator_name: string | null;
   claim_scope_key: string;
-  match_type: "github_repo" | "host" | "domain" | "canonical_url";
+  match_type: "github_repo" | "platform_profile" | "host" | "domain" | "canonical_url";
 }
 
 // ─── URL Parsing ───────────────────────────────────────────────
 
-function parseSourceUrl(url: string): {
+interface ParsedSource {
   hostname: string;
   pathname: string;
   owner: string | null;
   repo: string | null;
-} | null {
+  platformProfileKey: string | null;
+}
+
+function parseSourceUrl(url: string): ParsedSource | null {
   try {
     const parsed = new URL(url);
     const hostname = parsed.hostname.toLowerCase();
     const pathname = parsed.pathname;
+    const parts = pathname.split("/").filter(Boolean);
 
     // GitHub repo detection
     if (hostname === "github.com" || hostname === "www.github.com") {
-      const parts = pathname.split("/").filter(Boolean);
       if (parts.length >= 2) {
         const owner = parts[0];
         const repo = parts[1].replace(/\.git$/, "");
         if (/^[A-Za-z0-9_.-]{1,100}$/.test(owner) && /^[A-Za-z0-9_.-]{1,100}$/.test(repo)) {
-          return { hostname, pathname, owner, repo };
+          return { hostname, pathname, owner, repo, platformProfileKey: null };
         }
       }
     }
 
-    return { hostname, pathname, owner: null, repo: null };
+    // Twitter/X profile
+    if (hostname === "twitter.com" || hostname === "x.com") {
+      if (parts.length >= 1 && parts[0] && !["search", "settings", "notifications", "messages", "explore", "i"].includes(parts[0])) {
+        return { hostname, pathname, owner: null, repo: null, platformProfileKey: `platform_profile:x:${parts[0].toLowerCase()}` };
+      }
+    }
+
+    // YouTube profile
+    if (hostname === "youtube.com" || hostname === "www.youtube.com") {
+      if (parts.length >= 1 && parts[0]?.startsWith("@")) {
+        return { hostname, pathname, owner: null, repo: null, platformProfileKey: `platform_profile:youtube:${parts[0].slice(1).toLowerCase()}` };
+      }
+      if (parts.length >= 2 && parts[0] === "channel") {
+        return { hostname, pathname, owner: null, repo: null, platformProfileKey: `platform_profile:youtube:${parts[1]}` };
+      }
+    }
+
+    // Medium profile
+    if (hostname === "medium.com") {
+      if (parts.length >= 1 && parts[0]?.startsWith("@")) {
+        return { hostname, pathname, owner: null, repo: null, platformProfileKey: `platform_profile:medium:${parts[0].slice(1).toLowerCase()}` };
+      }
+    }
+
+    return { hostname, pathname, owner: null, repo: null, platformProfileKey: null };
   } catch {
     return null;
   }
@@ -63,11 +91,12 @@ function isTenantHost(hostname: string): boolean {
   return (
     hostname.endsWith(".github.io") ||
     hostname.endsWith(".vercel.app") ||
-    hostname.endsWith(".netlify.app")
+    hostname.endsWith(".netlify.app") ||
+    hostname.endsWith(".substack.com")
   );
 }
 
-// ─── Resolver ──────────────────────────────────────────────────
+// ─── Resolver (single URL) ────────────────────────────────────
 
 /**
  * Resolve a source URL to a verified creator claim.
@@ -79,7 +108,7 @@ export async function resolveCreatorClaim(
   const parsed = parseSourceUrl(sourceUrl);
   if (!parsed) return null;
 
-  const { hostname, owner, repo } = parsed;
+  const { hostname, owner, repo, platformProfileKey } = parsed;
   const db = supabaseAdmin();
 
   // Priority 1: GitHub repo match
@@ -104,7 +133,28 @@ export async function resolveCreatorClaim(
     }
   }
 
-  // Priority 2: Tenant host match (host:<exact-host>)
+  // Priority 2: Platform profile match
+  if (platformProfileKey) {
+    const { data } = await db
+      .from("paylabs_creator_claims")
+      .select("id, creator_wallet, creator_name, claim_scope_key")
+      .eq("claim_scope_key", platformProfileKey)
+      .eq("claim_status", "verified")
+      .limit(1)
+      .single();
+
+    if (data) {
+      return {
+        claim_id: data.id,
+        creator_wallet: data.creator_wallet.toLowerCase(),
+        creator_name: data.creator_name,
+        claim_scope_key: data.claim_scope_key,
+        match_type: "platform_profile",
+      };
+    }
+  }
+
+  // Priority 3: Tenant host match (host:<exact-host>)
   // Supports both new host:<host> and legacy domain:<host> keys during transition
   if (isTenantHost(hostname)) {
     const hostKey = `host:${hostname}`;
@@ -129,7 +179,7 @@ export async function resolveCreatorClaim(
     }
   }
 
-  // Priority 3: Domain-level match (domain:<hostname>)
+  // Priority 4: Domain-level match (domain:<hostname>)
   {
     const scopeKey = `domain:${hostname}`;
     const { data } = await db
@@ -151,7 +201,7 @@ export async function resolveCreatorClaim(
     }
   }
 
-  // Priority 4: Exact canonical_url match
+  // Priority 5: Exact canonical_url match
   {
     const { data } = await db
       .from("paylabs_creator_claims")
@@ -175,10 +225,24 @@ export async function resolveCreatorClaim(
   return null;
 }
 
+// ─── Batch Resolver ────────────────────────────────────────────
+
+type ClaimRow = { id: string; creator_wallet: string; creator_name: string | null; claim_scope_key: string; canonical_url: string | null };
+
+function toResolved(row: ClaimRow, matchType: ResolvedClaim["match_type"]): ResolvedClaim {
+  return {
+    claim_id: row.id,
+    creator_wallet: row.creator_wallet.toLowerCase(),
+    creator_name: row.creator_name,
+    claim_scope_key: row.claim_scope_key,
+    match_type: matchType,
+  };
+}
+
 /**
  * Batch resolve multiple source URLs.
  * Returns a Map of sourceUrl → ResolvedClaim (null if no match).
- * Uses a single DB query per priority level for efficiency.
+ * Uses batched DB queries per priority level for efficiency.
  */
 export async function resolveCreatorClaimsBatch(
   sourceUrls: string[]
@@ -192,6 +256,7 @@ export async function resolveCreatorClaimsBatch(
 
   // Collect all scope keys to query
   const githubKeys: string[] = [];
+  const platformProfileKeys: string[] = [];
   const hostKeys: string[] = [];
   const domainKeys: string[] = [];
   const canonicalUrls: string[] = [];
@@ -206,9 +271,13 @@ export async function resolveCreatorClaimsBatch(
       githubKeys.push(`github_repo:${p.owner}/${p.repo}`);
     }
 
+    if (p.platformProfileKey) {
+      platformProfileKeys.push(p.platformProfileKey);
+    }
+
     if (isTenantHost(p.hostname)) {
       hostKeys.push(`host:${p.hostname}`);
-      // Also add legacy domain:<host> for transition
+      // Legacy domain:<host> for transition
       domainKeys.push(`domain:${p.hostname}`);
     }
 
@@ -218,17 +287,19 @@ export async function resolveCreatorClaimsBatch(
 
   // Deduplicate
   const uniqueGithubKeys = [...new Set(githubKeys)];
+  const uniquePlatformProfileKeys = [...new Set(platformProfileKeys)];
   const uniqueHostKeys = [...new Set(hostKeys)];
   const uniqueDomainKeys = [...new Set(domainKeys)];
   const uniqueCanonicalUrls = [...new Set(canonicalUrls)];
 
   const db = supabaseAdmin();
 
-  // Batch query all verified claims with matching scope keys
-  const allScopeKeys = [...new Set([...uniqueGithubKeys, ...uniqueHostKeys, ...uniqueDomainKeys])];
+  // Build maps from batch queries
+  const claimsByScopeKey = new Map<string, ClaimRow>();
+  const claimsByCanonicalUrl = new Map<string, ClaimRow>();
 
-  let claimsByScopeKey = new Map<string, { id: string; creator_wallet: string; creator_name: string | null; claim_scope_key: string }>();
-  let claimsByCanonicalUrl = new Map<string, { id: string; creator_wallet: string; creator_name: string | null; claim_scope_key: string }>();
+  // Query 1: scope_key IN (all scope keys)
+  const allScopeKeys = [...new Set([...uniqueGithubKeys, ...uniquePlatformProfileKeys, ...uniqueHostKeys, ...uniqueDomainKeys])];
 
   if (allScopeKeys.length > 0) {
     const { data } = await db
@@ -247,6 +318,25 @@ export async function resolveCreatorClaimsBatch(
     }
   }
 
+  // Query 2: canonical_url IN (only URLs not already found via scope_key)
+  const unmatchedCanonicalUrls = uniqueCanonicalUrls.filter((url) => !claimsByCanonicalUrl.has(url));
+
+  if (unmatchedCanonicalUrls.length > 0) {
+    const { data } = await db
+      .from("paylabs_creator_claims")
+      .select("id, creator_wallet, creator_name, claim_scope_key, canonical_url")
+      .in("canonical_url", unmatchedCanonicalUrls)
+      .eq("claim_status", "verified");
+
+    if (data) {
+      for (const claim of data) {
+        if (claim.canonical_url && !claimsByCanonicalUrl.has(claim.canonical_url)) {
+          claimsByCanonicalUrl.set(claim.canonical_url, claim);
+        }
+      }
+    }
+  }
+
   // Resolve each URL by priority
   for (const { url, parsed: p } of parsed) {
     if (!p || result.has(url)) continue;
@@ -256,61 +346,46 @@ export async function resolveCreatorClaimsBatch(
       const key = `github_repo:${p.owner}/${p.repo}`;
       const claim = claimsByScopeKey.get(key);
       if (claim) {
-        result.set(url, {
-          claim_id: claim.id,
-          creator_wallet: claim.creator_wallet.toLowerCase(),
-          creator_name: claim.creator_name,
-          claim_scope_key: claim.claim_scope_key,
-          match_type: "github_repo",
-        });
+        result.set(url, toResolved(claim, "github_repo"));
         continue;
       }
     }
 
-    // Priority 2: Tenant host (host:<host> or legacy domain:<host>)
+    // Priority 2: Platform profile
+    if (p.platformProfileKey) {
+      const claim = claimsByScopeKey.get(p.platformProfileKey);
+      if (claim) {
+        result.set(url, toResolved(claim, "platform_profile"));
+        continue;
+      }
+    }
+
+    // Priority 3: Tenant host (host:<host> or legacy domain:<host>)
     if (isTenantHost(p.hostname)) {
       const hostClaim = claimsByScopeKey.get(`host:${p.hostname}`);
       const legacyClaim = claimsByScopeKey.get(`domain:${p.hostname}`);
       const claim = hostClaim || legacyClaim;
       if (claim) {
-        result.set(url, {
-          claim_id: claim.id,
-          creator_wallet: claim.creator_wallet.toLowerCase(),
-          creator_name: claim.creator_name,
-          claim_scope_key: claim.claim_scope_key,
-          match_type: "host",
-        });
+        result.set(url, toResolved(claim, "host"));
         continue;
       }
     }
 
-    // Priority 3: Domain
+    // Priority 4: Domain
     {
       const key = `domain:${p.hostname}`;
       const claim = claimsByScopeKey.get(key);
       if (claim) {
-        result.set(url, {
-          claim_id: claim.id,
-          creator_wallet: claim.creator_wallet.toLowerCase(),
-          creator_name: claim.creator_name,
-          claim_scope_key: claim.claim_scope_key,
-          match_type: "domain",
-        });
+        result.set(url, toResolved(claim, "domain"));
         continue;
       }
     }
 
-    // Priority 4: Exact canonical_url
+    // Priority 5: Exact canonical_url
     {
       const claim = claimsByCanonicalUrl.get(url);
       if (claim) {
-        result.set(url, {
-          claim_id: claim.id,
-          creator_wallet: claim.creator_wallet.toLowerCase(),
-          creator_name: claim.creator_name,
-          claim_scope_key: claim.claim_scope_key,
-          match_type: "canonical_url",
-        });
+        result.set(url, toResolved(claim, "canonical_url"));
         continue;
       }
     }

@@ -130,7 +130,7 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
       source_title: String(feedItem?.title || card.title || ""),
       publisher: String(feedItem?.publisher || card.publisher || ""),
       creator_wallet: feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : (card.creator_wallet || null),
-      claim_status: String(feedItem?.verification_status || card.claim_status || "unclaimed"),
+      claim_status: String(feedItem?.claim_status || feedItem?.verification_status || card.claim_status || "unclaimed"),
     });
   }
 

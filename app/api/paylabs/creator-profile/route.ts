@@ -73,7 +73,7 @@ function generateNonce(): string {
 
 // ─── Scope Detection ──────────────────────────────────────────
 
-type ClaimScope = "exact_url" | "domain" | "host" | "github_repo" | "manual";
+type ClaimScope = "exact_url" | "domain" | "host" | "github_repo" | "platform_profile" | "manual";
 type SourcePlatform = "domain" | "github" | "vercel" | "netlify" | "github_pages" | "rss_publisher" | "twitter" | "youtube" | "medium" | "substack" | "unsupported";
 
 const SOCIAL_HOSTS: Record<string, SourcePlatform> = {
@@ -92,6 +92,46 @@ function detectSourcePlatform(hostname: string): SourcePlatform {
   if (hostname.endsWith(".netlify.app")) return "netlify";
   if (hostname.endsWith(".substack.com")) return "substack";
   return SOCIAL_HOSTS[hostname] || "domain";
+}
+
+/**
+ * Extract social handle from URL path.
+ * Returns null if not a recognizable social profile URL.
+ */
+function extractSocialHandle(url: string, hostname: string, platform: SourcePlatform): string | null {
+  try {
+    const pathname = new URL(url).pathname;
+    const parts = pathname.split("/").filter(Boolean);
+
+    if (platform === "twitter") {
+      // twitter.com/<handle> or x.com/<handle>
+      if (parts.length >= 1 && parts[0] && !["search", "settings", "notifications", "messages", "explore", "i"].includes(parts[0])) {
+        return parts[0].toLowerCase();
+      }
+    }
+
+    if (platform === "youtube") {
+      // youtube.com/@handle
+      if (parts.length >= 1 && parts[0]?.startsWith("@")) {
+        return parts[0].slice(1).toLowerCase();
+      }
+      // youtube.com/channel/<id>
+      if (parts.length >= 2 && parts[0] === "channel") {
+        return parts[1];
+      }
+    }
+
+    if (platform === "medium") {
+      // medium.com/@handle
+      if (parts.length >= 1 && parts[0]?.startsWith("@")) {
+        return parts[0].slice(1).toLowerCase();
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function detectClaimScope(url: string, hostname: string): { scope: ClaimScope; scopeKey: string; platform: SourcePlatform } {
@@ -126,8 +166,19 @@ function detectClaimScope(url: string, hostname: string): { scope: ClaimScope; s
     };
   }
 
-  // Social platforms (twitter, youtube, medium): host-level claim
+  // Social platforms: platform_profile scope with extracted handle
   if (platform !== "domain") {
+    const handle = extractSocialHandle(url, hostname, platform);
+    if (handle) {
+      // Normalize twitter/x to "x" for scope key
+      const platformKey = platform === "twitter" ? "x" : platform;
+      return {
+        scope: "platform_profile",
+        scopeKey: `platform_profile:${platformKey}:${handle}`,
+        platform,
+      };
+    }
+    // Fallback to host if handle extraction fails
     return {
       scope: "host",
       scopeKey: `host:${hostname}`,
