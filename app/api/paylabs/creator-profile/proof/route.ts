@@ -9,12 +9,20 @@
  * - calls deterministic verifyCreatorClaimProof
  * - updates paylabs_creator_claims based on result
  * - no LLM, no admin secret, no NEXT_PUBLIC secret
+ *
+ * Security fixes:
+ * - Fix 1: Reject if another verified claim exists for same source_url
+ * - Fix 2: Guard all updates with .in("claim_status", ["unclaimed", "unknown"])
+ *          to prevent stale writes over rejected/revoked claims
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSession, refreshSession } from "@/lib/paylabs/ucw";
-import { verifyCreatorClaimProof } from "@/lib/paylabs/creator-distribution/proof-verifier";
+import {
+  verifyCreatorClaimProof,
+  findVerifiedClaimConflict,
+} from "@/lib/paylabs/creator-distribution/proof-verifier";
 
 const VALID_PROOF_TYPES = new Set(["well_known_json", "dns_txt"]);
 
@@ -125,7 +133,38 @@ export async function POST(req: NextRequest) {
   const now = new Date().toISOString();
 
   if (result.ok) {
-    // Success
+    // Fix 1: Check for duplicate verified claim before marking verified
+    const conflict = await findVerifiedClaimConflict(
+      db,
+      claimId,
+      claim.source_url as string | null,
+    );
+    if (conflict) {
+      // Another claim already verified for this source — block this one
+      await db
+        .from("paylabs_creator_claims")
+        .update({
+          proof_status: "failed",
+          proof_error: "verified_claim_conflict",
+          proof_checked_at: now,
+          updated_at: now,
+        })
+        .eq("id", claimId)
+        .in("claim_status", ["unclaimed", "unknown"]);
+
+      if (sid) await refreshSession(sid);
+      return NextResponse.json(
+        {
+          ok: false,
+          verified: false,
+          proof_error: "verified_claim_conflict",
+          conflict_claim_id: conflict.conflict_claim_id,
+        },
+        { status: 409 },
+      );
+    }
+
+    // Fix 2: Guard update with claim_status check
     const { data: updated, error: updateError } = await db
       .from("paylabs_creator_claims")
       .update({
@@ -140,8 +179,8 @@ export async function POST(req: NextRequest) {
         updated_at: now,
       })
       .eq("id", claimId)
-      .select(SAFE_CLAIM_COLUMNS)
-      .single();
+      .in("claim_status", ["unclaimed", "unknown"])
+      .select(SAFE_CLAIM_COLUMNS);
 
     if (updateError) {
       console.error("[creator-proof] update failed", {
@@ -153,15 +192,25 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Fix 2: Handle no-row result (status changed between read and write)
+    if (!updated || updated.length === 0) {
+      if (sid) await refreshSession(sid);
+      return NextResponse.json(
+        { error: "claim_status_changed" },
+        { status: 409 },
+      );
+    }
+
     if (sid) await refreshSession(sid);
     return NextResponse.json({
       ok: true,
       verified: true,
-      claim: updated,
+      claim: updated[0],
     });
   } else {
     // Failure — do NOT set claim_status="rejected"
-    const { data: updated, error: updateError } = await db
+    // Fix 2: Guard failure update with claim_status check
+    await db
       .from("paylabs_creator_claims")
       .update({
         proof_status: "failed",
@@ -171,25 +220,21 @@ export async function POST(req: NextRequest) {
         updated_at: now,
       })
       .eq("id", claimId)
-      .select(SAFE_CLAIM_COLUMNS)
-      .single();
+      .in("claim_status", ["unclaimed", "unknown"]);
 
-    if (updateError) {
-      console.error("[creator-proof] update failed", {
-        code: updateError.code,
-      });
-      return NextResponse.json(
-        { error: "Failed to update claim" },
-        { status: 500 },
-      );
-    }
+    // Re-read to return current state (may have changed)
+    const { data: current } = await db
+      .from("paylabs_creator_claims")
+      .select(SAFE_CLAIM_COLUMNS)
+      .eq("id", claimId)
+      .single();
 
     if (sid) await refreshSession(sid);
     return NextResponse.json({
       ok: false,
       verified: false,
       proof_error: result.proof_error,
-      claim: updated,
+      claim: current,
     });
   }
 }
