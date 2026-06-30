@@ -75,6 +75,21 @@ export function isDelegatedInlineExecutionEnabled(): boolean {
   return process.env.PAYLABS_DELEGATED_INLINE_EXECUTION === "true";
 }
 
+// ─── Auto-Tier Preflight Flag ───────────────────────────────
+
+/**
+ * Check if auto-tier route preflight is enabled.
+ * When true, route_tier=auto uses a two-step flow:
+ *   1. Route-only preflight (0.000001 USDC) → Brain selects tier
+ *   2. Final entry payment (locked quote - routing fee) → full orchestration
+ *
+ * When false (default), existing production flow is unchanged:
+ *   auto → easy quote → entry payment → Brain resolves tier → orchestration.
+ */
+export function isAutoTierPreflightEnabled(): boolean {
+  return process.env.PAYLABS_AUTO_TIER_PREFLIGHT_ENABLED === "true";
+}
+
 export {
   getAgentServiceExecutionMode,
   isAgentServiceLlmEnabled,
