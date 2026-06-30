@@ -7,7 +7,7 @@ import SubPageMobileNav from "@/components/paylabs/SubPageMobileNav";
 async function getRecentX402Payments(limit = 50) {
   const { data } = await supabaseAdmin()
     .from("paylabs_service_payment_events")
-    .select("discovery_run_id, node_type, seller, status, mode, amount_usdc, tx_hash, explorer_url, settlement_id, settlement_url, batch_tx_hash, batch_explorer_url, safe_summary, error, created_at")
+    .select("*")
     .order("created_at", { ascending: false })
     .limit(limit);
   return data || [];
@@ -152,7 +152,7 @@ export default async function DashboardPage() {
           { label: "Users (7d)", value: recentUsers7d },
           { label: "x402 Service Payments", value: servicePaymentCount },
           { label: "Receipts", value: receiptCount },
-          { label: "Settled USDC", value: usdc(totalSettledUsdc) },
+          { label: "x402 Volume", value: usdc(totalSettledUsdc) },
           {
             label: "Last TX",
             value: (() => {
@@ -203,6 +203,7 @@ export default async function DashboardPage() {
                 <tr>
                   <th>Time</th>
                   <th>Run ID</th>
+                  <th>Buyer</th>
                   <th>Seller</th>
                   <th>Node Type</th>
                   <th>Amount</th>
@@ -213,10 +214,11 @@ export default async function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {x402PaymentRows.map((r: any, i: number) => (
-                  <tr key={`${r.discovery_run_id}-${i}`}>
+                {x402PaymentRows.map((r: any) => (
+                  <tr key={r.event_id}>
                     <td className="muted">{timeAgo(r.created_at)}</td>
                     <td className="data-mono">{short(r.discovery_run_id)}</td>
+                    <td className="data-mono" style={{ fontSize: 11 }}>{r.buyer}</td>
                     <td className="data-mono" style={{ fontSize: 11 }}>{r.seller}</td>
                     <td>
                       <span className={`badge ${
