@@ -740,6 +740,9 @@ function buildX402Output(
       }
     : undefined;
 
+  // gross = all x402 transfers including child pass-through (Platform x402 Volume)
+  const grossPaymentVolumeUsdc = userBudgetUsedUsdc + childPaymentVolumeUsdc;
+
   return {
     discoveryRunId,
     status,
@@ -748,10 +751,10 @@ function buildX402Output(
     safeProgressSummaries,
     budgetSnapshot: {
       totalBudgetUsdc: userBudgetUsdc,
-      spentUsdc: userBudgetUsedUsdc,  // Budget consumed: controller→brain + brain→macro (no child double-count)
+      spentUsdc: userBudgetUsedUsdc,  // user cost = brain→macro (includes child budgets)
       remainingUsdc: Math.max(0, userBudgetUsdc - userBudgetUsedUsdc),
       serviceSpend: {} as Record<string, number>,
-      settledServiceFeesUsdc: childPaymentVolumeUsdc,  // Actual child service payments only
+      settledServiceFeesUsdc: childPaymentVolumeUsdc,
       estimatedServiceFeesUsdc: 0,
       userBudgetUsdc,
       userBudgetUsedUsdc,
@@ -759,14 +762,8 @@ function buildX402Output(
       treasuryFeeUsdc: FIXED_FEES_USDC.brainTreasury,
       macroAllocationUsdc: userBudgetUsedUsdc - FIXED_FEES_USDC.brainTreasury,
       childPaymentVolumeUsdc,
-      grossPaymentVolumeUsdc: userBudgetUsedUsdc + childPaymentVolumeUsdc,
-      executionFeeUsdc: lockedPlan
-        ? (lockedPlan.plannedCostBreakdown.brain_treasury_usdc +
-           lockedPlan.plannedCostBreakdown.macro_node_fees_usdc +
-           lockedPlan.plannedCostBreakdown.service_edge_fees_usdc +
-           lockedPlan.plannedCostBreakdown.registry_check_fees_usdc +
-           lockedPlan.plannedCostBreakdown.source_access_fees_usdc)
-        : undefined,
+      grossPaymentVolumeUsdc,
+      executionFeeUsdc: userBudgetUsedUsdc,  // = brain→macro edges (includes child budgets)
     },
     consensusDecisions: [],
     paymentPlan,
