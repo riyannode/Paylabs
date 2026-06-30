@@ -38,6 +38,19 @@ const AI_ROUTES: TopicRoute[] = [
   { path: "/aibase/topic/%E8%87%AA%E5%8A%A8%E5%8C%96", label: "AIBase Automation", category: "ai", subcategory: "automation", validated: true },
   { path: "/aibase/topic/%E5%A4%A7%E5%9E%8B%E8%AF%AD%E8%A8%80%E6%A8%A1%E5%9E%8B", label: "AIBase Large Language Models", category: "ai", subcategory: "llm", validated: true },
 
+  // AIBase — additional topic routes (2026-06 validated)
+  { path: "/aibase/topic/AI%E5%B7%A5%E5%85%B7", label: "AIBase AI Tools", category: "ai", subcategory: "tools", validated: true },
+  { path: "/aibase/topic/AI%E6%8A%80%E6%9C%AF", label: "AIBase AI Technology", category: "ai", subcategory: "technology", validated: false },
+  { path: "/aibase/topic/ChatGPT", label: "AIBase ChatGPT", category: "ai", subcategory: "chatgpt", validated: true },
+  { path: "/aibase/topic/GPT", label: "AIBase GPT", category: "ai", subcategory: "llm", validated: true },
+
+  // HuggingFace — ML research hub
+  { path: "/huggingface/blog", label: "HuggingFace Blog", category: "ai", subcategory: "research", validated: true },
+  { path: "/huggingface/daily-papers/date/0", label: "HuggingFace Daily Papers", category: "ai", subcategory: "research", validated: true },
+
+  // Google Research
+  { path: "/google/research", label: "Google Research Blog", category: "ai", subcategory: "research", validated: true },
+
   // OpenAI — official
   { path: "/openai/news", label: "OpenAI News", category: "ai", subcategory: "openai", validated: true },
   { path: "/openai/research", label: "OpenAI Research", category: "ai", subcategory: "research", validated: true },
@@ -73,8 +86,8 @@ const CRYPTO_ROUTES: TopicRoute[] = [
 
 /** Keyword → topic mapping. Order matters: first match wins. */
 const TOPIC_KEYWORDS: Array<{ keywords: string[]; category: "ai" | "crypto"; subcategory?: string }> = [
-  // AI — broad
-  { keywords: ["artificial intelligence", "machine learning", "deep learning", "neural network", "ai news", "ai research", "ai model", "ai tool", "ai agent"], category: "ai" },
+  // AI — broad (standalone "ai" uses boundary-safe keywordMatches: "said"/"paid" won't match)
+  { keywords: ["ai", "artificial intelligence", "machine learning", "deep learning", "neural network", "ai news", "ai research", "ai model", "ai tool", "ai agent"], category: "ai" },
   // AI — specific
   { keywords: ["openai", "chatgpt", "gpt-4", "gpt-5", "dall-e", "sora", "whisper", "gpt"], category: "ai", subcategory: "openai" },
   { keywords: ["llm", "large language model", "language model", "foundation model", "transformer"], category: "ai", subcategory: "llm" },

@@ -42,6 +42,12 @@ export interface SourceContext {
   topic_routes_count?: number;
   /** Number of accepted topic route candidates */
   topic_candidates_count?: number;
+  /** Topic-aware validation: warns when AI/crypto topic has 0 sources */
+  source_validation?: {
+    valid: boolean;
+    warning?: string;
+    detected_topic?: string;
+  };
 }
 
 // ─── Source Resolver Input ─────────────────────────────────

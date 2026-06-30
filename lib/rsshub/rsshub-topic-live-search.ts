@@ -17,6 +17,83 @@
 
 import { resolveTopicRoutes, type TopicRoute } from "./topic-routes";
 import { fetchRoute } from "./rsshub-client";
+import { detectTopics } from "./topic-routes";
+
+// ─── Domain Guards ─────────────────────────────────────────
+
+/** AI topic: domains that are always allowed */
+const AI_ALLOWED_DOMAINS = new Set([
+  "openai.com", "help.openai.com",
+  "aibase.com", "top.aibase.com",
+  "huggingface.co",
+  "arxiv.org",
+  "research.google",
+]);
+
+/** AI topic: arxiv.org only allowed when route starts with /huggingface/daily-papers */
+/** AI topic: research.google only allowed when route is /google/research */
+const AI_CONDITIONAL_DOMAINS: Record<string, (routePath: string) => boolean> = {
+  "arxiv.org": (rp) => rp.startsWith("/huggingface/daily-papers"),
+  "research.google": (rp) => rp === "/google/research",
+};
+
+/** Strong AI terms — generic news domains must have these in title/summary to pass */
+const STRONG_AI_TERMS = [
+  "ai", "artificial intelligence", "openai", "chatgpt", "gpt", "llm",
+  "machine learning", "model", "claude", "anthropic", "gemini",
+  "huggingface", "research", "deep learning", "neural",
+  "transformer", "diffusion", "language model",
+];
+
+/** Crypto topic: explicitly allowed domains */
+const CRYPTO_ALLOWED_DOMAINS = new Set([
+  "coindesk.com", "www.coindesk.com",
+  "cointelegraph.com", "www.cointelegraph.com",
+  "cryptoslate.com", "www.cryptoslate.com",
+  "theblock.co", "www.theblock.co",
+  "binance.com", "www.binance.com",
+]);
+
+function isDomainOrSubdomainOf(input: string, base: string): boolean {
+  const raw = input.toLowerCase().trim();
+  const b = base.toLowerCase();
+  return raw === b || raw.endsWith(`.${b}`);
+}
+
+function passesAiDomainGuard(domain: string, routePath: string, title: string, summary: string): boolean {
+  const d = domain.toLowerCase();
+  // Always-allowed domains
+  for (const allowed of AI_ALLOWED_DOMAINS) {
+    if (isDomainOrSubdomainOf(d, allowed)) return true;
+  }
+  // Conditional domains
+  for (const [condDomain, check] of Object.entries(AI_CONDITIONAL_DOMAINS)) {
+    if (isDomainOrSubdomainOf(d, condDomain) && check(routePath)) return true;
+  }
+  // Generic domain: require strong AI terms in title/summary
+  const combined = `${title} ${summary}`.toLowerCase();
+  return STRONG_AI_TERMS.some((t) => {
+    if (t.length <= 3) {
+      return new RegExp(`(^|[^a-z0-9])${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i").test(combined);
+    }
+    return combined.includes(t);
+  });
+}
+
+function passesCryptoDomainGuard(domain: string, routePath: string, title: string, summary: string): boolean {
+  const d = domain.toLowerCase();
+  // If from a crypto route (topic_route:crypto), allow it
+  if (routePath.startsWith("/coindesk/") || routePath.startsWith("/cointelegraph") ||
+      routePath.startsWith("/cryptoslate") || routePath.startsWith("/theblock/") ||
+      routePath.startsWith("/binance/")) return true;
+  // Explicitly allowed domains
+  for (const allowed of CRYPTO_ALLOWED_DOMAINS) {
+    if (isDomainOrSubdomainOf(d, allowed)) return true;
+  }
+  // Generic domain: require strong crypto terms
+  const combined = `${title} ${summary}`.toLowerCase();
+  return /\b(crypto|bitcoin|ethereum|blockchain|defi|web3|token|stablecoin|usdc|binance)\b/i.test(combined);
+}
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -398,6 +475,20 @@ export async function fetchTopicRoutesLiveSources(input: {
           if (isNegative) {
             itemsRejected++;
             continue;
+          }
+
+          // Domain guard: reject items from irrelevant domains for AI/crypto queries
+          if (detectedCategories.has("ai") && route.category === "ai") {
+            if (!passesAiDomainGuard(domain, route.path, item.title || "", item.summary || "")) {
+              itemsRejected++;
+              continue;
+            }
+          }
+          if (detectedCategories.has("crypto") && route.category === "crypto") {
+            if (!passesCryptoDomainGuard(domain, route.path, item.title || "", item.summary || "")) {
+              itemsRejected++;
+              continue;
+            }
           }
 
           // Score the item

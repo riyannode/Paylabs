@@ -18,6 +18,37 @@ import type {
 import { sanitizeEntityTerms, hasBoundaryTerm } from "./source-term-matching";
 import { detectTopics } from "@/lib/rsshub/topic-routes";
 
+// ─── Topic-aware source validation ────────────────────────
+
+/** Check if a topic query has insufficient sources — frontend must NOT show ✅ */
+function validateTopicSources(
+  sources: SourceItem[],
+  normalizedGoal: string,
+  entityTerms: string[]
+): { valid: boolean; warning?: string; detected_topic?: string } {
+  const topics = detectTopics(normalizedGoal, entityTerms);
+  if (topics.length === 0) return { valid: true };
+
+  const hasAi = topics.some((t) => t.category === "ai");
+  const hasCrypto = topics.some((t) => t.category === "crypto");
+
+  if (hasAi && sources.length === 0) {
+    return {
+      valid: false,
+      warning: "AI topic detected but no AI-specific sources found. Links are empty — do not mark as ✅.",
+      detected_topic: "ai",
+    };
+  }
+  if (hasCrypto && sources.length === 0) {
+    return {
+      valid: false,
+      warning: "Crypto topic detected but no crypto-specific sources found. Links are empty — do not mark as ✅.",
+      detected_topic: "crypto",
+    };
+  }
+  return { valid: true };
+}
+
 // ─── Whitelist: safe columns only ─────────────────────────
 // NEVER include source_payload, normalized_sha256, content_sha256,
 // creator_wallet, price_per_citation_usdc, price_per_unlock_usdc
@@ -304,6 +335,9 @@ export async function resolveSources(
       input.intentType
     ) + entityDiagnostic;
 
+    // Topic-aware validation: warn if AI/crypto topic but 0 sources
+    const sourceValidation = validateTopicSources(sources, input.normalizedGoal, input.entityTerms || []);
+
     return {
       ok: true,
       sourceContext: {
@@ -311,6 +345,7 @@ export async function resolveSources(
         source_selection_summary: sourceSelectionSummary,
         source_confidence: sourceConfidence,
         source_count: sources.length,
+        source_validation: sourceValidation,
       },
       error: null,
     };
