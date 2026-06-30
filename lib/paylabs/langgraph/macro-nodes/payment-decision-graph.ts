@@ -22,6 +22,19 @@ import { createServiceNode } from "../services/service-node";
 import type { ServiceName } from "../../agent-services/types";
 import type { BudgetSnapshot, SafeSourceCard } from "../../delegated-runtime/types";
 
+// ─── Claim Status Normalization ────────────────────────────
+// paylabs_feed_items uses 'claimed'/'unclaimed' (migration 12).
+// Payout pipeline (claim-policy.ts) expects 'verified'/'unclaimed'.
+// This normalizer bridges the two.
+
+function normalizeClaimStatus(...statuses: unknown[]): string {
+  for (const s of statuses) {
+    if (s === "verified" || s === "claimed") return "verified";
+    if (s && s !== "unclaimed" && s !== "null" && s !== "undefined") return String(s);
+  }
+  return "unclaimed";
+}
+
 // ─── Helper to cast state in payload functions ──────────────
 
 function asDecisionState(state: Record<string, unknown>): PaymentDecisionStateType {
@@ -130,7 +143,7 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
       source_title: String(feedItem?.title || card.title || ""),
       publisher: String(feedItem?.publisher || card.publisher || ""),
       creator_wallet: feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : (card.creator_wallet || null),
-      claim_status: String(feedItem?.claim_status || feedItem?.verification_status || card.claim_status || "unclaimed"),
+      claim_status: normalizeClaimStatus(feedItem?.claim_status, feedItem?.verification_status, card.claim_status),
     });
   }
 

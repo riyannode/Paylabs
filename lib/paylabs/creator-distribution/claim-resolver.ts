@@ -58,7 +58,12 @@ function parseSourceUrl(url: string): ParsedSource | null {
 
     // Twitter/X profile
     if (hostname === "twitter.com" || hostname === "x.com") {
-      if (parts.length >= 1 && parts[0] && !["search", "settings", "notifications", "messages", "explore", "i"].includes(parts[0])) {
+      const RESERVED_X = new Set([
+        "home", "search", "i", "settings", "notifications", "messages",
+        "explore", "compose", "login", "signup", "download", "tos",
+        "privacy", "about", "jobs", "intent", "share", "hashtag",
+      ]);
+      if (parts.length >= 1 && parts[0] && !RESERVED_X.has(parts[0].toLowerCase()) && !parts[0].startsWith("-")) {
         return { hostname, pathname, owner: null, repo: null, platformProfileKey: `platform_profile:x:${parts[0].toLowerCase()}` };
       }
     }

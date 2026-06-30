@@ -163,11 +163,11 @@ export async function syncRsshub(
       if (resolvedClaim) {
         // Verified claim found — use claim wallet
         creatorWallet = resolvedClaim.creator_wallet;
-        feedClaimStatus = "verified";
+        feedClaimStatus = "claimed";
       } else if (monetized) {
         // No claim but route is monetized — use route wallet
         creatorWallet = route.creator_wallet;
-        feedClaimStatus = "verified"; // route-level verification
+        feedClaimStatus = "claimed";
       }
 
       const row: Record<string, unknown> = {

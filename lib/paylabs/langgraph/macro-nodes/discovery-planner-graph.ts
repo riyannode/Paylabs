@@ -26,6 +26,19 @@ import type { BudgetSnapshot, SafeSourceCard } from "../../delegated-runtime/typ
 // (discovery_planner, payment_decision, settlement_memory) that are NOT
 // graph-internal child services. These presets are graph-internal only.
 
+// ─── Claim Status Normalization ────────────────────────────
+// paylabs_feed_items uses 'claimed'/'unclaimed' (migration 12).
+// Payout pipeline (claim-policy.ts) expects 'verified'/'unclaimed'.
+// This normalizer bridges the two.
+
+function normalizeClaimStatus(...statuses: unknown[]): string {
+  for (const s of statuses) {
+    if (s === "verified" || s === "claimed") return "verified";
+    if (s && s !== "unclaimed" && s !== "null" && s !== "undefined") return String(s);
+  }
+  return "unclaimed";
+}
+
 const DISCOVERY_PLANNER_SERVICE_PRESETS: Record<string, ServiceName[]> = {
   easy: ["intent_planner", "query_builder", "signal_scout_basics"],
   normal: ["intent_planner", "query_builder", "signal_scout"],
@@ -416,7 +429,8 @@ export async function runDiscoveryPlannerGraph(
           title: String(feedItem?.title || candidate.title || ""),
           source_url: String(feedItem?.canonical_url || ""),
           publisher: String(feedItem?.publisher || candidate.publisher || ""),
-          claim_status: String(feedItem?.claim_status || feedItem?.verification_status || "unclaimed"),
+          // Normalize: paylabs_feed_items uses 'claimed', payout pipeline uses 'verified'
+          claim_status: normalizeClaimStatus(feedItem?.claim_status, feedItem?.verification_status),
           creator_wallet: feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : null,
         });
       }

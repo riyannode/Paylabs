@@ -105,7 +105,13 @@ function extractSocialHandle(url: string, hostname: string, platform: SourcePlat
 
     if (platform === "twitter") {
       // twitter.com/<handle> or x.com/<handle>
-      if (parts.length >= 1 && parts[0] && !["search", "settings", "notifications", "messages", "explore", "i"].includes(parts[0])) {
+      // Reject reserved paths that are not profile handles
+      const RESERVED_X = new Set([
+        "home", "search", "i", "settings", "notifications", "messages",
+        "explore", "compose", "login", "signup", "download", "tos",
+        "privacy", "about", "jobs", "intent", "share", "hashtag",
+      ]);
+      if (parts.length >= 1 && parts[0] && !RESERVED_X.has(parts[0].toLowerCase()) && !parts[0].startsWith("-")) {
         return parts[0].toLowerCase();
       }
     }
@@ -201,6 +207,28 @@ function resolveProofMethod(platform: SourcePlatform): "well_known_json" | "gith
   return "well_known_json";
 }
 
+/**
+ * Get equivalent scope keys for a claim scope.
+ * Tenant hosts have two possible keys: host:<host> and legacy domain:<host>.
+ * This ensures conflict checks catch both old and new claims.
+ */
+function getEquivalentScopeKeys(scope: ClaimScope, scopeKey: string, hostname: string): string[] {
+  if (scope === "host" || (scope === "domain" && isTenantHost(hostname))) {
+    // Tenant host: check both host:<host> and domain:<host>
+    return [`host:${hostname}`, `domain:${hostname}`];
+  }
+  return [scopeKey];
+}
+
+function isTenantHost(hostname: string): boolean {
+  return (
+    hostname.endsWith(".github.io") ||
+    hostname.endsWith(".vercel.app") ||
+    hostname.endsWith(".netlify.app") ||
+    hostname.endsWith(".substack.com")
+  );
+}
+
 // ─── GET ──────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
@@ -249,12 +277,16 @@ export async function POST(req: NextRequest) {
 
   const supabase = supabaseAdmin();
 
-  // Check for existing claim on same scope_key + wallet
+  // Get all equivalent scope keys for conflict checking
+  // Tenant hosts have both host:<host> and legacy domain:<host>
+  const equivalentKeys = getEquivalentScopeKeys(scope, scopeKey, hostname);
+
+  // Check for existing claim on same scope_key + wallet (check all equivalent keys)
   const { data: existing, error: selectError } = await supabase
     .from("paylabs_creator_claims")
     .select(SAFE_CLAIM_COLUMNS)
     .eq("creator_wallet", walletAddress)
-    .eq("claim_scope_key", scopeKey)
+    .in("claim_scope_key", equivalentKeys)
     .order("updated_at", { ascending: false })
     .limit(1);
 
@@ -268,11 +300,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Check if another wallet already verified this scope
+  // Check if another wallet already verified this scope (check all equivalent keys)
   const { data: scopeConflict } = await supabase
     .from("paylabs_creator_claims")
     .select("id, creator_wallet, claim_status")
-    .eq("claim_scope_key", scopeKey)
+    .in("claim_scope_key", equivalentKeys)
     .eq("claim_status", "verified")
     .neq("creator_wallet", walletAddress)
     .limit(1);

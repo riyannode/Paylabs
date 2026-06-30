@@ -30,6 +30,7 @@ const SAFE_CLAIM_COLUMNS =
 
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_BODY_BYTES = 64 * 1024; // 64 KB — proof files are tiny
+const MAX_HOSTED_BODY_BYTES = 1024 * 1024; // 1 MB — profile pages can be large
 const MAX_REDIRECTS = 3;
 
 /** Unlocked claim statuses that verification can mutate. */
@@ -293,6 +294,165 @@ function safeHttpError(status: number): string {
   return "proof_fetch_failed";
 }
 
+/**
+ * Fetch a hosted proof page (profile page, bio, README) with:
+ * - 1MB max scan size
+ * - Same-host redirect enforcement (redirects must stay on original hostname)
+ * - SSRF protection on every redirect hop
+ * - No raw body stored (only evidence hash)
+ * - Bounded scan for proof markers
+ */
+type HostedFetchResult = { ok: boolean; body: string | null; error?: string };
+
+async function fetchHostedProofPage(
+  sourceUrl: string,
+  expectedHost: string,
+  proofMarkers: string[],
+): Promise<HostedFetchResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(sourceUrl, {
+      signal: controller.signal,
+      redirect: "manual",
+      headers: { "User-Agent": "PayLabs/0.1 Creator-Verify" },
+    });
+
+    // Handle redirects — must stay on same hostname
+    if ([301, 302, 303, 307, 308].includes(res.status)) {
+      const location = res.headers.get("location");
+      if (!location) return { ok: false, body: null, error: "proof_redirect_blocked" };
+
+      let redirectUrl: URL;
+      try {
+        redirectUrl = new URL(location, sourceUrl);
+      } catch {
+        return { ok: false, body: null, error: "proof_redirect_blocked" };
+      }
+
+      // Must stay HTTPS
+      if (redirectUrl.protocol !== "https:") return { ok: false, body: null, error: "proof_redirect_blocked" };
+
+      // Must stay on same hostname
+      if (redirectUrl.hostname !== expectedHost) return { ok: false, body: null, error: "proof_redirect_blocked" };
+
+      // No userinfo
+      if (redirectUrl.username || redirectUrl.password) return { ok: false, body: null, error: "proof_redirect_blocked" };
+
+      // SSRF: validate redirect target
+      const hostCheck = await assertPublicHost(redirectUrl.hostname);
+      if (!hostCheck.ok) return { ok: false, body: null, error: hostCheck.error };
+
+      return fetchHostedRedirect(redirectUrl.toString(), expectedHost, proofMarkers, MAX_REDIRECTS - 1);
+    }
+
+    if (!res.ok) return { ok: false, body: null, error: safeHttpError(res.status) };
+
+    return readHostedBody(res, proofMarkers);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("abort")) return { ok: false, body: null, error: "proof_fetch_timeout" };
+    return { ok: false, body: null, error: "proof_fetch_failed" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchHostedRedirect(
+  url: string,
+  expectedHost: string,
+  proofMarkers: string[],
+  remaining: number,
+): Promise<HostedFetchResult> {
+  if (remaining <= 0) return { ok: false, body: null, error: "proof_redirect_blocked" };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      redirect: "manual",
+      headers: { "User-Agent": "PayLabs/0.1 Creator-Verify" },
+    });
+
+    if ([301, 302, 303, 307, 308].includes(res.status)) {
+      const location = res.headers.get("location");
+      if (!location) return { ok: false, body: null, error: "proof_redirect_blocked" };
+
+      let redirectUrl: URL;
+      try { redirectUrl = new URL(location, url); } catch { return { ok: false, body: null, error: "proof_redirect_blocked" }; }
+      if (redirectUrl.protocol !== "https:") return { ok: false, body: null, error: "proof_redirect_blocked" };
+      if (redirectUrl.hostname !== expectedHost) return { ok: false, body: null, error: "proof_redirect_blocked" };
+      if (redirectUrl.username || redirectUrl.password) return { ok: false, body: null, error: "proof_redirect_blocked" };
+
+      const hostCheck = await assertPublicHost(redirectUrl.hostname);
+      if (!hostCheck.ok) return { ok: false, body: null, error: hostCheck.error };
+
+      return fetchHostedRedirect(redirectUrl.toString(), expectedHost, proofMarkers, remaining - 1);
+    }
+
+    if (!res.ok) return { ok: false, body: null, error: safeHttpError(res.status) };
+    return readHostedBody(res, proofMarkers);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("abort")) return { ok: false, body: null, error: "proof_fetch_timeout" };
+    return { ok: false, body: null, error: "proof_fetch_failed" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Read response body with 1MB cap. Scans for any of the proof markers.
+ * Returns body only if a marker is found (to avoid returning huge pages).
+ */
+async function readHostedBody(res: Response, proofMarkers: string[]): Promise<HostedFetchResult> {
+  const reader = res.body?.getReader();
+  if (!reader) return { ok: false, body: null, error: "proof_fetch_failed" };
+
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  let foundMarker = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.length;
+    if (totalBytes > MAX_HOSTED_BODY_BYTES) {
+      reader.cancel();
+      // Still scan what we have — marker might be in first 1MB
+      break;
+    }
+    chunks.push(value);
+
+    // Incremental scan: check if any marker is in the accumulated text
+    // Only scan every 64KB to avoid excessive string conversion
+    if (!foundMarker && totalBytes % 65536 < value.length) {
+      const partial = new TextDecoder().decode(Buffer.concat(chunks));
+      foundMarker = proofMarkers.some((m) => partial.includes(m));
+      if (foundMarker) {
+        // Found early — still read a bit more for complete evidence hash
+        continue;
+      }
+    }
+  }
+
+  const body = new TextDecoder().decode(Buffer.concat(chunks));
+
+  // Final scan if incremental didn't find it
+  if (!foundMarker) {
+    foundMarker = proofMarkers.some((m) => body.includes(m));
+  }
+
+  if (!foundMarker) {
+    return { ok: false, body: null, error: "proof_link_not_found" };
+  }
+
+  return { ok: true, body };
+}
+
 // ─── Verification Logic ───────────────────────────────────────
 
 type VerifyResult = {
@@ -528,14 +688,24 @@ async function verifyHostedLinkBacklink(claim: CreatorClaim, origin: string): Pr
     return { ok: false, proof_status: "failed", proof_error: hostCheck.error ?? "proof_internal_target_blocked", evidence_hash: null };
   }
 
-  // Build expected proof markers
-  const proofUrl = getProofUrl(origin, claim.id, claim.proof_nonce || "");
-  const proofText = getProofText(claim.id, claim.creator_wallet, claim.proof_nonce || "");
+  // Build all acceptable proof markers
+  // A. Proof URL using current request origin
+  const proofUrlFromRequest = getProofUrl(origin, claim.id, claim.proof_nonce || "");
+  const markers = [proofUrlFromRequest];
 
-  // Fetch the source URL (creator's profile page)
-  const fetched = await fetchProofRaw(sourceUrl);
+  // B. Proof URL using NEXT_PUBLIC_APP_URL if different from request origin
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    const envUrl = getProofUrl(process.env.NEXT_PUBLIC_APP_URL, claim.id, claim.proof_nonce || "");
+    if (envUrl !== proofUrlFromRequest) markers.push(envUrl);
+  }
 
-  if (!fetched.ok || !fetched.body) {
+  // C. Proof text (deterministic, no URL dependency)
+  markers.push(getProofText(claim.id, claim.creator_wallet, claim.proof_nonce || ""));
+
+  // Fetch profile page using dedicated hosted fetcher (1MB cap, same-host redirects)
+  const fetched = await fetchHostedProofPage(sourceUrl, hostname, markers);
+
+  if (!fetched.ok) {
     return {
       ok: false,
       proof_status: "failed",
@@ -544,17 +714,7 @@ async function verifyHostedLinkBacklink(claim: CreatorClaim, origin: string): Pr
     };
   }
 
-  const evidenceHash = sha256(fetched.body);
-
-  // Check if the page body contains the proof URL OR the proof text
-  if (!fetched.body.includes(proofUrl) && !fetched.body.includes(proofText)) {
-    return {
-      ok: false,
-      proof_status: "failed",
-      proof_error: "proof_link_not_found",
-      evidence_hash: evidenceHash,
-    };
-  }
+  const evidenceHash = sha256(fetched.body || "");
 
   return {
     ok: true,
