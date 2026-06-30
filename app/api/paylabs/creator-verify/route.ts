@@ -387,13 +387,19 @@ const GITHUB_OWNER_REPO_RE = /^[A-Za-z0-9_.-]{1,100}$/;
 
 async function verifyGithubRepoFile(claim: CreatorClaim): Promise<VerifyResult> {
   const sourceUrl = claim.source_url;
-  if (!sourceUrl || !sourceUrl.includes("github.com")) {
+  if (!sourceUrl) {
     return { ok: false, proof_status: "failed", proof_error: "Not a GitHub URL", evidence_hash: null };
   }
 
   let owner: string, repo: string;
   try {
-    const parts = new URL(sourceUrl).pathname.split("/").filter(Boolean);
+    const parsedUrl = new URL(sourceUrl);
+    const host = parsedUrl.hostname.toLowerCase();
+    if ((parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") || (host !== "github.com" && host !== "www.github.com")) {
+      return { ok: false, proof_status: "failed", proof_error: "Not a GitHub URL", evidence_hash: null };
+    }
+
+    const parts = parsedUrl.pathname.split("/").filter(Boolean);
     if (parts.length < 2) throw new Error("Invalid GitHub URL");
     owner = parts[0];
     repo = parts[1].replace(/\.git$/, "");
