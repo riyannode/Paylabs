@@ -2687,3 +2687,14 @@ a:hover { text-decoration: none; }
     padding-top: 72px; /* 56px topbar + 16px existing padding */
   }
 }
+
+/* ── Mobile topbar: final cascade override ──────────────
+   The base rule (.pl-mobile-topbar { display: none }) is defined
+   AFTER the 960px media query in this file. To ensure the mobile
+   topbar is actually visible on mobile, this override is appended
+   at the very bottom so it wins the cascade. */
+@media (max-width: 960px) {
+  .pl-mobile-topbar {
+    display: flex !important;
+  }
+}

@@ -8,5 +8,5 @@ import MobileNav from "./MobileNav";
  * that don't have the .pl-app grid.
  */
 export default function SubPageMobileNav() {
-  return <MobileNav />;
+  return <MobileNav applyBodyOffset />;
 }

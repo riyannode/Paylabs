@@ -6,16 +6,24 @@ import PayLabsNavLinks from "./PayLabsNavLinks";
 type Props = {
   /** Called when user wants to open the wallet modal. */
   onOpenWallet?: () => void;
+  /**
+   * When true, adds a body class that pushes .container.pl-compact-root
+   * down so sub-page content isn't hidden under the fixed topbar.
+   * The chat page uses .pl-app padding-top instead, so it does NOT
+   * set this flag.
+   */
+  applyBodyOffset?: boolean;
 };
 
-export default function MobileNav({ onOpenWallet }: Props) {
+export default function MobileNav({ onOpenWallet, applyBodyOffset = false }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
 
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
 
-  // Add body class for sub-page top padding (mobile only)
+  // Add body class for sub-page top padding (only when requested)
   useEffect(() => {
+    if (!applyBodyOffset) return;
     const mq = window.matchMedia("(max-width: 960px)");
     function apply() {
       if (mq.matches) {
@@ -30,7 +38,7 @@ export default function MobileNav({ onOpenWallet }: Props) {
       mq.removeEventListener("change", apply);
       document.body.classList.remove("pl-mobile-has-topbar");
     };
-  }, []);
+  }, [applyBodyOffset]);
 
   // Close on Escape key
   useEffect(() => {
