@@ -72,6 +72,71 @@ const SOURCE_SAFE_FIELDS = [
   "created_at",
 ].join(",");
 
+// ─── PR #74: Safe proof field whitelists ────────────────────
+
+const RUN_LIST_SAFE_FIELDS = [
+  "discovery_run_id",
+  "created_at",
+  "selected_tier",
+  "actual_settled_usdc",
+  "planned_cost_usdc",
+  "payment_count",
+  "actual_creator_payout_count",
+  "planned_creator_payout_count",
+  "last_tx_hash",
+  "last_explorer_url",
+  "last_settlement_id",
+  "last_settlement_url",
+  "last_batch_tx_hash",
+  "last_batch_explorer_url",
+  "safe_receipt_summary",
+  "creator_payout_status",
+  "advanced_evaluator_used",
+  "advanced_evaluator_confidence",
+  "execution_fee_usdc",
+].join(",");
+
+const EVENT_SAFE_FIELDS = [
+  "discovery_run_id",
+  "route_tier",
+  "event_type",
+  "actor_type",
+  "actor_name",
+  "target_type",
+  "target_name",
+  "status",
+  "mode",
+  "amount_usdc",
+  "tx_hash",
+  "explorer_url",
+  "settlement_id",
+  "settlement_url",
+  "batch_tx_hash",
+  "batch_explorer_url",
+  "safe_summary",
+  "error",
+  "sequence",
+  "created_at",
+].join(",");
+
+const PAYMENT_SAFE_FIELDS = [
+  "discovery_run_id",
+  "node_type",
+  "seller",
+  "status",
+  "mode",
+  "amount_usdc",
+  "tx_hash",
+  "explorer_url",
+  "settlement_id",
+  "settlement_url",
+  "batch_tx_hash",
+  "batch_explorer_url",
+  "safe_summary",
+  "error",
+  "created_at",
+].join(",");
+
 function toNumber(value: unknown): number | null {
   if (value == null) return null;
   const n = Number(value);
@@ -102,6 +167,107 @@ function safeHttpUrl(value: unknown): string | null {
 
 function receiptId(runId: string): string {
   return `#RCPT-${runId.slice(0, 6)}`;
+}
+
+function shortId(value: unknown): string | null {
+  const s = toStringOrNull(value);
+  if (!s) return null;
+  if (s.length <= 12) return s;
+  return `${s.slice(0, 8)}…${s.slice(-4)}`;
+}
+
+function shortHash(value: unknown): string | null {
+  const s = toStringOrNull(value);
+  if (!s) return null;
+  if (s.length <= 16) return s;
+  return `${s.slice(0, 8)}…${s.slice(-6)}`;
+}
+
+function safeGatewayStatus(row: Record<string, unknown>): string | null {
+  const mode = String(row.mode || "");
+  const summary = String(row.safe_summary || "").toLowerCase();
+  if (mode === "x402" && (summary.includes("paid") || row.status === "paid")) return "accepted";
+  if (mode === "x402_failed" || row.status === "failed") return "failed";
+  if (mode === "audit_only") return "pending";
+  return null;
+}
+
+/** PR #74: Map raw run_events row to safe proof object */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toSafeEventProof(row: any) {
+  return {
+    runId: shortId(row.discovery_run_id),
+    receiptId: row.discovery_run_id ? receiptId(String(row.discovery_run_id)) : null,
+    routeTier: row.route_tier ?? null,
+    seq: toNumber(row.sequence),
+    phase: row.actor_type ?? null,
+    nodeType: row.actor_type ?? null,
+    nodeLabel: row.actor_name ?? null,
+    targetLabel: row.target_name ?? null,
+    eventType: row.event_type ?? null,
+    status: row.status ?? null,
+    mode: row.mode ?? null,
+    amountUsdc: toNumber(row.amount_usdc),
+    safeMessage: row.safe_summary ?? null,
+    error: toStringOrNull(row.error),
+    gatewayStatus: safeGatewayStatus(row),
+    settlementId: shortId(row.settlement_id),
+    settlementUrl: safeHttpUrl(row.settlement_url),
+    batchTxHash: shortHash(row.batch_tx_hash),
+    batchExplorerUrl: safeHttpUrl(row.batch_explorer_url),
+    txHash: shortHash(row.tx_hash),
+    explorerUrl: safeHttpUrl(row.explorer_url),
+    createdAt: row.created_at ?? null,
+  };
+}
+
+/** PR #74: Map raw service_payment_events row to safe proof object */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toSafePaymentProof(row: any) {
+  return {
+    runId: shortId(row.discovery_run_id),
+    receiptId: row.discovery_run_id ? receiptId(String(row.discovery_run_id)) : null,
+    nodeType: row.node_type ?? null,
+    sellerLabel: row.seller ?? null,
+    status: row.status ?? null,
+    mode: row.mode ?? null,
+    amountUsdc: toNumber(row.amount_usdc),
+    safeMessage: row.safe_summary ?? null,
+    error: toStringOrNull(row.error),
+    gatewayStatus: safeGatewayStatus(row),
+    settlementId: shortId(row.settlement_id),
+    settlementUrl: safeHttpUrl(row.settlement_url),
+    batchTxHash: shortHash(row.batch_tx_hash),
+    batchExplorerUrl: safeHttpUrl(row.batch_explorer_url),
+    txHash: shortHash(row.tx_hash),
+    explorerUrl: safeHttpUrl(row.explorer_url),
+    createdAt: row.created_at ?? null,
+  };
+}
+
+/** PR #74: Map raw receipts row to safe run proof object (no user_wallet) */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toSafeRunProof(row: any) {
+  return {
+    runId: shortId(row.discovery_run_id),
+    receiptId: row.discovery_run_id ? receiptId(String(row.discovery_run_id)) : null,
+    createdAt: row.created_at ?? null,
+    selectedTier: row.selected_tier ?? null,
+    plannedCostUsdc: toNumber(row.planned_cost_usdc),
+    actualSettledUsdc: toNumber(row.actual_settled_usdc),
+    paymentCount: toNumber(row.payment_count),
+    actualCreatorPayoutCount: toNumber(row.actual_creator_payout_count),
+    plannedCreatorPayoutCount: toNumber(row.planned_creator_payout_count),
+    creatorPayoutStatus: toStringOrNull(row.creator_payout_status),
+    advancedEvaluatorUsed: row.advanced_evaluator_used ?? null,
+    advancedEvaluatorConfidence: toNumber(row.advanced_evaluator_confidence),
+    executionFeeUsdc: toNumber(row.execution_fee_usdc),
+    safeReceiptSummary: row.safe_receipt_summary ?? null,
+    displayStatus: displayStatus(row),
+    batchStatus: batchStatus(row),
+    lastBatchTxHash: shortHash(row.last_batch_tx_hash),
+    lastBatchExplorerUrl: safeHttpUrl(row.last_batch_explorer_url),
+  };
 }
 
 function displayStatus(row: any): DisplayStatus {
@@ -182,22 +348,23 @@ function mapReceiptDetail(row: any, creators: any[], sources: any[]) {
 }
 
 export async function getRunEvents(discoveryRunId: string) {
-  const { data, error } = await supabaseAdmin()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabaseAdmin()
     .from("paylabs_run_events")
-    .select("*")
+    .select(EVENT_SAFE_FIELDS)
     .eq("discovery_run_id", discoveryRunId)
-    .order("sequence", { ascending: true });
+    .order("sequence", { ascending: true }) as any);
 
   if (error) throw new Error(`get_run_events_failed: ${error.message}`);
-  return data || [];
+  return ((data || []) as Record<string, unknown>[]).map(toSafeEventProof);
 }
 
 export async function getRunReceipt(discoveryRunId: string) {
   const { data, error } = await supabaseAdmin()
     .from("paylabs_receipts")
-    .select("*")
+    .select(RECEIPT_SAFE_FIELDS)
     .eq("discovery_run_id", discoveryRunId)
-    .single();
+    .maybeSingle();
 
   if (error) throw new Error(`get_run_receipt_failed: ${error.message}`);
   return data;
@@ -278,23 +445,23 @@ export async function getDashboardSummary() {
 export async function getRecentPayments(limit = 25) {
   const { data, error } = await supabaseAdmin()
     .from("paylabs_service_payment_events")
-    .select("*")
+    .select(PAYMENT_SAFE_FIELDS)
     .order("created_at", { ascending: false })
     .limit(limit);
 
   if (error) throw new Error(`recent_payments_failed: ${error.message}`);
-  return data || [];
+  return (data || []).map(toSafePaymentProof);
 }
 
 export async function getRecentRuns(limit = 25) {
   const { data, error } = await supabaseAdmin()
     .from("paylabs_receipts")
-    .select("*")
+    .select(RUN_LIST_SAFE_FIELDS)
     .order("created_at", { ascending: false })
     .limit(limit);
 
   if (error) throw new Error(`recent_runs_failed: ${error.message}`);
-  return data || [];
+  return (data || []).map(toSafeRunProof);
 }
 
 export async function getLastTx() {
