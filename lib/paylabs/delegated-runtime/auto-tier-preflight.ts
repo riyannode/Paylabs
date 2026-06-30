@@ -289,6 +289,12 @@ export async function runRouteOnlyBrainPreflight(params: {
     maxRegistryChecks: bp.max_registry_checks ?? 10,
     maxSourceAccesses: bp.max_source_accesses ?? 10,
   });
+  // ── Budget guard: fail closed if locked quote exceeds user budget ──
+  if (lockedQuote.budgetStatus === "over_budget") {
+    throw new Error(
+      `route_preflight_budget_exceeded: planned cost ${lockedQuote.plannedCostUsdc.toFixed(6)} USDC exceeds user budget ${userBudgetUsdc.toFixed(6)} USDC`
+    );
+  }
 
   // ── Step 5: Compute final entry payment ──
   const finalEntryPaymentUsdc = lockedQuote.plannedCostUsdc - ROUTE_PREFLIGHT_ROUTING_FEE_USDC;

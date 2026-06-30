@@ -159,7 +159,7 @@ export async function POST(req: NextRequest) {
           goal: resolvedGoal.slice(0, 2000),
           user_wallet: resolvedWallet,
           route_tier: "auto",
-          status: "preflight_pending",
+          status: "running",
           started_at: now,
           budget_usdc: resolvedBudget,
           runner_id: "route-preflight",
@@ -200,7 +200,7 @@ export async function POST(req: NextRequest) {
       await supabaseAdmin()
         .from("paylabs_discovery_runs")
         .update({
-          status: "preflight_awaiting_payment",
+          status: "running",
           agent_trace: {
             ...((existingTrace?.agent_trace as Record<string, unknown>) || {}),
             auto_tier_preflight: {
@@ -244,9 +244,15 @@ export async function POST(req: NextRequest) {
       await supabaseAdmin()
         .from("paylabs_discovery_runs")
         .update({
-          status: "preflight_payment_failed",
+          status: "failed",
           completed_at: new Date().toISOString(),
           error_summary: `route_preflight_payment_failed: ${entryErrorMsg}`.slice(0, 500),
+          agent_trace: {
+            auto_tier_preflight: {
+              status: "payment_failed",
+              error: entryErrorMsg.slice(0, 300),
+            },
+          },
         })
         .eq("id", discoveryRunId);
 
@@ -266,9 +272,16 @@ export async function POST(req: NextRequest) {
       await supabaseAdmin()
         .from("paylabs_discovery_runs")
         .update({
-          status: "preflight_payer_mismatch",
+          status: "failed",
           completed_at: new Date().toISOString(),
           error_summary: `route_preflight_payer_mismatch: expected=${resolvedWallet} got=${payer}`,
+          agent_trace: {
+            auto_tier_preflight: {
+              status: "payer_mismatch",
+              expected: resolvedWallet,
+              got: payer,
+            },
+          },
         })
         .eq("id", discoveryRunId);
 
@@ -302,7 +315,7 @@ export async function POST(req: NextRequest) {
       await supabaseAdmin()
         .from("paylabs_discovery_runs")
         .update({
-          status: "preflight_brain_failed",
+          status: "failed",
           completed_at: new Date().toISOString(),
           error_summary: errMsg.slice(0, 500),
           agent_trace: {
@@ -357,17 +370,33 @@ export async function POST(req: NextRequest) {
       .eq("id", discoveryRunId)
       .single();
 
-    await supabaseAdmin()
+    const { error: lockPersistErr } = await supabaseAdmin()
       .from("paylabs_discovery_runs")
       .update({
-        status: "preflight_locked",
+        status: "running",
         effective_route_tier: selectedTier,
         agent_trace: {
           ...((traceBeforeUpdate?.agent_trace as Record<string, unknown>) || {}),
-          auto_tier_preflight: traceData,
+          auto_tier_preflight: {
+            status: "locked",
+            ...traceData,
+          },
         },
       })
       .eq("id", discoveryRunId);
+
+    if (lockPersistErr) {
+      // Payment was settled but persist failed — report error, do not pretend success
+      console.error("[route-preflight] persist failed after payment settle:", lockPersistErr.message);
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Route preflight persist failed: ${lockPersistErr.message}`,
+          routing_payment: paymentMeta,
+        },
+        { status: 500 },
+      );
+    }
 
     // ── Return safe response ────────────────────────────────
     const response = buildRoutePreflightResponse(
