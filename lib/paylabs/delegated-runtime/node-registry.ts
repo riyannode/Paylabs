@@ -143,19 +143,20 @@ export function getMacroNodeChildServicesForTier(
 
 /**
  * Get tier-aware allocation for a macro-node.
- * Uses actual child service count for the given tier.
+ * Includes child service budgets: base fee + (childCount * 0.000001).
+ * Children are funded from this allocation, not as separate user cost.
  */
 export function getMacroNodeAllocationUsdcForTier(
   nodeName: MacroNodePhase,
   routeTier: "easy" | "normal" | "advanced",
 ): number {
-  const children = getMacroNodeChildServicesForTier(nodeName, routeTier);
+  const children = getMacroNodeServicesForTier(nodeName, routeTier);
   return MACRO_NODE_FEE_USDC + children.length * CHILD_SERVICE_FEE_USDC;
 }
 
 /**
- * Get total allocation for a macro-node (base fee + child budget).
- * Uses static childServices count — prefer getMacroNodeAllocationUsdcForTier for billing.
+ * Get static macro-node allocation: base fee + configured child budget.
+ * Prefer getMacroNodeAllocationUsdcForTier() for tier-aware billing.
  */
 export function getMacroNodeAllocationUsdc(nodeName: MacroNodePhase): number {
   const config = MACRO_NODES[nodeName];
@@ -193,9 +194,9 @@ export function getTierMacroAllocations(routeTier: "easy" | "normal" | "advanced
 /**
  * Get total user budget used for a tier (treasury + macro allocations).
  *
- * easy:     0.000003 + 0.000004 = 0.000007
- * normal:   0.000003 + 0.000004 + 0.000006 = 0.000013
- * advanced: 0.000003 + 0.000004 + 0.000006 + 0.000002 = 0.000015
+ * easy:     0.000003 + (0.000001 + 3*0.000001) = 0.000007
+ * normal:   0.000003 + (0.000004 + 0.000006 + 0.000003) = 0.000016
+ * advanced: 0.000003 + (0.000004 + 0.000006 + 0.000004) = 0.000017
  */
 export function getTierUserBudgetUsedUsdc(routeTier: "easy" | "normal" | "advanced"): number {
   const { totalMacroAllocationUsdc } = getTierMacroAllocations(routeTier);

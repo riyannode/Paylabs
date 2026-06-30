@@ -68,60 +68,6 @@ export function isValidExternalTier(
   return tier === "easy" || tier === "normal" || tier === "advanced";
 }
 
-// ─── Discovery Fee Tiers ────────────────────────────────────────
-
-export interface DiscoveryFeeTier {
-  tier: ExternalRouteTier;
-  userPaysUsdc: string;
-  agentNanopaymentsUsdc: string;
-  gatewayBufferUsdc: string;
-  treasuryFeeUsdc: string;
-  maxSourceCandidates: number;
-  settlementMode: "nano" | "batch";
-}
-
-export const DISCOVERY_FEE_TIERS: Record<
-  ExternalRouteTier,
-  DiscoveryFeeTier
-> = {
-  easy: {
-    tier: "easy",
-    userPaysUsdc: "0.001000",
-    agentNanopaymentsUsdc: "0.000007",
-    gatewayBufferUsdc: "0.000050",
-    treasuryFeeUsdc: "0.000943",
-    maxSourceCandidates: 5,
-    settlementMode: "nano",
-  },
-  normal: {
-    tier: "normal",
-    userPaysUsdc: "0.002000",
-    agentNanopaymentsUsdc: "0.000007",
-    gatewayBufferUsdc: "0.000100",
-    treasuryFeeUsdc: "0.001893",
-    maxSourceCandidates: 10,
-    settlementMode: "batch",
-  },
-  advanced: {
-    tier: "advanced",
-    userPaysUsdc: "0.003000",
-    agentNanopaymentsUsdc: "0.000007",
-    gatewayBufferUsdc: "0.000150",
-    treasuryFeeUsdc: "0.002843",
-    maxSourceCandidates: 15,
-    settlementMode: "batch",
-  },
-};
-
-/**
- * Get discovery fee tier config.
- * Falls back to easy if invalid.
- */
-export function getDiscoveryFeeTier(
-  tier: string
-): DiscoveryFeeTier {
-  if (tier in DISCOVERY_FEE_TIERS) {
-    return DISCOVERY_FEE_TIERS[tier as ExternalRouteTier];
-  }
-  return DISCOVERY_FEE_TIERS.easy;
-}
+// ─── Discovery Fee Tiers (removed — dead code, never imported)
+// Actual pricing: quoteDelegatedRun() in quote-engine.ts
+// Entry payment: buildCustomerEntryChallenge(quote.plannedCostUsdc)

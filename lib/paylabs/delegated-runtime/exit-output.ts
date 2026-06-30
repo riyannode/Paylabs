@@ -42,10 +42,11 @@ export function buildExitOutput(result: OrchestratorOutput): ExitOutput {
   const paidEdges = graph.filter((edge) => edge.status === "paid");
   const failedEdges = graph.filter((edge) => edge.status === "failed");
   const servicePaid = paidEdges.filter((edge) => edge.nodeType === "service").length;
-  // Use budgetSnapshot.userBudgetUsedUsdc to avoid double-counting child edges
-  // that are already included in macro allocation edges.
-  // Fallback to sumPaid(graph) only if budgetSnapshot is missing.
-  const actualSettled = result.budgetSnapshot?.userBudgetUsedUsdc
+  // Platform x402 Volume = gross transfers including child pass-through
+  // Use grossPaymentVolumeUsdc if available (brain→macro + macro→child)
+  // Fallback: userBudgetUsedUsdc (brain→macro only, no child pass-through)
+  const actualSettled = result.budgetSnapshot?.grossPaymentVolumeUsdc
+    ?? result.budgetSnapshot?.userBudgetUsedUsdc
     ?? result.budgetSnapshot?.spentUsdc
     ?? sumPaid(graph);
 
