@@ -62,16 +62,15 @@ export const FIXED_FEES_USDC = {
 } as const;
 
 // ─── Creator Payout Constants ─────────────────────────────────
-// TODO: re-enable creator pool when creator accounting is ready
-// Currently zeroed — entry payment = execution fee only
+// Re-enabled: creator pool active for normal/advanced tiers
 
-export const CREATOR_PAYOUT_UNIT_USDC = 0; // was 0.000020
-export const CREATOR_PAYOUT_UNIT_ATOMIC = BigInt(0); // was 20
+export const CREATOR_PAYOUT_UNIT_USDC = 0.000020;
+export const CREATOR_PAYOUT_UNIT_ATOMIC = BigInt(20);
 
 export const CREATOR_PAYOUT_LIMIT: Record<DelegatedRouteTier, number> = {
   easy: 0,
-  normal: 0, // was 1
-  advanced: 0, // was 2
+  normal: 1,
+  advanced: 2,
 };
 
 // ─── Tier → Phase Mapping ────────────────────────────────────
