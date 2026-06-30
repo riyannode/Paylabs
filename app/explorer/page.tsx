@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { short, usdc } from "@/lib/utils";
+import { hrefFromTx } from "@/lib/paylabs/x402/payment-links";
 import BatchResolverLink from "@/components/paylabs/BatchResolverLink";
 
 async function getRecentX402Payments(limit = 50) {
@@ -13,9 +14,9 @@ async function getRecentX402Payments(limit = 50) {
 
 async function getLastTx() {
   const { data } = await supabaseAdmin()
-    .from("paylabs_service_payment_events")
-    .select("*")
-    .not("tx_hash", "is", null)
+    .from("paylabs_receipts")
+    .select("last_batch_tx_hash, last_batch_explorer_url, created_at")
+    .not("last_batch_tx_hash", "is", null)
     .order("created_at", { ascending: false })
     .limit(1);
   return data?.[0] || null;
@@ -149,7 +150,25 @@ export default async function DashboardPage() {
           { label: "x402 Service Payments", value: servicePaymentCount },
           { label: "Receipts", value: receiptCount },
           { label: "Settled USDC", value: usdc(totalSettledUsdc) },
-          { label: "Last TX", value: lastTxRow?.tx_hash ? short(lastTxRow.tx_hash) : "tx unavailable" },
+          {
+            label: "Last TX",
+            value: (() => {
+              const hash = lastTxRow?.last_batch_tx_hash as string | null;
+              const href = hrefFromTx(lastTxRow?.last_batch_explorer_url, hash);
+              return href && hash ? (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "var(--success, #22c55e)", textDecoration: "none", fontWeight: 600 }}
+                >
+                  {short(hash)} ↗
+                </a>
+              ) : (
+                <span style={{ color: "var(--muted, #888)" }}>Check tx</span>
+              );
+            })(),
+          },
         ].map((kpi) => (
           <div className="card" key={kpi.label}>
             <div className="muted" style={{ fontSize: 13 }}>
