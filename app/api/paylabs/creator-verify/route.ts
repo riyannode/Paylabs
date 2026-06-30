@@ -387,11 +387,23 @@ const GITHUB_OWNER_REPO_RE = /^[A-Za-z0-9_.-]{1,100}$/;
 
 /**
  * Derive the public proof URL for a claim.
- * Format: NEXT_PUBLIC_APP_URL/creator-proof/<claim_id>/<proof_nonce>
+ * Format: <origin>/creator-proof/<claim_id>/<proof_nonce>
+ * origin is derived from: NEXT_PUBLIC_APP_URL > request host > fallback
  */
-function getProofUrl(claimId: string, proofNonce: string): string {
-  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || "https://paylabs.dev").replace(/\/+$/, "");
+function getProofUrl(origin: string, claimId: string, proofNonce: string): string {
+  const baseUrl = origin.replace(/\/+$/, "");
   return `${baseUrl}/creator-proof/${claimId}/${proofNonce}`;
+}
+
+/**
+ * Derive the app origin from the request.
+ * Priority: NEXT_PUBLIC_APP_URL > X-Forwarded-Host/Proto > Host header > fallback
+ */
+function deriveOrigin(req: NextRequest): string {
+  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL;
+  const proto = req.headers.get("x-forwarded-proto") || "https";
+  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "paylabs.dev";
+  return `${proto}://${host}`;
 }
 
 /**
@@ -497,7 +509,7 @@ async function verifyGithubRepoFile(claim: CreatorClaim): Promise<VerifyResult> 
  * Stores only SHA-256 evidence hash. No raw body.
  * Uses safe error codes — no full URLs in proof_error.
  */
-async function verifyHostedLinkBacklink(claim: CreatorClaim): Promise<VerifyResult> {
+async function verifyHostedLinkBacklink(claim: CreatorClaim, origin: string): Promise<VerifyResult> {
   const sourceUrl = claim.source_url;
   if (!sourceUrl) {
     return { ok: false, proof_status: "failed", proof_error: "source_url missing from claim", evidence_hash: null };
@@ -517,7 +529,7 @@ async function verifyHostedLinkBacklink(claim: CreatorClaim): Promise<VerifyResu
   }
 
   // Build expected proof markers
-  const proofUrl = getProofUrl(claim.id, claim.proof_nonce || "");
+  const proofUrl = getProofUrl(origin, claim.id, claim.proof_nonce || "");
   const proofText = getProofText(claim.id, claim.creator_wallet, claim.proof_nonce || "");
 
   // Fetch the source URL (creator's profile page)
@@ -560,6 +572,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Connected Creator Wallet required" }, { status: 401 });
   }
 
+  const origin = deriveOrigin(req);
+
   const body = (await req.json().catch(() => ({}))) as { claim_id?: unknown };
   const claimId = typeof body.claim_id === "string" ? body.claim_id.trim() : "";
   if (!claimId) {
@@ -590,7 +604,7 @@ export async function POST(req: NextRequest) {
       message: "Claim is already verified.",
     };
     if (typedClaim.proof_method === "hosted_link_backlink" && typedClaim.proof_nonce) {
-      response.proof_url = getProofUrl(typedClaim.id, typedClaim.proof_nonce);
+      response.proof_url = getProofUrl(origin, typedClaim.id, typedClaim.proof_nonce);
       response.proof_text = getProofText(typedClaim.id, typedClaim.creator_wallet, typedClaim.proof_nonce);
     }
     return NextResponse.json(response);
@@ -622,7 +636,7 @@ export async function POST(req: NextRequest) {
   } else if (typedClaim.proof_method === "well_known_json") {
     result = await verifyWellKnownJson(typedClaim);
   } else if (typedClaim.proof_method === "hosted_link_backlink") {
-    result = await verifyHostedLinkBacklink(typedClaim);
+    result = await verifyHostedLinkBacklink(typedClaim, origin);
   } else {
     return NextResponse.json({
       ok: false,
@@ -712,7 +726,7 @@ export async function POST(req: NextRequest) {
 
   // Include proof URL and proof text for hosted_link_backlink so UI can display them
   if (typedClaim.proof_method === "hosted_link_backlink" && typedClaim.proof_nonce) {
-    response.proof_url = getProofUrl(typedClaim.id, typedClaim.proof_nonce);
+    response.proof_url = getProofUrl(origin, typedClaim.id, typedClaim.proof_nonce);
     response.proof_text = getProofText(typedClaim.id, typedClaim.creator_wallet, typedClaim.proof_nonce);
   }
 
