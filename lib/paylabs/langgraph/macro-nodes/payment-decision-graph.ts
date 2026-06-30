@@ -62,6 +62,7 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
 
   // Load feed items for metadata (wallet, price, claim status)
   const { getFeedItemById } = await import("../../../ai/tools");
+  const { resolveVerifiedCreatorClaimForSource } = await import("../../creator-distribution/claim-resolver");
 
   const candidateMeta: PaymentDecisionStateType["candidateMeta"] = [];
   for (const card of sourceCards.slice(0, 10)) {
@@ -73,17 +74,36 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
       card.feed_item_id.startsWith("tavily_live:");
 
     if (isLiveSource) {
-      // Live sources: use card data directly, always non-monetized/unclaimed
-      candidateMeta.push({
-        feed_item_id: card.feed_item_id,
-        source_url: card.source_url || "",
-        source_title: card.title || "",
-        publisher: card.publisher || "",
-        creator_wallet: null,
-        claim_status: "unclaimed",
-        source_kind: card.source_kind || (card.feed_item_id.startsWith("rsshub_live:") ? "rsshub_live" : "tavily_live"),
-        is_live: true,  // skip paid approval — no creator to pay
+      // Live sources: try to resolve verified creator claim by source URL/domain
+      const resolvedClaim = await resolveVerifiedCreatorClaimForSource({
+        sourceUrl: card.source_url || null,
       });
+
+      if (resolvedClaim) {
+        // Verified creator claim exists — this live source can be creator-payable
+        candidateMeta.push({
+          feed_item_id: card.feed_item_id,
+          source_url: card.source_url || "",
+          source_title: card.title || "",
+          publisher: card.publisher || "",
+          creator_wallet: resolvedClaim.creator_wallet,
+          claim_status: "verified",
+          source_kind: card.source_kind || (card.feed_item_id.startsWith("rsshub_live:") ? "rsshub_live" : "tavily_live"),
+          is_live: false, // verified claim — eligible for creator payout
+        });
+      } else {
+        // No verified claim — keep as non-monetized live source
+        candidateMeta.push({
+          feed_item_id: card.feed_item_id,
+          source_url: card.source_url || "",
+          source_title: card.title || "",
+          publisher: card.publisher || "",
+          creator_wallet: null,
+          claim_status: "unclaimed",
+          source_kind: card.source_kind || (card.feed_item_id.startsWith("rsshub_live:") ? "rsshub_live" : "tavily_live"),
+          is_live: true,  // skip paid approval — no creator to pay
+        });
+      }
       continue;
     }
 
@@ -95,13 +115,41 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
       // Feed item not found in DB — use card data as fallback
       feedItem = null;
     }
+
+    // Read route verification from joined relation (not top-level feedItem.verification_status)
+    const routeRaw = feedItem?.rsshub_route as unknown;
+    const route = Array.isArray(routeRaw) ? (routeRaw[0] as Record<string, unknown> | undefined) : (routeRaw as Record<string, unknown> | undefined);
+    const routeVerified = route?.verification_status === "verified" && route?.is_monetized === true;
+    const routeCreatorWallet = route?.creator_wallet ? String(route.creator_wallet).toLowerCase() : null;
+    const feedCreatorWallet = feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : (card.creator_wallet || null);
+
+    let creatorWallet: string | null = null;
+    let claimStatus = "unclaimed";
+
+    if (routeVerified && (routeCreatorWallet || feedCreatorWallet)) {
+      // Route is verified + monetized
+      creatorWallet = routeCreatorWallet || feedCreatorWallet;
+      claimStatus = "verified";
+    } else {
+      // Fallback: resolve from paylabs_creator_claims
+      const sourceUrl = String(feedItem?.canonical_url || card.source_url || "");
+      const resolvedClaim = await resolveVerifiedCreatorClaimForSource({ sourceUrl });
+      if (resolvedClaim) {
+        creatorWallet = resolvedClaim.creator_wallet;
+        claimStatus = "verified";
+      } else {
+        creatorWallet = feedCreatorWallet;
+        claimStatus = String(card.claim_status || "unclaimed");
+      }
+    }
+
     candidateMeta.push({
       feed_item_id: card.feed_item_id,
       source_url: String(feedItem?.canonical_url || card.source_url || ""),
       source_title: String(feedItem?.title || card.title || ""),
       publisher: String(feedItem?.publisher || card.publisher || ""),
-      creator_wallet: feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : (card.creator_wallet || null),
-      claim_status: String(feedItem?.verification_status || card.claim_status || "unclaimed"),
+      creator_wallet: creatorWallet,
+      claim_status: claimStatus,
     });
   }
 

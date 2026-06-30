@@ -370,16 +370,25 @@ export async function runDiscoveryPlannerGraph(
     const rankedCandidates = result.rankedCandidates || [];
     const sourceCards: SafeSourceCard[] = [];
     const maxSourceCards = Number(process.env.PAYLABS_SOURCE_CONTEXT_MAX_SOURCES) || 20;
+
+    // Lazy-load claim resolver (only if needed)
+    const { resolveVerifiedCreatorClaimForSource } = await import("../../creator-distribution/claim-resolver");
+
     for (const candidate of rankedCandidates.slice(0, maxSourceCards)) {
       // Live candidate: has source_url directly
       if (candidate.source_kind === "rsshub_live" || candidate.source_kind === "tavily_live") {
+        // Try to resolve a verified creator claim for this live source
+        const resolvedClaim = await resolveVerifiedCreatorClaimForSource({
+          sourceUrl: candidate.source_url || null,
+        });
+
         sourceCards.push({
           feed_item_id: candidate.feed_item_id,
           title: candidate.title || "",
           source_url: candidate.source_url || "",
           publisher: candidate.publisher || "",
-          claim_status: "unclaimed",
-          creator_wallet: null,
+          claim_status: resolvedClaim ? "verified" : "unclaimed",
+          creator_wallet: resolvedClaim ? resolvedClaim.creator_wallet : null,
           source_kind: candidate.source_kind,
           provider: candidate.provider,
         });
@@ -387,13 +396,41 @@ export async function runDiscoveryPlannerGraph(
         // DB candidate: enrich via getFeedItemById
         const { getFeedItemById } = await import("../../../ai/tools");
         const feedItem = (await getFeedItemById(candidate.feed_item_id)) as Record<string, unknown> | null;
+
+        // Read route verification from joined relation (not top-level feedItem)
+        const routeRaw = feedItem?.rsshub_route as unknown;
+        const route = Array.isArray(routeRaw) ? (routeRaw[0] as Record<string, unknown> | undefined) : (routeRaw as Record<string, unknown> | undefined);
+        const routeVerified = route?.verification_status === "verified" && route?.is_monetized === true;
+        const routeCreatorWallet = route?.creator_wallet ? String(route.creator_wallet).toLowerCase() : null;
+        const feedCreatorWallet = feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : null;
+
+        let creatorWallet: string | null = null;
+        let claimStatus = "unclaimed";
+
+        if (routeVerified && (routeCreatorWallet || feedCreatorWallet)) {
+          // Route itself is verified + monetized
+          creatorWallet = routeCreatorWallet || feedCreatorWallet;
+          claimStatus = "verified";
+        } else {
+          // Fallback: resolve from paylabs_creator_claims
+          const sourceUrl = String(feedItem?.canonical_url || candidate.source_url || "");
+          const resolvedClaim = await resolveVerifiedCreatorClaimForSource({ sourceUrl });
+          if (resolvedClaim) {
+            creatorWallet = resolvedClaim.creator_wallet;
+            claimStatus = "verified";
+          } else {
+            creatorWallet = feedCreatorWallet;
+            claimStatus = "unclaimed";
+          }
+        }
+
         sourceCards.push({
           feed_item_id: candidate.feed_item_id,
           title: String(feedItem?.title || candidate.title || ""),
           source_url: String(feedItem?.canonical_url || ""),
           publisher: String(feedItem?.publisher || candidate.publisher || ""),
-          claim_status: String(feedItem?.verification_status || "unclaimed"),
-          creator_wallet: feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : null,
+          claim_status: claimStatus,
+          creator_wallet: creatorWallet,
         });
       }
     }
