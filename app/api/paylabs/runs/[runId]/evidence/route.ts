@@ -10,6 +10,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 
+/** PR #74: Mask wallet address for safe display: 0x5502…0e8d */
+function shortWalletMask(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  if (value.length <= 12) return value;
+  return `${value.slice(0, 6)}…${value.slice(-4)}`;
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ runId: string }> }
@@ -26,47 +33,47 @@ export async function GET(
 
     const db = supabaseAdmin();
 
-    // 1. Get receipt for this run
+    // 1. Get receipt for this run (safe fields only)
     const { data: receipt } = await db
       .from("paylabs_receipts")
-      .select("*")
+      .select("selected_tier, advanced_evaluator_used, execution_fee_usdc, planned_creator_pool_usdc, actual_creator_paid_usdc, planned_creator_payout_count, actual_creator_payout_count, pending_creator_reserve_usdc, bot_share_usdc, service_share_usdc, creator_split_policy, advanced_evaluator_confidence, advanced_evaluator_rationale, why_two_sources_needed, safe_receipt_summary")
       .eq("discovery_run_id", discoveryRunId)
-      .single();
+      .maybeSingle();
 
-    // 2. Get evaluator memory for this run
+    // 2. Get evaluator memory for this run (safe fields only)
     const { data: evaluatorMemory } = await db
       .from("paylabs_evaluator_memory")
-      .select("*")
+      .select("safe_evaluator_summary, why_two_sources_needed, evaluator_confidence, warnings, source_ids, source_urls")
       .eq("discovery_run_id", discoveryRunId)
       .order("created_at", { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
-    // 3. Get creator payout events for this run
+    // 3. Get creator payout events for this run (safe fields only)
     const { data: payoutEvents } = await db
       .from("paylabs_creator_payout_events")
-      .select("*")
+      .select("feed_item_id, source_url, source_title, creator_wallet, status, planned_amount_usdc, actual_amount_usdc, settlement_id, tx_hash, explorer_url, safe_summary")
       .eq("discovery_run_id", discoveryRunId)
       .order("created_at", { ascending: true });
 
-    // 4. Get source attributions for this run
+    // 4. Get source attributions for this run (safe fields only)
     const { data: attributions } = await db
       .from("paylabs_source_attributions")
-      .select("*")
+      .select("feed_item_id, source_url, source_title, publisher, creator_wallet, claim_status, eligibility_status, final_score, risk_score, attribution_reason")
       .eq("discovery_run_id", discoveryRunId)
       .order("created_at", { ascending: true });
 
-    // 5. Get service payment events (includes evaluator service call)
+    // 5. Get service payment events (safe fields only)
     const { data: serviceEvents } = await db
       .from("paylabs_service_payment_events")
-      .select("*")
+      .select("seller, status, amount_usdc, safe_summary, created_at")
       .eq("discovery_run_id", discoveryRunId)
       .order("created_at", { ascending: true });
 
-    // 6. Get run events for full timeline
+    // 6. Get run events for full timeline (safe fields only)
     const { data: runEvents } = await db
       .from("paylabs_run_events")
-      .select("*")
+      .select("event_type, actor_name, target_name, status, safe_summary, sequence, created_at")
       .eq("discovery_run_id", discoveryRunId)
       .order("sequence", { ascending: true });
 
@@ -89,13 +96,13 @@ export async function GET(
           }
         : null,
 
-      // Creator attributions
+      // Creator attributions (wallet masked)
       attributions: (attributions || []).map((a: Record<string, unknown>) => ({
         feed_item_id: a.feed_item_id,
         source_url: a.source_url,
         source_title: a.source_title,
         publisher: a.publisher,
-        creator_wallet: a.creator_wallet,
+        creator_wallet: shortWalletMask(a.creator_wallet),
         claim_status: a.claim_status,
         eligibility_status: a.eligibility_status,
         final_score: a.final_score,
@@ -103,12 +110,12 @@ export async function GET(
         reason: a.attribution_reason,
       })),
 
-      // Payout results
+      // Payout results (wallet masked)
       payouts: (payoutEvents || []).map((p: Record<string, unknown>) => ({
         feed_item_id: p.feed_item_id,
         source_url: p.source_url,
         source_title: p.source_title,
-        creator_wallet: p.creator_wallet,
+        creator_wallet: shortWalletMask(p.creator_wallet),
         status: p.status,
         planned_amount_usdc: p.planned_amount_usdc,
         actual_amount_usdc: p.actual_amount_usdc,
@@ -139,7 +146,7 @@ export async function GET(
           }
         : null,
 
-      // Service call timeline (tool calls visible here)
+      // Service call timeline
       service_timeline: (serviceEvents || []).map((e: Record<string, unknown>) => ({
         service: e.seller,
         status: e.status,

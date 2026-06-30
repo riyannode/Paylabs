@@ -12,7 +12,20 @@ function stripTags(html: string): string {
     if (ch === ">") { inTag = false; continue; }
     if (!inTag) out += ch;
   }
-  return out.trim();
+  return decodeEntities(out.trim());
+}
+
+/** PR #74: Decode HTML entities for clean display */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/g, "'")
+    .replace(/&#x2F;/g, "/")
+    .replace(/&nbsp;/g, " ");
 }
 
 function timeAgo(dateStr: string): string {

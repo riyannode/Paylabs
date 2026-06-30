@@ -171,11 +171,21 @@ function CreatorsSection({ detail }: { detail: ReceiptDetail }) {
 }
 
 function SourcesSection({ detail }: { detail: ReceiptDetail }) {
+  const hasPaymentInfo = detail.paymentCount != null && detail.paymentCount > 0;
   return (
     <section className="pl-receipt-section">
       <h3>Sources</h3>
       {detail.sources.length === 0 ? (
-        <p className="muted">No source attribution recorded</p>
+        <div className="pl-safe-empty">
+          {hasPaymentInfo ? (
+            <>
+              <p>Sources used during this run</p>
+              <span className="muted">Creator-monetized sources: 0</span>
+            </>
+          ) : (
+            <p>No source data available for this run</p>
+          )}
+        </div>
       ) : (
         <div className="pl-receipt-rows">
           {detail.sources.map((source) => (
