@@ -163,6 +163,11 @@ export async function POST(req: NextRequest) {
           started_at: now,
           budget_usdc: resolvedBudget,
           runner_id: "route-preflight",
+          agent_trace: {
+            auto_tier_preflight: {
+              status: "preflight_pending",
+            },
+          },
         })
         .select("id")
         .single();
@@ -241,6 +246,13 @@ export async function POST(req: NextRequest) {
     if (!entryResult.ok || !entryResult.settled) {
       const entryErrorMsg = entryResult.error || "Route preflight payment verification failed";
 
+      // Merge existing agent_trace — preserve prior data
+      const { data: traceOnPayFail } = await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .select("agent_trace")
+        .eq("id", discoveryRunId)
+        .single();
+
       await supabaseAdmin()
         .from("paylabs_discovery_runs")
         .update({
@@ -248,6 +260,7 @@ export async function POST(req: NextRequest) {
           completed_at: new Date().toISOString(),
           error_summary: `route_preflight_payment_failed: ${entryErrorMsg}`.slice(0, 500),
           agent_trace: {
+            ...((traceOnPayFail?.agent_trace as Record<string, unknown>) || {}),
             auto_tier_preflight: {
               status: "payment_failed",
               error: entryErrorMsg.slice(0, 300),
@@ -269,6 +282,13 @@ export async function POST(req: NextRequest) {
     // If payer is null/undefined (ARC-TESTNET returns null), skip check — same as inline route.
     const payer = entryResult.payer?.toLowerCase();
     if (payer && payer !== resolvedWallet) {
+      // Merge existing agent_trace — preserve prior data
+      const { data: traceOnPayerMismatch } = await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .select("agent_trace")
+        .eq("id", discoveryRunId)
+        .single();
+
       await supabaseAdmin()
         .from("paylabs_discovery_runs")
         .update({
@@ -276,6 +296,7 @@ export async function POST(req: NextRequest) {
           completed_at: new Date().toISOString(),
           error_summary: `route_preflight_payer_mismatch: expected=${resolvedWallet} got=${payer}`,
           agent_trace: {
+            ...((traceOnPayerMismatch?.agent_trace as Record<string, unknown>) || {}),
             auto_tier_preflight: {
               status: "payer_mismatch",
               expected: resolvedWallet,
