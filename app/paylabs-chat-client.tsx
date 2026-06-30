@@ -772,34 +772,34 @@ export default function PayLabsChatClient({ analytics }: Props) {
               className="pl-guide-toggle"
               onClick={() => setGuideOpen(!guideOpen)}
             >
-              <span>Route guide</span>
+              <span>Route guide — Auto chooses depth based on task complexity</span>
               <span>{guideOpen ? "▾" : "▸"}</span>
             </button>
             {guideOpen && (
               <div className="pl-guide-rows">
                 <div className="pl-guide-row">
                   <div className="pl-guide-info">
-                    <b>Easy</b>
-                    <span>Best for: Quick answer</span>
+                    <b>Quick answer</b>
+                    <span>Best for: Explain, define, summarize</span>
                     <span className="pl-guide-example">Explain Arc x402 simply using source-backed info.</span>
                   </div>
                   <button className="pl-guide-use" onClick={() => setPrompt("Explain Arc x402 simply using source-backed info.")}>Use</button>
                 </div>
                 <div className="pl-guide-row">
                   <div className="pl-guide-info">
-                    <b>Normal</b>
-                    <span>Best for: Compare / verify</span>
+                    <b>Standard research</b>
+                    <span>Best for: Compare, verify, fact-check</span>
                     <span className="pl-guide-example">Compare Arc x402 and Circle Gateway and verify the main claims.</span>
                   </div>
                   <button className="pl-guide-use" onClick={() => setPrompt("Compare Arc x402 and Circle Gateway and verify the main claims.")}>Use</button>
                 </div>
                 <div className="pl-guide-row">
                   <div className="pl-guide-info">
-                    <b>Advanced</b>
-                    <span>Best for: Paid source / receipt</span>
-                    <span className="pl-guide-example">Use advanced route, unlock paid or creator-monetized sources if needed, and return receipt confirmation.</span>
+                    <b>Deep research</b>
+                    <span>Best for: Multi-source, current, attribution</span>
+                    <span className="pl-guide-example">What are the latest developments in open source AI agent frameworks, compare the strongest projects, verify with multiple current sources, and show which sources influenced the answer?</span>
                   </div>
-                  <button className="pl-guide-use" onClick={() => setPrompt("Use advanced route, unlock paid or creator-monetized sources if needed, and return receipt confirmation.")}>Use</button>
+                  <button className="pl-guide-use" onClick={() => setPrompt("What are the latest developments in open source AI agent frameworks, compare the strongest projects, verify with multiple current sources, and show which sources influenced the answer?")}>Use</button>
                 </div>
               </div>
             )}
