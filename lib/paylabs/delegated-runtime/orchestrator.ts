@@ -423,7 +423,7 @@ function extractDiscoveryCandidates(
 ): SafeCandidate[] {
   const candidates: SafeCandidate[] = [];
   const scoutEvals = state.serviceEvaluations.filter(
-    (e) => e.macroNode === "discovery_planner" && e.serviceName === "signal_scout" && e.output
+    (e) => e.macroNode === "discovery_planner" && (e.serviceName === "signal_scout" || e.serviceName === "signal_scout_basics") && e.output
   );
   for (const eval_ of scoutEvals) {
     const rc = (eval_.output as Record<string, unknown>)?.ranked_candidates;

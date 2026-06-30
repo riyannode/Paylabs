@@ -36,6 +36,18 @@ export interface SourceContext {
   source_count: number;
   /** How sources were retrieved: live RSSHub, DB fallback, or empty */
   retrieval_mode?: "rsshub_live" | "db_fallback" | "rsshub_live_empty";
+  /** Source discovery strategy: topic_routes, catalog, topic_routes_plus_catalog */
+  source_strategy?: string;
+  /** Number of topic route candidates selected */
+  topic_routes_count?: number;
+  /** Number of accepted topic route candidates */
+  topic_candidates_count?: number;
+  /** Topic-aware validation: warns when AI/crypto topic has 0 sources */
+  source_validation?: {
+    valid: boolean;
+    warning?: string;
+    detected_topic?: string;
+  };
 }
 
 // ─── Source Resolver Input ─────────────────────────────────

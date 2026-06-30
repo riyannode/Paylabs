@@ -18,6 +18,13 @@ import { z } from "zod";
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 import { shouldRunServiceAsDeterministic } from "../execution-mode";
+import { fetchTopicRoutesLiveSources } from "@/lib/rsshub/rsshub-topic-live-search";
+import { detectTopics } from "@/lib/rsshub/topic-routes";
+import {
+  passesAiSourceGuard,
+  passesCryptoSourceGuard,
+  isGenericCatchAllSource,
+} from "@/lib/rsshub/topic-source-guards";
 
 const SignalScoutSchema = z.object({
   ranked_sources: z.array(z.object({
@@ -278,36 +285,160 @@ export const signalScoutHandler: ServiceHandler = async (
     routeTier?: DelegatedRouteTier;
   };
 
-  // ── Step 1: Try live RSSHub search first ──
+  // ── Step 1: Try live RSSHub search + topic routes in parallel ──
   const liveEnabled = process.env.PAYLABS_RSSHUB_LIVE_ENABLED !== "false";
   const sourceDiscoveryMode = process.env.PAYLABS_SOURCE_DISCOVERY_MODE || "live_then_db";
   const dbFallbackEnabled = process.env.PAYLABS_DB_FALLBACK_ENABLED !== "false";
   const liveOnly = sourceDiscoveryMode === "live_only" || !dbFallbackEnabled;
 
   let liveResults: Awaited<ReturnType<typeof runLiveSearch>> = null;
+  let topicResult: Awaited<ReturnType<typeof fetchTopicRoutesLiveSources>> = {
+    candidates: [],
+    diagnostics: { detected_topics: 0, topic_routes_count: 0, topic_routes_fetched: 0, topic_items_fetched: 0, topic_items_accepted: 0, topic_items_rejected: 0, topic_candidates_count: 0 },
+  };
 
   if (liveEnabled) {
-    liveResults = await runLiveSearch(
-      expanded_queries || [],
-      entity_terms || [],
-      negative_filters || [],
-      routeTier || "easy"
-    );
+    const [liveRes, topicRes] = await Promise.all([
+      runLiveSearch(
+        expanded_queries || [],
+        entity_terms || [],
+        negative_filters || [],
+        routeTier || "easy"
+      ),
+      fetchTopicRoutesLiveSources({
+        userGoal: (expanded_queries || []).join(" ") || (entity_terms || []).join(" "),
+        entityTerms: entity_terms || [],
+        expandedQueries: expanded_queries || [],
+        negativeFilters: negative_filters || [],
+        sourcePreferences: source_preferences || [],
+        callerTag: "signal_scout",
+      }),
+    ]);
+    liveResults = liveRes;
+    topicResult = topicRes;
   }
 
-  // ── Step 2: If live search returned results, use them ──
-  if (liveResults && liveResults.length > 0) {
+  // ── Step 2: Merge topic candidates with live results ──
+  // Topic routes take priority (appear first), dedupe by source_url
+  // Filter out generic catch-all sources (Wikipedia current-events) when topic routes return domain-specific results
+  type MergedCandidate = {
+    feed_item_id: string;
+    title: string;
+    publisher: string;
+    source_kind: string;
+    provider: string;
+    source_url: string;
+    domain: string | null;
+    summary: string;
+    author: string;
+    published_at: string | null;
+    route_path: string | null;
+    rsshub_feed_url: string | null;
+    docs_url: string | null;
+    rank: number;
+    relevance_score: number;
+    reason: string;
+    _isTopicCandidate?: boolean;
+  };
+  const mergedLive: MergedCandidate[] = [];
+
+  // Detect if query is AI/crypto topic — used for guards even when topic routes return 0
+  const userGoalText = (expanded_queries || []).join(" ") || (entity_terms || []).join(" ");
+  const detectedTopics = detectTopics(userGoalText, entity_terms || []);
+  const queryHasAiTopic = detectedTopics.some((t) => t.category === "ai");
+  const queryHasCryptoTopic = detectedTopics.some((t) => t.category === "crypto");
+  const queryHasDomainTopic = queryHasAiTopic || queryHasCryptoTopic;
+
+  if (topicResult.candidates.length > 0) {
+    const seenUrls = new Set<string>();
+    const hasDomainSpecificTopics = topicResult.candidates.some(
+      (tc) => tc.topic_category === "ai" || tc.topic_category === "crypto"
+    );
+    for (const tc of topicResult.candidates) {
+      seenUrls.add(tc.source_url.toLowerCase());
+      mergedLive.push({ ...tc, _isTopicCandidate: true });
+    }
+    if (liveResults) {
+      for (const lr of liveResults) {
+        if (seenUrls.has(lr.source_url.toLowerCase())) continue;
+        const url = lr.source_url.toLowerCase();
+        const routePath = (lr.route_path || "").toLowerCase();
+        const domain = (lr.domain || "").toLowerCase();
+        const title = (lr.title || "").toLowerCase();
+        const summary = (lr.summary || "").toLowerCase();
+        // Filter out generic catch-all sources when domain-specific topic routes exist
+        if (hasDomainSpecificTopics && isGenericCatchAllSource({ domain, routePath, url })) {
+          continue;
+        }
+        // Domain guard: reject non-topic sources from wrong domains for AI/crypto queries
+        if (queryHasAiTopic && !passesAiSourceGuard({ domain, routePath, title, summary })) {
+          continue;
+        }
+        if (queryHasCryptoTopic && !passesCryptoSourceGuard({ domain, routePath, title, summary })) {
+          continue;
+        }
+        seenUrls.add(lr.source_url.toLowerCase());
+        mergedLive.push(lr);
+      }
+    }
+  } else if (liveResults) {
+    // Even when topic routes return 0, filter by domain guard for AI/crypto queries
+    if (queryHasDomainTopic) {
+      for (const lr of liveResults) {
+        const url = lr.source_url.toLowerCase();
+        const routePath = (lr.route_path || "").toLowerCase();
+        const domain = (lr.domain || "").toLowerCase();
+        const title = (lr.title || "").toLowerCase();
+        const summary = (lr.summary || "").toLowerCase();
+        // Reject generic catch-all
+        if (isGenericCatchAllSource({ domain, routePath, url })) continue;
+        // Domain guard for AI queries
+        if (queryHasAiTopic && !passesAiSourceGuard({ domain, routePath, title, summary })) continue;
+        // Domain guard for crypto queries
+        if (queryHasCryptoTopic && !passesCryptoSourceGuard({ domain, routePath, title, summary })) continue;
+        mergedLive.push(lr);
+      }
+    } else {
+      mergedLive.push(...liveResults);
+    }
+  }
+
+  // Re-rank merged candidates: sort by relevance_score descending, assign rank 1..N
+  // Topic candidates get priority over non-topic candidates
+  mergedLive.sort((a, b) => {
+    // Topic candidates first
+    if (a._isTopicCandidate && !b._isTopicCandidate) return -1;
+    if (!a._isTopicCandidate && b._isTopicCandidate) return 1;
+    if (b.relevance_score !== a.relevance_score) return b.relevance_score - a.relevance_score;
+    return 0;
+  });
+  mergedLive.forEach((c, i) => { c.rank = i + 1; });
+
+  // Determine source strategy
+  const hasTopicResults = topicResult.candidates.length > 0;
+  const hasLiveResults = liveResults && liveResults.length > 0;
+  const sourceStrategy = hasTopicResults && hasLiveResults
+    ? "rsshub_live_plus_topic"
+    : hasTopicResults
+      ? "rsshub_topic_live"
+      : "rsshub_live";
+
+  // ── Step 3: If merged live results exist, use them ──
+  if (mergedLive.length > 0) {
     return {
       ok: true,
       serviceName: "signal_scout",
       data: {
-        ranked_candidates: liveResults,
-        top_candidates: liveResults.slice(0, 3).map((r) => r.feed_item_id),
-        quick_relevance_notes: liveResults.slice(0, 5).map((r) => r.reason),
-        safe_signal_summary: `Live RSSHub: ${liveResults.length} source(s) found from ${liveResults.filter((s) => s.source_kind === "rsshub_live").length} route(s).`,
+        ranked_candidates: mergedLive,
+        top_candidates: mergedLive.slice(0, 3).map((r) => r.feed_item_id),
+        quick_relevance_notes: mergedLive.slice(0, 5).map((r) => r.reason),
+        safe_signal_summary: `Live RSSHub: ${mergedLive.length} source(s) found${hasTopicResults ? `, ${topicResult.candidates.length} from topic routes` : ""}.`,
         retrieval_mode: "rsshub_live",
+        source_strategy: sourceStrategy,
+        topic_routes_count: topicResult.diagnostics.topic_routes_count,
+        topic_candidates_count: topicResult.candidates.length,
       },
-      safeSummary: `Live RSSHub: ${liveResults.length} source(s) found.`,
+      safeSummary: `Live RSSHub: ${mergedLive.length} source(s) found.`,
       settled: false,
       error: null,
     };

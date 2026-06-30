@@ -942,10 +942,22 @@ a:hover { text-decoration: none; }
   font-size: 13px;
   text-decoration: none;
   color: #3b82f6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
 }
 .pl-source-links-row a:hover {
   background: var(--info-soft);
   text-decoration: none;
+}
+.pl-source-link-meta {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
 }
 
 .pl-rationale-block {
