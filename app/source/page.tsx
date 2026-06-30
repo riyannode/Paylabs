@@ -15,6 +15,33 @@ function stripTags(html: string): string {
   return out.trim();
 }
 
+/** PR #74: Decode HTML entities for clean display */
+function decodeEntities(text: string): string {
+  // Decode &amp; LAST to prevent double-unescaping
+  // (e.g. &amp;lt; should become &lt; not <)
+  return text
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/g, "'")
+    .replace(/&#x2F;/g, "/")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
+}
+
+/** PR #74: Safe text cleanup — decode entities twice, then strip tags.
+ *  Handles escaped HTML like &lt;a href=&quot;...&quot;&gt; by decoding
+ *  entities first (revealing real tags), then stripping those tags.
+ *  Double decode catches nested encoding. */
+function cleanFeedText(input: unknown): string {
+  const raw = typeof input === "string" ? input : "";
+  if (!raw) return "";
+  const decodedOnce = decodeEntities(raw);
+  const decodedTwice = decodeEntities(decodedOnce);
+  return stripTags(decodedTwice).replace(/\s+/g, " ").trim();
+}
+
 function timeAgo(dateStr: string): string {
   const d = new Date(dateStr);
   const now = new Date();
@@ -98,7 +125,7 @@ export default async function SourcesPage() {
               style={{ display: "flex", flexDirection: "column", gap: 8 }}
             >
               <div style={{ fontWeight: 700, fontSize: 15 }}>
-                {item.title || "(untitled)"}
+                {cleanFeedText(item.title) || "(untitled)"}
               </div>
 
               {item.summary && (
@@ -113,7 +140,7 @@ export default async function SourcesPage() {
                     overflow: "hidden",
                   }}
                 >
-                  {stripTags(item.summary)}
+                  {cleanFeedText(item.summary)}
                 </p>
               )}
 
