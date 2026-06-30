@@ -392,7 +392,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
     const hash = window.location.hash;
     if (
       window.location.pathname === "/" &&
-      (hash.includes("access_token") || hash.includes("id_token"))
+      (hash.includes("access_token") || hash.includes("id_token") || hash.includes("error"))
     ) {
       window.location.replace(`/creator-dashboard${hash}`);
     }
