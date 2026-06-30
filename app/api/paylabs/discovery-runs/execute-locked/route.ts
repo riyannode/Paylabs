@@ -24,7 +24,6 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { isAutoTierPreflightEnabled } from "@/lib/paylabs/feature-flags";
 import type { DelegatedRouteTier, ExecutionPlan } from "@/lib/paylabs/delegated-runtime/types";
 import type { OrchestratorOutput, PaymentGraphEdge } from "@/lib/paylabs/delegated-runtime/types";
-import { FIXED_FEES_USDC } from "@/lib/paylabs/delegated-runtime/quote-engine";
 import { TIER_PHASE_MAP } from "@/lib/paylabs/delegated-runtime/state";
 import { getMacroNodeAllocationUsdcForTier } from "@/lib/paylabs/delegated-runtime/node-registry";
 import type { MacroNodePhase } from "@/lib/paylabs/delegated-runtime/types";
@@ -197,8 +196,8 @@ function buildLockedOutput(
       userBudgetUsdc,
       userBudgetUsedUsdc,
       remainingBudgetUsdc: Math.max(0, userBudgetUsdc - userBudgetUsedUsdc),
-      treasuryFeeUsdc: FIXED_FEES_USDC.brainTreasury,
-      macroAllocationUsdc: userBudgetUsedUsdc - FIXED_FEES_USDC.brainTreasury,
+      treasuryFeeUsdc: 0, // locked execution skips controller→brain x402
+      macroAllocationUsdc: userBudgetUsedUsdc, // all spend is brain→macro level
       childPaymentVolumeUsdc,
       grossPaymentVolumeUsdc,
       executionFeeUsdc: lockedPlan
@@ -213,7 +212,20 @@ function buildLockedOutput(
     paymentPlan,
     paymentEdges: [],
     serviceEvaluations: [],
-    brainPlanning: brainData as OrchestratorOutput["brainPlanning"],
+    brainPlanning: brainData ? ({
+      ...brainData,
+      route_tier_hint: routeTier,
+      selected_macro_nodes: lockedPlan?.selectedMacroNodes ?? [],
+      selected_services: lockedPlan?.selectedServices ?? [],
+      planned_cost_usdc: lockedPlan?.plannedCostUsdc ?? 0,
+      planned_cost_breakdown: lockedPlan?.plannedCostBreakdown ?? {
+        brain_treasury_usdc: 0,
+        macro_node_fees_usdc: 0,
+        service_edge_fees_usdc: 0,
+        registry_check_fees_usdc: 0,
+        source_access_fees_usdc: 0,
+      },
+    } as OrchestratorOutput["brainPlanning"]) : null,
     paymentGraph,
     tieredSummaries,
     sourceContext,

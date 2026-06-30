@@ -164,7 +164,28 @@ export async function POST(req: NextRequest) {
           const trace = (run.agent_trace as Record<string, unknown>) || {};
           const pf = trace.auto_tier_preflight as Record<string, unknown> | undefined;
           if (!pf || pf.status !== "locked") return null;
-          return { ok: true, status: "route_preflight_locked", discovery_run_id: run.id, selected_tier: run.effective_route_tier };
+          // Fail-closed: final_entry_payment_usdc must be present and finite
+          const recoveredFinalPayment = Number(pf.final_entry_payment_usdc);
+          if (!Number.isFinite(recoveredFinalPayment) || recoveredFinalPayment <= 0) return null;
+          return {
+            ok: true,
+            status: "route_preflight_locked",
+            discovery_run_id: run.id,
+            selected_tier: pf.selected_tier || run.effective_route_tier,
+            routing_fee_usdc: pf.routing_fee_usdc,
+            final_entry_payment_usdc: pf.final_entry_payment_usdc,
+            locked_quote: {
+              plannedCostUsdc: pf.locked_planned_cost_usdc,
+              expectedPaymentEdges: pf.locked_expected_payment_edges,
+              plannedCostBreakdown: pf.locked_planned_cost_breakdown,
+            },
+            locked_execution_plan: {
+              selectedMacroNodes: pf.locked_selected_macro_nodes,
+              selectedServices: pf.locked_selected_services,
+            },
+            safe_brain_fields: pf.brain_fields,
+            routing_payment: pf.routing_payment,
+          };
         },
       });
 
@@ -180,6 +201,13 @@ export async function POST(req: NextRequest) {
       const preflightData = preflightResult.data as Record<string, unknown>;
       const discoveryRunId = preflightData.discovery_run_id as string;
       const finalEntryPaymentUsdc = Number(preflightData.final_entry_payment_usdc);
+      // Fail-closed guard: final_entry_payment_usdc must be finite and positive
+      if (!Number.isFinite(finalEntryPaymentUsdc) || finalEntryPaymentUsdc <= 0) {
+        return NextResponse.json(
+          { ok: false, error: "invalid_preflight_final_entry_payment" },
+          { status: 502 },
+        );
+      }
       // CORRECTION: maxAmount for execute-locked = final_entry_payment, NOT budget cap
       const finalMaxAmountUsdc = finalEntryPaymentUsdc.toFixed(6);
 
