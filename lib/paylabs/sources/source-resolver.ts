@@ -16,6 +16,43 @@ import type {
   SourceResolverOutput,
 } from "./types";
 import { sanitizeEntityTerms, hasBoundaryTerm } from "./source-term-matching";
+import { detectTopics } from "@/lib/rsshub/topic-routes";
+import {
+  passesAiSourceGuard,
+  passesCryptoSourceGuard,
+  isGenericCatchAllSource,
+} from "@/lib/rsshub/topic-source-guards";
+
+// ─── Topic-aware source validation ────────────────────────
+
+/** Check if a topic query has insufficient sources — frontend must NOT show ✅ */
+function validateTopicSources(
+  sources: SourceItem[],
+  normalizedGoal: string,
+  entityTerms: string[]
+): { valid: boolean; warning?: string; detected_topic?: string } {
+  const topics = detectTopics(normalizedGoal, entityTerms);
+  if (topics.length === 0) return { valid: true };
+
+  const hasAi = topics.some((t) => t.category === "ai");
+  const hasCrypto = topics.some((t) => t.category === "crypto");
+
+  if (hasAi && sources.length === 0) {
+    return {
+      valid: false,
+      warning: "AI topic detected but no AI-specific sources found. Links are empty — do not mark as ✅.",
+      detected_topic: "ai",
+    };
+  }
+  if (hasCrypto && sources.length === 0) {
+    return {
+      valid: false,
+      warning: "Crypto topic detected but no crypto-specific sources found. Links are empty — do not mark as ✅.",
+      detected_topic: "crypto",
+    };
+  }
+  return { valid: true };
+}
 
 // ─── Whitelist: safe columns only ─────────────────────────
 // NEVER include source_payload, normalized_sha256, content_sha256,
@@ -223,13 +260,35 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entity
   const isGitHubIntent = /\bgithub\b/i.test(goalLower) || /\brepo(s|sitory|sitories)?\b/i.test(goalLower) || !!ownerRepoMatch;
   const isNewsIntent = goalLower.includes("news") || goalLower.includes("latest") || goalLower.includes("update");
 
+  // Resolver-level guard: detect AI/crypto topic queries
+  const _detectedTopics = detectTopics(normalizedGoal, entityTerms || []);
+  const _queryHasAiTopic = _detectedTopics.some((t) => t.category === "ai");
+  const _queryHasCryptoTopic = _detectedTopics.some((t) => t.category === "crypto");
+  const _queryHasDomainTopic = _queryHasAiTopic || _queryHasCryptoTopic;
+
   const filtered = sources.filter((src) => {
     const title = (src.title || "").toLowerCase();
     const summary = (src.summary || "").toLowerCase();
     const domain = (src.domain || "").toLowerCase();
     const routePath = (src.route_path || "").toLowerCase();
     const url = (src.url || "").toLowerCase();
-    const combined = `${title} ${summary} ${domain} ${routePath} ${url}`;
+    const reason = (src.reason || "").toLowerCase();
+    // Include reason in combined text so topic_route:ai/openai helps entity matching
+    const combined = `${title} ${summary} ${domain} ${routePath} ${url} ${reason}`;
+
+    // Wikipedia/current-events guard: reject generic catch-all for AI/crypto queries
+    if (_queryHasDomainTopic && isGenericCatchAllSource({ domain, routePath, url })) {
+      return false;
+    }
+
+    // Resolver-level AI domain guard: reject wrong-domain sources for AI queries
+    if (_queryHasAiTopic && !passesAiSourceGuard({ domain, routePath, title, summary })) {
+      return false;
+    }
+    // Resolver-level crypto domain guard: reject wrong-domain sources for crypto queries
+    if (_queryHasCryptoTopic && !passesCryptoSourceGuard({ domain, routePath, title, summary })) {
+      return false;
+    }
 
     // Entity terms: at least ONE must appear (includes short meaningful tokens like x402, ai)
     if (entityPatterns.length > 0) {
@@ -288,6 +347,9 @@ export async function resolveSources(
       input.intentType
     ) + entityDiagnostic;
 
+    // Topic-aware validation: warn if AI/crypto topic but 0 sources
+    const sourceValidation = validateTopicSources(sources, input.normalizedGoal, input.entityTerms || []);
+
     return {
       ok: true,
       sourceContext: {
@@ -295,6 +357,7 @@ export async function resolveSources(
         source_selection_summary: sourceSelectionSummary,
         source_confidence: sourceConfidence,
         source_count: sources.length,
+        source_validation: sourceValidation,
       },
       error: null,
     };

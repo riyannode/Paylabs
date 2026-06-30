@@ -101,8 +101,8 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (exitOutput?.final_answer as string) ??
     null;
 
-  // Prioritize source-grounded answer over Brain Planner output
-  // But detect no-source fallback so we don't show "No sufficiently relevant sources..." as the answer
+  // Prioritize Brain LLM answer over deterministic source-grounded answer.
+  // brainAssistantResponse is a natural LLM answer; rawFinalAnswer is a deterministic source list.
   const isNoSourceFallback = /no sufficiently relevant sources found|no relevant sources found|no matching live rsshub sources|no sufficiently relevant live sources were found|did not attach source links/i.test(rawFinalAnswer || "");
   const brainAssistantResponse =
     (brainPlanning?.assistant_response as string) ??
@@ -120,8 +120,8 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
   const NO_SOURCE_FALLBACK_MSG = "No sufficiently relevant live sources were found for this query. The route completed with basic discovery, but PayLabs did not attach source links because no source passed the relevance gate.";
 
   const assistantResponse =
-    (rawFinalAnswer && !isNoSourceFallback ? rawFinalAnswer : null) ??
     (brainAssistantResponse && !isGenericBrainAnswer ? brainAssistantResponse : null) ??
+    (rawFinalAnswer && !isNoSourceFallback ? rawFinalAnswer : null) ??
     (isNoSourceFallback || isGenericBrainAnswer ? NO_SOURCE_FALLBACK_MSG : null) ??
     (exitOutput?.final_summary as string) ??
     tieredSummaries?.final_summary ??
@@ -130,14 +130,14 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (brainPlanning?.user_visible_reasoning as string) ??
     (agentTraceBrain?.user_visible_reasoning as string) ??
     null;
-  // Route reasoning priority: tier_decision_reason first (explains why Easy/Normal/Advanced was chosen)
+  // Route reasoning priority: user_visible_reasoning first (detailed explanation), then tier_decision_reason (short)
   const brainRationale =
+    (brainPlanning?.user_visible_reasoning as string) ??
+    (agentTraceBrain?.user_visible_reasoning as string) ??
     (brainPlanning?.tier_decision_reason as string) ??
     (agentTraceBrain?.tier_decision_reason as string) ??
     (brainPlanning?.plan_rationale as string) ??
     (agentTraceBrain?.plan_rationale as string) ??
-    (brainPlanning?.user_visible_reasoning as string) ??
-    (agentTraceBrain?.user_visible_reasoning as string) ??
     null;
 
   // Extract sources from source_context.sources_used or fallback to exit_output.sources_used
@@ -890,6 +890,7 @@ function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () =>
           {result.sourcesUsed.slice(0, 3).map((s, i) => (
             <a key={s.url} href={s.url} target="_blank" rel="noopener noreferrer" title={s.title}>
               Link {i + 1}
+              <span className="pl-source-link-meta">{s.title || s.domain || ""}</span>
             </a>
           ))}
         </div>
