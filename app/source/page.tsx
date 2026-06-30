@@ -17,15 +17,17 @@ function stripTags(html: string): string {
 
 /** PR #74: Decode HTML entities for clean display */
 function decodeEntities(text: string): string {
+  // Decode &amp; LAST to prevent double-unescaping
+  // (e.g. &amp;lt; should become &lt; not <)
   return text
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&#x27;/g, "'")
     .replace(/&#x2F;/g, "/")
-    .replace(/&nbsp;/g, " ");
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
 }
 
 function timeAgo(dateStr: string): string {
