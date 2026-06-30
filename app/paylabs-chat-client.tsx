@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import SidebarPanel from "@/components/paylabs/SidebarPanel";
+import MobileNav from "@/components/paylabs/MobileNav";
 import type { WalletState, WalletInfo, UcwBalance } from "@/components/paylabs/WalletConnectModal";
 import DcwModal from "@/components/paylabs/DcwModal";
 import { safeExplorerUrl as validateExplorerUrl } from "@/lib/paylabs/x402/payment-links";
@@ -613,6 +614,8 @@ export default function PayLabsChatClient({ analytics }: Props) {
   }, [walletInfo?.address]);
 
   return (
+    <>
+      <MobileNav />
     <div className="pl-app">
       <SidebarPanel analytics={analytics} />
 
@@ -833,6 +836,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
         }}
       />
     </div>
+    </>
   );
 }
 
