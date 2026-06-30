@@ -772,7 +772,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
               className="pl-guide-toggle"
               onClick={() => setGuideOpen(!guideOpen)}
             >
-              <span>Route guide — Auto chooses depth based on task complexity</span>
+              <span>Route guide — Brain auto routes by task complexity</span>
               <span>{guideOpen ? "▾" : "▸"}</span>
             </button>
             {guideOpen && (
