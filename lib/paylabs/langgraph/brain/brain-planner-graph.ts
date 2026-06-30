@@ -63,12 +63,22 @@ Macro nodes: ["discovery_planner", "payment_decision", "settlement_memory"]
 Services: ["intent_planner", "query_builder", "signal_scout", "intent_matcher", "source_verifier", "value_allocator", "trust_verifier", "payment_decider", "creator_attribution", "creator_payout_router"]
 max_registry_checks: 3-7. max_source_accesses: 3-6.
 
-ADVANCED — ONLY when user explicitly asks for paid source unlock, deeper evidence evaluation, creator payment, receipt, settlement, or payment routing to creator/source. Includes payment-decision phase, paid source unlock, advanced evidence evaluation, and creator payout phase.
+ADVANCED — when the task needs deep evidence evaluation, current/live sources, multi-source comparison, cross-source verification, fact-checking, investigation, source conflict resolution, or source attribution. Also when user explicitly asks for paid source unlock, creator payment, receipt, settlement, or payment routing. Includes payment-decision phase, paid source unlock, advanced evidence evaluation, and creator payout phase.
 Macro nodes: ["discovery_planner", "payment_decision", "settlement_memory"]
 Services: ["intent_planner", "query_builder", "signal_scout", "intent_matcher", "source_verifier", "value_allocator", "trust_verifier", "payment_decider", "creator_attribution", "advanced_evidence_evaluator", "creator_payout_router"]
 max_registry_checks: 5-10. max_source_accesses: 5-8.
 
-When unsure: EASY↔NORMAL→choose NORMAL. NORMAL↔ADVANCED→choose NORMAL. Never over-route to ADVANCED unless paid unlock/deeper settlement/evidence is explicitly requested.
+When unsure: EASY↔NORMAL→choose NORMAL. NORMAL↔ADVANCED→choose NORMAL.
+
+Choose ADVANCED when ANY of these apply:
+- Task requires comparing multiple current sources or live data
+- Task requires cross-source verification or fact-checking across sources
+- Task asks to show which sources influenced the answer (attribution)
+- Task involves investigation, deep research, or conflicting evidence
+- Task requires freshness (latest/recent/current developments)
+- User explicitly asks for paid source unlock, receipt, or settlement
+
+Do NOT choose ADVANCED only because the user typed "paid", "advanced", "premium", or "unlock" — the decision must be based on task difficulty and evidence needs.
 
 === PAYMENT PHASE VOCABULARY ===
 Use these exact terms. Do NOT say "no payment needed" — it is misleading in PayLabs.
@@ -132,7 +142,7 @@ tier_decision_reason:
 - MUST NOT say "no payment needed" or "no payment" — the entry x402 payment always applies.
 - For Easy: 1 sentence. Example: "Entry x402 payment is processed for discovery and source delivery — no creator payout for this straightforward search."
 - For Normal: 1.5 sentences. Example: "Entry x402 payment is processed. This run also includes payment-decision and creator payout phases for source verification, but no paid source unlock."
-- For Advanced: 2 sentences. Example: "Entry x402 payment is processed. This run includes the full pipeline — payment-decision, paid source unlock, advanced evidence evaluation, and creator payout — because you explicitly requested premium access."
+- For Advanced: 2 sentences. Example: "Entry x402 payment is processed. This run includes the full pipeline — payment-decision, paid source unlock, advanced evidence evaluation, and creator payout — because the task requires deep evidence evaluation and cross-source verification."
 
 plan_rationale:
 - 1-2 sentences on the execution plan rationale.
@@ -167,28 +177,58 @@ tier_decision_reason: "Entry x402 payment is processed. This run also includes p
 Example 6 — Query: "Pay creator to unlock premium research report"
 assistant_response: "This request involves paying a creator to access premium content, which requires the advanced route. PayLabs will first verify the source and evaluate whether the premium content justifies the unlock cost based on the creator's reputation and the content's relevance. Once you approve, it will unlock the premium source, attribute the creator, and route the eligible creator payout through the settlement layer using x402 micropayments. The answer will include only safe receipt and payment status fields — no raw transaction data or wallet details."
 user_visible_reasoning: "The full pipeline runs: source verification evaluates the premium content's value and creator credentials, followed by paid content unlock upon approval. Advanced evidence evaluation ensures quality before creator attribution and x402 micropayment settlement. Entry x402 payment includes payment-decision, paid source unlock, evidence evaluation, and creator payout — all phases active."
-tier_decision_reason: "Entry x402 payment is processed. This run includes the full pipeline — payment-decision, paid source unlock, advanced evidence evaluation, and creator payout — because you explicitly requested premium access."
+tier_decision_reason: "Entry x402 payment is processed. This run includes the full pipeline — payment-decision, paid source unlock, advanced evidence evaluation, and creator payout — because the task requires deep evidence evaluation and cross-source verification."
+
+Example 7 — Query: "What are the latest developments in open source AI agent frameworks, compare the strongest projects, verify with multiple current sources, and show which sources influenced the answer?"
+assistant_response: "This task needs current multi-source research. PayLabs will gather recent source-backed material, compare the strongest projects found during discovery, cross-check claims across multiple sources, and show which sources influenced the answer. Because the request asks for current developments, comparison, verification, and attribution, the deep research route is appropriate."
+user_visible_reasoning: "Multiple current sources will be gathered and cross-referenced. The route uses deeper evidence validation because the task requires current comparison, verification, and source attribution."
+tier_decision_reason: "Entry x402 payment is processed. This run includes the full pipeline — payment-decision, advanced evidence evaluation, and creator payout — because the task requires current multi-source research, cross-source verification, and source attribution."
 `;
 
 // ─── Deterministic Tier Hint (nudge only, not final output) ──
 
 function computeTierHint(goal: string): string {
   const g = goal.toLowerCase();
+
+  // ── Advanced signals: task difficulty, evidence needs, freshness, attribution ──
+  const advancedSignals = [
+    // Explicit payment/unlock (kept for backward compat)
+    "receipt", "settlement", "pay creator", "paid source", "unlock",
+    "payment routing", "payout", "buy access", "purchase access",
+    "premium", "paywall", "pay author",
+    // Task difficulty signals (autonomous)
+    "latest developments", "current developments", "recent developments",
+    "compare the strongest", "compare the best", "compare the top",
+    "verify with multiple", "cross-reference",
+    "multiple current sources", "multiple sources",
+    "which sources influenced", "source attribution", "sources influenced",
+    "deep research", "deep dive", "investigation",
+    "conflicting evidence", "conflicting sources",
+    "fact-check across", "verify across",
+  ];
+
+  // ── Normal signals: comparison, verification, moderate complexity ──
   const normalSignals = [
     "valid", "real", "klaim", "claim", "verify", "comparison", "compare",
     "vs", "trust", "better", "fact-check", "fact check", "credible",
     "reliable", "which", "assess", "evaluation", "truth",
+    "explain with sources", "summarize with sources",
   ];
-  const advancedSignals = [
-    "receipt", "settlement", "pay creator", "paid source", "unlock",
-    "payment routing", "payout", "buy access", "purchase access",
-    "premium", "paywall", "pay author",
+
+  // ── Easy signals: simple, direct, no source/freshness need ──
+  const easySignals = [
+    "what is", "define", "definition", "meaning of",
+    "quick answer", "simple explain", "briefly",
   ];
+
   for (const s of advancedSignals) {
     if (g.includes(s)) return "advanced";
   }
   for (const s of normalSignals) {
     if (g.includes(s)) return "normal";
+  }
+  for (const s of easySignals) {
+    if (g.includes(s)) return "easy";
   }
   return "easy";
 }
