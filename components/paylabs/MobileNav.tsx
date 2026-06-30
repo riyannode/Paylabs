@@ -17,21 +17,32 @@ type Props = {
 
 export default function MobileNav({ onOpenWallet, applyBodyOffset = false }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
 
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
 
-  // Add body class for sub-page top padding (only when requested)
+  // Track mobile breakpoint + body offset class + auto-close drawer on resize
   useEffect(() => {
-    if (!applyBodyOffset) return;
     const mq = window.matchMedia("(max-width: 960px)");
+
     function apply() {
-      if (mq.matches) {
+      const mobile = mq.matches;
+      setIsMobile(mobile);
+
+      // Close drawer when viewport becomes desktop
+      if (!mobile) {
+        setDrawerOpen(false);
+      }
+
+      // Body offset class for sub-pages only
+      if (applyBodyOffset && mobile) {
         document.body.classList.add("pl-mobile-has-topbar");
       } else {
         document.body.classList.remove("pl-mobile-has-topbar");
       }
     }
+
     apply();
     mq.addEventListener("change", apply);
     return () => {
@@ -50,7 +61,7 @@ export default function MobileNav({ onOpenWallet, applyBodyOffset = false }: Pro
     return () => document.removeEventListener("keydown", onKey);
   }, [drawerOpen, closeDrawer]);
 
-  // Lock body scroll when drawer is open
+  // Lock body scroll when drawer is open (cleared automatically on unmount/close)
   useEffect(() => {
     if (!drawerOpen) return;
     const prev = document.body.style.overflow;
@@ -81,8 +92,8 @@ export default function MobileNav({ onOpenWallet, applyBodyOffset = false }: Pro
         <div className="pl-mobile-topbar-spacer" />
       </header>
 
-      {/* ── Drawer overlay + panel ── */}
-      {drawerOpen && (
+      {/* ── Drawer overlay + panel (mobile only) ── */}
+      {drawerOpen && isMobile && (
         <div className="pl-mobile-drawer-root">
           <div
             className="pl-mobile-backdrop"
