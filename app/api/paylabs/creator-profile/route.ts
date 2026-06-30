@@ -184,10 +184,10 @@ function detectClaimScope(url: string, hostname: string): { scope: ClaimScope; s
         platform,
       };
     }
-    // Fallback to host if handle extraction fails
+    // No handle extracted — reject. Do NOT fall back to host:x.com etc.
     return {
-      scope: "host",
-      scopeKey: `host:${hostname}`,
+      scope: null as unknown as ClaimScope,
+      scopeKey: "",
       platform,
     };
   }
@@ -272,6 +272,15 @@ export async function POST(req: NextRequest) {
 
   const hostname = parsed.domain!;
   const { scope, scopeKey, platform } = detectClaimScope(parsed.url!, hostname);
+
+  // Reject social platform URLs where handle extraction failed
+  if (!scope || !scopeKey) {
+    return NextResponse.json(
+      { error: "Unsupported profile URL. Use a direct creator profile URL (e.g. x.com/username, youtube.com/@handle, medium.com/@handle)." },
+      { status: 400 },
+    );
+  }
+
   const proofMethod = resolveProofMethod(platform);
   const proofNonce = generateNonce();
 
