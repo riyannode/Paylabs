@@ -143,23 +143,22 @@ export function getMacroNodeChildServicesForTier(
 
 /**
  * Get tier-aware allocation for a macro-node.
- * Uses actual child service count for the given tier.
+ * Base fee ONLY — child services are paid as separate edges.
+ * No double counting: macro edge = 0.000001, each child edge = 0.000001.
  */
 export function getMacroNodeAllocationUsdcForTier(
-  nodeName: MacroNodePhase,
-  routeTier: "easy" | "normal" | "advanced",
+  _nodeName: MacroNodePhase,
+  _routeTier: "easy" | "normal" | "advanced",
 ): number {
-  const children = getMacroNodeChildServicesForTier(nodeName, routeTier);
-  return MACRO_NODE_FEE_USDC + children.length * CHILD_SERVICE_FEE_USDC;
+  return MACRO_NODE_FEE_USDC;
 }
 
 /**
- * Get total allocation for a macro-node (base fee + child budget).
- * Uses static childServices count — prefer getMacroNodeAllocationUsdcForTier for billing.
+ * Get total allocation for a macro-node — base fee ONLY.
+ * Child services are paid as separate edges (no double counting).
  */
-export function getMacroNodeAllocationUsdc(nodeName: MacroNodePhase): number {
-  const config = MACRO_NODES[nodeName];
-  return MACRO_NODE_FEE_USDC + config.childServices.length * CHILD_SERVICE_FEE_USDC;
+export function getMacroNodeAllocationUsdc(_nodeName: MacroNodePhase): number {
+  return MACRO_NODE_FEE_USDC;
 }
 
 /**
