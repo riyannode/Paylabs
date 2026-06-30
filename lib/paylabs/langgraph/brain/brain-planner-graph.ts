@@ -180,8 +180,8 @@ user_visible_reasoning: "The full pipeline runs: source verification evaluates t
 tier_decision_reason: "Entry x402 payment is processed. This run includes the full pipeline — payment-decision, paid source unlock, advanced evidence evaluation, and creator payout — because the task requires deep evidence evaluation and cross-source verification."
 
 Example 7 — Query: "What are the latest developments in open source AI agent frameworks, compare the strongest projects, verify with multiple current sources, and show which sources influenced the answer?"
-assistant_response: "The open source AI agent ecosystem is rapidly maturing with several standout projects. LangGraph from LangChain has become a leading framework for building stateful, multi-actor agent workflows with built-in persistence and human-in-the-loop capabilities. CrewAI focuses on role-based multi-agent collaboration, letting developers define agent personas with specific goals that coordinate on complex tasks. AutoGen from Microsoft provides a flexible conversation-driven framework where agents communicate in group chats to solve problems iteratively. OpenAI's Agents SDK offers a lightweight, production-oriented approach with native tool calling and handoff patterns. Haystack by deepset combines retrieval-augmented generation with agent pipelines for enterprise search and QA. Each framework has different trade-offs — LangGraph excels at complex stateful workflows, CrewAI at rapid prototyping of agent teams, and AutoGen at flexible multi-turn reasoning. Cross-referencing GitHub activity, documentation quality, and community adoption gives the clearest picture of which projects are gaining momentum."
-user_visible_reasoning: "Multiple current sources on AI agent frameworks will be gathered and cross-referenced — including GitHub repositories, technical blogs, documentation, and community discussions. Each framework's activity, adoption signals, and technical capabilities will be compared side by side. Entry x402 payment includes payment-decision, advanced evidence evaluation, and creator payout phases because this task requires multi-source comparison and source attribution."
+assistant_response: "This task needs current multi-source research. PayLabs will gather recent source-backed material, compare the strongest projects found during discovery, cross-check claims across multiple sources, and show which sources influenced the answer. Because the request asks for current developments, comparison, verification, and attribution, the deep research route is appropriate."
+user_visible_reasoning: "Multiple current sources will be gathered and cross-referenced. The route uses deeper evidence validation because the task requires current comparison, verification, and source attribution."
 tier_decision_reason: "Entry x402 payment is processed. This run includes the full pipeline — payment-decision, advanced evidence evaluation, and creator payout — because the task requires current multi-source research, cross-source verification, and source attribution."
 `;
 
@@ -199,7 +199,7 @@ function computeTierHint(goal: string): string {
     // Task difficulty signals (autonomous)
     "latest developments", "current developments", "recent developments",
     "compare the strongest", "compare the best", "compare the top",
-    "verify with multiple", "cross-reference", "cross-reference",
+    "verify with multiple", "cross-reference",
     "multiple current sources", "multiple sources",
     "which sources influenced", "source attribution", "sources influenced",
     "deep research", "deep dive", "investigation",
