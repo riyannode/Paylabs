@@ -73,26 +73,82 @@ function generateNonce(): string {
 
 // ─── Scope Detection ──────────────────────────────────────────
 
-type ClaimScope = "exact_url" | "domain" | "host" | "github_repo" | "manual";
-type SourcePlatform = "domain" | "github" | "vercel" | "netlify" | "github_pages" | "rss_publisher" | "unsupported";
+type ClaimScope = "exact_url" | "domain" | "host" | "github_repo" | "platform_profile" | "manual";
+type SourcePlatform = "domain" | "github" | "vercel" | "netlify" | "github_pages" | "rss_publisher" | "twitter" | "youtube" | "medium" | "substack" | "unsupported";
+
+const SOCIAL_HOSTS: Record<string, SourcePlatform> = {
+  "twitter.com": "twitter",
+  "x.com": "twitter",
+  "youtube.com": "youtube",
+  "www.youtube.com": "youtube",
+  "youtu.be": "youtube",
+  "medium.com": "medium",
+};
 
 function detectSourcePlatform(hostname: string): SourcePlatform {
-  if (hostname === "github.com") return "github";
+  if (hostname === "github.com" || hostname === "www.github.com") return "github";
   if (hostname.endsWith(".github.io")) return "github_pages";
   if (hostname.endsWith(".vercel.app")) return "vercel";
   if (hostname.endsWith(".netlify.app")) return "netlify";
-  return "domain";
+  if (hostname.endsWith(".substack.com")) return "substack";
+  return SOCIAL_HOSTS[hostname] || "domain";
+}
+
+/**
+ * Extract social handle from URL path.
+ * Returns null if not a recognizable social profile URL.
+ */
+function extractSocialHandle(url: string, hostname: string, platform: SourcePlatform): string | null {
+  try {
+    const pathname = new URL(url).pathname;
+    const parts = pathname.split("/").filter(Boolean);
+
+    if (platform === "twitter") {
+      // twitter.com/<handle> or x.com/<handle>
+      // Reject reserved paths that are not profile handles
+      const RESERVED_X = new Set([
+        "home", "search", "i", "settings", "notifications", "messages",
+        "explore", "compose", "login", "signup", "download", "tos",
+        "privacy", "about", "jobs", "intent", "share", "hashtag",
+      ]);
+      if (parts.length >= 1 && parts[0] && !RESERVED_X.has(parts[0].toLowerCase()) && !parts[0].startsWith("-")) {
+        return parts[0].toLowerCase();
+      }
+    }
+
+    if (platform === "youtube") {
+      // youtube.com/@handle
+      if (parts.length >= 1 && parts[0]?.startsWith("@")) {
+        return parts[0].slice(1).toLowerCase();
+      }
+      // youtube.com/channel/<id>
+      if (parts.length >= 2 && parts[0] === "channel") {
+        return parts[1];
+      }
+    }
+
+    if (platform === "medium") {
+      // medium.com/@handle
+      if (parts.length >= 1 && parts[0]?.startsWith("@")) {
+        return parts[0].slice(1).toLowerCase();
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function detectClaimScope(url: string, hostname: string): { scope: ClaimScope; scopeKey: string; platform: SourcePlatform } {
   const platform = detectSourcePlatform(hostname);
 
   // GitHub repo: https://github.com/owner/repo or deeper
-  if (hostname === "github.com") {
+  if (hostname === "github.com" || hostname === "www.github.com") {
     const parts = new URL(url).pathname.split("/").filter(Boolean);
     if (parts.length >= 2) {
-      const owner = parts[0];
-      const repo = parts[1].replace(/\.git$/, "");
+      const owner = parts[0].toLowerCase();
+      const repo = parts[1].replace(/\.git$/, "").toLowerCase();
       return {
         scope: "github_repo",
         scopeKey: `github_repo:${owner}/${repo}`,
@@ -101,20 +157,37 @@ function detectClaimScope(url: string, hostname: string): { scope: ClaimScope; s
     }
   }
 
-  // GitHub Pages: https://user.github.io/* → domain-level claim
-  if (hostname.endsWith(".github.io")) {
+  // Tenant hosts (shared platform subdomains): host-level claim
+  // *.github.io, *.vercel.app, *.netlify.app, *.substack.com
+  if (
+    hostname.endsWith(".github.io") ||
+    hostname.endsWith(".vercel.app") ||
+    hostname.endsWith(".netlify.app") ||
+    hostname.endsWith(".substack.com")
+  ) {
     return {
-      scope: "domain",
-      scopeKey: `domain:${hostname}`,
-      platform: "github_pages",
+      scope: "host",
+      scopeKey: `host:${hostname}`,
+      platform,
     };
   }
 
-  // Vercel/Netlify: domain-level claim
-  if (hostname.endsWith(".vercel.app") || hostname.endsWith(".netlify.app")) {
+  // Social platforms: platform_profile scope with extracted handle
+  if (platform !== "domain") {
+    const handle = extractSocialHandle(url, hostname, platform);
+    if (handle) {
+      // Normalize twitter/x to "x" for scope key
+      const platformKey = platform === "twitter" ? "x" : platform;
+      return {
+        scope: "platform_profile",
+        scopeKey: `platform_profile:${platformKey}:${handle}`,
+        platform,
+      };
+    }
+    // No handle extracted — reject. Do NOT fall back to host:x.com etc.
     return {
-      scope: "domain",
-      scopeKey: `domain:${hostname}`,
+      scope: null as unknown as ClaimScope,
+      scopeKey: "",
       platform,
     };
   }
@@ -127,9 +200,33 @@ function detectClaimScope(url: string, hostname: string): { scope: ClaimScope; s
   };
 }
 
-function resolveProofMethod(platform: SourcePlatform): "well_known_json" | "github_repo_file" | "manual_review" {
+function resolveProofMethod(platform: SourcePlatform): "well_known_json" | "github_repo_file" | "hosted_link_backlink" | "manual_review" {
   if (platform === "github") return "github_repo_file";
+  // Social platforms and platforms that can't host .well-known files
+  if (["twitter", "youtube", "medium", "substack"].includes(platform)) return "hosted_link_backlink";
   return "well_known_json";
+}
+
+/**
+ * Get equivalent scope keys for a claim scope.
+ * Tenant hosts have two possible keys: host:<host> and legacy domain:<host>.
+ * This ensures conflict checks catch both old and new claims.
+ */
+function getEquivalentScopeKeys(scope: ClaimScope, scopeKey: string, hostname: string): string[] {
+  if (scope === "host" || (scope === "domain" && isTenantHost(hostname))) {
+    // Tenant host: check both host:<host> and domain:<host>
+    return [`host:${hostname}`, `domain:${hostname}`];
+  }
+  return [scopeKey];
+}
+
+function isTenantHost(hostname: string): boolean {
+  return (
+    hostname.endsWith(".github.io") ||
+    hostname.endsWith(".vercel.app") ||
+    hostname.endsWith(".netlify.app") ||
+    hostname.endsWith(".substack.com")
+  );
 }
 
 // ─── GET ──────────────────────────────────────────────────────
@@ -175,17 +272,30 @@ export async function POST(req: NextRequest) {
 
   const hostname = parsed.domain!;
   const { scope, scopeKey, platform } = detectClaimScope(parsed.url!, hostname);
+
+  // Reject social platform URLs where handle extraction failed
+  if (!scope || !scopeKey) {
+    return NextResponse.json(
+      { error: "Unsupported profile URL. Use a direct creator profile URL (e.g. x.com/username, youtube.com/@handle, medium.com/@handle)." },
+      { status: 400 },
+    );
+  }
+
   const proofMethod = resolveProofMethod(platform);
   const proofNonce = generateNonce();
 
   const supabase = supabaseAdmin();
 
-  // Check for existing claim on same scope_key + wallet
+  // Get all equivalent scope keys for conflict checking
+  // Tenant hosts have both host:<host> and legacy domain:<host>
+  const equivalentKeys = getEquivalentScopeKeys(scope, scopeKey, hostname);
+
+  // Check for existing claim on same scope_key + wallet (check all equivalent keys)
   const { data: existing, error: selectError } = await supabase
     .from("paylabs_creator_claims")
     .select(SAFE_CLAIM_COLUMNS)
     .eq("creator_wallet", walletAddress)
-    .eq("claim_scope_key", scopeKey)
+    .in("claim_scope_key", equivalentKeys)
     .order("updated_at", { ascending: false })
     .limit(1);
 
@@ -199,11 +309,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Check if another wallet already verified this scope
+  // Check if another wallet already verified this scope (check all equivalent keys)
   const { data: scopeConflict } = await supabase
     .from("paylabs_creator_claims")
     .select("id, creator_wallet, claim_status")
-    .eq("claim_scope_key", scopeKey)
+    .in("claim_scope_key", equivalentKeys)
     .eq("claim_status", "verified")
     .neq("creator_wallet", walletAddress)
     .limit(1);

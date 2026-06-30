@@ -22,6 +22,19 @@ import { createServiceNode } from "../services/service-node";
 import type { ServiceName } from "../../agent-services/types";
 import type { BudgetSnapshot, SafeSourceCard } from "../../delegated-runtime/types";
 
+// ─── Claim Status Normalization ────────────────────────────
+// paylabs_feed_items uses 'claimed'/'unclaimed' (migration 12).
+// Payout pipeline (claim-policy.ts) expects 'verified'/'unclaimed'.
+// This normalizer bridges the two.
+
+function normalizeClaimStatus(...statuses: unknown[]): string {
+  for (const s of statuses) {
+    if (s === "verified" || s === "claimed") return "verified";
+    if (s && s !== "unclaimed" && s !== "null" && s !== "undefined") return String(s);
+  }
+  return "unclaimed";
+}
+
 // ─── Helper to cast state in payload functions ──────────────
 
 function asDecisionState(state: Record<string, unknown>): PaymentDecisionStateType {
@@ -63,6 +76,32 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
   // Load feed items for metadata (wallet, price, claim status)
   const { getFeedItemById } = await import("../../../ai/tools");
 
+  // Collect live source URLs for batch claim resolution
+  const liveSourceUrls: string[] = [];
+  for (const card of sourceCards.slice(0, 10)) {
+    const isLiveSource = card.source_kind === "rsshub_live" ||
+      card.source_kind === "tavily_live" ||
+      card.feed_item_id.startsWith("rsshub_live:") ||
+      card.feed_item_id.startsWith("tavily_live:");
+    if (isLiveSource && card.source_url) {
+      liveSourceUrls.push(card.source_url);
+    }
+  }
+
+  // Batch resolve claims for live sources
+  let liveClaimsMap: Map<string, { creator_wallet: string; claim_id: string } | null> = new Map();
+  if (liveSourceUrls.length > 0) {
+    try {
+      const { resolveCreatorClaimsBatch } = await import("../../creator-distribution/claim-resolver");
+      const resolved = await resolveCreatorClaimsBatch(liveSourceUrls);
+      for (const [url, claim] of resolved) {
+        liveClaimsMap.set(url, claim ? { creator_wallet: claim.creator_wallet, claim_id: claim.claim_id } : null);
+      }
+    } catch {
+      // Resolver failure should not block payment decision
+    }
+  }
+
   const candidateMeta: PaymentDecisionStateType["candidateMeta"] = [];
   for (const card of sourceCards.slice(0, 10)) {
     // Skip DB lookup for live source IDs (rsshub_live:*, tavily_live:*)
@@ -73,16 +112,23 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
       card.feed_item_id.startsWith("tavily_live:");
 
     if (isLiveSource) {
-      // Live sources: use card data directly, always non-monetized/unclaimed
+      // Live sources: check claim resolver for verified creator
+      const resolvedClaim = card.source_url ? liveClaimsMap.get(card.source_url) : null;
+
+      // Fall back to card's existing claim data when resolver misses
+      // (discovery may have already resolved the claim)
+      const wallet = resolvedClaim?.creator_wallet || card.creator_wallet || null;
+      const status = resolvedClaim ? "verified" : (card.claim_status || "unclaimed");
+
       candidateMeta.push({
         feed_item_id: card.feed_item_id,
         source_url: card.source_url || "",
         source_title: card.title || "",
         publisher: card.publisher || "",
-        creator_wallet: null,
-        claim_status: "unclaimed",
+        creator_wallet: wallet,
+        claim_status: status,
         source_kind: card.source_kind || (card.feed_item_id.startsWith("rsshub_live:") ? "rsshub_live" : "tavily_live"),
-        is_live: true,  // skip paid approval — no creator to pay
+        is_live: !resolvedClaim && status !== "verified",  // verified live sources are NOT treated as unclaimed live
       });
       continue;
     }
@@ -101,7 +147,7 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
       source_title: String(feedItem?.title || card.title || ""),
       publisher: String(feedItem?.publisher || card.publisher || ""),
       creator_wallet: feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : (card.creator_wallet || null),
-      claim_status: String(feedItem?.verification_status || card.claim_status || "unclaimed"),
+      claim_status: normalizeClaimStatus(feedItem?.claim_status, feedItem?.verification_status, card.claim_status),
     });
   }
 

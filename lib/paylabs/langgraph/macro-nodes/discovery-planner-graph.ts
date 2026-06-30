@@ -26,6 +26,19 @@ import type { BudgetSnapshot, SafeSourceCard } from "../../delegated-runtime/typ
 // (discovery_planner, payment_decision, settlement_memory) that are NOT
 // graph-internal child services. These presets are graph-internal only.
 
+// ─── Claim Status Normalization ────────────────────────────
+// paylabs_feed_items uses 'claimed'/'unclaimed' (migration 12).
+// Payout pipeline (claim-policy.ts) expects 'verified'/'unclaimed'.
+// This normalizer bridges the two.
+
+function normalizeClaimStatus(...statuses: unknown[]): string {
+  for (const s of statuses) {
+    if (s === "verified" || s === "claimed") return "verified";
+    if (s && s !== "unclaimed" && s !== "null" && s !== "undefined") return String(s);
+  }
+  return "unclaimed";
+}
+
 const DISCOVERY_PLANNER_SERVICE_PRESETS: Record<string, ServiceName[]> = {
   easy: ["intent_planner", "query_builder", "signal_scout_basics"],
   normal: ["intent_planner", "query_builder", "signal_scout"],
@@ -370,16 +383,40 @@ export async function runDiscoveryPlannerGraph(
     const rankedCandidates = result.rankedCandidates || [];
     const sourceCards: SafeSourceCard[] = [];
     const maxSourceCards = Number(process.env.PAYLABS_SOURCE_CONTEXT_MAX_SOURCES) || 20;
+
+    // Collect live source URLs for batch claim resolution
+    const liveSourceUrls: string[] = [];
+    for (const candidate of rankedCandidates.slice(0, maxSourceCards)) {
+      if (candidate.source_kind === "rsshub_live" || candidate.source_kind === "tavily_live") {
+        if (candidate.source_url) liveSourceUrls.push(candidate.source_url);
+      }
+    }
+
+    // Batch resolve claims for live sources
+    let liveClaimsMap: Map<string, { creator_wallet: string; claim_id: string } | null> = new Map();
+    if (liveSourceUrls.length > 0) {
+      try {
+        const { resolveCreatorClaimsBatch } = await import("../../creator-distribution/claim-resolver");
+        const resolved = await resolveCreatorClaimsBatch(liveSourceUrls);
+        for (const [url, claim] of resolved) {
+          liveClaimsMap.set(url, claim ? { creator_wallet: claim.creator_wallet, claim_id: claim.claim_id } : null);
+        }
+      } catch {
+        // Resolver failure should not block discovery
+      }
+    }
+
     for (const candidate of rankedCandidates.slice(0, maxSourceCards)) {
       // Live candidate: has source_url directly
       if (candidate.source_kind === "rsshub_live" || candidate.source_kind === "tavily_live") {
+        const resolvedClaim = candidate.source_url ? liveClaimsMap.get(candidate.source_url) : null;
         sourceCards.push({
           feed_item_id: candidate.feed_item_id,
           title: candidate.title || "",
           source_url: candidate.source_url || "",
           publisher: candidate.publisher || "",
-          claim_status: "unclaimed",
-          creator_wallet: null,
+          claim_status: resolvedClaim ? "verified" : "unclaimed",
+          creator_wallet: resolvedClaim?.creator_wallet || null,
           source_kind: candidate.source_kind,
           provider: candidate.provider,
         });
@@ -392,7 +429,8 @@ export async function runDiscoveryPlannerGraph(
           title: String(feedItem?.title || candidate.title || ""),
           source_url: String(feedItem?.canonical_url || ""),
           publisher: String(feedItem?.publisher || candidate.publisher || ""),
-          claim_status: String(feedItem?.verification_status || "unclaimed"),
+          // Normalize: paylabs_feed_items uses 'claimed', payout pipeline uses 'verified'
+          claim_status: normalizeClaimStatus(feedItem?.claim_status, feedItem?.verification_status),
           creator_wallet: feedItem?.creator_wallet ? String(feedItem.creator_wallet).toLowerCase() : null,
         });
       }
