@@ -384,6 +384,20 @@ export default function PayLabsChatClient({ analytics }: Props) {
     chatThreadRef.current?.scrollTo({ top: chatThreadRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
+  // ── Defensive: redirect UCW OAuth callback to /creator-dashboard ──
+  // If Google/Circle OAuth returns to root "/" with hash material,
+  // redirect to /creator-dashboard so the UCW hook can process the callback.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash;
+    if (
+      window.location.pathname === "/" &&
+      (hash.includes("access_token") || hash.includes("id_token") || hash.includes("error"))
+    ) {
+      window.location.replace(`/creator-dashboard${hash}`);
+    }
+  }, []);
+
   // ── Post-redirect: restore SDK from server session ──
   useEffect(() => {
     let cancelled = false;
