@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { short, usdc } from "@/lib/utils";
 import { hrefFromTx } from "@/lib/paylabs/x402/payment-links";
 import BatchResolverLink from "@/components/paylabs/BatchResolverLink";
+import SubPageMobileNav from "@/components/paylabs/SubPageMobileNav";
 
 async function getRecentX402Payments(limit = 50) {
   const { data } = await supabaseAdmin()
@@ -132,6 +133,8 @@ export default async function DashboardPage() {
   ]);
 
   return (
+    <>
+      <SubPageMobileNav />
     <div style={{ display: "grid", gap: 24 }}>
       <div>
         <a href="/" className="pl-back-btn">← Back to Chat</a>
@@ -259,5 +262,6 @@ export default async function DashboardPage() {
 
 
     </div>
+    </>
   );
 }

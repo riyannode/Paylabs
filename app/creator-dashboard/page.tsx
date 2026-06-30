@@ -1,9 +1,12 @@
 "use client";
 
 import CreatorWalletPanel from "@/components/paylabs/CreatorWalletPanel";
+import SubPageMobileNav from "@/components/paylabs/SubPageMobileNav";
 
 export default function CreatorPage() {
   return (
+    <>
+      <SubPageMobileNav />
     <div style={{ display: "grid", gap: 16 }}>
       <div>
         <a href="/" style={{ fontSize: 13, color: "var(--muted)", fontWeight: 500 }}>← Chat</a>
@@ -36,5 +39,6 @@ export default function CreatorPage() {
         </p>
       </div>
     </div>
+    </>
   );
 }
