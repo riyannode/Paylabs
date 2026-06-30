@@ -763,7 +763,13 @@ function buildX402Output(
       macroAllocationUsdc: userBudgetUsedUsdc - FIXED_FEES_USDC.brainTreasury,
       childPaymentVolumeUsdc,
       grossPaymentVolumeUsdc,
-      executionFeeUsdc: userBudgetUsedUsdc,  // = brain→macro edges (includes child budgets)
+      executionFeeUsdc: lockedPlan
+        ? (lockedPlan.plannedCostBreakdown.brain_treasury_usdc +
+           lockedPlan.plannedCostBreakdown.macro_node_fees_usdc +
+           lockedPlan.plannedCostBreakdown.service_edge_fees_usdc +
+           lockedPlan.plannedCostBreakdown.registry_check_fees_usdc +
+           lockedPlan.plannedCostBreakdown.source_access_fees_usdc)
+        : undefined,
     },
     consensusDecisions: [],
     paymentPlan,

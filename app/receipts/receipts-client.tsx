@@ -123,7 +123,7 @@ function PaymentSection({ detail }: { detail: ReceiptDetail }) {
       <dl>
         <div><dt>Network</dt><dd>Arc Testnet</dd></div>
         <div><dt>Tier</dt><dd>{label(detail.selectedTier)}</dd></div>
-        <div><dt>User Cost</dt><dd>{formatUsdc(detail.plannedCostUsdc)}</dd></div>
+        <div><dt>Planned Run Cost</dt><dd>{formatUsdc(detail.plannedCostUsdc)}</dd></div>
         <div><dt>Platform x402 Volume</dt><dd>{formatUsdc(detail.actualSettledUsdc)}</dd></div>
         <div><dt>Payments</dt><dd>{detail.paymentCount ?? 0}</dd></div>
       </dl>
