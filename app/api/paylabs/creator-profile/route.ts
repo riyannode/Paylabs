@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSession, refreshSession } from "@/lib/paylabs/ucw";
@@ -13,9 +14,14 @@ type CreatorClaim = {
   verified_at: string | null;
   created_at: string;
   updated_at: string;
+  proof_type: string | null;
+  proof_nonce: string | null;
+  proof_status: string;
+  proof_checked_at: string | null;
+  proof_error: string | null;
 };
 
-const SAFE_CLAIM_COLUMNS = "id, creator_wallet, creator_name, source_url, source_domain, claim_status, verification_method, verified_at, created_at, updated_at";
+const SAFE_CLAIM_COLUMNS = "id, creator_wallet, creator_name, source_url, source_domain, claim_status, verification_method, verified_at, created_at, updated_at, proof_type, proof_nonce, proof_status, proof_checked_at, proof_error";
 const LOCKED_STATUSES = new Set(["verified", "rejected", "revoked"]);
 
 function creatorProfileDbError(step: string, error: { code?: string | null }) {
@@ -102,14 +108,19 @@ export async function POST(req: NextRequest) {
   }
 
   if (existingClaim) {
+    // Preserve existing proof_nonce if present, generate if missing
+    const proofNonce = existingClaim.proof_nonce || randomUUID();
+
     const { data, error } = await supabase
       .from("paylabs_creator_claims")
       .update({
         creator_name: creatorName,
         source_domain: parsed.domain,
         claim_status: "unclaimed",
-        verification_method: "manual_review",
+        verification_method: "proof_pending",
         verified_at: null,
+        proof_status: "pending",
+        proof_nonce: proofNonce,
         updated_at: new Date().toISOString(),
       })
       .eq("id", existingClaim.id)
@@ -129,8 +140,10 @@ export async function POST(req: NextRequest) {
       source_url: parsed.url,
       source_domain: parsed.domain,
       claim_status: "unclaimed",
-      verification_method: "manual_review",
+      verification_method: "proof_pending",
       verified_at: null,
+      proof_status: "pending",
+      proof_nonce: randomUUID(),
     })
     .select(SAFE_CLAIM_COLUMNS)
     .single();
