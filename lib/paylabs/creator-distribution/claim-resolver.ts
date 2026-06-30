@@ -56,6 +56,44 @@ export function deriveHttpsDomain(sourceUrl: string | null | undefined): string 
   }
 }
 
+// ─── Domain-Scoped Claim Guard ─────────────────────────────────
+
+/**
+ * A claim is "domain-scoped" when it authorizes the whole domain,
+ * NOT just one specific URL. This is true when:
+ *   - source_url is null or empty (domain-only claim), OR
+ *   - source_url is the domain root with no path (https://<domain>/)
+ *
+ * Claims for specific paths (https://<domain>/blog/post1) must NOT
+ * authorize other URLs on the same domain via the domain fallback.
+ */
+function isDomainScopedClaim(claim: Record<string, unknown>, domain: string): boolean {
+  const sourceUrl = claim.source_url as string | null;
+  if (!sourceUrl) return true;
+  try {
+    const parsed = new URL(sourceUrl);
+    return (
+      parsed.hostname.toLowerCase() === domain &&
+      (parsed.pathname === "/" || parsed.pathname === "")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isDomainRoot(sourceUrl: string, domain: string): boolean {
+  try {
+    const parsed = new URL(sourceUrl);
+    return (
+      parsed.protocol === "https:" &&
+      parsed.hostname.toLowerCase() === domain &&
+      (parsed.pathname === "/" || parsed.pathname === "")
+    );
+  } catch {
+    return false;
+  }
+}
+
 // ─── Verified Claim Resolver ───────────────────────────────────
 
 /**
@@ -101,8 +139,10 @@ export async function resolveVerifiedCreatorClaimForSource(input: {
     }
   }
 
-  // Try source_domain match
+  // Try source_domain match — only domain-scoped claims
+  // (source_url null/empty, or source_url is the domain root with no path)
   if (domain) {
+    const domainRoot = `https://${domain}/`;
     const { data: domainMatches } = await db
       .from("paylabs_creator_claims")
       .select(
@@ -110,6 +150,7 @@ export async function resolveVerifiedCreatorClaimForSource(input: {
       )
       .eq("source_domain", domain)
       .eq("claim_status", "verified")
+      .or(`source_url.is.null,source_url.eq.${domainRoot}`)
       .order("verified_at", { ascending: false, nullsFirst: false })
       .order("updated_at", { ascending: false })
       .limit(1);
@@ -175,10 +216,13 @@ export async function resolveClaimVisibilityForSource(input: {
   }
 
   if (!claim && domain) {
+    // Only match domain-scoped claims (source_url null/empty or domain root)
+    const domainRoot = `https://${domain}/`;
     const { data } = await db
       .from("paylabs_creator_claims")
       .select("claim_status, creator_wallet, source_url, source_domain")
       .eq("source_domain", domain)
+      .or(`source_url.is.null,source_url.eq.${domainRoot}`)
       .order("updated_at", { ascending: false })
       .limit(1);
     claim = (data?.[0] as Record<string, unknown>) ?? null;

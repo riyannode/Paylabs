@@ -135,6 +135,29 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
+    // Prevent duplicate verified claims for the same source_url
+    if (sourceUrl) {
+      const { data: conflicting } = await db
+        .from("paylabs_creator_claims")
+        .select("id, creator_wallet")
+        .eq("source_url", sourceUrl)
+        .eq("claim_status", "verified")
+        .neq("id", claimId)
+        .limit(1);
+
+      if (conflicting && conflicting.length > 0) {
+        const conflict = conflicting[0] as Record<string, unknown>;
+        return NextResponse.json(
+          {
+            error: "Another claim for this source is already verified",
+            conflict_claim_id: conflict.id as string,
+            conflict_wallet: (conflict.creator_wallet as string)?.slice(0, 10) + "…",
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     updateFields.claim_status = "verified";
     updateFields.verified_at = now;
     updateFields.verification_method = "admin_approved";
