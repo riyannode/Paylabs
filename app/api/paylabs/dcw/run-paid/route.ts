@@ -21,6 +21,7 @@ import { getSession } from "@/lib/paylabs/auth/session";
 import { createDcwSigner } from "@/lib/paylabs/x402/dcw-signer-adapter";
 import { callPaidSeller } from "@/lib/paylabs/x402/buyer-transport";
 import { resolvePaylabsAppUrl } from "@/lib/paylabs/runtime/resolve-app-url";
+import { isAutoTierPreflightEnabled } from "@/lib/paylabs/feature-flags";
 
 // ─── Allowlisted internal seller URLs ────────────────────────
 function getAllowedSellerUrl(path: string): string | null {
@@ -29,6 +30,8 @@ function getAllowedSellerUrl(path: string): string | null {
 
   const allowedPaths = [
     "/api/paylabs/discovery-runs/inline",
+    "/api/paylabs/discovery-runs/route-preflight",
+    "/api/paylabs/discovery-runs/execute-locked",
     "/api/paylabs/macro-nodes",
   ];
 
@@ -105,11 +108,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Resolve seller URL
-    const sellerPath = "/api/paylabs/discovery-runs/inline";
-    const sellerUrl = getAllowedSellerUrl(sellerPath);
-    if (!sellerUrl) {
-      return NextResponse.json({ ok: false, error: `Seller path not allowed: ${sellerPath}` }, { status: 500 });
+    // 4. Create DCW signer + resolve actual wallet address (triple-match)
+    const dcwSigner = createDcwSigner();
+    let normalizedWallet: string;
+    try {
+      const signerAddress = await dcwSigner.getWalletAddress(wallet.wallet_id);
+      normalizedWallet = signerAddress.toLowerCase();
+      // Safe diagnostic: log if DB address differs from signer address
+      if (wallet.wallet_address?.toLowerCase() !== normalizedWallet) {
+        console.warn("[dcw/run-paid] wallet_address mismatch (DB vs signer)", {
+          db: wallet.wallet_address?.slice(0, 10),
+          signer: normalizedWallet.slice(0, 10),
+        });
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return NextResponse.json({ ok: false, error: `Failed to resolve DCW wallet address: ${msg}` }, { status: 500 });
     }
 
     // 5. Budget
@@ -117,16 +131,153 @@ export async function POST(req: NextRequest) {
     const userBudgetUsdc = requestedBudget > 0 ? requestedBudget : 0.01;
     const maxAmountUsdc = Math.min(userBudgetUsdc, SERVER_MAX_BUDGET_USDC).toFixed(6);
 
-    // 6. Execute paid request — request-bound (synchronous)
-    const dcwSigner = createDcwSigner();
+    // ─── Auto-tier preflight path (flag on + auto tier) ─────
+    if (isAutoTierPreflightEnabled() && routeTier === "auto") {
+      // Step 1: Route-preflight (0.000001 USDC)
+      const preflightSellerPath = "/api/paylabs/discovery-runs/route-preflight";
+      const preflightSellerUrl = getAllowedSellerUrl(preflightSellerPath);
+      if (!preflightSellerUrl) {
+        return NextResponse.json({ ok: false, error: `Seller path not allowed: ${preflightSellerPath}` }, { status: 500 });
+      }
 
+      const preflightResult = await callPaidSeller(dcwSigner, {
+        sellerUrl: preflightSellerUrl,
+        method: "POST",
+        body: {
+          goal,
+          user_wallet: normalizedWallet,
+          budget_usdc: maxAmountUsdc,
+        },
+        headers: {},
+        buyerWalletId: wallet.wallet_id,
+        buyerAgentName: "paylabs-dcw-user",
+        sellerServiceName: "discovery",
+        maxAmountUsdc: "0.000001", // routing fee cap only
+        requirePayment: true,
+        recoverResultById: async (runId: string) => {
+          const { data: run } = await supabaseAdmin()
+            .from("paylabs_discovery_runs")
+            .select("id, status, agent_trace, effective_route_tier")
+            .eq("id", runId)
+            .single();
+          if (!run) return null;
+          const trace = (run.agent_trace as Record<string, unknown>) || {};
+          const pf = trace.auto_tier_preflight as Record<string, unknown> | undefined;
+          if (!pf || pf.status !== "locked") return null;
+          return { ok: true, status: "route_preflight_locked", discovery_run_id: run.id, selected_tier: run.effective_route_tier };
+        },
+      });
+
+      if (!preflightResult.ok) {
+        return NextResponse.json({
+          ok: false,
+          status: "preflight_failed",
+          error: preflightResult.error || "Route preflight failed",
+          paymentMetadata: preflightResult.paymentMetadata ?? null,
+        }, { status: preflightResult.status === 402 ? 402 : 502 });
+      }
+
+      const preflightData = preflightResult.data as Record<string, unknown>;
+      const discoveryRunId = preflightData.discovery_run_id as string;
+      const finalEntryPaymentUsdc = Number(preflightData.final_entry_payment_usdc);
+      // CORRECTION: maxAmount for execute-locked = final_entry_payment, NOT budget cap
+      const finalMaxAmountUsdc = finalEntryPaymentUsdc.toFixed(6);
+
+      // Step 2: Execute-locked (final entry payment)
+      const lockedSellerPath = "/api/paylabs/discovery-runs/execute-locked";
+      const lockedSellerUrl = getAllowedSellerUrl(lockedSellerPath);
+      if (!lockedSellerUrl) {
+        return NextResponse.json({ ok: false, error: `Seller path not allowed: ${lockedSellerPath}` }, { status: 500 });
+      }
+
+      const lockedResult = await callPaidSeller(dcwSigner, {
+        sellerUrl: lockedSellerUrl,
+        method: "POST",
+        body: {
+          discovery_run_id: discoveryRunId,
+          user_wallet: normalizedWallet,
+          budget_usdc: maxAmountUsdc,
+        },
+        headers: {},
+        buyerWalletId: wallet.wallet_id,
+        buyerAgentName: "paylabs-dcw-user",
+        sellerServiceName: "discovery",
+        maxAmountUsdc: finalMaxAmountUsdc, // locked amount, not budget cap
+        requirePayment: true,
+        recoverResultById: async (runId: string) => {
+          const { data: run } = await supabaseAdmin()
+            .from("paylabs_discovery_runs")
+            .select("id, status, final_answer, route_tier, effective_route_tier, brain_route_tier_hint, agent_trace, source_snapshot, error_summary")
+            .eq("id", runId)
+            .single();
+          if (!run) return null;
+          if (run.status !== "completed" && run.status !== "paid_path_available") return null;
+          const sourceSnapshot = (run.source_snapshot as Record<string, unknown>) || {};
+          const agentTrace = (run.agent_trace as Record<string, unknown>) || {};
+          return {
+            ok: true,
+            status: "completed",
+            final_answer: run.final_answer || sourceSnapshot.final_answer || agentTrace.final_answer || null,
+            effective_route_tier: run.effective_route_tier || run.route_tier,
+            brain_route_tier_hint: run.brain_route_tier_hint,
+            source_context: sourceSnapshot.source_context || agentTrace.source_context || null,
+            payment_graph: agentTrace.payment_graph || null,
+            quote: agentTrace.quote || null,
+            exit_output: agentTrace.exit_output || null,
+            _recovered: true,
+            _recovery_source: "supabase_poll",
+          };
+        },
+      });
+
+      // Build entry_payment shape from locked result
+      const lockedPaymentMetadata = lockedResult.paymentMetadata ?? null;
+      const lockedResultData = lockedResult.data as Record<string, unknown> | null | undefined;
+      const lockedDataEntry = (lockedResultData?.entry_payment as Record<string, unknown> | null | undefined) ?? null;
+
+      const lockedEntryPayment = {
+        status: lockedResult.ok ? "paid" : "failed",
+        tx_hash: lockedPaymentMetadata?.txHash ?? (lockedDataEntry?.tx_hash as string | null | undefined) ?? null,
+        explorer_url: lockedPaymentMetadata?.explorerUrl ?? (lockedDataEntry?.explorer_url as string | null | undefined) ?? null,
+        settlement_id: lockedPaymentMetadata?.settlementId ?? (lockedDataEntry?.settlement_id as string | null | undefined) ?? null,
+        settlement_url: lockedPaymentMetadata?.settlementUrl ?? (lockedDataEntry?.settlement_url as string | null | undefined) ?? null,
+        transfer_status: lockedPaymentMetadata?.transferStatus ?? (lockedDataEntry?.transfer_status as string | null | undefined) ?? null,
+        gateway_accepted: lockedPaymentMetadata?.gatewayAccepted ?? (lockedDataEntry?.gateway_accepted as boolean | undefined) ?? lockedResult.ok,
+        batch_tx_hash: lockedPaymentMetadata?.batchTxHash ?? (lockedDataEntry?.batch_tx_hash as string | null | undefined) ?? null,
+        batch_explorer_url: lockedPaymentMetadata?.batchExplorerUrl ?? (lockedDataEntry?.batch_explorer_url as string | null | undefined) ?? null,
+        batch_resolver_url: lockedPaymentMetadata?.batchResolverUrl ?? (lockedDataEntry?.batch_resolver_url as string | null | undefined) ?? null,
+        customer_wallet: normalizedWallet,
+        customer_wallet_type: "circle_developer_controlled" as const,
+      };
+
+      return NextResponse.json({
+        ok: lockedResult.ok,
+        status: lockedResult.status,
+        data: lockedResult.data,
+        error: lockedResult.error,
+        paymentMetadata: lockedPaymentMetadata,
+        freeResponse: lockedResult.freeResponse,
+        entry_payment: lockedEntryPayment,
+        entry_payment_explorer_url: lockedEntryPayment.explorer_url,
+        entry_payment_batch_explorer_url: lockedEntryPayment.batch_explorer_url,
+      }, { status: lockedResult.ok ? 200 : 502 });
+    }
+
+    // ─── Old flow: inline seller (flag off or explicit tier) ──
+    const sellerPath = "/api/paylabs/discovery-runs/inline";
+    const sellerUrl = getAllowedSellerUrl(sellerPath);
+    if (!sellerUrl) {
+      return NextResponse.json({ ok: false, error: `Seller path not allowed: ${sellerPath}` }, { status: 500 });
+    }
+
+    // 6. Execute paid request — request-bound (synchronous)
     const result = await callPaidSeller(dcwSigner, {
       sellerUrl,
       method: "POST",
       body: {
         goal,
         route_tier: routeTier || "auto",
-        user_wallet: wallet.wallet_address,
+        user_wallet: normalizedWallet,
         budget_usdc: maxAmountUsdc,
       },
       headers: {},
@@ -181,7 +332,7 @@ export async function POST(req: NextRequest) {
       batch_tx_hash: paymentMetadata?.batchTxHash ?? (dataEntry?.batch_tx_hash as string | null | undefined) ?? null,
       batch_explorer_url: paymentMetadata?.batchExplorerUrl ?? (dataEntry?.batch_explorer_url as string | null | undefined) ?? null,
       batch_resolver_url: paymentMetadata?.batchResolverUrl ?? (dataEntry?.batch_resolver_url as string | null | undefined) ?? null,
-      customer_wallet: wallet.wallet_address,
+      customer_wallet: normalizedWallet,
       customer_wallet_type: "circle_developer_controlled" as const,
     };
 
