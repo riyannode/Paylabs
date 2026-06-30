@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import PayLabsNavLinks from "./PayLabsNavLinks";
 
 type Analytics = {
   uniqueUsers: number;
@@ -13,20 +13,11 @@ type Props = {
 };
 
 export default function SidebarPanel({ analytics }: Props) {
-  const pathname = usePathname();
-
   return (
     <aside className="pl-sidebar">
       <div className="pl-brand">PayLabs</div>
 
-      <nav className="pl-nav">
-        <a className={pathname === "/" ? "active" : undefined} href="/">Chat</a>
-        <a className={pathname === "/receipts" ? "active" : undefined} href="/receipts">Receipts</a>
-        <a className={pathname === "/explorer" ? "active" : undefined} href="/explorer">Explorer</a>
-        <a className={pathname === "/source" ? "active" : undefined} href="/source">Sources</a>
-        <a className={pathname === "/creator-dashboard" ? "active" : undefined} href="/creator-dashboard">Creator Dashboard</a>
-        <a className={pathname === "/creator-profile" ? "active" : undefined} href="/creator-profile">Creator Profile</a>
-      </nav>
+      <PayLabsNavLinks />
 
       {/* User Analytics */}
       <section className="pl-side-card">
