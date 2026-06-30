@@ -1201,7 +1201,7 @@ a:hover { text-decoration: none; }
 .pl-wallet-overlay-v3 {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: 900;
   display: grid;
   place-items: center;
   padding: 18px;
@@ -1697,6 +1697,20 @@ a:hover { text-decoration: none; }
 
   .pl-wallet-grid {
     grid-template-columns: 1fr;
+  }
+
+  /* ── Mobile navigation ── */
+
+  .pl-mobile-topbar {
+    display: flex;
+  }
+
+  .pl-app {
+    padding-top: 56px;
+  }
+
+  .pl-main > .pl-topbar {
+    /* Keep existing topbar (wallet pill) visible on mobile */
   }
 }
 
@@ -2556,5 +2570,120 @@ a:hover { text-decoration: none; }
   .pl-faucet-button,
   .pl-fund-wallet-button {
     width: 100%;
+  }
+}
+
+/* ══════════════════════════════════════════════
+   Mobile Navigation (topbar + drawer)
+   Visible only at <= 960px via media query above.
+   ══════════════════════════════════════════════ */
+
+.pl-mobile-topbar {
+  display: none; /* shown in 960px media query */
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  padding: 0 16px;
+  align-items: center;
+  gap: 12px;
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  z-index: 600;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
+}
+
+.pl-mobile-hamburger {
+  width: 40px;
+  height: 40px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--foreground);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.pl-mobile-hamburger:hover {
+  background: var(--card-soft);
+}
+
+.pl-mobile-brand {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.pl-mobile-topbar-spacer {
+  flex: 1;
+}
+
+/* Drawer overlay */
+
+.pl-mobile-drawer-root {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+}
+
+.pl-mobile-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  backdrop-filter: blur(4px);
+}
+
+/* Drawer panel */
+
+.pl-mobile-drawer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  max-width: 85vw;
+  background: #fff;
+  border-right: 1px solid var(--border);
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  box-shadow: 4px 0 24px rgba(15, 23, 42, 0.10);
+  transform: translateX(0);
+  transition: transform 0.22s ease;
+}
+
+.pl-mobile-drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.pl-mobile-close {
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--foreground);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.pl-mobile-close:hover {
+  background: var(--card-soft);
+}
+
+/* On sub-pages that don't use .pl-app, add top padding for fixed mobile topbar */
+@media (max-width: 960px) {
+  body.pl-mobile-has-topbar .container.pl-compact-root {
+    padding-top: 72px; /* 56px topbar + 16px existing padding */
   }
 }
