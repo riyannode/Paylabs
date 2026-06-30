@@ -62,6 +62,7 @@ export const FIXED_FEES_USDC = {
 } as const;
 
 // ─── Creator Payout Constants ─────────────────────────────────
+// Re-enabled: creator pool active for normal/advanced tiers
 
 export const CREATOR_PAYOUT_UNIT_USDC = 0.000020;
 export const CREATOR_PAYOUT_UNIT_ATOMIC = BigInt(20);
@@ -161,15 +162,19 @@ export function quoteDelegatedRun(input: QuoteInput): DelegatedRunQuote {
     servicesByMacroNode[macroNode].push(service);
   }
 
-  const macroNodeFeesUsdc = selectedMacroNodes.length * FIXED_FEES_USDC.macroNode;
-  const serviceEdgeFeesUsdc = selectedServices.length * FIXED_FEES_USDC.serviceEdge;
+  // Macro allocation = base + children (each macro node receives enough for itself + its children)
+  // serviceEdgeFeesUsdc = child budget only (each child = 0.000001), NOT a separate edge fee
+  const macroBaseFeesUsdc = selectedMacroNodes.length * FIXED_FEES_USDC.macroNode;
+  const serviceEdgeFeesUsdc = selectedServices.length * FIXED_FEES_USDC.serviceEdge; // = childBudgetUsdc
   const registryCheckFeesUsdc = maxRegistryChecks * FIXED_FEES_USDC.registryCheck;
   const sourceAccessFeesUsdc = maxSourceAccesses * FIXED_FEES_USDC.sourceAccess;
 
-  // Execution fee = brain + macro nodes + service edges + registry + source
+  // Execution graph = brain treasury + total macro allocation (which includes child budgets)
+  // = brain + macroBase + childBudget + registry + source
+  // NOTE: serviceEdgeFeesUsdc IS the child budget — do not double-count
   const executionFeeUsdc =
     FIXED_FEES_USDC.brainTreasury +
-    macroNodeFeesUsdc +
+    macroBaseFeesUsdc +
     serviceEdgeFeesUsdc +
     registryCheckFeesUsdc +
     sourceAccessFeesUsdc;
@@ -194,7 +199,7 @@ export function quoteDelegatedRun(input: QuoteInput): DelegatedRunQuote {
     selectedServices,
     servicesByMacroNode,
     expectedPaymentEdges: getExpectedPaymentEdgeCount(routeTier),
-    macroNodeFeesUsdc,
+    macroNodeFeesUsdc: macroBaseFeesUsdc,
     serviceEdgeFeesUsdc,
     registryCheckFeesUsdc,
     sourceAccessFeesUsdc,
