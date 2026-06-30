@@ -30,10 +30,36 @@ const SAFE_CLAIM_COLUMNS =
 
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_BODY_BYTES = 64 * 1024; // 64 KB — proof files are tiny
+const MAX_HOSTED_BODY_BYTES = 1024 * 1024; // 1 MB — profile pages can be large
 const MAX_REDIRECTS = 3;
 
 /** Unlocked claim statuses that verification can mutate. */
 const UNLOCKED_STATUSES = ["unclaimed", "unknown"];
+
+/** Canonical host aliases — redirects between these are allowed for hosted-link verification. */
+const CANONICAL_HOST_ALIASES: Record<string, string[]> = {
+  "twitter.com": ["x.com"],
+  "x.com": ["twitter.com"],
+  "youtube.com": ["www.youtube.com"],
+  "www.youtube.com": ["youtube.com"],
+  "medium.com": ["www.medium.com"],
+  "www.medium.com": ["medium.com"],
+};
+
+function isAllowedHostRedirect(from: string, to: string): boolean {
+  if (from === to) return true;
+  return CANONICAL_HOST_ALIASES[from]?.includes(to) ?? false;
+}
+
+/** Detect if hostname is a tenant host (shared platform subdomain). */
+function isTenantHost(hostname: string): boolean {
+  return (
+    hostname.endsWith(".github.io") ||
+    hostname.endsWith(".vercel.app") ||
+    hostname.endsWith(".netlify.app") ||
+    hostname.endsWith(".substack.com")
+  );
+}
 
 // ─── SSRF Protection ──────────────────────────────────────────
 
@@ -293,6 +319,165 @@ function safeHttpError(status: number): string {
   return "proof_fetch_failed";
 }
 
+/**
+ * Fetch a hosted proof page (profile page, bio, README) with:
+ * - 1MB max scan size
+ * - Same-host redirect enforcement (redirects must stay on original hostname)
+ * - SSRF protection on every redirect hop
+ * - No raw body stored (only evidence hash)
+ * - Bounded scan for proof markers
+ */
+type HostedFetchResult = { ok: boolean; body: string | null; error?: string };
+
+async function fetchHostedProofPage(
+  sourceUrl: string,
+  expectedHost: string,
+  proofMarkers: string[],
+): Promise<HostedFetchResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(sourceUrl, {
+      signal: controller.signal,
+      redirect: "manual",
+      headers: { "User-Agent": "PayLabs/0.1 Creator-Verify" },
+    });
+
+    // Handle redirects — must stay on same hostname
+    if ([301, 302, 303, 307, 308].includes(res.status)) {
+      const location = res.headers.get("location");
+      if (!location) return { ok: false, body: null, error: "proof_redirect_blocked" };
+
+      let redirectUrl: URL;
+      try {
+        redirectUrl = new URL(location, sourceUrl);
+      } catch {
+        return { ok: false, body: null, error: "proof_redirect_blocked" };
+      }
+
+      // Must stay HTTPS
+      if (redirectUrl.protocol !== "https:") return { ok: false, body: null, error: "proof_redirect_blocked" };
+
+      // Must stay on same hostname (or canonical alias like twitter.com↔x.com)
+      if (!isAllowedHostRedirect(expectedHost, redirectUrl.hostname)) return { ok: false, body: null, error: "proof_redirect_blocked" };
+
+      // No userinfo
+      if (redirectUrl.username || redirectUrl.password) return { ok: false, body: null, error: "proof_redirect_blocked" };
+
+      // SSRF: validate redirect target
+      const hostCheck = await assertPublicHost(redirectUrl.hostname);
+      if (!hostCheck.ok) return { ok: false, body: null, error: hostCheck.error };
+
+      return fetchHostedRedirect(redirectUrl.toString(), expectedHost, proofMarkers, MAX_REDIRECTS - 1);
+    }
+
+    if (!res.ok) return { ok: false, body: null, error: safeHttpError(res.status) };
+
+    return await readHostedBody(res, proofMarkers);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("abort")) return { ok: false, body: null, error: "proof_fetch_timeout" };
+    return { ok: false, body: null, error: "proof_fetch_failed" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchHostedRedirect(
+  url: string,
+  expectedHost: string,
+  proofMarkers: string[],
+  remaining: number,
+): Promise<HostedFetchResult> {
+  if (remaining <= 0) return { ok: false, body: null, error: "proof_redirect_blocked" };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      redirect: "manual",
+      headers: { "User-Agent": "PayLabs/0.1 Creator-Verify" },
+    });
+
+    if ([301, 302, 303, 307, 308].includes(res.status)) {
+      const location = res.headers.get("location");
+      if (!location) return { ok: false, body: null, error: "proof_redirect_blocked" };
+
+      let redirectUrl: URL;
+      try { redirectUrl = new URL(location, url); } catch { return { ok: false, body: null, error: "proof_redirect_blocked" }; }
+      if (redirectUrl.protocol !== "https:") return { ok: false, body: null, error: "proof_redirect_blocked" };
+      if (!isAllowedHostRedirect(expectedHost, redirectUrl.hostname)) return { ok: false, body: null, error: "proof_redirect_blocked" };
+      if (redirectUrl.username || redirectUrl.password) return { ok: false, body: null, error: "proof_redirect_blocked" };
+
+      const hostCheck = await assertPublicHost(redirectUrl.hostname);
+      if (!hostCheck.ok) return { ok: false, body: null, error: hostCheck.error };
+
+      return fetchHostedRedirect(redirectUrl.toString(), expectedHost, proofMarkers, remaining - 1);
+    }
+
+    if (!res.ok) return { ok: false, body: null, error: safeHttpError(res.status) };
+    return await readHostedBody(res, proofMarkers);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("abort")) return { ok: false, body: null, error: "proof_fetch_timeout" };
+    return { ok: false, body: null, error: "proof_fetch_failed" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Read response body with 1MB cap. Scans for any of the proof markers.
+ * Returns body only if a marker is found (to avoid returning huge pages).
+ */
+async function readHostedBody(res: Response, proofMarkers: string[]): Promise<HostedFetchResult> {
+  const reader = res.body?.getReader();
+  if (!reader) return { ok: false, body: null, error: "proof_fetch_failed" };
+
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  let foundMarker = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.length;
+    if (totalBytes > MAX_HOSTED_BODY_BYTES) {
+      reader.cancel();
+      // Still scan what we have — marker might be in first 1MB
+      break;
+    }
+    chunks.push(value);
+
+    // Incremental scan: check if any marker is in the accumulated text
+    // Only scan every 64KB to avoid excessive string conversion
+    if (!foundMarker && totalBytes % 65536 < value.length) {
+      const partial = new TextDecoder().decode(Buffer.concat(chunks));
+      foundMarker = proofMarkers.some((m) => partial.includes(m));
+      if (foundMarker) {
+        // Found early — still read a bit more for complete evidence hash
+        continue;
+      }
+    }
+  }
+
+  const body = new TextDecoder().decode(Buffer.concat(chunks));
+
+  // Final scan if incremental didn't find it
+  if (!foundMarker) {
+    foundMarker = proofMarkers.some((m) => body.includes(m));
+  }
+
+  if (!foundMarker) {
+    return { ok: false, body: null, error: "proof_link_not_found" };
+  }
+
+  return { ok: true, body };
+}
+
 // ─── Verification Logic ───────────────────────────────────────
 
 type VerifyResult = {
@@ -385,6 +570,36 @@ async function verifyWellKnownJson(claim: CreatorClaim): Promise<VerifyResult> {
 /** Validate GitHub owner/repo chars: alphanumeric, hyphen, underscore, dot only. */
 const GITHUB_OWNER_REPO_RE = /^[A-Za-z0-9_.-]{1,100}$/;
 
+/**
+ * Derive the public proof URL for a claim.
+ * Format: <origin>/creator-proof/<claim_id>/<proof_nonce>
+ * origin is derived from: NEXT_PUBLIC_APP_URL > request host > fallback
+ */
+function getProofUrl(origin: string, claimId: string, proofNonce: string): string {
+  const baseUrl = origin.replace(/\/+$/, "");
+  return `${baseUrl}/creator-proof/${claimId}/${proofNonce}`;
+}
+
+/**
+ * Derive the app origin from the request.
+ * Priority: NEXT_PUBLIC_APP_URL > X-Forwarded-Host/Proto > Host header > fallback
+ */
+function deriveOrigin(req: NextRequest): string {
+  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL;
+  const proto = req.headers.get("x-forwarded-proto") || "https";
+  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "paylabs.dev";
+  return `${proto}://${host}`;
+}
+
+/**
+ * Derive the proof text string for hosted_link_backlink.
+ * This is a deterministic text the creator can paste anywhere.
+ * Format: paylabs-v1 claim=<claim_id> wallet=<creator_wallet_lowercase> nonce=<proof_nonce>
+ */
+function getProofText(claimId: string, creatorWallet: string, proofNonce: string): string {
+  return `paylabs-v1 claim=${claimId} wallet=${creatorWallet.toLowerCase()} nonce=${proofNonce}`;
+}
+
 async function verifyGithubRepoFile(claim: CreatorClaim): Promise<VerifyResult> {
   const sourceUrl = claim.source_url;
   if (!sourceUrl) {
@@ -401,8 +616,8 @@ async function verifyGithubRepoFile(claim: CreatorClaim): Promise<VerifyResult> 
 
     const parts = parsedUrl.pathname.split("/").filter(Boolean);
     if (parts.length < 2) throw new Error("Invalid GitHub URL");
-    owner = parts[0];
-    repo = parts[1].replace(/\.git$/, "");
+    owner = parts[0].toLowerCase();
+    repo = parts[1].replace(/\.git$/, "").toLowerCase();
   } catch {
     return { ok: false, proof_status: "failed", proof_error: "Cannot parse GitHub owner/repo", evidence_hash: null };
   }
@@ -468,6 +683,72 @@ async function verifyGithubRepoFile(claim: CreatorClaim): Promise<VerifyResult> 
   };
 }
 
+/**
+ * Hosted Link Backlink Verification
+ *
+ * Fetches the creator's registered source_url (profile page, bio link, etc.)
+ * and checks if the page body contains EITHER:
+ * - The exact PayLabs proof URL (NEXT_PUBLIC_APP_URL/creator-proof/<id>/<nonce>)
+ * - The exact proof text (paylabs-v1 claim=<id> wallet=<wallet> nonce=<nonce>)
+ *
+ * Stores only SHA-256 evidence hash. No raw body.
+ * Uses safe error codes — no full URLs in proof_error.
+ */
+async function verifyHostedLinkBacklink(claim: CreatorClaim, origin: string): Promise<VerifyResult> {
+  const sourceUrl = claim.source_url;
+  if (!sourceUrl) {
+    return { ok: false, proof_status: "failed", proof_error: "source_url missing from claim", evidence_hash: null };
+  }
+
+  // SSRF: validate host is public before fetching
+  let hostname: string;
+  try {
+    hostname = new URL(sourceUrl).hostname;
+  } catch {
+    return { ok: false, proof_status: "failed", proof_error: "Invalid source_url", evidence_hash: null };
+  }
+
+  const hostCheck = await assertPublicHost(hostname);
+  if (!hostCheck.ok) {
+    return { ok: false, proof_status: "failed", proof_error: hostCheck.error ?? "proof_internal_target_blocked", evidence_hash: null };
+  }
+
+  // Build all acceptable proof markers
+  // A. Proof URL using current request origin
+  const proofUrlFromRequest = getProofUrl(origin, claim.id, claim.proof_nonce || "");
+  const markers = [proofUrlFromRequest];
+
+  // B. Proof URL using NEXT_PUBLIC_APP_URL if different from request origin
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    const envUrl = getProofUrl(process.env.NEXT_PUBLIC_APP_URL, claim.id, claim.proof_nonce || "");
+    if (envUrl !== proofUrlFromRequest) markers.push(envUrl);
+  }
+
+  // C. Proof text (deterministic, no URL dependency)
+  markers.push(getProofText(claim.id, claim.creator_wallet, claim.proof_nonce || ""));
+
+  // Fetch profile page using dedicated hosted fetcher (1MB cap, same-host redirects)
+  const fetched = await fetchHostedProofPage(sourceUrl, hostname, markers);
+
+  if (!fetched.ok) {
+    return {
+      ok: false,
+      proof_status: "failed",
+      proof_error: fetched.error || "proof_fetch_failed",
+      evidence_hash: null,
+    };
+  }
+
+  const evidenceHash = sha256(fetched.body || "");
+
+  return {
+    ok: true,
+    proof_status: "verified",
+    proof_error: null,
+    evidence_hash: evidenceHash,
+  };
+}
+
 // ─── POST ─────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -475,6 +756,8 @@ export async function POST(req: NextRequest) {
   if (!walletAddress) {
     return NextResponse.json({ error: "Connected Creator Wallet required" }, { status: 401 });
   }
+
+  const origin = deriveOrigin(req);
 
   const body = (await req.json().catch(() => ({}))) as { claim_id?: unknown };
   const claimId = typeof body.claim_id === "string" ? body.claim_id.trim() : "";
@@ -500,11 +783,16 @@ export async function POST(req: NextRequest) {
 
   // Already verified
   if (typedClaim.claim_status === "verified" && typedClaim.proof_status === "verified") {
-    return NextResponse.json({
+    const response: Record<string, unknown> = {
       ok: true,
       proof_status: "verified",
       message: "Claim is already verified.",
-    });
+    };
+    if (typedClaim.proof_method === "hosted_link_backlink" && typedClaim.proof_nonce) {
+      response.proof_url = getProofUrl(origin, typedClaim.id, typedClaim.proof_nonce);
+      response.proof_text = getProofText(typedClaim.id, typedClaim.creator_wallet, typedClaim.proof_nonce);
+    }
+    return NextResponse.json(response);
   }
 
   // Locked statuses — cannot re-verify
@@ -532,6 +820,8 @@ export async function POST(req: NextRequest) {
     result = await verifyGithubRepoFile(typedClaim);
   } else if (typedClaim.proof_method === "well_known_json") {
     result = await verifyWellKnownJson(typedClaim);
+  } else if (typedClaim.proof_method === "hosted_link_backlink") {
+    result = await verifyHostedLinkBacklink(typedClaim, origin);
   } else {
     return NextResponse.json({
       ok: false,
@@ -552,10 +842,15 @@ export async function POST(req: NextRequest) {
 
   // If proof passed, check for scope conflict before marking verified.
   if (result.ok && typedClaim.claim_scope_key) {
+    // For tenant hosts, check both host:<host> and legacy domain:<host> keys
+    const scopeKeysToCheck = typedClaim.source_domain && isTenantHost(typedClaim.source_domain)
+      ? [`host:${typedClaim.source_domain}`, `domain:${typedClaim.source_domain}`]
+      : [typedClaim.claim_scope_key];
+
     const { data: conflict } = await supabase
       .from("paylabs_creator_claims")
       .select("id, creator_wallet, claim_status")
-      .eq("claim_scope_key", typedClaim.claim_scope_key)
+      .in("claim_scope_key", scopeKeysToCheck)
       .eq("claim_status", "verified")
       .neq("id", claimId)
       .limit(1);
@@ -604,17 +899,26 @@ export async function POST(req: NextRequest) {
   }
 
   if (result.ok) {
-    return NextResponse.json({
+    const response: Record<string, unknown> = {
       ok: true,
       proof_status: "verified",
       message: "Source verified! Your creator wallet is now eligible for payouts.",
-    });
+    };
+    return NextResponse.json(response);
   }
 
-  return NextResponse.json({
+  const response: Record<string, unknown> = {
     ok: false,
     proof_status: result.proof_status,
     error: result.proof_error,
     message: result.proof_error ?? "Verification failed. Check your proof file and try again.",
-  });
+  };
+
+  // Include proof URL and proof text for hosted_link_backlink so UI can display them
+  if (typedClaim.proof_method === "hosted_link_backlink" && typedClaim.proof_nonce) {
+    response.proof_url = getProofUrl(origin, typedClaim.id, typedClaim.proof_nonce);
+    response.proof_text = getProofText(typedClaim.id, typedClaim.creator_wallet, typedClaim.proof_nonce);
+  }
+
+  return NextResponse.json(response);
 }
