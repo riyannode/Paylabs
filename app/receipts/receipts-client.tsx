@@ -125,7 +125,6 @@ function PaymentSection({ detail }: { detail: ReceiptDetail }) {
         <div><dt>Tier</dt><dd>{label(detail.selectedTier)}</dd></div>
         <div><dt>User Cost</dt><dd>{formatUsdc(detail.plannedCostUsdc)}</dd></div>
         <div><dt>Platform x402 Volume</dt><dd>{formatUsdc(detail.actualSettledUsdc)}</dd></div>
-        <div><dt>Remaining</dt><dd>{formatUsdc(detail.remainingBudgetUsdc)}</dd></div>
         <div><dt>Payments</dt><dd>{detail.paymentCount ?? 0}</dd></div>
       </dl>
       {detail.safeReceiptSummary && <p className="muted pl-receipt-summary">{detail.safeReceiptSummary}</p>}
