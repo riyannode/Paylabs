@@ -346,13 +346,14 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
   // ── Step 2: Merge topic candidates with regular live results ──
   // Dedupe by source_url — topic routes take priority (appear first)
   const seenUrls = new Set<string>();
-  const merged: RankedCandidate[] = [];
+  const merged: Array<RankedCandidate & { _isTopicCandidate?: boolean }> = [];
+  const topicUrlSet = new Set(topicCandidates.map((tc) => tc.source_url.toLowerCase()));
 
   for (const tc of topicCandidates) {
     const key = tc.source_url.toLowerCase();
     if (!seenUrls.has(key)) {
       seenUrls.add(key);
-      merged.push(tc);
+      merged.push({ ...tc, _isTopicCandidate: true });
     }
   }
   for (const lr of liveResults) {
@@ -370,6 +371,14 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
   if (merged.length > 0) {
     const MIN_SCORE = 3; // Minimum raw score to be considered relevant
 
+    // Generic catch-all routes that should be filtered when topic routes exist
+    const GENERIC_CATCH_ALL_PATTERNS = [
+      /\/wiki.*current.events/i,
+      /\/wiki.*in.the.news/i,
+      /en\.wikipedia\.org.*current/i,
+    ];
+    const hasDomainSpecificTopics = topicCandidates.length > 0;
+
     const rescored = merged
       .map((item) => {
         const { score: local_score, entityHit } = scoreItem(
@@ -381,15 +390,36 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
         );
         return { ...item, local_score, entityHit };
       })
-      // Filter: must have entity match OR high keyword score
-      .filter((item) => item.entityHit || item.local_score >= MIN_SCORE)
-      .sort((a, b) => b.local_score - a.local_score)
+      // Filter: topic candidates pass unconditionally; non-topic need entity/keyword gate
+      // Also reject Wikipedia current-events when domain-specific topic routes exist
+      .filter((item) => {
+        // Reject generic catch-all when topic routes returned domain-specific results
+        if (hasDomainSpecificTopics) {
+          const url = (item.source_url || "").toLowerCase();
+          const routePath = (item.route_path || "").toLowerCase();
+          if (GENERIC_CATCH_ALL_PATTERNS.some((p) => p.test(url) || p.test(routePath))) {
+            return false;
+          }
+        }
+        // Topic candidates already passed topic-level acceptance — keep them
+        if (item._isTopicCandidate) return true;
+        // Non-topic candidates need entity match OR keyword score
+        return item.entityHit || item.local_score >= MIN_SCORE;
+      })
+      .sort((a, b) => {
+        // Topic candidates first, then by score
+        if (a._isTopicCandidate && !b._isTopicCandidate) return -1;
+        if (!a._isTopicCandidate && b._isTopicCandidate) return 1;
+        return b.local_score - a.local_score;
+      })
       .map((item, i) => ({
         ...item,
         rank: i + 1,
-        relevance_score: item.local_score > 0
-          ? Math.min(item.local_score / 30, 1)
-          : item.relevance_score,
+        relevance_score: item._isTopicCandidate
+          ? Math.max(item.relevance_score, 0.35) // topic candidates get minimum 0.35
+          : item.local_score > 0
+            ? Math.min(item.local_score / 30, 1)
+            : item.relevance_score,
       }));
 
     return {
@@ -417,13 +447,21 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
   }
 
   // ── Step 3: No live results — return empty with diagnostics (NO DB fallback) ──
+  const topicRoutesCount = topicResult.diagnostics.topic_routes_count;
+  const topicCandidatesCount = topicResult.candidates.length;
+  const noSourceReason = topicRoutesCount > 0 && topicCandidatesCount === 0
+    ? `Topic routes detected (${topicRoutesCount}) but no items passed acceptance gate.`
+    : topicRoutesCount === 0
+      ? "No topic routes detected and no live search results."
+      : "No matching live RSSHub sources found.";
+
   return {
     ok: true,
     serviceName: "signal_scout_basics",
     data: {
       ranked_candidates: [],
       top_candidates: [],
-      quick_relevance_notes: ["No matching live RSSHub sources found."],
+      quick_relevance_notes: [noSourceReason],
       safe_signal_summary: "[basic] No live RSSHub source matched this query.",
       retrieval_mode: "rsshub_live_empty",
       live_diagnostics: diagnostics,

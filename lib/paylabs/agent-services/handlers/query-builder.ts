@@ -28,7 +28,7 @@ const QueryBuilderSchema = z.object({
 const MEANINGFUL_SHORT_TOKENS = new Set([
   "ai", "ml", "llm", "btc", "eth", "sol", "nft", "dao", "dex",
   "api", "usdc", "x402", "evm", "l2", "cefi", "gpt", "cv",
-  "waf", "aws", "cdns",
+  "waf", "aws", "cdns", "crypto", "defi", "web3",
 ]);
 
 // ─── Deterministic Query Expansion ──────────────────────────

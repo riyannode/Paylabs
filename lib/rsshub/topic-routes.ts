@@ -83,7 +83,7 @@ const TOPIC_KEYWORDS: Array<{ keywords: string[]; category: "ai" | "crypto"; sub
   { keywords: ["claude", "anthropic", "gemini", "google ai", "midjourney", "stable diffusion", "ai image", "ai video", "ai audio"], category: "ai" },
 
   // Crypto — broad
-  { keywords: ["cryptocurrency", "crypto news", "crypto market", "blockchain", "defi", "decentralized finance", "web3", "nft", "token", "altcoin"], category: "crypto" },
+  { keywords: ["cryptocurrency", "crypto", "crypto news", "crypto market", "blockchain", "defi", "decentralized finance", "web3", "nft", "token", "altcoin"], category: "crypto" },
   // Crypto — specific
   { keywords: ["bitcoin", "btc", "ethereum", "eth", "solana", "sol"], category: "crypto", subcategory: "news" },
   { keywords: ["binance", "coinbase", "kraken", "exchange"], category: "crypto", subcategory: "binance" },

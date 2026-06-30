@@ -19,6 +19,7 @@ import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 import { shouldRunServiceAsDeterministic } from "../execution-mode";
 import { fetchTopicRoutesLiveSources } from "@/lib/rsshub/rsshub-topic-live-search";
+import { detectTopics } from "@/lib/rsshub/topic-routes";
 
 const SignalScoutSchema = z.object({
   ranked_sources: z.array(z.object({
@@ -332,6 +333,7 @@ export const signalScoutHandler: ServiceHandler = async (
     rank: number;
     relevance_score: number;
     reason: string;
+    _isTopicCandidate?: boolean;
   };
   const mergedLive: MergedCandidate[] = [];
 
@@ -342,6 +344,11 @@ export const signalScoutHandler: ServiceHandler = async (
     /en\.wikipedia\.org.*current/i,
   ];
 
+  // Detect if query is AI/crypto topic — used for Wikipedia guard even when topic routes return 0
+  const userGoalText = (expanded_queries || []).join(" ") || (entity_terms || []).join(" ");
+  const detectedTopics = detectTopics(userGoalText, entity_terms || []);
+  const queryHasDomainTopic = detectedTopics.some((t) => t.category === "ai" || t.category === "crypto");
+
   if (topicResult.candidates.length > 0) {
     const seenUrls = new Set<string>();
     const hasDomainSpecificTopics = topicResult.candidates.some(
@@ -349,7 +356,7 @@ export const signalScoutHandler: ServiceHandler = async (
     );
     for (const tc of topicResult.candidates) {
       seenUrls.add(tc.source_url.toLowerCase());
-      mergedLive.push(tc);
+      mergedLive.push({ ...tc, _isTopicCandidate: true });
     }
     if (liveResults) {
       for (const lr of liveResults) {
@@ -367,13 +374,28 @@ export const signalScoutHandler: ServiceHandler = async (
       }
     }
   } else if (liveResults) {
-    mergedLive.push(...liveResults);
+    // Even when topic routes return 0, filter Wikipedia/current-events if query is AI/crypto
+    if (queryHasDomainTopic) {
+      for (const lr of liveResults) {
+        const url = lr.source_url.toLowerCase();
+        const routePath = (lr.route_path || "").toLowerCase();
+        if (GENERIC_CATCH_ALL_PATTERNS.some((p) => p.test(url) || p.test(routePath))) {
+          continue;
+        }
+        mergedLive.push(lr);
+      }
+    } else {
+      mergedLive.push(...liveResults);
+    }
   }
 
   // Re-rank merged candidates: sort by relevance_score descending, assign rank 1..N
+  // Topic candidates get priority over non-topic candidates
   mergedLive.sort((a, b) => {
+    // Topic candidates first
+    if (a._isTopicCandidate && !b._isTopicCandidate) return -1;
+    if (!a._isTopicCandidate && b._isTopicCandidate) return 1;
     if (b.relevance_score !== a.relevance_score) return b.relevance_score - a.relevance_score;
-    // Tiebreak: prefer candidates with higher raw relevance (topic candidates already scored)
     return 0;
   });
   mergedLive.forEach((c, i) => { c.rank = i + 1; });

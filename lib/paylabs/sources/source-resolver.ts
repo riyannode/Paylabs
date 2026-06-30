@@ -16,6 +16,7 @@ import type {
   SourceResolverOutput,
 } from "./types";
 import { sanitizeEntityTerms, hasBoundaryTerm } from "./source-term-matching";
+import { detectTopics } from "@/lib/rsshub/topic-routes";
 
 // ─── Whitelist: safe columns only ─────────────────────────
 // NEVER include source_payload, normalized_sha256, content_sha256,
@@ -223,6 +224,10 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entity
   const isGitHubIntent = /\bgithub\b/i.test(goalLower) || /\brepo(s|sitory|sitories)?\b/i.test(goalLower) || !!ownerRepoMatch;
   const isNewsIntent = goalLower.includes("news") || goalLower.includes("latest") || goalLower.includes("update");
 
+  // Resolver-level guard: reject Wikipedia/current-events for AI/crypto topic queries
+  const _detectedTopics = detectTopics(normalizedGoal, entityTerms || []);
+  const _queryHasDomainTopic = _detectedTopics.some((t) => t.category === "ai" || t.category === "crypto");
+
   const filtered = sources.filter((src) => {
     const title = (src.title || "").toLowerCase();
     const summary = (src.summary || "").toLowerCase();
@@ -232,6 +237,15 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entity
     const reason = (src.reason || "").toLowerCase();
     // Include reason in combined text so topic_route:ai/openai helps entity matching
     const combined = `${title} ${summary} ${domain} ${routePath} ${url} ${reason}`;
+
+    // Wikipedia/current-events guard: reject generic catch-all for AI/crypto queries
+    if (_queryHasDomainTopic) {
+      const isWikipediaCatchAll =
+        /\/wiki.*current.events/i.test(routePath) ||
+        /\/wiki.*in.the.news/i.test(routePath) ||
+        (/en\.wikipedia\.org/i.test(domain) && /current/i.test(routePath));
+      if (isWikipediaCatchAll) return false;
+    }
 
     // Entity terms: at least ONE must appear (includes short meaningful tokens like x402, ai)
     if (entityPatterns.length > 0) {

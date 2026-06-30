@@ -48,6 +48,7 @@ const KNOWN_ENTITIES = new Set([
   "cefi", "cv", "cdns", "anthropic", "claude", "gemini",
   "binance", "coinbase", "stripe", "supabase", "vercel",
   "langchain", "langgraph", "mcp",
+  "crypto", "blockchain", "token", "altcoin", "stablecoin",
 ]);
 
 // ─── Core Helpers ───────────────────────────────────────────
