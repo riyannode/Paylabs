@@ -31,7 +31,6 @@ import {
   markPayoutResult,
   deleteLedgerRow,
   recordUnallocatedReserve,
-  getExistingPayout,
 } from "../../creator-distribution/payout-ledger";
 import type {
   CreatorAttribution,
@@ -310,6 +309,8 @@ export async function creatorPayoutRouterHandler(
     (r) => r.status === "paid" || r.status === "gateway_accepted",
   );
 
+  const paidCount = paidCreatorResults.length;
+
   const revenueShare = buildRevenueShareForPaidCreatorCount({
     paidCreatorCount: paidCreatorResults.length,
   });
@@ -335,20 +336,14 @@ export async function creatorPayoutRouterHandler(
   };
 
   if (revenueShare.bot_atomic > BigInt(0) && botWallet) {
-    // Check if existing bot share has a different amount (paid count changed on retry)
-    const existingBot = await getExistingPayout(input.discoveryRunId, "bot_share", "platform_bot");
-    if (existingBot && existingBot.status !== "paid" && existingBot.status !== "gateway_accepted") {
-      const existingAmount = BigInt(existingBot.amount_atomic);
-      if (existingAmount !== revenueShare.bot_atomic) {
-        // Amount changed — delete stale row so we can re-claim with correct amount
-        await deleteLedgerRow(input.discoveryRunId, "bot_share", "platform_bot");
-      }
-    }
+    // Key by paid slot count so different retry outcomes don't conflict
+    // e.g. attempt1 (1 creator) → platform_bot_1, retry (2 creators) → platform_bot_2
+    const botSubjectId = `platform_bot_${paidCount}`;
 
     const botClaim = await claimPending({
       discoveryRunId: input.discoveryRunId,
       payoutType: "bot_share",
-      payoutSubjectId: "platform_bot",
+      payoutSubjectId: botSubjectId,
       amountAtomic: revenueShare.bot_atomic.toString(),
       amountUsdc: Number(revenueShare.bot_atomic) / 1e6,
       walletAddress: botWallet,
@@ -377,7 +372,7 @@ export async function creatorPayoutRouterHandler(
         const markRes = await markPayoutResult({
           discoveryRunId: input.discoveryRunId,
           payoutType: "bot_share",
-          payoutSubjectId: "platform_bot",
+          payoutSubjectId: botSubjectId,
           status: execResult.status === "gateway_accepted" ? "gateway_accepted" : execResult.status === "paid" ? "paid" : "failed",
           settlementId: execResult.settlement_id,
           txHash: execResult.tx_hash,
@@ -404,7 +399,7 @@ export async function creatorPayoutRouterHandler(
         await markPayoutResult({
           discoveryRunId: input.discoveryRunId,
           payoutType: "bot_share",
-          payoutSubjectId: "platform_bot",
+          payoutSubjectId: botSubjectId,
           status: "failed",
           error: `bot_transport_exception: ${msg}`,
         });
@@ -430,12 +425,10 @@ export async function creatorPayoutRouterHandler(
       };
     }
   } else {
-    // No paid creators — delete any stale bot share from prior failed attempt
-    await deleteLedgerRow(input.discoveryRunId, "bot_share", "platform_bot");
+    // No paid creators — nothing to transfer
   }
 
-  // Service share — claim-before-transfer
-  // Fix 4: Same pattern as bot share
+  // Service share — claim-before-transfer with dynamic key by paid count
   let serviceResult: {
     status: string;
     amount_atomic: string;
@@ -455,19 +448,13 @@ export async function creatorPayoutRouterHandler(
   };
 
   if (revenueShare.service_atomic > BigInt(0) && serviceWallet) {
-    // Check if existing service share has a different amount (paid count changed on retry)
-    const existingService = await getExistingPayout(input.discoveryRunId, "service_share", "platform_service");
-    if (existingService && existingService.status !== "paid" && existingService.status !== "gateway_accepted") {
-      const existingAmount = BigInt(existingService.amount_atomic);
-      if (existingAmount !== revenueShare.service_atomic) {
-        await deleteLedgerRow(input.discoveryRunId, "service_share", "platform_service");
-      }
-    }
+    // Key by paid slot count — same pattern as bot share
+    const serviceSubjectId = `platform_service_${paidCount}`;
 
     const serviceClaim = await claimPending({
       discoveryRunId: input.discoveryRunId,
       payoutType: "service_share",
-      payoutSubjectId: "platform_service",
+      payoutSubjectId: serviceSubjectId,
       amountAtomic: revenueShare.service_atomic.toString(),
       amountUsdc: Number(revenueShare.service_atomic) / 1e6,
       walletAddress: serviceWallet,
@@ -496,7 +483,7 @@ export async function creatorPayoutRouterHandler(
         const markRes = await markPayoutResult({
           discoveryRunId: input.discoveryRunId,
           payoutType: "service_share",
-          payoutSubjectId: "platform_service",
+          payoutSubjectId: serviceSubjectId,
           status: execResult.status === "gateway_accepted" ? "gateway_accepted" : execResult.status === "paid" ? "paid" : "failed",
           settlementId: execResult.settlement_id,
           txHash: execResult.tx_hash,
@@ -523,7 +510,7 @@ export async function creatorPayoutRouterHandler(
         await markPayoutResult({
           discoveryRunId: input.discoveryRunId,
           payoutType: "service_share",
-          payoutSubjectId: "platform_service",
+          payoutSubjectId: serviceSubjectId,
           status: "failed",
           error: `service_transport_exception: ${msg}`,
         });
@@ -549,14 +536,12 @@ export async function creatorPayoutRouterHandler(
       };
     }
   } else {
-    // No paid creators — delete any stale service share from prior failed attempt
-    await deleteLedgerRow(input.discoveryRunId, "service_share", "platform_service");
+    // No paid creators — nothing to transfer
   }
 
   // ── Unallocated reserve ──
   // Fix 5: Clear stale reserve if unallocatedAtomic drops to 0 on retry
   // Fix 7: Distinguish eligibility vs failure reasons
-  const paidCount = paidCreatorResults.length;
   const plannedPoolAtomic = splitPlan.planned_creator_pool_atomic;
   const paidPoolAtomic = BigInt(paidCount) * BigInt(20); // 20 atomic per slot
   const unallocatedAtomic = plannedPoolAtomic - paidPoolAtomic;
