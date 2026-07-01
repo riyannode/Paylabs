@@ -784,6 +784,32 @@ export async function POST(req: NextRequest) {
 
   // Already verified
   if (typedClaim.claim_status === "verified" && typedClaim.proof_status === "verified") {
+    // Backfill sync: existing verified claims may have unmonetized feed items
+    try {
+      const syncResult = await syncVerifiedCreatorClaimToFeedItems({
+        id: typedClaim.id,
+        creator_wallet: typedClaim.creator_wallet,
+        claim_status: typedClaim.claim_status,
+        claim_scope: typedClaim.claim_scope,
+        claim_scope_key: typedClaim.claim_scope_key,
+        source_url: typedClaim.source_url,
+        source_domain: typedClaim.source_domain,
+        canonical_url: typedClaim.canonical_url,
+      });
+      if (syncResult.updated > 0) {
+        console.log("[creator-verify] backfill sync on already-verified", {
+          claim_id: typedClaim.id.slice(0, 8),
+          matched: syncResult.matched,
+          updated: syncResult.updated,
+        });
+      }
+    } catch (syncError) {
+      console.error("[creator-verify] backfill sync failed (non-blocking)", {
+        claim_id: typedClaim.id.slice(0, 8),
+        error: syncError instanceof Error ? syncError.message : String(syncError),
+      });
+    }
+
     const response: Record<string, unknown> = {
       ok: true,
       proof_status: "verified",

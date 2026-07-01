@@ -72,19 +72,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ walletAddress, sources: [] });
   }
 
-  // 2. Batch count feed items per claim domain
-  // Collect unique domains from claims to batch the count query
+  // 2. Batch count payable feed items per claim domain
+  // Only count rows attributed to THIS wallet (is_monetized + claim_status=claimed)
   const domains = [...new Set(claims.map((c) => c.source_domain).filter(Boolean))] as string[];
 
   const feedCountByDomain = new Map<string, number>();
 
   if (domains.length > 0) {
-    // Query feed items for all claimed domains at once
     const { data: feedItems } = await supabase
       .from("paylabs_feed_items")
       .select("domain")
       .in("domain", domains)
-      .eq("is_active", true);
+      .eq("is_active", true)
+      .eq("is_monetized", true)
+      .eq("claim_status", "claimed")
+      .eq("creator_wallet", walletAddress);
 
     if (feedItems) {
       for (const item of feedItems) {
