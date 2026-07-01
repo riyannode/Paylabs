@@ -68,9 +68,9 @@ Each service supports 3 execution modes: `deterministic` (default), `llm`, `hybr
 | Service | LLM-Capable | Default Mode | What LLM does (when enabled) |
 |---------|-------------|-------------|------------------------------|
 | **Brain planner** | ✅ always LLM | — | Plans tier, strategy, query variants. No deterministic fallback |
-| `intent_planner` | ✅ | deterministic | LLM intent classification. Fail → rule-based fallback |
-| `query_builder` | ✅ | deterministic | LLM query expansion/refinement. Fail → deterministic keyword expansion |
-| `signal_scout` | ✅ | deterministic | LLM reranks top 20 candidates. Fail → metadata/keyword ranking |
+| `intent_planner` | ✅ | LLM | LLM intent classification. Fail → rule-based fallback |
+| `query_builder` | ✅ | LLM | LLM query expansion/refinement. Fail → deterministic keyword expansion |
+| `signal_scout` | ✅ | LLM | LLM reranks top 20 candidates. Fail → metadata/keyword ranking |
 | `signal_scout_basics` | ❌ | deterministic | Pure keyword/entity scoring. No LLM ever |
 | `intent_matcher` | ✅ | deterministic | LLM relevance evaluation. Fail → keyword overlap scoring |
 | `source_verifier` | ✅ | deterministic | LLM quality assessment. Fail → URL/domain/metadata validation |
