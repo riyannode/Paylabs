@@ -4,10 +4,25 @@ import { hrefFromTx } from "@/lib/paylabs/x402/payment-links";
 import BatchResolverLink from "@/components/paylabs/BatchResolverLink";
 import SubPageMobileNav from "@/components/paylabs/SubPageMobileNav";
 
+const PAYMENT_SAFE_FIELDS = [
+  "event_id",
+  "discovery_run_id",
+  "node_type",
+  "seller",
+  "status",
+  "amount_usdc",
+  "tx_hash",
+  "explorer_url",
+  "batch_tx_hash",
+  "batch_explorer_url",
+  "error",
+  "created_at",
+].join(",");
+
 async function getRecentX402Payments(limit = 50) {
   const { data } = await supabaseAdmin()
     .from("paylabs_service_payment_events")
-    .select("*")
+    .select(PAYMENT_SAFE_FIELDS)
     .order("created_at", { ascending: false })
     .limit(limit);
   return data || [];
@@ -193,7 +208,7 @@ export default async function DashboardPage() {
           { label: "Users (7d)", value: recentUsers7d },
           { label: "x402 Service Payments", value: servicePaymentCount },
           { label: "Receipts", value: receiptCount },
-          { label: "Platform x402 Volume", value: usdc(totalSettledUsdc) },
+          { label: "Platform x402 Volume", value: usdc(totalSettledUsdc + creatorPaidUsdc) },
           {
             label: "Last TX",
             value: (() => {
@@ -247,12 +262,10 @@ export default async function DashboardPage() {
                 <tr>
                   <th>Time</th>
                   <th>Run ID</th>
-                  <th>Buyer</th>
                   <th>Seller</th>
                   <th>Node Type</th>
                   <th>Amount</th>
                   <th>Status</th>
-                  <th>Mode</th>
                   <th>Payment Visibility</th>
                   <th>Error</th>
                 </tr>
@@ -262,7 +275,6 @@ export default async function DashboardPage() {
                   <tr key={r.event_id}>
                     <td className="muted">{timeAgo(r.created_at)}</td>
                     <td className="data-mono">{short(r.discovery_run_id)}</td>
-                    <td className="data-mono" style={{ fontSize: 11 }}>{r.buyer}</td>
                     <td className="data-mono" style={{ fontSize: 11 }}>{r.seller}</td>
                     <td>
                       <span className={`badge ${
@@ -281,7 +293,6 @@ export default async function DashboardPage() {
                         {r.status}
                       </span>
                     </td>
-                    <td style={{ fontSize: 11 }}>{r.mode}</td>
                     <td>
                       <BatchResolverLink
                         runId={r.discovery_run_id}
