@@ -17,94 +17,33 @@ Users ask a question, set a USDC budget, connect a wallet, sign one x402 entry p
 PayLabs runs on a **LangGraph agent runtime** — a directed graph of LLM-powered and deterministic service nodes, each with its own x402 payment edge.
 
 ```
-                              ┌─────────────┐
-                              │    USER      │
-                              │  UCW / DCW   │
-                              └──────┬───────┘
-                                     │ x402 entry payment
-                                     ▼
-                           ┌─────────────────────┐
-                           │    ENTRY GATE        │
-                           │  verify · settle     │
-                           │  payer wallet check  │
-                           └──────────┬───────────┘
-                                      │
-                                      ▼
-              ┌───────────────────────────────────────────────┐
-              │                   BRAIN                       │
-              │          (LangGraph, always LLM)              │
-              │                                               │
-              │  • plans tier (easy / normal / advanced)       │
-              │  • selects macro nodes + services              │
-              │  • builds query variants + discovery strategy  │
-              │  • advisory only — no prices, no wallets       │
-              │                                               │
-              │  buyer: run_budget_controller                  │
-              │  seller: brain_service_wallet                  │
-              └───────────────────────┬───────────────────────┘
-                                      │ x402
-                    ┌─────────────────┼─────────────────┐
-                    ▼                 ▼                  ▼
-     ┌──────────────────────┐ ┌────────────────┐ ┌──────────────────────┐
-     │  DISCOVERY PLANNER   │ │ PAYMENT DECIDE │ │  SETTLEMENT MEMORY   │
-     │  (LangGraph)         │ │ (LangGraph)    │ │  (LangGraph)         │
-     │                      │ │                │ │                      │
-     │  easy: 3 services    │ │ normal: 5 svc  │ │  normal: 2 services  │
-     │  normal: 3 services  │ │ adv: 5 svc     │ │  advanced: 3 services│
-     └──────────┬───────────┘ └───────┬────────┘ └──────────┬───────────┘
-                │ x402                │ x402                 │ x402
-       ┌────────┼────────┐     ┌──────┼──────┐        ┌──────┼──────┐
-       ▼        ▼        ▼     ▼      ▼      ▼        ▼      ▼      ▼
-     ┌──────┐┌──────┐┌──────┐┌─────┐┌─────┐┌─────┐┌──────┐┌──────┐┌──────┐
-     │intent││query ││signal││intnt││src  ││val  ││creat ││adv   ││creat │
-     │plnnr ││bld   ││scout ││match││vrfy ││alloc││attrb ││evdnc ││payout│
-     │      ││      ││      ││     ││     ││trst ││      ││eval  ││rtr   │
-     │      ││      ││      ││     ││     ││pay  ││      ││      ││      │
-     │      ││      ││      ││     ││     ││dcd  ││      ││      ││      │
-     └──────┘└──────┘└──────┘└─────┘└─────┘└─────┘└──────┘└──────┘└──────┘
+USER ──x402──► ENTRY GATE ──► BRAIN (LLM)
+                                │
+                    ┌───────────┼───────────┐
+                    ▼           ▼           ▼
+             DISCOVERY     PAYMENT      SETTLEMENT
+             PLANNER       DECISION     MEMORY
+                │              │            │
+         ┌─────┼─────┐   ┌────┼────┐   ┌───┼───┐
+         ▼     ▼     ▼   ▼    ▼    ▼   ▼   ▼   ▼
+       intent query signal intent src  val creator adv   creator
+       plnr   bldr  scout  match  vrfy alloc attrb evdnc payout
+                                                trst      rtr
+                                                pay_dcd
 
-     ┌────────────────────────────────────────────────────────────────────┐
-     │                    x402 PAYMENT GRAPH                             │
-     │                                                                    │
-     │  run_budget_controller → brain           (treasury fee)           │
-     │  brain → discovery_planner               (macro node fee)        │
-     │  brain → payment_decision                (macro node fee)        │
-     │  brain → settlement_memory               (macro node fee)        │
-     │  discovery_planner → intent_planner      (service edge fee)      │
-     │  discovery_planner → query_builder       (service edge fee)      │
-     │  discovery_planner → signal_scout        (service edge fee)      │
-     │  payment_decision → intent_matcher       (service edge fee)      │
-     │  payment_decision → source_verifier      (service edge fee)      │
-     │  payment_decision → value_allocator      (service edge fee)      │
-     │  payment_decision → trust_verifier       (service edge fee)      │
-     │  payment_decision → payment_decider      (service edge fee)      │
-     │  settlement_memory → creator_attribution (service edge fee)      │
-     │  settlement_memory → adv_evidence_eval   (service edge fee)      │
-     │  settlement_memory → creator_payout_rtr  (service edge fee)      │
-     └────────────────────────────────────────────────────────────────────┘
+  ◄── Discovery ──►  ◄── Payment Decision ──►  ◄─ Settlement ─►
+       3 services          5 services             3 services
 
-     ┌────────────────────────────────────────────────────────────────────┐
-     │                    CREATOR PAYOUT FLOW                            │
-     │                                                                    │
-     │  source_verifier ──► creator_attribution ──► creator_payout_router│
-     │                           │                         │             │
-     │                    claim resolver            split policy          │
-     │                    (DB, no LLM)             85/10/5 atomic        │
-     │                           │                         │             │
-     │                    eligibility ──► claim-before-transfer          │
-     │                    (deterministic)    (idempotent ledger)         │
-     │                                            │                      │
-     │                                    x402 → creator wallet         │
-     └────────────────────────────────────────────────────────────────────┘
+  Each arrow = x402 payment edge (Circle Gateway batched)
+  Each service = independent LangGraph node
+```
 
-     ┌────────────────────────────────────────────────────────────────────┐
-     │                    OUTPUT                                         │
-     │                                                                    │
-     │  source context ──► AI answer with citations                      │
-     │  payment graph  ──► explorer page (tx hashes, batch links)        │
-     │  receipts       ──► per-run breakdown (planned vs settled)        │
-     │  creator payouts ──► payout ledger (per-creator USDC amounts)     │
-     └────────────────────────────────────────────────────────────────────┘
+**Creator payout flow:**
+
+```
+sources used ──► creator_attribution ──► creator_payout_router ──► creator wallet
+                  (claim resolver,        (85/10/5 split,           (x402 USDC)
+                   deterministic)          idempotent ledger)
 ```
 
 **12 agent services** across 3 macro-node phases:
