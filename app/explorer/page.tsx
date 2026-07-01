@@ -72,48 +72,12 @@ async function safeSum(
 }
 // ─── Payout Ledger ──────────────────────────────────────────
 
-async function getPayoutLedgerRows(limit = 100) {
-  return safeQuery<any>(() =>
-    supabaseAdmin()
-      .from("paylabs_payout_ledger")
-      .select(
-        "discovery_run_id,payout_type,payout_subject_id,status,amount_usdc,amount_atomic,reason,tx_hash,explorer_url,batch_tx_hash,batch_explorer_url,created_at"
-      )
-      .order("created_at", { ascending: false })
-      .limit(limit)
-  );
-}
-
 async function getCreatorPaidUsdc(): Promise<number> {
   const rows = await safeQuery<any>(() =>
     supabaseAdmin()
       .from("paylabs_payout_ledger")
       .select("amount_usdc")
       .eq("payout_type", "creator_share")
-      .in("status", ["paid", "gateway_accepted"])
-      .limit(1000)
-  );
-  return rows.reduce((s, r) => s + Number(r.amount_usdc || 0), 0);
-}
-
-async function getBotShareUsdc(): Promise<number> {
-  const rows = await safeQuery<any>(() =>
-    supabaseAdmin()
-      .from("paylabs_payout_ledger")
-      .select("amount_usdc")
-      .eq("payout_type", "bot_share")
-      .in("status", ["paid", "gateway_accepted"])
-      .limit(1000)
-  );
-  return rows.reduce((s, r) => s + Number(r.amount_usdc || 0), 0);
-}
-
-async function getServiceShareUsdc(): Promise<number> {
-  const rows = await safeQuery<any>(() =>
-    supabaseAdmin()
-      .from("paylabs_payout_ledger")
-      .select("amount_usdc")
-      .eq("payout_type", "service_share")
       .in("status", ["paid", "gateway_accepted"])
       .limit(1000)
   );
@@ -142,23 +106,6 @@ async function getTreasuryUnallocatedUsdc(): Promise<number> {
   );
 }
 
-function payoutTypeLabel(t: string): string {
-  switch (t) {
-    case "creator_share":
-      return "Creator";
-    case "bot_share":
-      return "Bot Share";
-    case "service_share":
-      return "Service Share";
-    case "unallocated_reserve":
-      return "Treasury / Unallocated";
-    case "treasury_retained":
-      return "Treasury Retained";
-    default:
-      return t;
-  }
-}
-
 function timeAgo(dateStr: string): string {
   const d = new Date(dateStr);
   const now = new Date();
@@ -181,11 +128,8 @@ export default async function DashboardPage() {
     totalSettledUsdc,
     // Payout ledger
     creatorPaidUsdc,
-    botShareUsdc,
-    serviceShareUsdc,
     treasuryUnallocatedUsdc,
     payoutLedgerCount,
-    payoutLedgerRows,
   ] = await Promise.all([
     // x402 Service Payments
     getRecentX402Payments(50),
@@ -198,11 +142,8 @@ export default async function DashboardPage() {
     safeSum("paylabs_receipts", "actual_settled_usdc"),
     // Payout ledger aggregations
     getCreatorPaidUsdc(),
-    getBotShareUsdc(),
-    getServiceShareUsdc(),
     getTreasuryUnallocatedUsdc(),
     safeCount("paylabs_payout_ledger"),
-    getPayoutLedgerRows(100),
   ]);
 
   // ─── User stats (unique wallets) ───
@@ -275,11 +216,9 @@ export default async function DashboardPage() {
             })(),
           },
           // Payout ledger KPIs
-          { label: "Creator Paid", value: usdc(creatorPaidUsdc) },
-          { label: "Bot Share", value: usdc(botShareUsdc) },
-          { label: "Service Share", value: usdc(serviceShareUsdc) },
+          { label: "Paid to Creators", value: usdc(creatorPaidUsdc) },
           { label: "Treasury / Unallocated", value: usdc(treasuryUnallocatedUsdc) },
-          { label: "Payout Ledger Rows", value: payoutLedgerCount },
+          { label: "Creator Payout Rows", value: payoutLedgerCount },
         ].map((kpi) => (
           <div className="card" key={kpi.label}>
             <div className="muted" style={{ fontSize: 13 }}>
@@ -365,90 +304,6 @@ export default async function DashboardPage() {
           </div>
         )}
       </section>
-      {/* ─── Creator Distribution Ledger ───────────────────── */}
-      <section className="card">
-        <h2 className="section-title">Creator Distribution Ledger</h2>
-        <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
-          Creator payouts, bot/service shares, and Treasury / Unallocated amounts from PayLabs payout ledger.
-        </p>
-        {payoutLedgerRows.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 24 }}>
-            No payout ledger entries yet.
-          </div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Run ID</th>
-                  <th>Type</th>
-                  <th>Subject</th>
-                  <th>Amount</th>
-                  <th>Status</th>
-                  <th>Reason</th>
-                  <th>Visibility</th>
-                </tr>
-              </thead>
-              <tbody>
-                {payoutLedgerRows.map((r: any) => {
-                  const hasTx = !!(r.tx_hash || r.explorer_url || r.batch_tx_hash || r.batch_explorer_url);
-                  const isSkippedTreasury = r.status === "skipped" && (r.payout_type === "unallocated_reserve" || r.payout_type === "treasury_retained");
-                  return (
-                    <tr key={`${r.discovery_run_id}-${r.payout_type}-${r.payout_subject_id}`}>
-                      <td className="muted">{timeAgo(r.created_at)}</td>
-                      <td className="data-mono">{short(r.discovery_run_id)}</td>
-                      <td>
-                        <span className={`badge ${
-                          r.payout_type === "creator_share" ? "badge-success" :
-                          r.payout_type === "unallocated_reserve" || r.payout_type === "treasury_retained" ? "badge-warning" :
-                          ""
-                        }`} style={{ fontSize: 10 }}>
-                          {payoutTypeLabel(r.payout_type)}
-                        </span>
-                      </td>
-                      <td className="data-mono" style={{ fontSize: 11 }}>{short(r.payout_subject_id)}</td>
-                      <td className="data-mono">{usdc(r.amount_usdc)}</td>
-                      <td>
-                        <span className={`badge ${
-                          r.status === "paid" || r.status === "gateway_accepted" ? "badge-success" :
-                          r.status === "failed" ? "badge-danger" :
-                          r.status === "skipped" ? "badge-warning" :
-                          ""
-                        }`}>
-                          {r.status}
-                        </span>
-                      </td>
-                      <td className="muted" style={{ fontSize: 11, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {r.reason || "—"}
-                      </td>
-                      <td>
-                        {hasTx ? (
-                          <BatchResolverLink
-                            runId={r.discovery_run_id}
-                            initialBatchExplorerUrl={r.batch_explorer_url}
-                            initialBatchTxHash={r.batch_tx_hash}
-                            directExplorerUrl={r.explorer_url}
-                            directTxHash={r.tx_hash}
-                          />
-                        ) : isSkippedTreasury ? (
-                          <span className="muted" style={{ fontSize: 11 }}>No transfer</span>
-                        ) : (
-                          <span className="muted" style={{ fontSize: 11 }}>—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-
-
-
 
     </div>
     </>
