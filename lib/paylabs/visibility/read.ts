@@ -288,7 +288,7 @@ function batchStatus(row: any): BatchStatus {
   return "pending";
 }
 
-function mapReceiptDetail(row: any, creators: any[], sources: any[]) {
+function mapReceiptDetail(row: any, creators: any[], sources: any[], userCostUsdc?: number | null) {
   return {
     id: row.discovery_run_id,
     discoveryRunId: row.discovery_run_id,
@@ -318,6 +318,8 @@ function mapReceiptDetail(row: any, creators: any[], sources: any[]) {
     lastBatchExplorerUrl: row.last_batch_explorer_url ?? null,
     displayStatus: displayStatus(row),
     batchStatus: batchStatus(row),
+    // Derived from agent_trace.auto_tier_preflight (no DB column)
+    userCostUsdc: userCostUsdc !== undefined ? userCostUsdc : null,
     creators: creators.map((creator) => ({
       id: String(creator.id),
       routeTier: creator.route_tier ?? null,
@@ -380,7 +382,7 @@ export async function getRunReceiptDetail(discoveryRunId: string) {
   if (receiptError) throw new Error(`get_run_receipt_detail_failed: ${receiptError.message}`);
   if (!receipt) return null;
 
-  const [creatorsResult, sourcesResult] = await Promise.all([
+  const [creatorsResult, sourcesResult, runResult] = await Promise.all([
     supabaseAdmin()
       .from("paylabs_creator_payout_events")
       .select(CREATOR_SAFE_FIELDS)
@@ -392,12 +394,25 @@ export async function getRunReceiptDetail(discoveryRunId: string) {
       .eq("discovery_run_id", discoveryRunId)
       .order("final_score", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: true }),
+    // Fetch agent_trace to derive userCostUsdc (no DB column needed)
+    supabaseAdmin()
+      .from("paylabs_discovery_runs")
+      .select("agent_trace")
+      .eq("id", discoveryRunId)
+      .maybeSingle(),
   ]);
 
   if (creatorsResult.error) throw new Error(`get_creator_receipt_rows_failed: ${creatorsResult.error.message}`);
   if (sourcesResult.error) throw new Error(`get_source_receipt_rows_failed: ${sourcesResult.error.message}`);
 
-  return mapReceiptDetail(receipt, creatorsResult.data || [], sourcesResult.data || []);
+  // Derive userCostUsdc from agent_trace.auto_tier_preflight
+  const agentTrace = (runResult.data?.agent_trace as Record<string, unknown>) || {};
+  const preflight = agentTrace.auto_tier_preflight as Record<string, unknown> | undefined;
+  const userCostUsdc = preflight?.status === "locked"
+    ? Number(preflight.routing_fee_usdc || 0) + Number(preflight.final_entry_payment_usdc || 0)
+    : null;
+
+  return mapReceiptDetail(receipt, creatorsResult.data || [], sourcesResult.data || [], userCostUsdc);
 }
 
 export async function getRecentReceiptList(limit = 25) {
