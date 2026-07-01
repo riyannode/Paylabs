@@ -408,3 +408,183 @@ export async function resolveCreatorClaimsBatch(
 
   return result;
 }
+
+// ─── Exact URL Matching Helper ─────────────────────────────────
+
+/** Minimal claim shape needed for canonicalUrl matching. */
+export interface ClaimMatchInput {
+  claim_scope: string | null;
+  claim_scope_key: string | null;
+  source_url: string | null;
+  source_domain: string | null;
+  canonical_url: string | null;
+}
+
+/**
+ * Determine whether a feed item's canonical_url belongs to a given claim,
+ * based on claim scope. Pure function — no DB, no network.
+ *
+ * Returns false for invalid/unparseable URLs.
+ */
+export function canonicalUrlMatchesClaim(canonicalUrl: string, claim: ClaimMatchInput): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(canonicalUrl);
+  } catch {
+    return false;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  const scope = claim.claim_scope;
+
+  if (scope === "exact_url") {
+    return canonicalUrl === claim.canonical_url || canonicalUrl === claim.source_url;
+  }
+
+  if (scope === "github_repo") {
+    const scopeKey = claim.claim_scope_key;
+    if (!scopeKey) return false;
+    const repoPath = scopeKey.replace("github_repo:", "").toLowerCase();
+    const [owner, repo] = repoPath.split("/");
+    if (!owner || !repo) return false;
+    if (hostname !== "github.com" && hostname !== "www.github.com") return false;
+    if (parts.length < 2) return false;
+    const urlOwner = parts[0].toLowerCase();
+    const urlRepo = parts[1].replace(/\.git$/, "").toLowerCase();
+    return urlOwner === owner && urlRepo === repo;
+  }
+
+  if (scope === "platform_profile") {
+    const scopeKey = claim.claim_scope_key;
+    if (!scopeKey) return false;
+    const keyParts = scopeKey.split(":");
+    if (keyParts.length < 3) return false;
+    const platform = keyParts[1];
+    const handle = keyParts.slice(2).join(":").toLowerCase();
+
+    if (platform === "x" || platform === "twitter") {
+      if (hostname !== "x.com" && hostname !== "twitter.com") return false;
+      if (parts.length < 1 || !parts[0]) return false;
+      const RESERVED_X = new Set([
+        "home", "search", "i", "settings", "notifications", "messages",
+        "explore", "compose", "login", "signup", "download", "tos",
+        "privacy", "about", "jobs", "intent", "share", "hashtag",
+      ]);
+      const urlHandle = parts[0].toLowerCase();
+      if (RESERVED_X.has(urlHandle) || urlHandle.startsWith("-")) return false;
+      return urlHandle === handle;
+    }
+
+    if (platform === "youtube") {
+      if (hostname !== "youtube.com" && hostname !== "www.youtube.com") return false;
+      if (parts.length < 1 || !parts[0]) return false;
+      // /@handle
+      if (parts[0].startsWith("@")) {
+        return parts[0].slice(1).toLowerCase() === handle;
+      }
+      // /channel/<id>
+      if (parts[0] === "channel" && parts.length >= 2) {
+        return parts[1] === handle;
+      }
+      return false;
+    }
+
+    if (platform === "medium") {
+      if (hostname !== "medium.com") return false;
+      if (parts.length < 1 || !parts[0]) return false;
+      if (!parts[0].startsWith("@")) return false;
+      return parts[0].slice(1).toLowerCase() === handle;
+    }
+
+    return false;
+  }
+
+  if (scope === "domain") {
+    if (!claim.source_domain) return false;
+    const domain = claim.source_domain.toLowerCase();
+    return hostname === domain || hostname.endsWith("." + domain);
+  }
+
+  if (scope === "host") {
+    if (!claim.source_domain) return false;
+    return hostname === claim.source_domain.toLowerCase();
+  }
+
+  return false;
+}
+
+// ─── Post-Verification Feed Item Sync ──────────────────────────
+
+export interface SyncFeedItemsResult {
+  matched: number;
+  updated: number;
+}
+
+/**
+ * After a claim is verified, update existing matching feed items
+ * to set creator_wallet, is_monetized, and claim_status.
+ *
+ * Safe behavior:
+ * - Only updates existing rows (never creates synthetic feed items)
+ * - Only runs for verified claims
+ * - Scope-specific matching only (no broad domain fallback for repo/profile claims)
+ * - Does not touch price fields
+ * - Returns summary; throws only on DB errors (caller catches)
+ */
+export async function syncVerifiedCreatorClaimToFeedItems(
+  claim: { id: string; creator_wallet: string; claim_status: string; claim_scope: string | null; claim_scope_key: string | null; source_url: string | null; source_domain: string | null; canonical_url: string | null },
+): Promise<SyncFeedItemsResult> {
+  if (claim.claim_status !== "verified") {
+    return { matched: 0, updated: 0 };
+  }
+
+  const db = supabaseAdmin();
+  const wallet = claim.creator_wallet.toLowerCase();
+  const idPrefix = claim.id.slice(0, 8);
+
+  // Fetch all active feed item URLs, filter in JS using exact scope matching
+  const { data: allActive, error: fetchError } = await db
+    .from("paylabs_feed_items")
+    .select("canonical_url")
+    .eq("is_active", true);
+
+  if (fetchError) {
+    throw new Error(`syncVerifiedCreatorClaimToFeedItems: fetch failed for claim ${idPrefix}: ${fetchError.message}`);
+  }
+
+  if (!allActive || allActive.length === 0) {
+    return { matched: 0, updated: 0 };
+  }
+
+  // Filter using canonicalUrlMatchesClaim (exact scope matching, no LIKE)
+  const matchedUrls: string[] = [];
+  for (const row of allActive) {
+    if (row.canonical_url && canonicalUrlMatchesClaim(row.canonical_url, claim)) {
+      matchedUrls.push(row.canonical_url);
+    }
+  }
+
+  if (matchedUrls.length === 0) {
+    return { matched: 0, updated: 0 };
+  }
+
+  // Update matching feed items: set creator_wallet, is_monetized, claim_status only
+  const { data: updatedRows, error: updateError } = await db
+    .from("paylabs_feed_items")
+    .update({
+      creator_wallet: wallet,
+      is_monetized: true,
+      claim_status: "claimed",
+    })
+    .in("canonical_url", matchedUrls)
+    .eq("is_active", true)
+    .select("canonical_url");
+
+  if (updateError) {
+    throw new Error(`syncVerifiedCreatorClaimToFeedItems: update failed for claim ${idPrefix}: ${updateError.message}`);
+  }
+
+  const updatedCount = updatedRows?.length ?? 0;
+  return { matched: matchedUrls.length, updated: updatedCount };
+}
