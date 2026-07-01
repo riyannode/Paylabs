@@ -129,7 +129,6 @@ export default async function DashboardPage() {
     // Payout ledger
     creatorPaidUsdc,
     treasuryUnallocatedUsdc,
-    payoutLedgerCount,
   ] = await Promise.all([
     // x402 Service Payments
     getRecentX402Payments(50),
@@ -143,7 +142,6 @@ export default async function DashboardPage() {
     // Payout ledger aggregations
     getCreatorPaidUsdc(),
     getTreasuryUnallocatedUsdc(),
-    safeCount("paylabs_payout_ledger"),
   ]);
 
   // ─── User stats (unique wallets) ───
@@ -218,7 +216,6 @@ export default async function DashboardPage() {
           // Payout ledger KPIs
           { label: "Paid to Creators", value: usdc(creatorPaidUsdc) },
           { label: "Treasury / Unallocated", value: usdc(treasuryUnallocatedUsdc) },
-          { label: "Creator Payout Rows", value: payoutLedgerCount },
         ].map((kpi) => (
           <div className="card" key={kpi.label}>
             <div className="muted" style={{ fontSize: 13 }}>
