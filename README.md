@@ -167,9 +167,9 @@ User signs x402 entry payment
 
 ## Wallets
 
-**UCW (User-Controlled Wallet)** — production default. Social login, email OTP, PIN flow. User signs x402 entry payments. Circle W3S Web SDK in browser.
+**UCW (User-Controlled Wallet)** — For Creator. Social login, email OTP, PIN flow. User signs x402 entry payments. Circle W3S Web SDK in browser.
 
-**DCW (Developer-Controlled Wallet)** — server-side alternative. Google OAuth + email OTP + passkey auth. Paid runs execute synchronously in-request.
+**DCW (Developer-Controlled Wallet)** — For chat user. Google OAuth + email OTP + passkey auth. Paid runs execute synchronously in-request.
 
 ## Auth
 
