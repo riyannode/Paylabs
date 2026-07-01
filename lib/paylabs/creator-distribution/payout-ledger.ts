@@ -463,7 +463,7 @@ export async function recordUnallocatedReserve(input: {
   // If newly claimed (not already recorded), mark as skipped immediately
   if (result.action === "claimed") {
     const db = supabaseAdmin();
-    await db
+    const { data: finalized, error: finalizeError } = await db
       .from("paylabs_payout_ledger")
       .update({
         status: "skipped",
@@ -473,7 +473,16 @@ export async function recordUnallocatedReserve(input: {
       .eq("discovery_run_id", input.discoveryRunId)
       .eq("payout_type", "unallocated_reserve")
       .eq("payout_subject_id", "unallocated_reserve")
-      .eq("status", "pending"); // Only update our own pending row
+      .eq("status", "pending") // Only update our own pending row
+      .select("id")
+      .maybeSingle();
+
+    if (finalizeError) {
+      return { ok: false, error: `reserve_finalize_failed: ${finalizeError.message}` };
+    }
+    if (!finalized) {
+      return { ok: false, error: `reserve_finalize_no_pending_row: unallocated_reserve` };
+    }
   }
 
   return { ok: true };

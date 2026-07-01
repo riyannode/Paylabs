@@ -256,14 +256,23 @@ export async function creatorPayoutRouterHandler(
       });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      // Transport threw — mark ledger as failed so retry can reclaim
-      await markPayoutResult({
-        discoveryRunId: input.discoveryRunId,
-        payoutType: "creator_share",
-        payoutSubjectId: subjectId,
-        status: "failed",
-        error: `transport_exception: ${msg}`,
-      });
+      // Transport threw AFTER transfer_started was marked.
+      // Do NOT mark as "failed" — that makes it retryable via claimPending,
+      // but the transfer may have reached the Gateway (indeterminate state).
+      // Leave as pending with transfer_started=true so stale-pending path
+      // rejects reclaim and flags reconciliation_required.
+      const db = (await import("@/lib/supabase/server")).supabaseAdmin();
+      await db
+        .from("paylabs_payout_ledger")
+        .update({
+          error: `transport_exception: ${msg}`,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("discovery_run_id", input.discoveryRunId)
+        .eq("payout_type", "creator_share")
+        .eq("payout_subject_id", subjectId)
+        .eq("status", "pending");
+      console.error("[creator-payout-router] transport exception (reconciliation_required):", msg);
       creatorResults.push({
         feed_item_id: item.feed_item_id,
         source_url: item.source_url,
@@ -571,7 +580,7 @@ export async function creatorPayoutRouterHandler(
   } = {
     status: paidCount === 0 ? "skipped"
       : botFailedCount === 0 && botPaidAtomic > BigInt(0) ? "paid"
-      : botPaidAtomic > BigInt(0) ? "partial"
+      : botPaidAtomic > BigInt(0) ? "paid"
       : "failed",
     amount_atomic: botPaidAtomic.toString(),
     amount_usdc: Number(botPaidAtomic) / 1e6,
@@ -592,7 +601,7 @@ export async function creatorPayoutRouterHandler(
   } = {
     status: paidCount === 0 ? "skipped"
       : serviceFailedCount === 0 && servicePaidAtomic > BigInt(0) ? "paid"
-      : servicePaidAtomic > BigInt(0) ? "partial"
+      : servicePaidAtomic > BigInt(0) ? "paid"
       : "failed",
     amount_atomic: servicePaidAtomic.toString(),
     amount_usdc: Number(servicePaidAtomic) / 1e6,
