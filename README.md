@@ -14,7 +14,7 @@ Users ask a question, set a USDC budget, connect a wallet, sign one x402 entry p
 
 ## Agent Stack
 
-PayLabs runs on a **LangGraph agent runtime** — a directed graph of LLM-powered and deterministic service nodes, each with its own x402 payment edge.
+PayLabs runs on a **LangGraph agent runtime** — a directed graph of LLM-powered and deterministic service nodes, each with its own x402 payment edge.Brain pay x402 to what node service he use, node seevice pay all child under the graph
 
 ```
 USER ──x402──► ENTRY GATE ──► BRAIN (LLM)
