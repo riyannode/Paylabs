@@ -3,7 +3,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import CreatorWalletPanel from "@/components/paylabs/CreatorWalletPanel";
-import CreatorWalletTopRight from "@/components/paylabs/CreatorWalletTopRight";
 
 type ClaimStatus = "unclaimed" | "verified" | "rejected" | "revoked" | "unknown";
 type ProofStatus = "not_started" | "pending" | "verified" | "failed" | "manual_required";
@@ -250,11 +249,6 @@ export default function CreatorProfileClient() {
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      {/* Top-right Creator Wallet pill */}
-      <div className="pl-creator-wallet-row">
-        <CreatorWalletTopRight />
-      </div>
-
       {/* Step 1: Wallet — full interactive panel */}
       <section className="pl-creator-wallet-card">
         <div className="pl-creator-wallet-card-header">
