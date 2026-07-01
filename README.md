@@ -14,7 +14,9 @@ Users ask a question, set a USDC budget, connect a wallet, sign one x402 entry p
 
 ## Agent Stack
 
-PayLabs runs on a **LangGraph agent runtime** — a directed graph of LLM-powered and deterministic service nodes, each with its own x402 payment edge.Brain pay x402 to what node service he use, node seevice pay all child under the graph
+PayLabs runs on a **LangGraph-based x402 agent runtime** — a directed graph of LLM-powered and deterministic service nodes connected by payment-tracked execution edges.
+
+A user starts with an x402 entry payment. The Brain creates a locked quote and run plan, then routes execution through selected LangGraph macro-node phase with x402. Each macro node delegates work to child service nodes, and each macro-to-child call is tracked as an x402 payment edge. Circle Gateway may batch those payment edges into Arc submitBatch transactions, while PayLabs records safe receipt and proof metadata.
 
 ```
 USER ──x402──► ENTRY GATE ──► BRAIN (LLM)
