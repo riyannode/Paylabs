@@ -67,16 +67,18 @@ function DcwInfoRow({
   children,
   copyValue,
   muted,
+  icon,
 }: {
   label: string;
   value?: string;
   children?: React.ReactNode;
   copyValue?: string | null;
   muted?: boolean;
+  icon?: React.ReactNode;
 }) {
   return (
     <div className="pl-info-row-v3">
-      <span className="pl-row-icon-v3" aria-hidden="true" />
+      <span className="pl-row-icon-v3" aria-hidden="true">{icon}</span>
       <span className="pl-row-label-v3">{label}</span>
       <b className={muted ? "muted" : ""}>
         {children ?? value}
@@ -764,21 +766,21 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
             {activeTab === "balances" && (
               <>
                 <div className="pl-summary-card-v3">
-                  <DcwInfoRow label="Wallet">
+                  <DcwInfoRow label="Wallet" icon={<WalletIcon />}>
                     <span className="data-mono">{shortAddr(wallet.address)}</span>
                   </DcwInfoRow>
-                  <DcwInfoRow label="Type" value="PayLabs Wallet" />
-                  <DcwInfoRow label="Network" value="Arc Testnet" />
+                  <DcwInfoRow label="Type" value="PayLabs Wallet" icon={<CardIcon />} />
+                  <DcwInfoRow label="Network" value="Arc Testnet" icon={<GlobeIcon />} />
 
                   {balance.walletUsdc != null ? (
-                    <DcwInfoRow label="Wallet USDC" value={`${balance.walletUsdc} USDC`} />
+                    <DcwInfoRow label="Wallet USDC" value={`${balance.walletUsdc} USDC`} icon={<DollarIcon />} />
                   ) : balance.walletBalanceStatus === "unavailable" ? (
-                    <DcwInfoRow label="Wallet USDC" value="Syncing…" muted />
+                    <DcwInfoRow label="Wallet USDC" value="Syncing…" muted icon={<DollarIcon />} />
                   ) : (
-                    <DcwInfoRow label="Wallet USDC" value="0.00 USDC" muted />
+                    <DcwInfoRow label="Wallet USDC" value="0.00 USDC" muted icon={<DollarIcon />} />
                   )}
 
-                  <DcwInfoRow label="Gateway Balance">
+                  <DcwInfoRow label="Gateway Balance" icon={<BoltIcon />}>
                     <span style={{ color: x402Balance > 0 ? "var(--success, #22c55e)" : undefined }}>
                       {balance.gatewayUsdc != null ? `${x402Balance.toFixed(6)} USDC` : "Checking…"}
                     </span>
@@ -786,10 +788,10 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                   <span className="muted" style={{ fontSize: 10, marginLeft: 4 }}>Powered by Circle Gateway</span>
 
                   {asDecimal(balance.pendingBatchUsdc) > 0 && (
-                    <DcwInfoRow label="Pending Batch" value={`${asDecimal(balance.pendingBatchUsdc).toFixed(6)} USDC`} />
+                    <DcwInfoRow label="Pending Batch" value={`${asDecimal(balance.pendingBatchUsdc).toFixed(6)} USDC`} icon={<ClockIcon />} />
                   )}
 
-                  <DcwInfoRow label="Planned Cost" value={`${plannedCostNum.toFixed(6)} USDC`} />
+                  <DcwInfoRow label="Planned Cost" value={`${plannedCostNum.toFixed(6)} USDC`} icon={<TargetIcon />} />
                 </div>
 
                 {/* Status */}
@@ -825,18 +827,19 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
               <>
                 <div className="pl-summary-card-v3">
                   {balance.walletUsdc != null ? (
-                    <DcwInfoRow label="Wallet USDC" value={`${balance.walletUsdc} USDC`} />
+                    <DcwInfoRow label="Wallet USDC" value={`${balance.walletUsdc} USDC`} icon={<DollarIcon />} />
                   ) : balance.walletBalanceStatus === "unavailable" ? (
-                    <DcwInfoRow label="Wallet USDC" value="Syncing…" muted />
+                    <DcwInfoRow label="Wallet USDC" value="Syncing…" muted icon={<DollarIcon />} />
                   ) : (
-                    <DcwInfoRow label="Wallet USDC" value="0.00 USDC" muted />
+                    <DcwInfoRow label="Wallet USDC" value="0.00 USDC" muted icon={<DollarIcon />} />
                   )}
                   <DcwInfoRow
                     label="Gateway Balance"
+                    icon={<BoltIcon />}
                     value={balance.gatewayUsdc != null ? `${x402Balance.toFixed(6)} USDC` : "Checking…"}
                   />
-                  <DcwInfoRow label="Planned Cost" value={`${plannedCostNum.toFixed(6)} USDC`} />
-                  <DcwInfoRow label="Recommended" value={`${recommendedStr} USDC`} />
+                  <DcwInfoRow label="Planned Cost" value={`${plannedCostNum.toFixed(6)} USDC`} icon={<TargetIcon />} />
+                  <DcwInfoRow label="Recommended" value={`${recommendedStr} USDC`} icon={<CheckIcon />} />
                 </div>
 
                 {/* Deposit to Gateway */}
@@ -887,16 +890,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                       {!["approve_pending", "approve_complete", "deposit_pending", "deposit_complete", "complete", "failed"].includes(depositState) && `⏳ ${depositState}…`}
                     </p>
                   )}
-                  {recommendedTopUp > 0 && (
-                    <button
-                      type="button"
-                      className="pl-use-recommended-pill"
-                      onClick={() => setDepositAmount(recommendedStr)}
-                      disabled={flowActive}
-                    >
-                      Use recommended: {recommendedStr} USDC
-                    </button>
-                  )}
+
                 </div>
 
                 <div className="pl-faucet-card">
@@ -999,4 +993,36 @@ function MailIcon() {
 
 function PasskeyIcon() {
   return <Svg><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></Svg>;
+}
+
+function WalletIcon() {
+  return <Svg><rect x="2" y="6" width="20" height="14" rx="2" /><path d="M16 14h.01" /></Svg>;
+}
+
+function DollarIcon() {
+  return <Svg><line x1="12" y1="1" x2="12" y2="23" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></Svg>;
+}
+
+function BoltIcon() {
+  return <Svg><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></Svg>;
+}
+
+function TargetIcon() {
+  return <Svg><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" /></Svg>;
+}
+
+function CheckIcon() {
+  return <Svg><polyline points="20 6 9 17 4 12" /></Svg>;
+}
+
+function ClockIcon() {
+  return <Svg><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></Svg>;
+}
+
+function CardIcon() {
+  return <Svg><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /></Svg>;
+}
+
+function GlobeIcon() {
+  return <Svg><circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></Svg>;
 }
