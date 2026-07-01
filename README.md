@@ -355,7 +355,6 @@ pnpm typecheck    # tsc --noEmit
 - No local private keys for production execution
 - UCW tokens stay server-side, frontend only keeps wallet address/ID
 - Raw x402 payloads, signatures, Gateway responses never stored in receipts
-- Budget validation before payment, payer mismatch fails closed
 - Settlement mode is not user-selectable
 - Raw chain-of-thought never exposed
 - Creator payout ledger is idempotent — claim-before-transfer prevents double-pay
