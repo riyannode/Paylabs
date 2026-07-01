@@ -78,14 +78,41 @@ export default function CreatorWalletPanel() {
 
   return (
     <>
-      <button
-        className="pl-primary-v3"
-        onClick={openCreatorWalletModal}
-      >
-        {walletInfo?.address
-          ? `Creator Wallet (${walletInfo.address.slice(0, 6)}…${walletInfo.address.slice(-4)})`
-          : "Connect Creator Wallet"}
-      </button>
+      {walletInfo?.address ? (
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="pl-creator-wallet-dot" />
+            <span style={{ fontSize: 14, fontWeight: 600 }}>Connected</span>
+            <span style={{ fontSize: 13, color: "#475569", fontVariantNumeric: "tabular-nums" }}>
+              {walletInfo.address.slice(0, 6)}…{walletInfo.address.slice(-4)}
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              className="pl-primary-v3"
+              onClick={openCreatorWalletModal}
+              style={{ width: "auto", padding: "0 20px" }}
+            >
+              Manage Wallet
+            </button>
+            <button
+              type="button"
+              className="pl-eoa-fallback-v3"
+              onClick={disconnect}
+              style={{ width: "auto", padding: "0 16px" }}
+            >
+              Disconnect
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          className="pl-primary-v3"
+          onClick={openCreatorWalletModal}
+        >
+          Connect Creator Wallet
+        </button>
+      )}
 
       {dcwConflict && (
         <div className="pl-wallet-error-v3" style={{ marginTop: 8 }}>
@@ -99,17 +126,6 @@ export default function CreatorWalletPanel() {
             Switch to Creator Wallet
           </button>
         </div>
-      )}
-
-      {walletInfo?.address && (
-        <button
-          type="button"
-          className="pl-eoa-fallback-v3"
-          onClick={disconnect}
-          style={{ marginTop: 8 }}
-        >
-          Disconnect Creator Wallet
-        </button>
       )}
 
       <WalletConnectModal
