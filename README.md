@@ -2,13 +2,13 @@
 
 AI search/crawler + creator monetization platform. Every search is budgeted, every source is paid, every creator gets their share.
 
-Users ask a question, set a USDC budget, connect a wallet, sign one x402 entry payment, and get an AI answer — where the creators behind the sources used in that answer automatically receive USDC payouts.
+Users ask a question, connect a wallet, sign one x402 entry payment, and get an AI answer — where the creators behind the sources used in that answer automatically receive USDC payouts.
 
 **Production:** `https://paylabs.vercel.app/`
 
 ## What PayLabs Does
 
-**For users:** AI-powered source discovery. Ask a question, get answers backed by real sources from across the web, with full transparency on what was searched, which sources were used, and what it cost.
+**For users:** AI-powered source discovery. Ask a question, get answers backed by real sources from across the RSShub, with full transparency on what was searched, which sources were used, and what it cost.
 
 **For creators:** Automatic monetization. Register your GitHub repos, blogs, or domains as sources. When PayLabs uses your content in an answer, you get paid in USDC — no manual invoicing, no chasing payments.
 
