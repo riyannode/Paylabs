@@ -326,7 +326,7 @@ PAYLABS_AGENT_SERVICE_LLM_ENABLED_SIGNAL_SCOUT=true
 
 ### Agent keys
 
-9 delegated service agents that run in production:
+9 LLM-capable delegated service agents that run in production:
 
 | Agent Key | Phase | LLM-Capable |
 |-----------|-------|-------------|
@@ -374,4 +374,8 @@ These SDKs are reusable companion packages. They are not required to run the Pay
 | [`deepagent-x402-kit`](https://github.com/riyannode/deepagent-x402-kit) | Python LangChain / Deep Agents kit for ERC-8004 agent identity on Arc plus optional policy-gated Circle x402 tools. One Circle DCW wallet maps to one ERC-8004 agent identity. | `pip install "git+https://github.com/riyannode/deepagent-x402-kit.git"` |
 
 These packages are currently installed directly from GitHub and are not published to npm/PyPI yet. For reproducible installs, pin a commit SHA.
+
+## License
+
+MIT
 
