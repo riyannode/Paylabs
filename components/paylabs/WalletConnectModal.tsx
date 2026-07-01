@@ -127,6 +127,14 @@ export default function WalletConnectModal({
         {!isConnected ? (
           <div className="pl-wallet-content-v3">
             <div className="pl-login-stack-v3">
+              <div style={{ marginBottom: 4 }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.02em" }}>
+                  Connect Creator Wallet
+                </div>
+                <div style={{ fontSize: 13, color: "#64748b", marginTop: 4, lineHeight: 1.5 }}>
+                  Use Circle User-Controlled Wallet to manage creator identity and monetization.
+                </div>
+              </div>
               <button
                 className="pl-login-option-v3"
                 onClick={ucwGoogleError && onRetryPrepareGoogleLogin ? onRetryPrepareGoogleLogin : onConnectGoogle}
