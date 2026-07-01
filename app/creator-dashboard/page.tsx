@@ -1,6 +1,7 @@
 "use client";
 
 import CreatorWalletPanel from "@/components/paylabs/CreatorWalletPanel";
+import CreatorSourcesRoster from "./creator-sources-roster";
 import SubPageMobileNav from "@/components/paylabs/SubPageMobileNav";
 
 export default function CreatorPage() {
@@ -29,6 +30,14 @@ export default function CreatorPage() {
         <a className="pl-primary-v3" href="/creator-profile" style={{ textAlign: "center", textDecoration: "none" }}>
           Complete Creator Profile
         </a>
+      </div>
+
+      <div className="card" style={{ display: "grid", gap: 12 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 600 }}>Registered Sources</h2>
+        <p className="muted" style={{ fontSize: 13 }}>
+          Sources you have registered and their verification / monetization status.
+        </p>
+        <CreatorSourcesRoster />
       </div>
 
       <div className="card" style={{ textAlign: "center", padding: "64px 24px" }}>

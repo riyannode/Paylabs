@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 type ClaimStatus = "unclaimed" | "verified" | "rejected" | "revoked" | "unknown";
 type ProofStatus = "not_started" | "pending" | "verified" | "failed" | "manual_required";
@@ -143,7 +144,9 @@ export default function CreatorProfileClient() {
   const [proofText, setProofText] = useState<string | null>(null);
 
   const sourceDomain = useMemo(() => deriveDomain(sourceUrl), [sourceUrl]);
-  const currentClaim = claims[0];
+  const searchParams = useSearchParams();
+  const claimIdParam = searchParams.get("claimId");
+  const currentClaim = claims.find((c) => c.id === claimIdParam) ?? claims[0];
   const isVerified = currentClaim?.claim_status === "verified";
   const isPending = currentClaim?.claim_status === "unclaimed" && currentClaim?.proof_status === "pending";
 
@@ -160,10 +163,11 @@ export default function CreatorProfileClient() {
       }
       setWalletAddress(data.walletAddress);
       setClaims(data.claims ?? []);
-      const firstClaim = data.claims?.[0];
-      if (firstClaim) {
-        setCreatorName(firstClaim.creator_name ?? "");
-        setSourceUrl(firstClaim.source_url ?? "");
+      const urlClaimId = new URLSearchParams(window.location.search).get("claimId");
+      const selectedClaim = data.claims?.find((c) => c.id === urlClaimId) ?? data.claims?.[0];
+      if (selectedClaim) {
+        setCreatorName(selectedClaim.creator_name ?? "");
+        setSourceUrl(selectedClaim.source_url ?? "");
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load creator profile.");
@@ -425,6 +429,43 @@ export default function CreatorProfileClient() {
           </div>
         </div>
       </section>
+
+      {/* All Registered Sources */}
+      {claims.length > 1 && (
+        <section className="card" style={{ display: "grid", gap: 12 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 700 }}>All Registered Sources</h2>
+          <p className="muted" style={{ fontSize: 13 }}>
+            You have {claims.length} registered sources. Showing active claim above; full roster is on the{" "}
+            <a href="/creator-dashboard" style={{ fontWeight: 600 }}>Creator Dashboard</a>.
+          </p>
+          <div style={{ display: "grid", gap: 8 }}>
+            {claims.map((claim) => (
+              <div
+                key={claim.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "8px 12px",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  fontSize: 13,
+                  gap: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
+                  <span style={{ fontWeight: 600, wordBreak: "break-all" }}>{claim.source_url ?? "(unknown)"}</span>
+                  <span className="muted" style={{ fontSize: 11 }}>
+                    {platformLabel(claim.source_platform)} · {scopeLabel(claim)}
+                  </span>
+                </div>
+                <span style={statusStyle(claim.claim_status)}>{statusLabel(claim.claim_status)}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
