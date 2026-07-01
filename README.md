@@ -18,18 +18,17 @@ PayLabs runs on a **LangGraph agent runtime** — a directed graph of LLM-powere
 
 ```
 USER ──x402──► ENTRY GATE ──► BRAIN (LLM)
-                                │
-                    ┌───────────┼───────────┐
-                    ▼           ▼           ▼
-             DISCOVERY     PAYMENT      SETTLEMENT
-             PLANNER       DECISION     MEMORY
-                │              │            │
-         ┌─────┼─────┐   ┌────┼────┐   ┌───┼───┐
-         ▼     ▼     ▼   ▼    ▼    ▼   ▼   ▼   ▼
-       intent query signal intent src  val creator adv   creator
-       plnr   bldr  scout  match  vrfy alloc attrb evdnc payout
-                                                trst      rtr
-                                                pay_dcd
+                                 │
+                  ┌────────────┼────────────┐
+                  |x402          |x402           |x402
+                  ▼             ▼              ▼
+             DISCOVERY        PAYMENT         SETTLEMENT
+             PLANNER          DECISION         MEMORY
+                │                │                 │
+                |x402            |x402              |x402
+         ┌─────┼─────┐   ┌────┼────┐       ┌───┼───┐
+         ▼     ▼     ▼   ▼    ▼     ▼      ▼   ▼   ▼
+        child  child child child child child child child child
 
   ◄── Discovery ──►  ◄── Payment Decision ──►  ◄─ Settlement ─►
        3 services          5 services             3 services
