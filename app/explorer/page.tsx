@@ -249,7 +249,7 @@ export default async function DashboardPage() {
       <section className="card">
         <h2 className="section-title">x402 Service Payments</h2>
         <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
-          x402 paid service calls from PayLabs runs.
+          Track x402 paid service calls from PayLabs runs. Batch link explorers are available in Payment Visibility after settlement.
         </p>
         {x402PaymentRows.length === 0 ? (
           <div className="muted" style={{ textAlign: "center", padding: 24 }}>
