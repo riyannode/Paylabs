@@ -805,29 +805,6 @@ export default function PayLabsChatClient({ analytics }: Props) {
             )}
           </div>
         </section>
-
-        {/* ── How PayLabs Works ── */}
-        {messages.length === 0 && (
-          <div style={{ maxWidth: 800, margin: "auto 0 0", padding: "8px 0 24px" }}>
-            <div style={{ textAlign: "center", marginBottom: 20 }}>
-              <h2 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", marginBottom: 4 }}>How PayLabs Works</h2>
-              <p style={{ fontSize: 14, color: "var(--muted)" }}>Three layers working together — search, pay, monetize.</p>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-              {[
-                { icon: "🔍", title: "AI Crawler", desc: "Finds and reads source content for each run. PayLabs indexes live sources and matches them to your query." },
-                { icon: "💰", title: "x402 Paid Calls", desc: "Service calls and source access are paid with USDC. Payments settle on-chain through x402 protocol." },
-                { icon: "👤", title: "Creator Monetization", desc: "Creators verify sources and earn when PayLabs uses their content. Revenue flows automatically per run." },
-              ].map((card) => (
-                <div key={card.title} className="card" style={{ padding: 16 }}>
-                  <div style={{ fontSize: 24, marginBottom: 10 }}>{card.icon}</div>
-                  <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>{card.title}</h3>
-                  <p style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}>{card.desc}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </main>
 
       <DcwModal

@@ -662,16 +662,24 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
         {/* ── Step: Auth (Google + Passkey) ─────────────── */}
         {step === "auth" && (
           <div className="pl-dcw-step">
-            <div className="pl-login-stack-v3">
-              <div ref={googleButtonRef} className="pl-google-button-host" aria-busy={isGoogleLoading} />
+            <div className="pl-dcw-auth-stack">
+              <div className="pl-dcw-login-option" style={{ padding: 0, overflow: "hidden" }}>
+                <div ref={googleButtonRef} style={{ width: "100%", minHeight: 40, display: "grid", placeItems: "center" }} aria-busy={isGoogleLoading} />
+              </div>
 
               <button
-                className="pl-login-option-v3 pl-passkey-pill"
+                type="button"
+                className="pl-dcw-login-option"
                 onClick={() => setShowPasskeyForm((value) => !value)}
                 aria-expanded={showPasskeyForm}
               >
-                <span className="pl-login-icon-v3"><PasskeyIcon /></span>
-                <b>Use Passkey</b>
+                <span className="pl-dcw-login-icon" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M7 10V8a5 5 0 0 1 10 0v2" />
+                    <rect x="5" y="10" width="14" height="10" rx="2" />
+                  </svg>
+                </span>
+                <span className="pl-dcw-login-label">Use Passkey</span>
               </button>
             </div>
 
@@ -944,6 +952,58 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
           .pl-google-button-host { width: 100%; min-height: 44px; display: grid; place-items: center; }
           .pl-passkey-pill { width: 100%; }
           .pl-dcw-email-section { width: 100%; }
+
+          /* ── DCW Auth Options (scoped) ── */
+
+          .pl-dcw-auth-stack {
+            display: grid;
+            gap: 8px;
+          }
+
+          .pl-dcw-login-option {
+            width: 100%;
+            min-height: 40px;
+            display: grid;
+            grid-template-columns: 32px 1fr 32px;
+            align-items: center;
+            gap: 8px;
+            border: 1px solid #e5e7eb;
+            background: #fff;
+            border-radius: 10px;
+            padding: 6px 10px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 700;
+            color: #0f172a;
+            transition: border-color 0.12s, box-shadow 0.12s;
+          }
+
+          .pl-dcw-login-option:hover {
+            border-color: #bfdbfe;
+            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.06);
+          }
+
+          .pl-dcw-login-icon {
+            width: 28px;
+            height: 28px;
+            display: grid;
+            place-items: center;
+            border-radius: 9px;
+            background: #f8fafc;
+            color: #0f172a;
+            flex: 0 0 auto;
+          }
+
+          .pl-dcw-login-icon.google {
+            background: #fff;
+            font-weight: 800;
+            font-size: 15px;
+          }
+
+          .pl-dcw-login-label {
+            text-align: center;
+            line-height: 1;
+          }
           .pl-dcw-deposit-card { margin-top: 12px; background: #fff; }
           .pl-dcw-deposit-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; }
           .pl-dcw-address-code { display: block; overflow-wrap: anywhere; font-size: 12px; }
