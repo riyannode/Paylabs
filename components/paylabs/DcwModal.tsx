@@ -654,10 +654,6 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
       <div className="pl-wallet-modal-v3 pl-dcw-modal pl-dcw-popover-modal" onClick={(e) => e.stopPropagation()}>
         <button className="pl-wallet-x-v3" onClick={onClose} aria-label="Close">×</button>
 
-        <div className="pl-dcw-header">
-          <h3>PayLabs Wallet</h3>
-          <p className="muted">Used for automatic x402 payments.</p>
-        </div>
 
         {/* ── Step: Auth (Google + Passkey) ─────────────── */}
         {step === "auth" && (
@@ -672,17 +668,20 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                 </div>
               </div>
 
-              {/* Hidden Google SDK render target */}
-              <div ref={googleButtonRef} style={{ position: "absolute", opacity: 0, pointerEvents: "none", width: 0, height: 0, overflow: "hidden" }} aria-busy={isGoogleLoading} />
-
+              {/* Google button — SDK renders into hidden div, custom styled button wraps it */}
               <button
                 className="pl-login-option-v3"
                 onClick={() => {
-                  const g = (window as unknown as Record<string, unknown>).google as
-                    | { accounts?: { id?: { prompt: Function } } }
-                    | undefined;
-                  if (g?.accounts?.id) {
-                    g.accounts.id.prompt();
+                  // Click the real Google SDK button inside the hidden div
+                  const sdkBtn = googleButtonRef.current?.querySelector("div[role=button]") as HTMLElement;
+                  if (sdkBtn) {
+                    sdkBtn.click();
+                  } else {
+                    // Fallback: try prompt()
+                    const g = (window as unknown as Record<string, unknown>).google as
+                      | { accounts?: { id?: { prompt: Function } } }
+                      | undefined;
+                    g?.accounts?.id?.prompt();
                   }
                 }}
                 disabled={isGoogleLoading}
@@ -690,6 +689,8 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                 <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
                 <b>Continue with Google</b>
               </button>
+              {/* Hidden container for Google SDK to render its button into */}
+              <div ref={googleButtonRef} style={{ position: "absolute", width: 0, height: 0, overflow: "hidden", opacity: 0 }} aria-busy={isGoogleLoading} />
 
               <button
                 className="pl-login-option-v3"
