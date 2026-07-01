@@ -800,6 +800,7 @@ export async function POST(req: NextRequest) {
         console.log("[creator-verify] backfill sync on already-verified", {
           claim_id: typedClaim.id.slice(0, 8),
           matched: syncResult.matched,
+          priceDerived: syncResult.priceDerived,
           updated: syncResult.updated,
         });
       }
@@ -942,6 +943,7 @@ export async function POST(req: NextRequest) {
       console.log("[creator-verify] feed sync after verification", {
         claim_id: typedClaim.id.slice(0, 8),
         matched: syncResult.matched,
+        priceDerived: syncResult.priceDerived,
         updated: syncResult.updated,
       });
     } catch (syncError) {

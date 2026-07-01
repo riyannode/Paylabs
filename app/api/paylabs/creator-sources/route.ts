@@ -73,16 +73,25 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ walletAddress, sources: [] });
   }
 
-  // 2. Fetch all payable feed items for this wallet (canonical_url only)
-  const { data: payableItems } = await supabase
+  // 2. Fetch all payable feed items for this wallet (canonical_url + price)
+  const { data: payableItems, error: payableItemsError } = await supabase
     .from("paylabs_feed_items")
-    .select("canonical_url")
+    .select("canonical_url, price_per_citation_usdc")
     .eq("is_active", true)
     .eq("is_monetized", true)
     .eq("claim_status", "claimed")
     .eq("creator_wallet", walletAddress);
 
-  const payableUrls = payableItems?.map((r) => r.canonical_url).filter(Boolean) as string[] ?? [];
+  if (payableItemsError) {
+    console.error("[creator-sources] failed to load payable feed items", { code: payableItemsError.code ?? null });
+    return NextResponse.json({ error: "Failed to load indexed feed items." }, { status: 500 });
+  }
+
+  // Only count rows with positive citation price as truly payable
+  const payableUrls = payableItems
+    ?.filter((r) => (r.price_per_citation_usdc ?? 0) > 0)
+    .map((r) => r.canonical_url)
+    .filter(Boolean) as string[] ?? [];
 
   // 3. Per-claim feed item count using exact scope matching
   const sources: CreatorSource[] = claims.map((claim) => {
