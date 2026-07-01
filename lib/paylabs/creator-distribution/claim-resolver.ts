@@ -442,30 +442,27 @@ export async function syncVerifiedCreatorClaimToFeedItems(
 
   const matchedUrls = new Set<string>();
 
-  if (scope === "domain" && claim.source_domain) {
-    // Domain scope: match all feed items on this domain
+  // For domain/host scopes, derive hostname from canonical_url (domain column may be null)
+  // Use LIKE on canonical_url to match items on this domain/host
+  if ((scope === "domain" || scope === "host") && claim.source_domain) {
     const { data } = await db
       .from("paylabs_feed_items")
       .select("canonical_url")
-      .eq("domain", claim.source_domain)
-      .eq("is_active", true);
+      .eq("is_active", true)
+      .like("canonical_url", `https://${claim.source_domain}/%`);
     if (data) {
       for (const row of data) {
-        if (row.canonical_url) matchedUrls.add(row.canonical_url);
-      }
-    }
-  }
-
-  if (scope === "host" && claim.source_domain) {
-    // Host scope: match by exact domain column (tenant subdomain)
-    const { data } = await db
-      .from("paylabs_feed_items")
-      .select("canonical_url")
-      .eq("domain", claim.source_domain)
-      .eq("is_active", true);
-    if (data) {
-      for (const row of data) {
-        if (row.canonical_url) matchedUrls.add(row.canonical_url);
+        if (row.canonical_url) {
+          // Double-check hostname matches exactly (LIKE prefix could match subdomains)
+          try {
+            const hostname = new URL(row.canonical_url).hostname.toLowerCase();
+            if (hostname === claim.source_domain) {
+              matchedUrls.add(row.canonical_url);
+            }
+          } catch {
+            // skip
+          }
+        }
       }
     }
   }

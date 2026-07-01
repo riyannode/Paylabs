@@ -73,16 +73,16 @@ export async function GET(req: NextRequest) {
   }
 
   // 2. Batch count payable feed items per claim domain
-  // Only count rows attributed to THIS wallet (is_monetized + claim_status=claimed)
+  // Derive hostname from canonical_url (domain column may be null)
   const domains = [...new Set(claims.map((c) => c.source_domain).filter(Boolean))] as string[];
 
   const feedCountByDomain = new Map<string, number>();
 
   if (domains.length > 0) {
+    // Fetch canonical_url for all payable rows attributed to this wallet
     const { data: feedItems } = await supabase
       .from("paylabs_feed_items")
-      .select("domain")
-      .in("domain", domains)
+      .select("canonical_url")
       .eq("is_active", true)
       .eq("is_monetized", true)
       .eq("claim_status", "claimed")
@@ -90,9 +90,13 @@ export async function GET(req: NextRequest) {
 
     if (feedItems) {
       for (const item of feedItems) {
-        const d = item.domain;
-        if (d) {
-          feedCountByDomain.set(d, (feedCountByDomain.get(d) ?? 0) + 1);
+        try {
+          const hostname = new URL(item.canonical_url).hostname.toLowerCase();
+          if (domains.includes(hostname)) {
+            feedCountByDomain.set(hostname, (feedCountByDomain.get(hostname) ?? 0) + 1);
+          }
+        } catch {
+          // skip unparseable URLs
         }
       }
     }
