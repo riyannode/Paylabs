@@ -287,6 +287,24 @@ export async function writeCreatorPayoutEvent(input: {
 
   const isPaid = input.result.status === "paid" || input.result.status === "gateway_accepted";
 
+  // Idempotent: skip if legacy row already exists for this run + feed_item
+  const { data: existing, error: checkError } = await db
+    .from("paylabs_creator_payout_events")
+    .select("id")
+    .eq("discovery_run_id", input.discoveryRunId)
+    .eq("feed_item_id", input.result.feed_item_id)
+    .maybeSingle();
+
+  if (checkError) {
+    console.error("[creator-payout-event-write] existence check error:", checkError.message);
+    return { ok: false, error: `payout_event_check_failed: ${checkError.message}` };
+  }
+
+  if (existing) {
+    // Already recorded — skip duplicate insert
+    return { ok: true };
+  }
+
   const { error } = await db.from("paylabs_creator_payout_events").insert({
     discovery_run_id: input.discoveryRunId,
     route_tier: input.routeTier,
