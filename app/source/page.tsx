@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { short, shortUrl, usdc } from "@/lib/utils";
-import SubPageMobileNav from "@/components/paylabs/SubPageMobileNav";
+import PageHeader from "@/components/paylabs/PageHeader";
 
 /** Strip all HTML/XML tags — character scan, not regex */
 function stripTags(html: string): string {
@@ -93,7 +93,7 @@ export default async function SourcesPage() {
 
   return (
     <>
-      <SubPageMobileNav />
+      <PageHeader />
     <div style={{ display: "grid", gap: 24 }}>
       <div>
         <a href="/" style={{ fontSize: 13, color: "var(--muted)", fontWeight: 500 }}>← Chat</a>

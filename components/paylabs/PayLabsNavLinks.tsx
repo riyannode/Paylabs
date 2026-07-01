@@ -2,14 +2,13 @@
 
 import { usePathname } from "next/navigation";
 
-/** Shared navigation items for PayLabs sidebar + mobile drawer. */
+/** Updated navigation items for PayLabs design refresh. */
 export const NAV_ITEMS = [
-  { label: "Chat", href: "/" },
-  { label: "Receipts", href: "/receipts" },
-  { label: "Explorer", href: "/explorer" },
+  { label: "Search", href: "/" },
   { label: "Sources", href: "/source" },
-  { label: "Creator Dashboard", href: "/creator-dashboard" },
-  { label: "Creator Profile", href: "/creator-profile" },
+  { label: "Creator", href: "/creator-dashboard" },
+  { label: "Explorer", href: "/explorer" },
+  { label: "Payment Visibility", href: "/receipts" },
 ] as const;
 
 type Props = {

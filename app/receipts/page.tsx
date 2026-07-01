@@ -1,5 +1,5 @@
 import ReceiptsClient from "./receipts-client";
-import SubPageMobileNav from "@/components/paylabs/SubPageMobileNav";
+import PageHeader from "@/components/paylabs/PageHeader";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,7 @@ export default async function ReceiptsPage({
   const { run } = await searchParams;
   return (
     <>
-      <SubPageMobileNav />
+      <PageHeader />
       <ReceiptsClient initialRunId={run || null} />
     </>
   );

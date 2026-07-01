@@ -2,7 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { short, usdc } from "@/lib/utils";
 import { hrefFromTx } from "@/lib/paylabs/x402/payment-links";
 import BatchResolverLink from "@/components/paylabs/BatchResolverLink";
-import SubPageMobileNav from "@/components/paylabs/SubPageMobileNav";
+import PageHeader from "@/components/paylabs/PageHeader";
 
 const PAYMENT_SAFE_FIELDS = [
   "event_id",
@@ -190,7 +190,7 @@ export default async function DashboardPage() {
 
   return (
     <>
-      <SubPageMobileNav />
+      <PageHeader />
     <div style={{ display: "grid", gap: 24 }}>
       <div>
         <a href="/" className="pl-back-btn">← Back to Chat</a>
