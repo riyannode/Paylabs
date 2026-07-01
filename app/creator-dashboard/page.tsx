@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import CreatorSourcesRoster from "./creator-sources-roster";
-import PageHeader from "@/components/paylabs/PageHeader";
+import SubPageMobileNav from "@/components/paylabs/SubPageMobileNav";
 
 function shortAddr(addr?: string | null) {
   if (!addr) return "—";
@@ -33,7 +33,7 @@ export default function CreatorPage() {
 
   return (
     <>
-      <PageHeader />
+      <SubPageMobileNav />
     <div style={{ display: "grid", gap: 16 }}>
       <div>
         <a href="/" style={{ fontSize: 13, color: "var(--muted)", fontWeight: 500 }}>← Chat</a>

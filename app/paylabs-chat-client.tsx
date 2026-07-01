@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
-import PageHeader from "@/components/paylabs/PageHeader";
+import SidebarPanel from "@/components/paylabs/SidebarPanel";
+import MobileNav from "@/components/paylabs/MobileNav";
 import type { WalletState, WalletInfo, UcwBalance } from "@/components/paylabs/WalletConnectModal";
 import DcwModal from "@/components/paylabs/DcwModal";
 import { safeExplorerUrl as validateExplorerUrl } from "@/lib/paylabs/x402/payment-links";
@@ -613,10 +614,12 @@ export default function PayLabsChatClient({ analytics }: Props) {
   }, [walletInfo?.address]);
 
   return (
-    <div style={{ minHeight: "100vh" }}>
-      <PageHeader />
+    <>
+      <MobileNav />
+    <div className="pl-app">
+      <SidebarPanel analytics={analytics} />
 
-      <main style={{ maxWidth: 800, margin: "0 auto", padding: "0 16px 32px" }}>
+      <main className="pl-main">
         <div className="pl-topbar">
           <div />
 
@@ -691,9 +694,8 @@ export default function PayLabsChatClient({ analytics }: Props) {
           </div>
         )}
 
-        <section className="pl-hero" style={{ paddingTop: 32, minHeight: "auto" }}>
-          <div className="pl-hero-badge">✦ AI Search × Creator Payments</div>
-          <h1>AI search that <span className="pl-hero-accent">pays the sources</span> it uses.</h1>
+        <section className="pl-hero">
+          <h1>AI search that <span style={{ color: "var(--info)" }}>pays the sources</span> it uses.</h1>
           <p>PayLabs crawls the web, answers with AI, and routes x402 payments to verified creators when their sources are used.</p>
 
           <div className={`pl-chat-shell ${messages.length > 0 ? "has-thread" : ""}`}>
@@ -804,90 +806,29 @@ export default function PayLabsChatClient({ analytics }: Props) {
           </div>
         </section>
 
+        {/* ── How PayLabs Works ── */}
+        {messages.length === 0 && (
+          <div style={{ maxWidth: 800, margin: "auto 0 0", padding: "8px 0 24px" }}>
+            <div style={{ textAlign: "center", marginBottom: 20 }}>
+              <h2 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", marginBottom: 4 }}>How PayLabs Works</h2>
+              <p style={{ fontSize: 14, color: "var(--muted)" }}>Three layers working together — search, pay, monetize.</p>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+              {[
+                { icon: "🔍", title: "AI Crawler", desc: "Finds and reads source content for each run. PayLabs indexes live sources and matches them to your query." },
+                { icon: "💰", title: "x402 Paid Calls", desc: "Service calls and source access are paid with USDC. Payments settle on-chain through x402 protocol." },
+                { icon: "👤", title: "Creator Monetization", desc: "Creators verify sources and earn when PayLabs uses their content. Revenue flows automatically per run." },
+              ].map((card) => (
+                <div key={card.title} className="card" style={{ padding: 16 }}>
+                  <div style={{ fontSize: 24, marginBottom: 10 }}>{card.icon}</div>
+                  <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>{card.title}</h3>
+                  <p style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}>{card.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </main>
-
-      {/* ── Product Cards ── */}
-      {messages.length === 0 && (
-        <>
-          <section className="pl-section" style={{ maxWidth: 800, margin: "0 auto", padding: "32px 16px" }}>
-            <div className="pl-section-header">
-              <h2>How PayLabs Works</h2>
-              <p>Three layers working together — search, pay, monetize.</p>
-            </div>
-            <div className="pl-product-cards">
-              <div className="pl-product-card">
-                <div className="pl-product-card-icon">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                </div>
-                <h3>AI Crawler</h3>
-                <p>Finds and reads source content for each run. PayLabs indexes live sources and matches them to your query.</p>
-              </div>
-              <div className="pl-product-card">
-                <div className="pl-product-card-icon">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                </div>
-                <h3>x402 Paid Calls</h3>
-                <p>Service calls and source access are paid with USDC. Payments settle on-chain through x402 protocol.</p>
-              </div>
-              <div className="pl-product-card">
-                <div className="pl-product-card-icon">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                </div>
-                <h3>Creator Monetization</h3>
-                <p>Creators verify sources and earn when PayLabs uses their content. Revenue flows automatically per run.</p>
-              </div>
-            </div>
-          </section>
-
-          {/* ── How it works ── */}
-          <section className="pl-section" style={{ maxWidth: 800, margin: "0 auto", padding: "0 16px 32px" }}>
-            <div className="pl-section-header">
-              <h2>Simple Flow</h2>
-            </div>
-            <div className="pl-how-it-works">
-              <div className="pl-how-step">
-                <div className="pl-how-step-num">1</div>
-                <h4>Ask</h4>
-                <p>Type your question into PayLabs search.</p>
-              </div>
-              <div className="pl-how-arrow">→</div>
-              <div className="pl-how-step">
-                <div className="pl-how-step-num">2</div>
-                <h4>Crawl</h4>
-                <p>AI crawls and reads verified sources.</p>
-              </div>
-              <div className="pl-how-arrow">→</div>
-              <div className="pl-how-step">
-                <div className="pl-how-step-num">3</div>
-                <h4>Pay</h4>
-                <p>x402 payments route to creators automatically.</p>
-              </div>
-            </div>
-          </section>
-
-          {/* ── Creator CTA ── */}
-          <section style={{ maxWidth: 800, margin: "0 auto", padding: "0 16px 16px" }}>
-            <div className="pl-cta-block">
-              <div className="pl-cta-block-content">
-                <h3>Monetize your sources</h3>
-                <p>Register your source, verify ownership, and earn when PayLabs uses your content in AI runs.</p>
-              </div>
-              <a href="/creator-profile" className="pl-cta-primary">Set up Creator Profile</a>
-            </div>
-          </section>
-
-          {/* ── Transparency CTA ── */}
-          <section style={{ maxWidth: 800, margin: "0 auto", padding: "0 16px 32px" }}>
-            <div className="pl-cta-block">
-              <div className="pl-cta-block-content">
-                <h3>Payment visibility built in</h3>
-                <p>Track x402 paid service calls from PayLabs runs. Batch details are available in Payment Visibility after settlement.</p>
-              </div>
-              <a href="/explorer" className="pl-cta-outline">View Explorer</a>
-            </div>
-          </section>
-        </>
-      )}
 
       <DcwModal
         open={dcwOpen}
@@ -918,6 +859,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
         }}
       />
     </div>
+    </>
   );
 }
 
