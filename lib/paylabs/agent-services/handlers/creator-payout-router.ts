@@ -19,10 +19,8 @@ import type {
   ServiceHandlerInput,
   ServiceHandlerOutput,
 } from "../types";
-import { buildCreatorSplitPlan, buildRevenueShareForPaidCreatorCount } from "../../creator-distribution/split-policy";
+import { buildCreatorSplitPlan, SPLIT_PER_SLOT } from "../../creator-distribution/split-policy";
 import {
-  executeBotRevenueShare,
-  executeServiceRevenueShare,
   writeCreatorPayoutEvent,
 } from "../../creator-distribution/payout-executor";
 import { createCreatorPaymentTransport } from "../../creator-distribution/transport";
@@ -155,6 +153,28 @@ export async function creatorPayoutRouterHandler(
 
     // Already completed — skip transfer, return existing result
     if (claim.action === "already_completed" && claim.row) {
+      // Try to ensure legacy table has this row (best-effort, no second payout)
+      const legacyCompat = await writeCreatorPayoutEvent({
+        discoveryRunId: input.discoveryRunId,
+        routeTier,
+        result: {
+          feed_item_id: item.feed_item_id,
+          source_url: item.source_url,
+          creator_wallet: item.creator_wallet,
+          amount_atomic: item.creator_amount_atomic.toString(),
+          amount_usdc: item.creator_amount_usdc,
+          status: claim.row.status as CreatorPayoutResult["status"],
+          settlement_id: claim.row.settlement_id,
+          settlement_url: claim.row.settlement_url,
+          tx_hash: claim.row.tx_hash,
+          explorer_url: claim.row.explorer_url,
+          batch_tx_hash: claim.row.batch_tx_hash,
+          batch_explorer_url: claim.row.batch_explorer_url,
+          error: claim.row.error,
+        },
+        splitPolicy: "creator_split_v1_85_10_5",
+      });
+
       creatorResults.push({
         feed_item_id: item.feed_item_id,
         source_url: item.source_url,
@@ -168,7 +188,9 @@ export async function creatorPayoutRouterHandler(
         explorer_url: claim.row.explorer_url,
         batch_tx_hash: claim.row.batch_tx_hash,
         batch_explorer_url: claim.row.batch_explorer_url,
-        error: claim.row.error,
+        error: !legacyCompat.ok
+          ? `legacy_compat_write_failed: ${legacyCompat.error}`
+          : claim.row.error,
       });
       continue;
     }
@@ -266,7 +288,7 @@ export async function creatorPayoutRouterHandler(
     }
 
     // Write to legacy events table for reader backward compat
-    await writeCreatorPayoutEvent({
+    const legacyWrite = await writeCreatorPayoutEvent({
       discoveryRunId: input.discoveryRunId,
       routeTier,
       result: {
@@ -287,6 +309,11 @@ export async function creatorPayoutRouterHandler(
       splitPolicy: "creator_split_v1_85_10_5",
     });
 
+    // Surface legacy write failure but DO NOT retry x402 (canonical ledger is source of truth)
+    if (!legacyWrite.ok) {
+      console.error("[creator-payout-router] legacy event write failed:", legacyWrite.error);
+    }
+
     creatorResults.push({
       feed_item_id: item.feed_item_id,
       source_url: item.source_url,
@@ -304,20 +331,166 @@ export async function creatorPayoutRouterHandler(
     });
   }
 
-  // ── Bot/service shares: only for paid creators ──
+  // ── Bot/service platform shares: per-creator, not cumulative ──
+  // Each paid creator gets a separate bot (2 atomic) and service (1 atomic) ledger entry.
+  // Keyed by feed_item_id so retries only pay the delta for newly-paid creators.
   const paidCreatorResults = creatorResults.filter(
     (r) => r.status === "paid" || r.status === "gateway_accepted",
   );
 
   const paidCount = paidCreatorResults.length;
 
-  const revenueShare = buildRevenueShareForPaidCreatorCount({
-    paidCreatorCount: paidCreatorResults.length,
-  });
+  // Per-creator bot/service share tracking
+  let botPaidAtomic = BigInt(0);
+  let botFailedCount = 0;
+  let servicePaidAtomic = BigInt(0);
+  let serviceFailedCount = 0;
 
-  // Bot share — claim-before-transfer
-  // Fix 4: If paid count changed on retry, delete stale bot share row and re-claim
-  let botResult: {
+  for (const paidResult of paidCreatorResults) {
+    const botSubjectId = `platform_bot:${paidResult.feed_item_id}`;
+    const serviceSubjectId = `platform_service:${paidResult.feed_item_id}`;
+
+    // ── Bot share for this creator ──
+    if (botWallet) {
+      const botClaim = await claimPending({
+        discoveryRunId: input.discoveryRunId,
+        payoutType: "bot_share",
+        payoutSubjectId: botSubjectId,
+        amountAtomic: SPLIT_PER_SLOT.bot.toString(),
+        amountUsdc: Number(SPLIT_PER_SLOT.bot) / 1e6,
+        walletAddress: botWallet,
+        routeTier,
+        safeMetadata: { feed_item_id: paidResult.feed_item_id },
+      });
+
+      if (botClaim.ok && botClaim.action === "already_completed") {
+        // Already paid — count toward total
+        if (botClaim.row && (botClaim.row.status === "paid" || botClaim.row.status === "gateway_accepted")) {
+          botPaidAtomic += SPLIT_PER_SLOT.bot;
+        }
+      } else if (botClaim.ok && botClaim.action === "claimed") {
+        try {
+          const transferResult = await transport.transfer({
+            toAddress: botWallet,
+            amountAtomic: SPLIT_PER_SLOT.bot.toString(),
+            metadata: {
+              discovery_run_id: input.discoveryRunId,
+              payment_type: "bot_revenue_share",
+              feed_item_id: paidResult.feed_item_id,
+            },
+          });
+
+          const ledgerStatus = transferResult.status === "pending" ? "failed"
+            : transferResult.status === "gateway_accepted" ? "gateway_accepted"
+            : transferResult.status === "paid" ? "paid" : "failed";
+
+          const markRes = await markPayoutResult({
+            discoveryRunId: input.discoveryRunId,
+            payoutType: "bot_share",
+            payoutSubjectId: botSubjectId,
+            status: ledgerStatus as "paid" | "gateway_accepted" | "failed",
+            settlementId: transferResult.settlementId,
+            txHash: transferResult.txHash,
+            explorerUrl: transferResult.explorerUrl,
+            error: transferResult.error,
+          });
+
+          if (!markRes.ok) {
+            console.error("[creator-payout-router] bot share ledger mark failed:", markRes.error);
+            botFailedCount++;
+          } else if (ledgerStatus === "paid" || ledgerStatus === "gateway_accepted") {
+            botPaidAtomic += SPLIT_PER_SLOT.bot;
+          } else {
+            botFailedCount++;
+          }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          await markPayoutResult({
+            discoveryRunId: input.discoveryRunId,
+            payoutType: "bot_share",
+            payoutSubjectId: botSubjectId,
+            status: "failed",
+            error: `bot_transport_exception: ${msg}`,
+          });
+          botFailedCount++;
+        }
+      } else {
+        // Claim failed
+        botFailedCount++;
+      }
+    }
+
+    // ── Service share for this creator ──
+    if (serviceWallet) {
+      const serviceClaim = await claimPending({
+        discoveryRunId: input.discoveryRunId,
+        payoutType: "service_share",
+        payoutSubjectId: serviceSubjectId,
+        amountAtomic: SPLIT_PER_SLOT.service.toString(),
+        amountUsdc: Number(SPLIT_PER_SLOT.service) / 1e6,
+        walletAddress: serviceWallet,
+        routeTier,
+        safeMetadata: { feed_item_id: paidResult.feed_item_id },
+      });
+
+      if (serviceClaim.ok && serviceClaim.action === "already_completed") {
+        if (serviceClaim.row && (serviceClaim.row.status === "paid" || serviceClaim.row.status === "gateway_accepted")) {
+          servicePaidAtomic += SPLIT_PER_SLOT.service;
+        }
+      } else if (serviceClaim.ok && serviceClaim.action === "claimed") {
+        try {
+          const transferResult = await transport.transfer({
+            toAddress: serviceWallet,
+            amountAtomic: SPLIT_PER_SLOT.service.toString(),
+            metadata: {
+              discovery_run_id: input.discoveryRunId,
+              payment_type: "service_revenue_share",
+              feed_item_id: paidResult.feed_item_id,
+            },
+          });
+
+          const ledgerStatus = transferResult.status === "pending" ? "failed"
+            : transferResult.status === "gateway_accepted" ? "gateway_accepted"
+            : transferResult.status === "paid" ? "paid" : "failed";
+
+          const markRes = await markPayoutResult({
+            discoveryRunId: input.discoveryRunId,
+            payoutType: "service_share",
+            payoutSubjectId: serviceSubjectId,
+            status: ledgerStatus as "paid" | "gateway_accepted" | "failed",
+            settlementId: transferResult.settlementId,
+            txHash: transferResult.txHash,
+            explorerUrl: transferResult.explorerUrl,
+            error: transferResult.error,
+          });
+
+          if (!markRes.ok) {
+            console.error("[creator-payout-router] service share ledger mark failed:", markRes.error);
+            serviceFailedCount++;
+          } else if (ledgerStatus === "paid" || ledgerStatus === "gateway_accepted") {
+            servicePaidAtomic += SPLIT_PER_SLOT.service;
+          } else {
+            serviceFailedCount++;
+          }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          await markPayoutResult({
+            discoveryRunId: input.discoveryRunId,
+            payoutType: "service_share",
+            payoutSubjectId: serviceSubjectId,
+            status: "failed",
+            error: `service_transport_exception: ${msg}`,
+          });
+          serviceFailedCount++;
+        }
+      } else {
+        serviceFailedCount++;
+      }
+    }
+  }
+
+  // Aggregate bot/service results
+  const botResult: {
     status: string;
     amount_atomic: string;
     amount_usdc: number;
@@ -326,110 +499,19 @@ export async function creatorPayoutRouterHandler(
     explorer_url: string | null;
     error: string | null;
   } = {
-    status: "skipped",
-    amount_atomic: revenueShare.bot_atomic.toString(),
-    amount_usdc: Number(revenueShare.bot_atomic) / 1e6,
-    settlement_id: null,
+    status: paidCount === 0 ? "skipped"
+      : botFailedCount === 0 && botPaidAtomic > BigInt(0) ? "paid"
+      : botPaidAtomic > BigInt(0) ? "partial"
+      : "failed",
+    amount_atomic: botPaidAtomic.toString(),
+    amount_usdc: Number(botPaidAtomic) / 1e6,
+    settlement_id: null, // Aggregated — per-creator details in ledger
     tx_hash: null,
     explorer_url: null,
-    error: null,
+    error: botFailedCount > 0 ? `${botFailedCount}/${paidCount} bot shares failed` : null,
   };
 
-  if (revenueShare.bot_atomic > BigInt(0) && botWallet) {
-    // Key by paid slot count so different retry outcomes don't conflict
-    // e.g. attempt1 (1 creator) → platform_bot_1, retry (2 creators) → platform_bot_2
-    const botSubjectId = `platform_bot_${paidCount}`;
-
-    const botClaim = await claimPending({
-      discoveryRunId: input.discoveryRunId,
-      payoutType: "bot_share",
-      payoutSubjectId: botSubjectId,
-      amountAtomic: revenueShare.bot_atomic.toString(),
-      amountUsdc: Number(revenueShare.bot_atomic) / 1e6,
-      walletAddress: botWallet,
-      routeTier,
-    });
-
-    if (botClaim.ok && botClaim.action === "already_completed" && botClaim.row) {
-      botResult = {
-        status: botClaim.row.status,
-        amount_atomic: botClaim.row.amount_atomic,
-        amount_usdc: botClaim.row.amount_usdc,
-        settlement_id: botClaim.row.settlement_id,
-        tx_hash: botClaim.row.tx_hash,
-        explorer_url: botClaim.row.explorer_url,
-        error: botClaim.row.error,
-      };
-    } else if (botClaim.ok && botClaim.action === "claimed") {
-      try {
-        const execResult = await executeBotRevenueShare({
-          discoveryRunId: input.discoveryRunId,
-          amountAtomic: revenueShare.bot_atomic,
-          botWalletAddress: botWallet,
-          transport,
-        });
-
-        const markRes = await markPayoutResult({
-          discoveryRunId: input.discoveryRunId,
-          payoutType: "bot_share",
-          payoutSubjectId: botSubjectId,
-          status: execResult.status === "gateway_accepted" ? "gateway_accepted" : execResult.status === "paid" ? "paid" : "failed",
-          settlementId: execResult.settlement_id,
-          txHash: execResult.tx_hash,
-          explorerUrl: execResult.explorer_url,
-          error: execResult.error,
-        });
-
-        if (!markRes.ok) {
-          console.error("[creator-payout-router] bot share ledger mark failed:", markRes.error);
-          botResult = {
-            status: "failed",
-            amount_atomic: revenueShare.bot_atomic.toString(),
-            amount_usdc: Number(revenueShare.bot_atomic) / 1e6,
-            settlement_id: execResult.settlement_id ?? null,
-            tx_hash: execResult.tx_hash ?? null,
-            explorer_url: execResult.explorer_url ?? null,
-            error: `bot_ledger_mark_failed: ${markRes.error}`,
-          };
-        } else {
-          botResult = execResult;
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await markPayoutResult({
-          discoveryRunId: input.discoveryRunId,
-          payoutType: "bot_share",
-          payoutSubjectId: botSubjectId,
-          status: "failed",
-          error: `bot_transport_exception: ${msg}`,
-        });
-        botResult = {
-          status: "failed",
-          amount_atomic: revenueShare.bot_atomic.toString(),
-          amount_usdc: Number(revenueShare.bot_atomic) / 1e6,
-          settlement_id: null,
-          tx_hash: null,
-          explorer_url: null,
-          error: `bot_transport_exception: ${msg}`,
-        };
-      }
-    } else {
-      botResult = {
-        status: "failed",
-        amount_atomic: revenueShare.bot_atomic.toString(),
-        amount_usdc: Number(revenueShare.bot_atomic) / 1e6,
-        settlement_id: null,
-        tx_hash: null,
-        explorer_url: null,
-        error: botClaim.error || "bot_claim_failed",
-      };
-    }
-  } else {
-    // No paid creators — nothing to transfer
-  }
-
-  // Service share — claim-before-transfer with dynamic key by paid count
-  let serviceResult: {
+  const serviceResult: {
     status: string;
     amount_atomic: string;
     amount_usdc: number;
@@ -438,106 +520,17 @@ export async function creatorPayoutRouterHandler(
     explorer_url: string | null;
     error: string | null;
   } = {
-    status: "skipped",
-    amount_atomic: revenueShare.service_atomic.toString(),
-    amount_usdc: Number(revenueShare.service_atomic) / 1e6,
+    status: paidCount === 0 ? "skipped"
+      : serviceFailedCount === 0 && servicePaidAtomic > BigInt(0) ? "paid"
+      : servicePaidAtomic > BigInt(0) ? "partial"
+      : "failed",
+    amount_atomic: servicePaidAtomic.toString(),
+    amount_usdc: Number(servicePaidAtomic) / 1e6,
     settlement_id: null,
     tx_hash: null,
     explorer_url: null,
-    error: null,
+    error: serviceFailedCount > 0 ? `${serviceFailedCount}/${paidCount} service shares failed` : null,
   };
-
-  if (revenueShare.service_atomic > BigInt(0) && serviceWallet) {
-    // Key by paid slot count — same pattern as bot share
-    const serviceSubjectId = `platform_service_${paidCount}`;
-
-    const serviceClaim = await claimPending({
-      discoveryRunId: input.discoveryRunId,
-      payoutType: "service_share",
-      payoutSubjectId: serviceSubjectId,
-      amountAtomic: revenueShare.service_atomic.toString(),
-      amountUsdc: Number(revenueShare.service_atomic) / 1e6,
-      walletAddress: serviceWallet,
-      routeTier,
-    });
-
-    if (serviceClaim.ok && serviceClaim.action === "already_completed" && serviceClaim.row) {
-      serviceResult = {
-        status: serviceClaim.row.status,
-        amount_atomic: serviceClaim.row.amount_atomic,
-        amount_usdc: serviceClaim.row.amount_usdc,
-        settlement_id: serviceClaim.row.settlement_id,
-        tx_hash: serviceClaim.row.tx_hash,
-        explorer_url: serviceClaim.row.explorer_url,
-        error: serviceClaim.row.error,
-      };
-    } else if (serviceClaim.ok && serviceClaim.action === "claimed") {
-      try {
-        const execResult = await executeServiceRevenueShare({
-          discoveryRunId: input.discoveryRunId,
-          amountAtomic: revenueShare.service_atomic,
-          serviceWalletAddress: serviceWallet,
-          transport,
-        });
-
-        const markRes = await markPayoutResult({
-          discoveryRunId: input.discoveryRunId,
-          payoutType: "service_share",
-          payoutSubjectId: serviceSubjectId,
-          status: execResult.status === "gateway_accepted" ? "gateway_accepted" : execResult.status === "paid" ? "paid" : "failed",
-          settlementId: execResult.settlement_id,
-          txHash: execResult.tx_hash,
-          explorerUrl: execResult.explorer_url,
-          error: execResult.error,
-        });
-
-        if (!markRes.ok) {
-          console.error("[creator-payout-router] service share ledger mark failed:", markRes.error);
-          serviceResult = {
-            status: "failed",
-            amount_atomic: revenueShare.service_atomic.toString(),
-            amount_usdc: Number(revenueShare.service_atomic) / 1e6,
-            settlement_id: execResult.settlement_id ?? null,
-            tx_hash: execResult.tx_hash ?? null,
-            explorer_url: execResult.explorer_url ?? null,
-            error: `service_ledger_mark_failed: ${markRes.error}`,
-          };
-        } else {
-          serviceResult = execResult;
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await markPayoutResult({
-          discoveryRunId: input.discoveryRunId,
-          payoutType: "service_share",
-          payoutSubjectId: serviceSubjectId,
-          status: "failed",
-          error: `service_transport_exception: ${msg}`,
-        });
-        serviceResult = {
-          status: "failed",
-          amount_atomic: revenueShare.service_atomic.toString(),
-          amount_usdc: Number(revenueShare.service_atomic) / 1e6,
-          settlement_id: null,
-          tx_hash: null,
-          explorer_url: null,
-          error: `service_transport_exception: ${msg}`,
-        };
-      }
-    } else {
-      serviceResult = {
-        status: "failed",
-        amount_atomic: revenueShare.service_atomic.toString(),
-        amount_usdc: Number(revenueShare.service_atomic) / 1e6,
-        settlement_id: null,
-        tx_hash: null,
-        explorer_url: null,
-        error: serviceClaim.error || "service_claim_failed",
-      };
-    }
-  } else {
-    // No paid creators — nothing to transfer
-  }
 
   // ── Unallocated reserve ──
   // Fix 5: Clear stale reserve if unallocatedAtomic drops to 0 on retry
@@ -604,10 +597,9 @@ export async function creatorPayoutRouterHandler(
         payout_limit: splitPlan.payout_limit,
         planned_creator_pool_atomic: splitPlan.planned_creator_pool_atomic.toString(),
         actual_creator_pool_atomic: splitPlan.actual_creator_pool_atomic.toString(),
-        pending_creator_reserve_atomic: splitPlan.pending_creator_reserve_atomic.toString(),
+        pending_creator_reserve_atomic: unallocatedAtomic.toString(),
       },
-      pending_creator_reserve:
-        Number(splitPlan.pending_creator_reserve_atomic) / 1e6,
+      pending_creator_reserve: Number(unallocatedAtomic) / 1e6,
       safe_summary: `Creator payout: ${paidCount}/${splitPlan.creator_items.length} paid, bot=${botResult.status}, service=${serviceResult.status}.`,
     },
     safeSummary: `Creator payout router: ${paidCount}/${splitPlan.creator_items.length} creators paid.`,

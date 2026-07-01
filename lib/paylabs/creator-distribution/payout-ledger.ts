@@ -131,13 +131,76 @@ export async function claimPending(
     };
   }
 
-  // Already pending — concurrent claim, fail closed
+  // Already pending — check for stale abandoned claim before rejecting
+  // If pending for >5 min (serverless timeout / crash), allow reclaim
   if (existing && existing.status === "pending") {
+    const STALE_PENDING_MS = 5 * 60 * 1000; // 5 minutes
+    const updatedAt = new Date(existing.updated_at).getTime();
+    const isStale = Date.now() - updatedAt > STALE_PENDING_MS;
+
+    if (!isStale) {
+      // Active concurrent claim — fail closed
+      return {
+        ok: false,
+        action: "already_pending",
+        row: existing as PayoutLedgerRow,
+        error: `concurrent_claim: ${input.payoutType}/${input.payoutSubjectId} already pending`,
+      };
+    }
+
+    // Stale pending — reclaim via CAS (updated_at must still match)
+    const staleNow = new Date().toISOString();
+    const { data: reclaimed, error: reclaimError } = await db
+      .from("paylabs_payout_ledger")
+      .update({
+        status: "pending",
+        amount_atomic: input.amountAtomic,
+        amount_usdc: input.amountUsdc,
+        wallet_address: input.walletAddress ?? null,
+        route_tier: input.routeTier ?? null,
+        safe_metadata: {
+          ...(input.safeMetadata ?? {}),
+          reclaimed_from_stale: true,
+          stale_updated_at: existing.updated_at,
+        },
+        error: null,
+        settlement_id: null,
+        settlement_url: null,
+        tx_hash: null,
+        explorer_url: null,
+        batch_tx_hash: null,
+        batch_explorer_url: null,
+        updated_at: staleNow,
+      })
+      .eq("discovery_run_id", input.discoveryRunId)
+      .eq("payout_type", input.payoutType)
+      .eq("payout_subject_id", input.payoutSubjectId)
+      .eq("status", "pending")
+      .eq("updated_at", existing.updated_at) // CAS: only reclaim if still stale
+      .select()
+      .maybeSingle();
+
+    if (reclaimError) {
+      return {
+        ok: false,
+        action: "error",
+        error: `stale_reclaim_failed: ${reclaimError.message}`,
+      };
+    }
+
+    if (!reclaimed) {
+      // Another retry already reclaimed this row
+      return {
+        ok: false,
+        action: "already_pending",
+        error: `concurrent_reclaim: ${input.payoutType}/${input.payoutSubjectId} reclaimed by another retry`,
+      };
+    }
+
     return {
-      ok: false,
-      action: "already_pending",
-      row: existing as PayoutLedgerRow,
-      error: `concurrent_claim: ${input.payoutType}/${input.payoutSubjectId} already pending`,
+      ok: true,
+      action: "claimed",
+      row: reclaimed as PayoutLedgerRow,
     };
   }
 
