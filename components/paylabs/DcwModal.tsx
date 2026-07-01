@@ -241,6 +241,11 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
       });
     }
 
+    const width = Math.max(
+      240,
+      Math.min(360, Math.floor(googleButtonRef.current.getBoundingClientRect().width || 320))
+    );
+
     googleButtonRef.current.replaceChildren();
     g.accounts.id.renderButton(googleButtonRef.current, {
       type: "standard",
@@ -248,7 +253,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
       size: "large",
       text: "continue_with",
       shape: "rectangular",
-      width: googleButtonRef.current.offsetWidth || 320,
+      width,
     });
   }, [handleGoogleSignIn]);
 
@@ -281,10 +286,18 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
 
   useEffect(() => {
     if (!open || step !== "auth") return;
-    const id = window.setTimeout(() => {
+
+    const raf = window.requestAnimationFrame(() => {
       renderGoogleButton();
-    }, 0);
-    return () => window.clearTimeout(id);
+    });
+
+    const onResize = () => renderGoogleButton();
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener("resize", onResize);
+    };
   }, [open, step, renderGoogleButton]);
 
   // ── Passkey Registration ──────────────────────────────────
@@ -668,29 +681,8 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                 </div>
               </div>
 
-              {/* Google button — SDK renders into hidden div, custom styled button wraps it */}
-              <button
-                className="pl-login-option-v3"
-                onClick={() => {
-                  // Click the real Google SDK button inside the hidden div
-                  const sdkBtn = googleButtonRef.current?.querySelector("div[role=button]") as HTMLElement;
-                  if (sdkBtn) {
-                    sdkBtn.click();
-                  } else {
-                    // Fallback: try prompt()
-                    const g = (window as unknown as Record<string, unknown>).google as
-                      | { accounts?: { id?: { prompt: Function } } }
-                      | undefined;
-                    g?.accounts?.id?.prompt();
-                  }
-                }}
-                disabled={isGoogleLoading}
-              >
-                <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
-                <b>Continue with Google</b>
-              </button>
-              {/* Hidden container for Google SDK to render its button into */}
-              <div ref={googleButtonRef} style={{ position: "absolute", width: 0, height: 0, overflow: "hidden", opacity: 0 }} aria-busy={isGoogleLoading} />
+              {/* Real Google SDK button — visible, reliable on desktop + mobile */}
+              <div ref={googleButtonRef} className="pl-google-button-host pl-google-button-host-dcw" aria-busy={isGoogleLoading} />
 
               <button
                 className="pl-login-option-v3"
@@ -969,6 +961,26 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
         )}
         <style jsx>{`
           .pl-google-button-host { width: 100%; min-height: 44px; display: grid; place-items: center; }
+          .pl-google-button-host-dcw {
+            width: 100%;
+            min-width: 240px;
+            max-width: 360px;
+            min-height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: visible;
+          }
+          .pl-google-button-host-dcw > div,
+          .pl-google-button-host-dcw iframe {
+            max-width: 100% !important;
+          }
+          @media (max-width: 480px) {
+            .pl-google-button-host-dcw {
+              min-width: 0;
+              max-width: 100%;
+            }
+          }
           .pl-passkey-pill { width: 100%; }
           .pl-dcw-email-section { width: 100%; }
           .pl-dcw-deposit-card { margin-top: 12px; background: #fff; }
