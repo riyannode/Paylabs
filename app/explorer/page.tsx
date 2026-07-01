@@ -208,7 +208,6 @@ export default async function DashboardPage() {
           { label: "Users (7d)", value: recentUsers7d },
           { label: "x402 Service Payments", value: servicePaymentCount },
           { label: "Receipts", value: receiptCount },
-          { label: "Service x402 Volume", value: usdc(totalSettledUsdc) },
           { label: "Platform x402 Volume", value: usdc(totalSettledUsdc + creatorPaidUsdc) },
           {
             label: "Last TX",
