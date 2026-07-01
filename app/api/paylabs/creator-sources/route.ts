@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSession, refreshSession } from "@/lib/paylabs/ucw";
+import { canonicalUrlMatchesClaim, type ClaimMatchInput } from "@/lib/paylabs/creator-distribution/claim-resolver";
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -72,39 +73,34 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ walletAddress, sources: [] });
   }
 
-  // 2. Batch count payable feed items per claim domain
-  // Derive hostname from canonical_url (domain column may be null)
-  const domains = [...new Set(claims.map((c) => c.source_domain).filter(Boolean))] as string[];
+  // 2. Fetch all payable feed items for this wallet (canonical_url only)
+  const { data: payableItems } = await supabase
+    .from("paylabs_feed_items")
+    .select("canonical_url")
+    .eq("is_active", true)
+    .eq("is_monetized", true)
+    .eq("claim_status", "claimed")
+    .eq("creator_wallet", walletAddress);
 
-  const feedCountByDomain = new Map<string, number>();
+  const payableUrls = payableItems?.map((r) => r.canonical_url).filter(Boolean) as string[] ?? [];
 
-  if (domains.length > 0) {
-    // Fetch canonical_url for all payable rows attributed to this wallet
-    const { data: feedItems } = await supabase
-      .from("paylabs_feed_items")
-      .select("canonical_url")
-      .eq("is_active", true)
-      .eq("is_monetized", true)
-      .eq("claim_status", "claimed")
-      .eq("creator_wallet", walletAddress);
+  // 3. Per-claim feed item count using exact scope matching
+  const sources: CreatorSource[] = claims.map((claim) => {
+    const matchInput: ClaimMatchInput = {
+      claim_scope: claim.claim_scope,
+      claim_scope_key: claim.claim_scope_key,
+      source_url: claim.source_url,
+      source_domain: claim.source_domain,
+      canonical_url: claim.canonical_url,
+    };
 
-    if (feedItems) {
-      for (const item of feedItems) {
-        try {
-          const hostname = new URL(item.canonical_url).hostname.toLowerCase();
-          if (domains.includes(hostname)) {
-            feedCountByDomain.set(hostname, (feedCountByDomain.get(hostname) ?? 0) + 1);
-          }
-        } catch {
-          // skip unparseable URLs
-        }
+    let feedItemsCount = 0;
+    for (const url of payableUrls) {
+      if (canonicalUrlMatchesClaim(url, matchInput)) {
+        feedItemsCount++;
       }
     }
-  }
 
-  // 3. Build response
-  const sources: CreatorSource[] = claims.map((claim) => {
-    const feedItemsCount = claim.source_domain ? (feedCountByDomain.get(claim.source_domain) ?? 0) : 0;
     return {
       id: claim.id,
       creator_name: claim.creator_name,

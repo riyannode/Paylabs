@@ -409,6 +409,111 @@ export async function resolveCreatorClaimsBatch(
   return result;
 }
 
+// ─── Exact URL Matching Helper ─────────────────────────────────
+
+/** Minimal claim shape needed for canonicalUrl matching. */
+export interface ClaimMatchInput {
+  claim_scope: string | null;
+  claim_scope_key: string | null;
+  source_url: string | null;
+  source_domain: string | null;
+  canonical_url: string | null;
+}
+
+/**
+ * Determine whether a feed item's canonical_url belongs to a given claim,
+ * based on claim scope. Pure function — no DB, no network.
+ *
+ * Returns false for invalid/unparseable URLs.
+ */
+export function canonicalUrlMatchesClaim(canonicalUrl: string, claim: ClaimMatchInput): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(canonicalUrl);
+  } catch {
+    return false;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  const scope = claim.claim_scope;
+
+  if (scope === "exact_url") {
+    return canonicalUrl === claim.canonical_url || canonicalUrl === claim.source_url;
+  }
+
+  if (scope === "github_repo") {
+    const scopeKey = claim.claim_scope_key;
+    if (!scopeKey) return false;
+    const repoPath = scopeKey.replace("github_repo:", "").toLowerCase();
+    const [owner, repo] = repoPath.split("/");
+    if (!owner || !repo) return false;
+    if (hostname !== "github.com" && hostname !== "www.github.com") return false;
+    if (parts.length < 2) return false;
+    const urlOwner = parts[0].toLowerCase();
+    const urlRepo = parts[1].replace(/\.git$/, "").toLowerCase();
+    return urlOwner === owner && urlRepo === repo;
+  }
+
+  if (scope === "platform_profile") {
+    const scopeKey = claim.claim_scope_key;
+    if (!scopeKey) return false;
+    const keyParts = scopeKey.split(":");
+    if (keyParts.length < 3) return false;
+    const platform = keyParts[1];
+    const handle = keyParts.slice(2).join(":").toLowerCase();
+
+    if (platform === "x" || platform === "twitter") {
+      if (hostname !== "x.com" && hostname !== "twitter.com") return false;
+      if (parts.length < 1 || !parts[0]) return false;
+      const RESERVED_X = new Set([
+        "home", "search", "i", "settings", "notifications", "messages",
+        "explore", "compose", "login", "signup", "download", "tos",
+        "privacy", "about", "jobs", "intent", "share", "hashtag",
+      ]);
+      const urlHandle = parts[0].toLowerCase();
+      if (RESERVED_X.has(urlHandle) || urlHandle.startsWith("-")) return false;
+      return urlHandle === handle;
+    }
+
+    if (platform === "youtube") {
+      if (hostname !== "youtube.com" && hostname !== "www.youtube.com") return false;
+      if (parts.length < 1 || !parts[0]) return false;
+      // /@handle
+      if (parts[0].startsWith("@")) {
+        return parts[0].slice(1).toLowerCase() === handle;
+      }
+      // /channel/<id>
+      if (parts[0] === "channel" && parts.length >= 2) {
+        return parts[1] === handle;
+      }
+      return false;
+    }
+
+    if (platform === "medium") {
+      if (hostname !== "medium.com") return false;
+      if (parts.length < 1 || !parts[0]) return false;
+      if (!parts[0].startsWith("@")) return false;
+      return parts[0].slice(1).toLowerCase() === handle;
+    }
+
+    return false;
+  }
+
+  if (scope === "domain") {
+    if (!claim.source_domain) return false;
+    const domain = claim.source_domain.toLowerCase();
+    return hostname === domain || hostname.endsWith("." + domain);
+  }
+
+  if (scope === "host") {
+    if (!claim.source_domain) return false;
+    return hostname === claim.source_domain.toLowerCase();
+  }
+
+  return false;
+}
+
 // ─── Post-Verification Feed Item Sync ──────────────────────────
 
 export interface SyncFeedItemsResult {
@@ -436,116 +541,33 @@ export async function syncVerifiedCreatorClaimToFeedItems(
 
   const db = supabaseAdmin();
   const wallet = claim.creator_wallet.toLowerCase();
-  const scope = claim.claim_scope;
-  const scopeKey = claim.claim_scope_key;
   const idPrefix = claim.id.slice(0, 8);
 
-  const matchedUrls = new Set<string>();
+  // Fetch all active feed item URLs, filter in JS using exact scope matching
+  const { data: allActive, error: fetchError } = await db
+    .from("paylabs_feed_items")
+    .select("canonical_url")
+    .eq("is_active", true);
 
-  // For domain/host scopes, derive hostname from canonical_url (domain column may be null)
-  // Use LIKE on canonical_url to match items on this domain/host
-  if ((scope === "domain" || scope === "host") && claim.source_domain) {
-    const { data } = await db
-      .from("paylabs_feed_items")
-      .select("canonical_url")
-      .eq("is_active", true)
-      .like("canonical_url", `https://${claim.source_domain}/%`);
-    if (data) {
-      for (const row of data) {
-        if (row.canonical_url) {
-          // Double-check hostname matches exactly (LIKE prefix could match subdomains)
-          try {
-            const hostname = new URL(row.canonical_url).hostname.toLowerCase();
-            if (hostname === claim.source_domain) {
-              matchedUrls.add(row.canonical_url);
-            }
-          } catch {
-            // skip
-          }
-        }
-      }
-    }
+  if (fetchError) {
+    throw new Error(`syncVerifiedCreatorClaimToFeedItems: fetch failed for claim ${idPrefix}: ${fetchError.message}`);
   }
 
-  if (scope === "github_repo" && scopeKey) {
-    // github_repo:<owner>/<repo> — parse canonical_url, require exact owner/repo path
-    const parts = scopeKey.replace("github_repo:", "").split("/");
-    if (parts.length === 2) {
-      const [owner, repo] = parts;
-      // Match: https://github.com/owner/repo or https://github.com/owner/repo/...
-      // Use LIKE with exact prefix to avoid matching github.com/owner/repo-other
-      const { data } = await db
-        .from("paylabs_feed_items")
-        .select("canonical_url")
-        .eq("is_active", true)
-        .or(`canonical_url.like.https://github.com/${owner}/${repo},canonical_url.like.https://github.com/${owner}/${repo}/%`);
-      if (data) {
-        for (const row of data) {
-          if (row.canonical_url) matchedUrls.add(row.canonical_url);
-        }
-      }
-    }
-  }
-
-  if (scope === "platform_profile" && scopeKey) {
-    // platform_profile:<platform>:<handle> — parse canonical_url for matching profile handle
-    const parts = scopeKey.split(":");
-    if (parts.length >= 3) {
-      const platform = parts[1];
-      const handle = parts.slice(2).join(":");
-      // Match by parsing canonical_url — platform-specific patterns
-      if (platform === "x" || platform === "twitter") {
-        // x.com/<handle> or twitter.com/<handle>
-        const { data } = await db
-          .from("paylabs_feed_items")
-          .select("canonical_url")
-          .eq("is_active", true)
-          .or(`canonical_url.like.https://x.com/${handle},canonical_url.like.https://twitter.com/${handle},canonical_url.like.https://x.com/${handle}/%,canonical_url.like.https://twitter.com/${handle}/%`);
-        if (data) {
-          for (const row of data) {
-            if (row.canonical_url) matchedUrls.add(row.canonical_url);
-          }
-        }
-      } else if (platform === "youtube") {
-        // youtube.com/@handle or youtube.com/channel/<id>
-        const { data } = await db
-          .from("paylabs_feed_items")
-          .select("canonical_url")
-          .eq("is_active", true)
-          .or(`canonical_url.like.https://youtube.com/@${handle},canonical_url.like.https://www.youtube.com/@${handle},canonical_url.like.https://youtube.com/@${handle}/%,canonical_url.like.https://www.youtube.com/@${handle}/%`);
-        if (data) {
-          for (const row of data) {
-            if (row.canonical_url) matchedUrls.add(row.canonical_url);
-          }
-        }
-      } else if (platform === "medium") {
-        // medium.com/@handle
-        const { data } = await db
-          .from("paylabs_feed_items")
-          .select("canonical_url")
-          .eq("is_active", true)
-          .or(`canonical_url.like.https://medium.com/@${handle},canonical_url.like.https://medium.com/@${handle}/%`);
-        if (data) {
-          for (const row of data) {
-            if (row.canonical_url) matchedUrls.add(row.canonical_url);
-          }
-        }
-      }
-    }
-  }
-
-  if (scope === "exact_url") {
-    // Exact URL: only match the exact canonical_url or source_url
-    if (claim.canonical_url) matchedUrls.add(claim.canonical_url);
-    if (claim.source_url) matchedUrls.add(claim.source_url);
-  }
-
-  const totalMatched = matchedUrls.size;
-  if (totalMatched === 0) {
+  if (!allActive || allActive.length === 0) {
     return { matched: 0, updated: 0 };
   }
 
-  const urlArray = [...matchedUrls];
+  // Filter using canonicalUrlMatchesClaim (exact scope matching, no LIKE)
+  const matchedUrls: string[] = [];
+  for (const row of allActive) {
+    if (row.canonical_url && canonicalUrlMatchesClaim(row.canonical_url, claim)) {
+      matchedUrls.push(row.canonical_url);
+    }
+  }
+
+  if (matchedUrls.length === 0) {
+    return { matched: 0, updated: 0 };
+  }
 
   // Update matching feed items: set creator_wallet, is_monetized, claim_status only
   const { data: updatedRows, error: updateError } = await db
@@ -555,7 +577,7 @@ export async function syncVerifiedCreatorClaimToFeedItems(
       is_monetized: true,
       claim_status: "claimed",
     })
-    .in("canonical_url", urlArray)
+    .in("canonical_url", matchedUrls)
     .eq("is_active", true)
     .select("canonical_url");
 
@@ -564,5 +586,5 @@ export async function syncVerifiedCreatorClaimToFeedItems(
   }
 
   const updatedCount = updatedRows?.length ?? 0;
-  return { matched: totalMatched, updated: updatedCount };
+  return { matched: matchedUrls.length, updated: updatedCount };
 }

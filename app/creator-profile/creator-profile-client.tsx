@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 type ClaimStatus = "unclaimed" | "verified" | "rejected" | "revoked" | "unknown";
 type ProofStatus = "not_started" | "pending" | "verified" | "failed" | "manual_required";
@@ -143,7 +144,9 @@ export default function CreatorProfileClient() {
   const [proofText, setProofText] = useState<string | null>(null);
 
   const sourceDomain = useMemo(() => deriveDomain(sourceUrl), [sourceUrl]);
-  const currentClaim = claims[0];
+  const searchParams = useSearchParams();
+  const claimIdParam = searchParams.get("claimId");
+  const currentClaim = claims.find((c) => c.id === claimIdParam) ?? claims[0];
   const isVerified = currentClaim?.claim_status === "verified";
   const isPending = currentClaim?.claim_status === "unclaimed" && currentClaim?.proof_status === "pending";
 
@@ -160,10 +163,11 @@ export default function CreatorProfileClient() {
       }
       setWalletAddress(data.walletAddress);
       setClaims(data.claims ?? []);
-      const firstClaim = data.claims?.[0];
-      if (firstClaim) {
-        setCreatorName(firstClaim.creator_name ?? "");
-        setSourceUrl(firstClaim.source_url ?? "");
+      const urlClaimId = new URLSearchParams(window.location.search).get("claimId");
+      const selectedClaim = data.claims?.find((c) => c.id === urlClaimId) ?? data.claims?.[0];
+      if (selectedClaim) {
+        setCreatorName(selectedClaim.creator_name ?? "");
+        setSourceUrl(selectedClaim.source_url ?? "");
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load creator profile.");

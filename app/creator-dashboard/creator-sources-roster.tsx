@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type CreatorSource = {
   id: string;
@@ -70,32 +70,47 @@ export default function CreatorSourcesRoster() {
   const [sources, setSources] = useState<CreatorSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const resp = await fetch("/api/paylabs/creator-sources", { credentials: "include" });
+      const data = (await resp.json().catch(() => ({}))) as SourcesResponse;
+      if (!mountedRef.current) return;
+      if (!resp.ok) {
+        setError(data.error ?? "Failed to load sources.");
+        setSources([]);
+        return;
+      }
+      setSources(data.sources ?? []);
+    } catch (e) {
+      if (!mountedRef.current) return;
+      setError(e instanceof Error ? e.message : "Failed to load sources.");
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        const resp = await fetch("/api/paylabs/creator-sources", { credentials: "include" });
-        const data = (await resp.json().catch(() => ({}))) as SourcesResponse;
-        if (cancelled) return;
-        if (!resp.ok) {
-          setError(data.error ?? "Failed to load sources.");
-          setSources([]);
-          return;
-        }
-        setSources(data.sources ?? []);
-      } catch (e) {
-        if (cancelled) return;
-        setError(e instanceof Error ? e.message : "Failed to load sources.");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
+    mountedRef.current = true;
     load();
-    return () => { cancelled = true; };
-  }, []);
+    return () => { mountedRef.current = false; };
+  }, [load]);
+
+  // Refetch on tab focus / visibility change
+  useEffect(() => {
+    function onVisibility() {
+      if (document.visibilityState === "visible") load();
+    }
+    window.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onVisibility);
+    return () => {
+      window.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onVisibility);
+    };
+  }, [load]);
 
   if (loading) {
     return <p className="muted" style={{ fontSize: 13 }}>Loading your registered sources…</p>;
@@ -116,6 +131,19 @@ export default function CreatorSourcesRoster() {
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button
+          type="button"
+          onClick={load}
+          style={{
+            fontSize: 12, fontWeight: 600, color: "#2563eb",
+            background: "none", border: "1px solid var(--border)",
+            borderRadius: 8, padding: "4px 12px", cursor: "pointer",
+          }}
+        >
+          Refresh sources
+        </button>
+      </div>
       {sources.map((src) => {
         const monetization = monetizationBadge(src.monetization_status);
         const status = statusBadge(src.claim_status);
@@ -176,7 +204,7 @@ export default function CreatorSourcesRoster() {
             {/* CTA */}
             {src.monetization_status === "pending_verification" && (
               <a
-                href="/creator-profile"
+                href={`/creator-profile?claimId=${src.id}`}
                 style={{ fontSize: 12, fontWeight: 600, color: "#2563eb", textDecoration: "none" }}
               >
                 Verify ownership →
