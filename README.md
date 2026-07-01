@@ -64,60 +64,6 @@ Key rules:
 - Every LLM-capable service auto-falls back to deterministic on LLM failure
 - `hybrid` mode = deterministic decision + LLM summary text only
 
-## LLM Configuration
-
-### Per-agent model routing
-
-Each agent can use a different LLM provider, model, and base URL. Resolution order:
-
-```
-PAYLABS_LLM_<FIELD>_<AGENT_KEY>  →  PAYLABS_LLM_<FIELD>_DEFAULT  →  hardcoded fallback
-```
-
-Example — 9Router as default provider:
-
-```bash
-# 9Router (OpenAI-compatible proxy)
-PAYLABS_LLM_PROVIDER_DEFAULT=openai-compatible
-PAYLABS_LLM_BASE_URL_DEFAULT=https://your-9router-endpoint.com/v1
-PAYLABS_LLM_API_KEY_DEFAULT=your-api-key
-PAYLABS_TUTOR_MODEL_DEFAULT=your-model-name
-PAYLABS_LLM_REQUIRED=true
-
-# Override specific agent to use a different model
-PAYLABS_TUTOR_MODEL_INTENT_PLANNER=gpt-4o-mini
-PAYLABS_LLM_BASE_URL_INTENT_PLANNER=https://your-other-provider.com/v1
-PAYLABS_LLM_API_KEY_INTENT_PLANNER=your-other-key
-```
-
-### Execution mode switching
-
-```bash
-# All services deterministic (default — no LLM calls)
-PAYLABS_AGENT_SERVICE_EXECUTION_MODE=deterministic
-PAYLABS_AGENT_SERVICE_LLM_ENABLED=false
-
-# All services LLM-enabled
-PAYLABS_AGENT_SERVICE_EXECUTION_MODE=llm
-PAYLABS_AGENT_SERVICE_LLM_ENABLED=true
-
-# Per-service override (e.g. only intent_planner uses LLM)
-PAYLABS_AGENT_SERVICE_EXECUTION_MODE_INTENT_PLANNER=llm
-PAYLABS_AGENT_SERVICE_LLM_ENABLED_INTENT_PLANNER=true
-
-# Hybrid mode — deterministic decision + LLM explanation
-PAYLABS_AGENT_SERVICE_EXECUTION_MODE_SIGNAL_SCOUT=hybrid
-PAYLABS_AGENT_SERVICE_LLM_ENABLED_SIGNAL_SCOUT=true
-```
-
-### Agent keys (24 total)
-
-Legacy agents (15): `tutor_intake`, `intent_classifier`, `query_expander`, `feed_discovery_agent`, `source_ranker`, `evidence_allocator`, `stop_limit_controller`, `budget_optimizer`, `source_quality_verifier`, `provenance_verifier`, `creator_ownership_verifier`, `policy_guard`, `payment_quote_agent`, `payment_executor`, `receipt_auditor`
-
-Delegated service agents (9): `brain_planner`, `intent_planner`, `query_builder`, `signal_scout`, `intent_matcher`, `source_verifier`, `value_allocator`, `trust_verifier`, `advanced_evidence_evaluator`
-
-Each key maps to `PAYLABS_LLM_PROVIDER_<KEY>`, `PAYLABS_TUTOR_MODEL_<KEY>`, `PAYLABS_LLM_BASE_URL_<KEY>`, `PAYLABS_LLM_API_KEY_<KEY>`, `PAYLABS_LLM_TIMEOUT_MS_<KEY>`, `PAYLABS_LLM_MAX_TOKENS_<KEY>`.
-
 ## Creator Monetization
 
 ### How creators earn
@@ -308,6 +254,70 @@ PAYLABS_AGENT_SERVICE_LLM_ENABLED
 PAYLABS_AGENT_SERVICE_EXECUTION_MODE_<AGENT_KEY>
 PAYLABS_AGENT_SERVICE_LLM_ENABLED_<AGENT_KEY>
 ```
+
+## LLM Configuration
+
+### Per-agent model routing
+
+Each agent can use a different LLM provider, model, and base URL. Resolution:
+
+```
+PAYLABS_LLM_<FIELD>_<AGENT_KEY>  →  PAYLABS_LLM_<FIELD>_DEFAULT  →  hardcoded fallback
+```
+
+Example — 9Router as default provider:
+
+```bash
+# Default provider (OpenAI-compatible proxy)
+PAYLABS_LLM_PROVIDER_DEFAULT=openai-compatible
+PAYLABS_LLM_BASE_URL_DEFAULT=https://your-9router-endpoint.com/v1
+PAYLABS_LLM_API_KEY_DEFAULT=your-api-key
+PAYLABS_TUTOR_MODEL_DEFAULT=your-model-name
+PAYLABS_LLM_REQUIRED=true
+
+# Override specific agent to use a different model
+PAYLABS_TUTOR_MODEL_INTENT_PLANNER=gpt-4o-mini
+PAYLABS_LLM_BASE_URL_INTENT_PLANNER=https://your-other-provider.com/v1
+PAYLABS_LLM_API_KEY_INTENT_PLANNER=your-other-key
+```
+
+### Execution mode switching
+
+```bash
+# All services deterministic (default — no LLM calls)
+PAYLABS_AGENT_SERVICE_EXECUTION_MODE=deterministic
+PAYLABS_AGENT_SERVICE_LLM_ENABLED=false
+
+# All services LLM-enabled
+PAYLABS_AGENT_SERVICE_EXECUTION_MODE=llm
+PAYLABS_AGENT_SERVICE_LLM_ENABLED=true
+
+# Per-service override (e.g. only intent_planner uses LLM)
+PAYLABS_AGENT_SERVICE_EXECUTION_MODE_INTENT_PLANNER=llm
+PAYLABS_AGENT_SERVICE_LLM_ENABLED_INTENT_PLANNER=true
+
+# Hybrid mode — deterministic decision + LLM explanation
+PAYLABS_AGENT_SERVICE_EXECUTION_MODE_SIGNAL_SCOUT=hybrid
+PAYLABS_AGENT_SERVICE_LLM_ENABLED_SIGNAL_SCOUT=true
+```
+
+### Agent keys
+
+9 delegated service agents that run in production:
+
+| Agent Key | Phase | LLM-Capable |
+|-----------|-------|-------------|
+| `brain_planner` | Brain | ✅ always LLM |
+| `intent_planner` | Discovery | ✅ |
+| `query_builder` | Discovery | ✅ |
+| `signal_scout` | Discovery | ✅ |
+| `intent_matcher` | Payment Decision | ✅ |
+| `source_verifier` | Payment Decision | ✅ |
+| `value_allocator` | Payment Decision | ✅ |
+| `trust_verifier` | Payment Decision | ✅ |
+| `advanced_evidence_evaluator` | Settlement | ✅ always LLM |
+
+Each key maps to `PAYLABS_LLM_PROVIDER_<KEY>`, `PAYLABS_TUTOR_MODEL_<KEY>`, `PAYLABS_LLM_BASE_URL_<KEY>`, `PAYLABS_LLM_API_KEY_<KEY>`, `PAYLABS_LLM_TIMEOUT_MS_<KEY>`, `PAYLABS_LLM_MAX_TOKENS_<KEY>`.
 
 ## Development
 
