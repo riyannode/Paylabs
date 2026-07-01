@@ -500,6 +500,8 @@ export function canonicalUrlMatchesClaim(canonicalUrl: string, claim: ClaimMatch
     return false;
   }
 
+  // Domain scope intentionally covers subdomains (e.g. blog.example.com matches example.com).
+  // Host scope is exact hostname only — use host for single-property claims.
   if (scope === "domain") {
     if (!claim.source_domain) return false;
     const domain = claim.source_domain.toLowerCase();
@@ -518,73 +520,232 @@ export function canonicalUrlMatchesClaim(canonicalUrl: string, claim: ClaimMatch
 
 export interface SyncFeedItemsResult {
   matched: number;
+  priceDerived: number;
   updated: number;
+}
+
+const SYNC_PAGE_SIZE = 1000;
+
+/**
+ * Fetch all active feed items in paginated batches (Supabase default limit = 1000).
+ * Returns only the selected columns for each row.
+ */
+async function fetchAllActiveFeedItems(
+  db: ReturnType<typeof supabaseAdmin>,
+  selectCols: string,
+): Promise<Record<string, unknown>[]> {
+  const allRows: Record<string, unknown>[] = [];
+  let offset = 0;
+  for (;;) {
+    const { data, error } = await db
+      .from("paylabs_feed_items")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .select(selectCols as any)
+      .eq("is_active", true)
+      .range(offset, offset + SYNC_PAGE_SIZE - 1);
+
+    if (error) {
+      throw new Error(`fetchAllActiveFeedItems: query failed at offset ${offset}: ${error.message}`);
+    }
+    // Supabase generic select returns untyped data — cast safely
+    const rows = (data ?? []) as unknown as Record<string, unknown>[];
+    if (rows.length === 0) break;
+    allRows.push(...rows);
+    if (rows.length < SYNC_PAGE_SIZE) break;
+    offset += SYNC_PAGE_SIZE;
+  }
+  return allRows;
 }
 
 /**
  * After a claim is verified, update existing matching feed items
- * to set creator_wallet, is_monetized, and claim_status.
+ * to set creator_wallet and claim_status.
  *
- * Safe behavior:
- * - Only updates existing rows (never creates synthetic feed items)
- * - Only runs for verified claims
- * - Scope-specific matching only (no broad domain fallback for repo/profile claims)
- * - Does not touch price fields
- * - Returns summary; throws only on DB errors (caller catches)
+ * Only marks is_monetized=true when price_per_citation_usdc > 0.
+ * Derives default prices from the linked rsshub route when available.
+ * Never overwrites non-zero prices.
+ * Respects resolver priority — skips rows owned by a higher-priority verified claim.
  */
 export async function syncVerifiedCreatorClaimToFeedItems(
   claim: { id: string; creator_wallet: string; claim_status: string; claim_scope: string | null; claim_scope_key: string | null; source_url: string | null; source_domain: string | null; canonical_url: string | null },
 ): Promise<SyncFeedItemsResult> {
   if (claim.claim_status !== "verified") {
-    return { matched: 0, updated: 0 };
+    return { matched: 0, priceDerived: 0, updated: 0 };
   }
 
   const db = supabaseAdmin();
   const wallet = claim.creator_wallet.toLowerCase();
   const idPrefix = claim.id.slice(0, 8);
 
-  // Fetch all active feed item URLs, filter in JS using exact scope matching
-  const { data: allActive, error: fetchError } = await db
-    .from("paylabs_feed_items")
-    .select("canonical_url")
-    .eq("is_active", true);
+  // Fetch all active feed items with pricing + route columns (paginated)
+  const allActive = await fetchAllActiveFeedItems(
+    db,
+    "canonical_url, creator_wallet, claim_status, is_monetized, price_per_citation_usdc, price_per_unlock_usdc, rsshub_route_id",
+  );
 
-  if (fetchError) {
-    throw new Error(`syncVerifiedCreatorClaimToFeedItems: fetch failed for claim ${idPrefix}: ${fetchError.message}`);
-  }
-
-  if (!allActive || allActive.length === 0) {
-    return { matched: 0, updated: 0 };
+  if (allActive.length === 0) {
+    return { matched: 0, priceDerived: 0, updated: 0 };
   }
 
   // Filter using canonicalUrlMatchesClaim (exact scope matching, no LIKE)
-  const matchedUrls: string[] = [];
+  const matchedRows: Record<string, unknown>[] = [];
   for (const row of allActive) {
-    if (row.canonical_url && canonicalUrlMatchesClaim(row.canonical_url, claim)) {
-      matchedUrls.push(row.canonical_url);
+    if (row.canonical_url && canonicalUrlMatchesClaim(row.canonical_url as string, claim)) {
+      matchedRows.push(row);
     }
   }
 
-  if (matchedUrls.length === 0) {
-    return { matched: 0, updated: 0 };
+  if (matchedRows.length === 0) {
+    return { matched: 0, priceDerived: 0, updated: 0 };
   }
 
-  // Update matching feed items: set creator_wallet, is_monetized, claim_status only
-  const { data: updatedRows, error: updateError } = await db
-    .from("paylabs_feed_items")
-    .update({
+  // Collect matched URLs for priority check
+  const matchedUrls = matchedRows.map((r) => r.canonical_url as string);
+
+  // Priority check: resolve each URL to see if a higher-priority claim owns it
+  const resolvedMap = await resolveCreatorClaimsBatch(matchedUrls);
+
+  // Collect rsshub_route_ids that need default prices
+  const routeIdsNeedingDefaults = new Set<string>();
+  for (const row of matchedRows) {
+    const hasPrice = ((row.price_per_citation_usdc as number | null) ?? 0) > 0;
+    const routeId = row.rsshub_route_id as string | null;
+    if (!hasPrice && routeId) {
+      routeIdsNeedingDefaults.add(routeId);
+    }
+  }
+
+  // Load route defaults in batch
+  const routeDefaults = new Map<string, { citation: number; unlock: number }>();
+  if (routeIdsNeedingDefaults.size > 0) {
+    const { data: routes, error: routeError } = await db
+      .from("paylabs_rsshub_routes")
+      .select("id, default_price_per_citation_usdc, default_price_per_unlock_usdc")
+      .in("id", [...routeIdsNeedingDefaults]);
+
+    if (routeError) {
+      console.error("[syncVerifiedClaim] failed to load route defaults", { code: routeError.code ?? null });
+      // Non-fatal: continue without route defaults
+    } else if (routes) {
+      for (const r of routes) {
+        const citation = (r.default_price_per_citation_usdc as number | null) ?? 0;
+        const unlock = (r.default_price_per_unlock_usdc as number | null) ?? 0;
+        if (citation > 0) {
+          routeDefaults.set(r.id, { citation, unlock });
+        }
+      }
+    }
+  }
+
+  // Build update list: apply priority + price derivation logic
+  let priceDerived = 0;
+  const toUpdate: { url: string; updateFields: Record<string, unknown> }[] = [];
+
+  for (const row of matchedRows) {
+    const url = row.canonical_url as string;
+
+    // Priority check: skip if resolver returns a different wallet
+    const resolved = resolvedMap.get(url);
+    if (resolved && resolved.creator_wallet.toLowerCase() !== wallet) {
+      continue;
+    }
+
+    const updateFields: Record<string, unknown> = {
       creator_wallet: wallet,
-      is_monetized: true,
       claim_status: "claimed",
-    })
-    .in("canonical_url", matchedUrls)
-    .eq("is_active", true)
-    .select("canonical_url");
+    };
 
-  if (updateError) {
-    throw new Error(`syncVerifiedCreatorClaimToFeedItems: update failed for claim ${idPrefix}: ${updateError.message}`);
+    const currentCitationPrice = (row.price_per_citation_usdc as number | null) ?? 0;
+    const currentUnlockPrice = (row.price_per_unlock_usdc as number | null) ?? 0;
+    const routeId = row.rsshub_route_id as string | null;
+
+    if (currentCitationPrice > 0) {
+      // Already has positive price — safe to monetize, don't touch prices
+      updateFields.is_monetized = true;
+    } else if (routeId && routeDefaults.has(routeId)) {
+      // Derive price from route defaults
+      const defaults = routeDefaults.get(routeId)!;
+      updateFields.price_per_citation_usdc = defaults.citation;
+      if (currentUnlockPrice <= 0 && defaults.unlock > 0) {
+        updateFields.price_per_unlock_usdc = defaults.unlock;
+      }
+      updateFields.is_monetized = true;
+      priceDerived++;
+    } else {
+      // No price and no route default — claim the row but don't monetize
+      updateFields.is_monetized = false;
+    }
+
+    toUpdate.push({ url, updateFields });
   }
 
-  const updatedCount = updatedRows?.length ?? 0;
-  return { matched: matchedUrls.length, updated: updatedCount };
+  if (toUpdate.length === 0) {
+    return { matched: matchedRows.length, priceDerived: 0, updated: 0 };
+  }
+
+  // Update in batch (grouped by identical update fields for efficiency)
+  // Since most rows share the same update shape, batch by URL list
+  const monetizedUrls = toUpdate.filter((u) => u.updateFields.is_monetized === true).map((u) => u.url);
+  const claimedOnlyUrls = toUpdate.filter((u) => u.updateFields.is_monetized === false).map((u) => u.url);
+
+  let updatedCount = 0;
+
+  // Update monetized rows (has price)
+  if (monetizedUrls.length > 0) {
+    // Build the common update payload for monetized rows
+    // Price derivation may differ per row, so update individually for rows needing price
+    const needsPriceUpdate = toUpdate.filter(
+      (u) => u.updateFields.is_monetized === true && "price_per_citation_usdc" in u.updateFields,
+    );
+    const noPriceUpdate = toUpdate.filter(
+      (u) => u.updateFields.is_monetized === true && !("price_per_citation_usdc" in u.updateFields),
+    );
+
+    // Rows that already had positive price — simple update
+    if (noPriceUpdate.length > 0) {
+      const { data: rows, error: err } = await db
+        .from("paylabs_feed_items")
+        .update({ creator_wallet: wallet, is_monetized: true, claim_status: "claimed" })
+        .in("canonical_url", noPriceUpdate.map((u) => u.url))
+        .eq("is_active", true)
+        .select("canonical_url");
+
+      if (err) {
+        throw new Error(`syncVerifiedCreatorClaimToFeedItems: update (monetized) failed for claim ${idPrefix}: ${err.message}`);
+      }
+      updatedCount += rows?.length ?? 0;
+    }
+
+    // Rows needing price derivation — update one by one (different prices per route)
+    for (const item of needsPriceUpdate) {
+      const { data: rows, error: err } = await db
+        .from("paylabs_feed_items")
+        .update(item.updateFields)
+        .eq("canonical_url", item.url)
+        .eq("is_active", true)
+        .select("canonical_url");
+
+      if (err) {
+        throw new Error(`syncVerifiedCreatorClaimToFeedItems: update (price-derived) failed for claim ${idPrefix}: ${err.message}`);
+      }
+      updatedCount += rows?.length ?? 0;
+    }
+  }
+
+  // Rows claimed but not monetized (no price, no route default)
+  if (claimedOnlyUrls.length > 0) {
+    const { data: rows, error: err } = await db
+      .from("paylabs_feed_items")
+      .update({ creator_wallet: wallet, is_monetized: false, claim_status: "claimed" })
+      .in("canonical_url", claimedOnlyUrls)
+      .eq("is_active", true)
+      .select("canonical_url");
+
+    if (err) {
+      throw new Error(`syncVerifiedCreatorClaimToFeedItems: update (claimed-only) failed for claim ${idPrefix}: ${err.message}`);
+    }
+    updatedCount += rows?.length ?? 0;
+  }
+
+  return { matched: matchedRows.length, priceDerived, updated: updatedCount };
 }
