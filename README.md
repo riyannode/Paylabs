@@ -32,11 +32,91 @@ LangGraph (orchestration)
 | **Payment Decision** | `intent_matcher`, `source_verifier`, `value_allocator`, `trust_verifier`, `payment_decider` | Match sources to intent, verify credibility, allocate value, decide payments |
 | **Settlement** | `creator_attribution`, `advanced_evidence_evaluator`, `creator_payout_router` | Attribute sources to verified creators, evaluate evidence quality, route payouts |
 
-Each service runs as an independent LangGraph node with its own x402 payment edge. Some are LLM-assisted (intent_planner, query_builder), others are fully deterministic (payment_decider, creator_attribution).
+Each service runs as an independent LangGraph node with its own x402 payment edge.
 
 **Brain** = LLM planner. Chooses tier, services, search strategy. Advisory only — cannot set prices, wallets, or payment refs.
 
 **Quote Engine** = deterministic pricing. Computes cost from tier + selected services. No LLM-generated prices.
+
+### LLM vs Deterministic per service
+
+Each service supports 3 execution modes: `deterministic` (default), `llm`, `hybrid`.
+
+| Service | LLM-Capable | Default Mode | What LLM does (when enabled) |
+|---------|-------------|-------------|------------------------------|
+| **Brain planner** | ✅ always LLM | — | Plans tier, strategy, query variants. No deterministic fallback |
+| `intent_planner` | ✅ | deterministic | LLM intent classification. Fail → rule-based fallback |
+| `query_builder` | ✅ | deterministic | LLM query expansion/refinement. Fail → deterministic keyword expansion |
+| `signal_scout` | ✅ | deterministic | LLM reranks top 20 candidates. Fail → metadata/keyword ranking |
+| `signal_scout_basics` | ❌ | deterministic | Pure keyword/entity scoring. No LLM ever |
+| `intent_matcher` | ✅ | deterministic | LLM relevance evaluation. Fail → keyword overlap scoring |
+| `source_verifier` | ✅ | deterministic | LLM quality assessment. Fail → URL/domain/metadata validation |
+| `value_allocator` | ✅ | deterministic | Budget math ALWAYS deterministic. LLM only writes explanation text |
+| `trust_verifier` | ✅ | deterministic | Trust checks ALWAYS deterministic. LLM only writes risk summary |
+| `payment_decider` | ❌ 🔒 | deterministic | **Hard-locked.** Pure aggregator. No LLM regardless of env |
+| `creator_attribution` | ❌ | deterministic | Pure DB query + claim resolver. No LLM ever |
+| `advanced_evidence_evaluator` | ✅ always LLM | LLM | Deep Agent with 7 tools (memory read/write, source comparison) |
+| `creator_payout_router` | ❌ | deterministic | Deterministic split (85/10/5) + ledger. No LLM ever |
+
+Key rules:
+- `value_allocator` and `trust_verifier`: financial decisions (budget math, trust scores) are ALWAYS deterministic. LLM only generates human-readable explanation text
+- `payment_decider`: hard-locked to deterministic — no env var can override
+- Every LLM-capable service auto-falls back to deterministic on LLM failure
+- `hybrid` mode = deterministic decision + LLM summary text only
+
+## LLM Configuration
+
+### Per-agent model routing
+
+Each agent can use a different LLM provider, model, and base URL. Resolution order:
+
+```
+PAYLABS_LLM_<FIELD>_<AGENT_KEY>  →  PAYLABS_LLM_<FIELD>_DEFAULT  →  hardcoded fallback
+```
+
+Example — 9Router as default provider:
+
+```bash
+# 9Router (OpenAI-compatible proxy)
+PAYLABS_LLM_PROVIDER_DEFAULT=openai-compatible
+PAYLABS_LLM_BASE_URL_DEFAULT=https://your-9router-endpoint.com/v1
+PAYLABS_LLM_API_KEY_DEFAULT=your-api-key
+PAYLABS_TUTOR_MODEL_DEFAULT=your-model-name
+PAYLABS_LLM_REQUIRED=true
+
+# Override specific agent to use a different model
+PAYLABS_TUTOR_MODEL_INTENT_PLANNER=gpt-4o-mini
+PAYLABS_LLM_BASE_URL_INTENT_PLANNER=https://your-other-provider.com/v1
+PAYLABS_LLM_API_KEY_INTENT_PLANNER=your-other-key
+```
+
+### Execution mode switching
+
+```bash
+# All services deterministic (default — no LLM calls)
+PAYLABS_AGENT_SERVICE_EXECUTION_MODE=deterministic
+PAYLABS_AGENT_SERVICE_LLM_ENABLED=false
+
+# All services LLM-enabled
+PAYLABS_AGENT_SERVICE_EXECUTION_MODE=llm
+PAYLABS_AGENT_SERVICE_LLM_ENABLED=true
+
+# Per-service override (e.g. only intent_planner uses LLM)
+PAYLABS_AGENT_SERVICE_EXECUTION_MODE_INTENT_PLANNER=llm
+PAYLABS_AGENT_SERVICE_LLM_ENABLED_INTENT_PLANNER=true
+
+# Hybrid mode — deterministic decision + LLM explanation
+PAYLABS_AGENT_SERVICE_EXECUTION_MODE_SIGNAL_SCOUT=hybrid
+PAYLABS_AGENT_SERVICE_LLM_ENABLED_SIGNAL_SCOUT=true
+```
+
+### Agent keys (24 total)
+
+Legacy agents (15): `tutor_intake`, `intent_classifier`, `query_expander`, `feed_discovery_agent`, `source_ranker`, `evidence_allocator`, `stop_limit_controller`, `budget_optimizer`, `source_quality_verifier`, `provenance_verifier`, `creator_ownership_verifier`, `policy_guard`, `payment_quote_agent`, `payment_executor`, `receipt_auditor`
+
+Delegated service agents (9): `brain_planner`, `intent_planner`, `query_builder`, `signal_scout`, `intent_matcher`, `source_verifier`, `value_allocator`, `trust_verifier`, `advanced_evidence_evaluator`
+
+Each key maps to `PAYLABS_LLM_PROVIDER_<KEY>`, `PAYLABS_TUTOR_MODEL_<KEY>`, `PAYLABS_LLM_BASE_URL_<KEY>`, `PAYLABS_LLM_API_KEY_<KEY>`, `PAYLABS_LLM_TIMEOUT_MS_<KEY>`, `PAYLABS_LLM_MAX_TOKENS_<KEY>`.
 
 ## Creator Monetization
 
@@ -219,6 +299,14 @@ PAYLABS_LLM_PROVIDER_DEFAULT
 PAYLABS_LLM_BASE_URL_DEFAULT
 PAYLABS_LLM_API_KEY_DEFAULT
 PAYLABS_TUTOR_MODEL_DEFAULT
+PAYLABS_LLM_TIMEOUT_MS_DEFAULT
+PAYLABS_LLM_MAX_TOKENS_DEFAULT
+
+# Execution mode (per-service switchable)
+PAYLABS_AGENT_SERVICE_EXECUTION_MODE
+PAYLABS_AGENT_SERVICE_LLM_ENABLED
+PAYLABS_AGENT_SERVICE_EXECUTION_MODE_<AGENT_KEY>
+PAYLABS_AGENT_SERVICE_LLM_ENABLED_<AGENT_KEY>
 ```
 
 ## Development
