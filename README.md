@@ -358,3 +358,20 @@ pnpm typecheck    # tsc --noEmit
 - Settlement mode is not user-selectable
 - Raw chain-of-thought never exposed
 - Creator payout ledger is idempotent — claim-before-transfer prevents double-pay
+
+---
+
+## Reusable Arc/Circle x402 SDKs
+
+PayLabs also ships alongside standalone open-source SDKs for builders working with Arc, Circle Gateway, x402 payments, agent wallets, and batch proof visibility.
+
+These SDKs are reusable companion packages. They are not required to run the PayLabs web app, and each package can be used independently.
+
+| SDK | Purpose | Install |
+|-----|---------|---------|
+| [`x402-batch-codec`](https://github.com/riyannode/x402-batch-codec) | TypeScript codec for decoding Circle Gateway x402 `submitBatch` transactions on Arc, verifying buyer/seller batch presence, and encoding safe batch proof objects. Codec-only: no signing, no wallet execution, no raw payment headers. | `npm install github:riyannode/x402-batch-codec` |
+| [`x402-header-agent`](https://github.com/riyannode/x402-header-agent) | TypeScript + native Python SDK for Circle Gateway x402 header payments. Includes buyer/seller helpers, LangChain/CrewAI/custom agent adapters, batch payment helpers, and Circle DCW signing. No raw buyer private keys. | `npm install github:riyannode/x402-header-agent` |
+| [`deepagent-x402-kit`](https://github.com/riyannode/deepagent-x402-kit) | Python LangChain / Deep Agents kit for ERC-8004 agent identity on Arc plus optional policy-gated Circle x402 tools. One Circle DCW wallet maps to one ERC-8004 agent identity. | `pip install "git+https://github.com/riyannode/deepagent-x402-kit.git"` |
+
+These packages are currently installed directly from GitHub and are not published to npm/PyPI yet. For reproducible installs, pin a commit SHA.
+
