@@ -4,7 +4,7 @@ AI search + creator monetization platform. Every search is budgeted, every sourc
 
 Users ask a question, set a USDC budget, connect a wallet, sign one x402 entry payment, and get an AI answer — where the creators behind the sources used in that answer automatically receive USDC payouts.
 
-**Production:** `[paylab](https://paylabs.vercel.app/)`
+**Production:** `https://paylabs.vercel.app`
 
 ## What PayLabs Does
 
