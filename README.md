@@ -1,6 +1,6 @@
 # PayLabs
 
-AI search + creator monetization platform. Every search is budgeted, every source is paid, every creator gets their share.
+AI search/crawler + creator monetization platform. Every search is budgeted, every source is paid, every creator gets their share.
 
 Users ask a question, set a USDC budget, connect a wallet, sign one x402 entry payment, and get an AI answer — where the creators behind the sources used in that answer automatically receive USDC payouts.
 
