@@ -27,6 +27,7 @@ import { createCreatorPaymentTransport } from "../../creator-distribution/transp
 import {
   claimPending,
   markPayoutResult,
+  markTransferStarted,
   deleteLedgerRow,
   recordUnallocatedReserve,
 } from "../../creator-distribution/payout-ledger";
@@ -209,6 +210,39 @@ export async function creatorPayoutRouterHandler(
       error?: string | null;
     };
 
+    // Mark transfer started BEFORE calling transport — prevents stale-pending double-pay
+    const transferStartMark = await markTransferStarted(
+      input.discoveryRunId,
+      "creator_share",
+      subjectId,
+    );
+    if (!transferStartMark.ok) {
+      // Cannot mark transfer started — fail closed, do not send transfer
+      await markPayoutResult({
+        discoveryRunId: input.discoveryRunId,
+        payoutType: "creator_share",
+        payoutSubjectId: subjectId,
+        status: "failed",
+        error: `mark_transfer_started_failed: ${transferStartMark.error}`,
+      });
+      creatorResults.push({
+        feed_item_id: item.feed_item_id,
+        source_url: item.source_url,
+        creator_wallet: item.creator_wallet,
+        amount_atomic: item.creator_amount_atomic.toString(),
+        amount_usdc: item.creator_amount_usdc,
+        status: "failed",
+        settlement_id: null,
+        settlement_url: null,
+        tx_hash: null,
+        explorer_url: null,
+        batch_tx_hash: null,
+        batch_explorer_url: null,
+        error: `mark_transfer_started_failed: ${transferStartMark.error}`,
+      });
+      continue;
+    }
+
     try {
       paymentResult = await transport.transfer({
         toAddress: item.creator_wallet,
@@ -369,6 +403,24 @@ export async function creatorPayoutRouterHandler(
           botPaidAtomic += SPLIT_PER_SLOT.bot;
         }
       } else if (botClaim.ok && botClaim.action === "claimed") {
+        // Mark transfer started before calling transport
+        const botTransferStart = await markTransferStarted(
+          input.discoveryRunId,
+          "bot_share",
+          botSubjectId,
+        );
+        if (!botTransferStart.ok) {
+          await markPayoutResult({
+            discoveryRunId: input.discoveryRunId,
+            payoutType: "bot_share",
+            payoutSubjectId: botSubjectId,
+            status: "failed",
+            error: `mark_transfer_started_failed: ${botTransferStart.error}`,
+          });
+          botFailedCount++;
+          continue; // Skip to next creator for bot/service
+        }
+
         try {
           const transferResult = await transport.transfer({
             toAddress: botWallet,
@@ -438,6 +490,24 @@ export async function creatorPayoutRouterHandler(
           servicePaidAtomic += SPLIT_PER_SLOT.service;
         }
       } else if (serviceClaim.ok && serviceClaim.action === "claimed") {
+        // Mark transfer started before calling transport
+        const serviceTransferStart = await markTransferStarted(
+          input.discoveryRunId,
+          "service_share",
+          serviceSubjectId,
+        );
+        if (!serviceTransferStart.ok) {
+          await markPayoutResult({
+            discoveryRunId: input.discoveryRunId,
+            payoutType: "service_share",
+            payoutSubjectId: serviceSubjectId,
+            status: "failed",
+            error: `mark_transfer_started_failed: ${serviceTransferStart.error}`,
+          });
+          serviceFailedCount++;
+          continue;
+        }
+
         try {
           const transferResult = await transport.transfer({
             toAddress: serviceWallet,

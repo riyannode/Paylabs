@@ -148,7 +148,20 @@ export async function claimPending(
       };
     }
 
-    // Stale pending — reclaim via CAS (updated_at must still match)
+    // Stale pending — check if transfer may have started before allowing reclaim
+    const existingMeta = (existing.safe_metadata ?? {}) as Record<string, unknown>;
+    if (existingMeta.transfer_started === true) {
+      // Transfer may have started — do not reclaim, do not send another transfer
+      // Requires manual reconciliation
+      return {
+        ok: false,
+        action: "error",
+        row: existing as PayoutLedgerRow,
+        error: `stale_pending_reconciliation_required: ${input.payoutType}/${input.payoutSubjectId} transfer may have started`,
+      };
+    }
+
+    // Stale pending without transfer_started — safe to reclaim via CAS
     const staleNow = new Date().toISOString();
     const { data: reclaimed, error: reclaimError } = await db
       .from("paylabs_payout_ledger")
@@ -341,6 +354,51 @@ export async function markPayoutResult(
     return {
       ok: false,
       error: `ledger_mark_no_pending_row: ${input.payoutType}/${input.payoutSubjectId}`,
+    };
+  }
+
+  return { ok: true };
+}
+
+// ─── Mark Transfer Started ────────────────────────────────────
+
+/**
+ * Mark that an x402 transfer is about to begin.
+ * Sets transfer_started: true in safe_metadata BEFORE calling transport.transfer.
+ * This prevents stale-pending reclaim from double-paying after a crash mid-transfer.
+ */
+export async function markTransferStarted(
+  discoveryRunId: string,
+  payoutType: PayoutType,
+  payoutSubjectId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const db = supabaseAdmin();
+  const now = new Date().toISOString();
+
+  const { data, error } = await db
+    .from("paylabs_payout_ledger")
+    .update({
+      safe_metadata: {
+        transfer_started: true,
+        transfer_started_at: now,
+      },
+      updated_at: now,
+    })
+    .eq("discovery_run_id", discoveryRunId)
+    .eq("payout_type", payoutType)
+    .eq("payout_subject_id", payoutSubjectId)
+    .eq("status", "pending") // Only mark pending rows
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, error: `mark_transfer_started_failed: ${error.message}` };
+  }
+
+  if (!data) {
+    return {
+      ok: false,
+      error: `mark_transfer_started_no_pending_row: ${payoutType}/${payoutSubjectId}`,
     };
   }
 
