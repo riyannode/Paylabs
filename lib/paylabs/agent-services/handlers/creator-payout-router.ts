@@ -387,9 +387,18 @@ export async function creatorPayoutRouterHandler(
 
         if (!markRes.ok) {
           console.error("[creator-payout-router] bot share ledger mark failed:", markRes.error);
+          botResult = {
+            status: "failed",
+            amount_atomic: revenueShare.bot_atomic.toString(),
+            amount_usdc: Number(revenueShare.bot_atomic) / 1e6,
+            settlement_id: execResult.settlement_id ?? null,
+            tx_hash: execResult.tx_hash ?? null,
+            explorer_url: execResult.explorer_url ?? null,
+            error: `bot_ledger_mark_failed: ${markRes.error}`,
+          };
+        } else {
+          botResult = execResult;
         }
-
-        botResult = execResult;
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         await markPayoutResult({
@@ -497,9 +506,18 @@ export async function creatorPayoutRouterHandler(
 
         if (!markRes.ok) {
           console.error("[creator-payout-router] service share ledger mark failed:", markRes.error);
+          serviceResult = {
+            status: "failed",
+            amount_atomic: revenueShare.service_atomic.toString(),
+            amount_usdc: Number(revenueShare.service_atomic) / 1e6,
+            settlement_id: execResult.settlement_id ?? null,
+            tx_hash: execResult.tx_hash ?? null,
+            explorer_url: execResult.explorer_url ?? null,
+            error: `service_ledger_mark_failed: ${markRes.error}`,
+          };
+        } else {
+          serviceResult = execResult;
         }
-
-        serviceResult = execResult;
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         await markPayoutResult({
@@ -575,10 +593,19 @@ export async function creatorPayoutRouterHandler(
   }
 
   // ── Build output ──
-  const errorSummary = creatorResults
+  const creatorErrors = creatorResults
     .filter((r) => r.status === "failed")
-    .map((r) => `[${r.feed_item_id}]: ${r.error}`)
-    .join("; ");
+    .map((r) => `[${r.feed_item_id}]: ${r.error}`);
+
+  const botErrors = botResult.status === "failed" && botResult.error
+    ? [`[bot_share]: ${botResult.error}`]
+    : [];
+
+  const serviceErrors = serviceResult.status === "failed" && serviceResult.error
+    ? [`[service_share]: ${serviceResult.error}`]
+    : [];
+
+  const errorSummary = [...creatorErrors, ...botErrors, ...serviceErrors].join("; ");
 
   return {
     ok: true,

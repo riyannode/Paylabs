@@ -250,7 +250,7 @@ export async function markPayoutResult(
   const db = supabaseAdmin();
   const now = new Date().toISOString();
 
-  const { error } = await db
+  const { data, error } = await db
     .from("paylabs_payout_ledger")
     .update({
       status: input.status,
@@ -266,11 +266,21 @@ export async function markPayoutResult(
     .eq("discovery_run_id", input.discoveryRunId)
     .eq("payout_type", input.payoutType)
     .eq("payout_subject_id", input.payoutSubjectId)
-    .eq("status", "pending"); // Only update pending rows
+    .eq("status", "pending") // Only update pending rows
+    .select("id")
+    .maybeSingle();
 
   if (error) {
     return { ok: false, error: `ledger_mark_failed: ${error.message}` };
   }
+
+  if (!data) {
+    return {
+      ok: false,
+      error: `ledger_mark_no_pending_row: ${input.payoutType}/${input.payoutSubjectId}`,
+    };
+  }
+
   return { ok: true };
 }
 
