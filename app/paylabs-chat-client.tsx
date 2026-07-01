@@ -395,7 +395,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
       window.location.pathname === "/" &&
       (hash.includes("access_token") || hash.includes("id_token") || hash.includes("error"))
     ) {
-      window.location.replace(`/creator-dashboard${hash}`);
+      window.location.replace(`/creator-profile${hash}`);
     }
   }, []);
 

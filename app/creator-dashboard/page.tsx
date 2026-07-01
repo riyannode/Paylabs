@@ -1,10 +1,36 @@
 "use client";
 
-import CreatorWalletPanel from "@/components/paylabs/CreatorWalletPanel";
+import { useCallback, useEffect, useState } from "react";
 import CreatorSourcesRoster from "./creator-sources-roster";
 import SubPageMobileNav from "@/components/paylabs/SubPageMobileNav";
 
+function shortAddr(addr?: string | null) {
+  if (!addr) return "—";
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
 export default function CreatorPage() {
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [checking, setChecking] = useState(true);
+
+  const checkSession = useCallback(async () => {
+    try {
+      const resp = await fetch("/api/paylabs/wallet/ucw?action=session-restore", {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!resp.ok) { setWalletAddress(null); return; }
+      const data = await resp.json().catch(() => ({}));
+      setWalletAddress(data?.walletAddress ?? null);
+    } catch {
+      setWalletAddress(null);
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  useEffect(() => { checkSession(); }, [checkSession]);
+
   return (
     <>
       <SubPageMobileNav />
@@ -14,22 +40,30 @@ export default function CreatorPage() {
         <h1 className="page-title">Creator Dashboard</h1>
       </div>
 
-      <div className="card">
-        <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Creator Wallet</h2>
-        <p className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
-          Connect your wallet to manage your creator profile and track source payment earnings.
-        </p>
-        <CreatorWalletPanel />
-      </div>
-
-      <div className="card" style={{ display: "grid", gap: 12 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 600 }}>Creator Profile</h2>
-        <p className="muted" style={{ fontSize: 13 }}>
-          Register your source so PayLabs can attribute eligible runs to your creator wallet.
-        </p>
-        <a className="pl-primary-v3" href="/creator-profile" style={{ textAlign: "center", textDecoration: "none" }}>
-          Complete Creator Profile
-        </a>
+      {/* Creator Profile CTA / summary */}
+      <div className="pl-creator-cta-card">
+        <h2>Creator Profile</h2>
+        {checking ? (
+          <p>Checking wallet session…</p>
+        ) : walletAddress ? (
+          <>
+            <p>
+              Creator Wallet connected: <strong>{shortAddr(walletAddress)}</strong>
+            </p>
+            <a className="pl-creator-cta-link" href="/creator-profile">
+              Manage Creator Profile →
+            </a>
+          </>
+        ) : (
+          <>
+            <p>
+              Set up your Creator Profile to connect your Creator Wallet and register sources.
+            </p>
+            <a className="pl-creator-cta-link" href="/creator-profile">
+              Set up Creator Profile →
+            </a>
+          </>
+        )}
       </div>
 
       <div className="card" style={{ display: "grid", gap: 12 }}>
@@ -44,7 +78,7 @@ export default function CreatorPage() {
         <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
         <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>Earnings Dashboard</h2>
         <p className="muted" style={{ fontSize: 14, maxWidth: 400, margin: "0 auto" }}>
-          Creator earnings tracking is under development. Connect your wallet above to get started.
+          Creator earnings tracking is under development. Set up your Creator Profile to get started.
         </p>
       </div>
     </div>

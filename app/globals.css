@@ -2681,6 +2681,187 @@ a:hover { text-decoration: none; }
   background: var(--card-soft);
 }
 
+/* ── Creator Wallet Pill (top-right compact) ── */
+
+.pl-creator-wallet-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 0 0 4px;
+}
+
+.pl-creator-wallet-pill {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #0f172a;
+  border-radius: 999px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+  transition: border-color 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+}
+
+.pl-creator-wallet-pill:hover {
+  border-color: #bfdbfe;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.08);
+}
+
+.pl-creator-wallet-pill:active {
+  transform: scale(0.99);
+}
+
+.pl-creator-wallet-pill.connected {
+  border-color: #dbeafe;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.pl-creator-wallet-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #16a34a;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.10);
+  flex: 0 0 auto;
+}
+
+.pl-creator-wallet-dot.idle {
+  background: #94a3b8;
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.12);
+}
+
+.pl-creator-wallet-label {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+
+.pl-creator-wallet-address {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: #475569;
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .pl-creator-wallet-pill {
+    max-width: 100%;
+    min-height: 36px;
+    padding: 0 10px;
+    gap: 6px;
+    font-size: 12px;
+  }
+  .pl-creator-wallet-address {
+    display: none;
+  }
+}
+
+/* ── Circle-style wallet card refinement ── */
+
+.pl-creator-wallet-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.02);
+}
+
+.pl-creator-wallet-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.pl-creator-wallet-card-header h2 {
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+}
+
+.pl-creator-wallet-card-sub {
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.5;
+  margin: 0 0 16px;
+}
+
+/* ── Circle-style modal refinements ── */
+
+.pl-wallet-modal-v3 {
+  border-radius: 20px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(15, 23, 42, 0.04);
+}
+
+.pl-login-option-v3 {
+  border-radius: 12px;
+  border: 1.5px solid #e5e7eb;
+  transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.pl-login-option-v3:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.06);
+}
+
+.pl-primary-v3 {
+  border-radius: 12px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* ── Creator Dashboard CTA card ── */
+
+.pl-creator-cta-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 24px;
+  display: grid;
+  gap: 12px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+
+.pl-creator-cta-card h2 {
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+}
+
+.pl-creator-cta-card p {
+  font-size: 13px;
+  color: #64748b;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.pl-creator-cta-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 20px;
+  border-radius: 12px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: background 0.14s ease;
+  justify-self: start;
+}
+
+.pl-creator-cta-link:hover {
+  background: #1d4ed8;
+}
+
 /* On sub-pages that don't use .pl-app, add top padding for fixed mobile topbar */
 @media (max-width: 960px) {
   body.pl-mobile-has-topbar .container.pl-compact-root {
