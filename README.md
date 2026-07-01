@@ -193,6 +193,11 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 | `/creator-profile` | Creator claims — register, verify, monetize sources |
 | `/creator-proof/[claimId]/[nonce]` | Public verification — verified creator badge |
 
+> **Accounting note:** Platform x402 Volume represents cumulative gross x402 activity since PayLabs first opened. Treasury / Unallocated represents retained or unallocated ledger entries recorded after the treasury tracking layer was wired on July 2. It is not a real-time wallet balance and is not expected to equal total platform volume.
+
+
+
+
 ## Tech Stack
 
 | Layer | Technology |
