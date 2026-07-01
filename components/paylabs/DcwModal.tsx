@@ -667,6 +667,12 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
       <div className="pl-wallet-modal-v3 pl-dcw-modal pl-dcw-popover-modal" onClick={(e) => e.stopPropagation()}>
         <button className="pl-wallet-x-v3" onClick={onClose} aria-label="Close">×</button>
 
+        {step !== "auth" && (
+          <div className="pl-dcw-header">
+            <h3>PayLabs Wallet</h3>
+            <p className="muted">Used for automatic x402 payments.</p>
+          </div>
+        )}
 
         {/* ── Step: Auth (Google + Passkey) ─────────────── */}
         {step === "auth" && (
