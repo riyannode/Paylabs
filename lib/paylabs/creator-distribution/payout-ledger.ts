@@ -186,7 +186,9 @@ export async function claimPending(
     };
   }
 
-  // Existing row with failed/skipped → retry: update to pending
+  // Existing row with failed/skipped → retry: atomic compare-and-swap
+  // .in("status", ["failed", "skipped"]) ensures only ONE concurrent retry wins.
+  // If two retries read the same failed row, only the first to update claims it.
   const { data: updated, error: updateError } = await db
     .from("paylabs_payout_ledger")
     .update({
@@ -208,14 +210,24 @@ export async function claimPending(
     .eq("discovery_run_id", input.discoveryRunId)
     .eq("payout_type", input.payoutType)
     .eq("payout_subject_id", input.payoutSubjectId)
+    .in("status", ["failed", "skipped"]) // CAS: only update if still failed/skipped
     .select()
-    .single();
+    .maybeSingle(); // Returns null if no row matched (someone else claimed it)
 
   if (updateError) {
     return {
       ok: false,
       action: "error",
       error: `ledger_retry_update_failed: ${updateError.message}`,
+    };
+  }
+
+  // No row matched = concurrent retry already claimed it
+  if (!updated) {
+    return {
+      ok: false,
+      action: "already_pending",
+      error: `concurrent_retry: ${input.payoutType}/${input.payoutSubjectId} already claimed by another retry`,
     };
   }
 
@@ -334,6 +346,35 @@ export async function recordUnallocatedReserve(input: {
   }
 
   return { ok: true };
+}
+
+// ─── Delete Ledger Row ───────────────────────────────────────
+
+/**
+ * Delete a specific ledger row. Used to clear stale bot/service share
+ * when paid creator count changes on retry, or stale reserve rows.
+ * Only deletes rows that are NOT paid/gateway_accepted (safety).
+ */
+export async function deleteLedgerRow(
+  discoveryRunId: string,
+  payoutType: PayoutType,
+  payoutSubjectId: string,
+): Promise<{ ok: boolean; deleted: boolean; error?: string }> {
+  const db = supabaseAdmin();
+
+  const { data, error } = await db
+    .from("paylabs_payout_ledger")
+    .delete()
+    .eq("discovery_run_id", discoveryRunId)
+    .eq("payout_type", payoutType)
+    .eq("payout_subject_id", payoutSubjectId)
+    .not("status", "in", '("paid","gateway_accepted")') // Never delete completed rows
+    .select("id");
+
+  if (error) {
+    return { ok: false, deleted: false, error: `ledger_delete_failed: ${error.message}` };
+  }
+  return { ok: true, deleted: (data?.length ?? 0) > 0 };
 }
 
 // ─── List Payouts for Run ────────────────────────────────────
