@@ -19,7 +19,7 @@ PayLabs runs on a **Langchain/LangGraph-based x402 agent runtime** — a directe
 A user starts with an x402 entry payment. The Brain creates a locked quote and execution plan, then pays selected macro-node phases through x402. Each macro node runs a LangGraph phase and pays its child service nodes through x402 service edges. Circle Gateway may batch these payment edges into Arc submitBatch transactions, while PayLabs records safe receipt and proof metadata.
 
 ```
-USER ──x402──► ENTRY GATE ──► BRAIN (LLM)
+USER ──x402──► ENTRY GATE ──► BRAIN Choose node (LLM)
                                  │
                   ┌──────────x402────────────┐
                   |              |               |
