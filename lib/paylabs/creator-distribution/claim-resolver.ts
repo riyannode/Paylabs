@@ -423,7 +423,8 @@ export interface SyncFeedItemsResult {
  * Safe behavior:
  * - Only updates existing rows (never creates synthetic feed items)
  * - Only runs for verified claims
- * - Does not overwrite non-zero prices
+ * - Scope-specific matching only (no broad domain fallback for repo/profile claims)
+ * - Does not touch price fields
  * - Returns summary; throws only on DB errors (caller catches)
  */
 export async function syncVerifiedCreatorClaimToFeedItems(
@@ -437,12 +438,12 @@ export async function syncVerifiedCreatorClaimToFeedItems(
   const wallet = claim.creator_wallet.toLowerCase();
   const scope = claim.claim_scope;
   const scopeKey = claim.claim_scope_key;
+  const idPrefix = claim.id.slice(0, 8);
 
-  // Build list of canonical_urls to match
   const matchedUrls = new Set<string>();
 
-  // Strategy 1: Match by domain column (fast, indexed)
-  if (claim.source_domain) {
+  if (scope === "domain" && claim.source_domain) {
+    // Domain scope: match all feed items on this domain
     const { data } = await db
       .from("paylabs_feed_items")
       .select("canonical_url")
@@ -455,26 +456,32 @@ export async function syncVerifiedCreatorClaimToFeedItems(
     }
   }
 
-  // Strategy 2: Exact canonical_url match (for exact_url scope)
-  if (scope === "exact_url" && claim.canonical_url) {
-    matchedUrls.add(claim.canonical_url);
-  }
-  if (claim.source_url) {
-    matchedUrls.add(claim.source_url);
+  if (scope === "host" && claim.source_domain) {
+    // Host scope: match by exact domain column (tenant subdomain)
+    const { data } = await db
+      .from("paylabs_feed_items")
+      .select("canonical_url")
+      .eq("domain", claim.source_domain)
+      .eq("is_active", true);
+    if (data) {
+      for (const row of data) {
+        if (row.canonical_url) matchedUrls.add(row.canonical_url);
+      }
+    }
   }
 
-  // Strategy 3: Parse-based matching for scopes where domain column may not align
-  // This handles github_repo, platform_profile, and host scopes
   if (scope === "github_repo" && scopeKey) {
-    // github_repo:<owner>/<repo> — match feed items on github.com with same owner/repo
+    // github_repo:<owner>/<repo> — parse canonical_url, require exact owner/repo path
     const parts = scopeKey.replace("github_repo:", "").split("/");
     if (parts.length === 2) {
       const [owner, repo] = parts;
+      // Match: https://github.com/owner/repo or https://github.com/owner/repo/...
+      // Use LIKE with exact prefix to avoid matching github.com/owner/repo-other
       const { data } = await db
         .from("paylabs_feed_items")
         .select("canonical_url")
         .eq("is_active", true)
-        .like("canonical_url", `https://github.com/${owner}/${repo}%`);
+        .or(`canonical_url.like.https://github.com/${owner}/${repo},canonical_url.like.https://github.com/${owner}/${repo}/%`);
       if (data) {
         for (const row of data) {
           if (row.canonical_url) matchedUrls.add(row.canonical_url);
@@ -484,21 +491,56 @@ export async function syncVerifiedCreatorClaimToFeedItems(
   }
 
   if (scope === "platform_profile" && scopeKey) {
-    // platform_profile:<platform>:<handle> — match feed items where publisher matches handle
+    // platform_profile:<platform>:<handle> — parse canonical_url for matching profile handle
     const parts = scopeKey.split(":");
     if (parts.length >= 3) {
+      const platform = parts[1];
       const handle = parts.slice(2).join(":");
-      const { data } = await db
-        .from("paylabs_feed_items")
-        .select("canonical_url")
-        .eq("is_active", true)
-        .ilike("author_name", handle);
-      if (data) {
-        for (const row of data) {
-          if (row.canonical_url) matchedUrls.add(row.canonical_url);
+      // Match by parsing canonical_url — platform-specific patterns
+      if (platform === "x" || platform === "twitter") {
+        // x.com/<handle> or twitter.com/<handle>
+        const { data } = await db
+          .from("paylabs_feed_items")
+          .select("canonical_url")
+          .eq("is_active", true)
+          .or(`canonical_url.like.https://x.com/${handle},canonical_url.like.https://twitter.com/${handle},canonical_url.like.https://x.com/${handle}/%,canonical_url.like.https://twitter.com/${handle}/%`);
+        if (data) {
+          for (const row of data) {
+            if (row.canonical_url) matchedUrls.add(row.canonical_url);
+          }
+        }
+      } else if (platform === "youtube") {
+        // youtube.com/@handle or youtube.com/channel/<id>
+        const { data } = await db
+          .from("paylabs_feed_items")
+          .select("canonical_url")
+          .eq("is_active", true)
+          .or(`canonical_url.like.https://youtube.com/@${handle},canonical_url.like.https://www.youtube.com/@${handle},canonical_url.like.https://youtube.com/@${handle}/%,canonical_url.like.https://www.youtube.com/@${handle}/%`);
+        if (data) {
+          for (const row of data) {
+            if (row.canonical_url) matchedUrls.add(row.canonical_url);
+          }
+        }
+      } else if (platform === "medium") {
+        // medium.com/@handle
+        const { data } = await db
+          .from("paylabs_feed_items")
+          .select("canonical_url")
+          .eq("is_active", true)
+          .or(`canonical_url.like.https://medium.com/@${handle},canonical_url.like.https://medium.com/@${handle}/%`);
+        if (data) {
+          for (const row of data) {
+            if (row.canonical_url) matchedUrls.add(row.canonical_url);
+          }
         }
       }
     }
+  }
+
+  if (scope === "exact_url") {
+    // Exact URL: only match the exact canonical_url or source_url
+    if (claim.canonical_url) matchedUrls.add(claim.canonical_url);
+    if (claim.source_url) matchedUrls.add(claim.source_url);
   }
 
   const totalMatched = matchedUrls.size;
@@ -506,10 +548,9 @@ export async function syncVerifiedCreatorClaimToFeedItems(
     return { matched: 0, updated: 0 };
   }
 
-  // Update matching feed items — safe partial update
   const urlArray = [...matchedUrls];
 
-  // First: set creator_wallet, is_monetized, claim_status on all matched items
+  // Update matching feed items: set creator_wallet, is_monetized, claim_status only
   const { data: updatedRows, error: updateError } = await db
     .from("paylabs_feed_items")
     .update({
@@ -522,26 +563,9 @@ export async function syncVerifiedCreatorClaimToFeedItems(
     .select("canonical_url");
 
   if (updateError) {
-    throw new Error(`syncVerifiedCreatorClaimToFeedItems: update failed: ${updateError.message}`);
+    throw new Error(`syncVerifiedCreatorClaimToFeedItems: update failed for claim ${idPrefix}: ${updateError.message}`);
   }
 
   const updatedCount = updatedRows?.length ?? 0;
-
-  // Second: set default prices only where null or 0 (do not overwrite non-zero prices)
-  if (updatedCount > 0) {
-    // For safety, update items where price is 0 — these are the default/unset items
-    try {
-      await db
-        .from("paylabs_feed_items")
-        .update({ price_per_citation_usdc: 0.001, price_per_unlock_usdc: 0.01 })
-        .in("canonical_url", urlArray)
-        .eq("is_active", true)
-        .eq("price_per_citation_usdc", 0)
-        .select("canonical_url");
-    } catch {
-      // Non-critical: prices stay at 0 if this fails
-    }
-  }
-
   return { matched: totalMatched, updated: updatedCount };
 }

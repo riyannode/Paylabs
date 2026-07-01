@@ -914,13 +914,13 @@ export async function POST(req: NextRequest) {
         canonical_url: typedClaim.canonical_url,
       });
       console.log("[creator-verify] feed sync after verification", {
-        claim_id: typedClaim.id,
+        claim_id: typedClaim.id.slice(0, 8),
         matched: syncResult.matched,
         updated: syncResult.updated,
       });
     } catch (syncError) {
       console.error("[creator-verify] feed sync failed (non-blocking)", {
-        claim_id: typedClaim.id,
+        claim_id: typedClaim.id.slice(0, 8),
         error: syncError instanceof Error ? syncError.message : String(syncError),
       });
     }
