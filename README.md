@@ -1,6 +1,6 @@
 # PayLabs
 
-AI search where every action is budgeted, paid via x402 on Arc/Circle, and receipt-backed.
+AI search and crawler built with langgraph/langchain runtime, paid via x402 on Arc/Circle, and receipt-backed.
 
 Users ask a question, set a USDC budget, connect a wallet, sign one x402 entry payment, and get an AI answer with source context, creator payouts, and a receipt.
 
@@ -44,11 +44,10 @@ Three layers separate concerns:
 
 Auto-tier: Brain selects optimal tier via a two-step preflight (route-preflight → execute-locked).
 
-## Wallets
+## Walet
+**UCW (User-Controlled Wallet)** — For creator. Social login, email OTP, PIN flow. User signs x402 entry payments. Circle W3S Web SDK in browser.
 
-**UCW (User-Controlled Wallet)** — production default. Social login, email OTP, PIN flow. User signs x402 entry payments. Circle W3S Web SDK in browser.
-
-**DCW (Developer-Controlled Wallet)** — server-side alternative. Google OAuth + email OTP + passkey auth. Wallet created via Circle DCW SDK. Paid runs execute synchronously in-request.
+**DCW (Developer-Controlled Wallet)** — For user. Google OAuth + email OTP + passkey auth. Wallet created via Circle DCW SDK. Paid runs execute synchronously in-request.
 
 ## Auth
 
