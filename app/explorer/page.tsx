@@ -70,6 +70,41 @@ async function safeSum(
     return 0;
   }
 }
+// ─── Payout Ledger ──────────────────────────────────────────
+
+async function getCreatorPaidUsdc(): Promise<number> {
+  const rows = await safeQuery<any>(() =>
+    supabaseAdmin()
+      .from("paylabs_payout_ledger")
+      .select("amount_usdc")
+      .eq("payout_type", "creator_share")
+      .in("status", ["paid", "gateway_accepted"])
+      .limit(1000)
+  );
+  return rows.reduce((s, r) => s + Number(r.amount_usdc || 0), 0);
+}
+
+async function getTreasuryUnallocatedUsdc(): Promise<number> {
+  const unalloc = await safeQuery<any>(() =>
+    supabaseAdmin()
+      .from("paylabs_payout_ledger")
+      .select("amount_usdc")
+      .eq("payout_type", "unallocated_reserve")
+      .eq("status", "skipped")
+      .limit(1000)
+  );
+  const retained = await safeQuery<any>(() =>
+    supabaseAdmin()
+      .from("paylabs_payout_ledger")
+      .select("amount_usdc")
+      .eq("payout_type", "treasury_retained")
+      .limit(1000)
+  );
+  return [...unalloc, ...retained].reduce(
+    (s, r) => s + Number(r.amount_usdc || 0),
+    0
+  );
+}
 
 function timeAgo(dateStr: string): string {
   const d = new Date(dateStr);
@@ -91,6 +126,9 @@ export default async function DashboardPage() {
     receiptCount,
     lastTxRow,
     totalSettledUsdc,
+    // Payout ledger
+    creatorPaidUsdc,
+    treasuryUnallocatedUsdc,
   ] = await Promise.all([
     // x402 Service Payments
     getRecentX402Payments(50),
@@ -101,6 +139,9 @@ export default async function DashboardPage() {
     getLastTx(),
     // Total settled USDC
     safeSum("paylabs_receipts", "actual_settled_usdc"),
+    // Payout ledger aggregations
+    getCreatorPaidUsdc(),
+    getTreasuryUnallocatedUsdc(),
   ]);
 
   // ─── User stats (unique wallets) ───
@@ -172,6 +213,9 @@ export default async function DashboardPage() {
               );
             })(),
           },
+          // Payout ledger KPIs
+          { label: "Paid to Creators", value: usdc(creatorPaidUsdc) },
+          { label: "Treasury / Unallocated", value: usdc(treasuryUnallocatedUsdc) },
         ].map((kpi) => (
           <div className="card" key={kpi.label}>
             <div className="muted" style={{ fontSize: 13 }}>
@@ -257,9 +301,6 @@ export default async function DashboardPage() {
           </div>
         )}
       </section>
-
-
-
 
     </div>
     </>

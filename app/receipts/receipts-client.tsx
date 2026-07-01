@@ -148,7 +148,7 @@ function CreatorsSection({ detail }: { detail: ReceiptDetail }) {
         <div className="pl-safe-empty">
           <p>No eligible creator payout</p>
           <span>Creator Cut: {formatUsdc(detail.actualCreatorPaidUsdc)}</span>
-          <span>Reserve: {formatUsdc(detail.pendingCreatorReserveUsdc)}</span>
+          <span>Treasury / Unallocated: {formatUsdc(detail.pendingCreatorReserveUsdc)}</span>
         </div>
       ) : (
         <div className="pl-receipt-rows">
