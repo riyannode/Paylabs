@@ -425,6 +425,43 @@ export default function CreatorProfileClient() {
           </div>
         </div>
       </section>
+
+      {/* All Registered Sources */}
+      {claims.length > 1 && (
+        <section className="card" style={{ display: "grid", gap: 12 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 700 }}>All Registered Sources</h2>
+          <p className="muted" style={{ fontSize: 13 }}>
+            You have {claims.length} registered sources. Showing active claim above; full roster is on the{" "}
+            <a href="/creator-dashboard" style={{ fontWeight: 600 }}>Creator Dashboard</a>.
+          </p>
+          <div style={{ display: "grid", gap: 8 }}>
+            {claims.map((claim) => (
+              <div
+                key={claim.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "8px 12px",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  fontSize: 13,
+                  gap: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
+                  <span style={{ fontWeight: 600, wordBreak: "break-all" }}>{claim.source_url ?? "(unknown)"}</span>
+                  <span className="muted" style={{ fontSize: 11 }}>
+                    {platformLabel(claim.source_platform)} · {scopeLabel(claim)}
+                  </span>
+                </div>
+                <span style={statusStyle(claim.claim_status)}>{statusLabel(claim.claim_status)}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

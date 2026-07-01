@@ -408,3 +408,140 @@ export async function resolveCreatorClaimsBatch(
 
   return result;
 }
+
+// ─── Post-Verification Feed Item Sync ──────────────────────────
+
+export interface SyncFeedItemsResult {
+  matched: number;
+  updated: number;
+}
+
+/**
+ * After a claim is verified, update existing matching feed items
+ * to set creator_wallet, is_monetized, and claim_status.
+ *
+ * Safe behavior:
+ * - Only updates existing rows (never creates synthetic feed items)
+ * - Only runs for verified claims
+ * - Does not overwrite non-zero prices
+ * - Returns summary; throws only on DB errors (caller catches)
+ */
+export async function syncVerifiedCreatorClaimToFeedItems(
+  claim: { id: string; creator_wallet: string; claim_status: string; claim_scope: string | null; claim_scope_key: string | null; source_url: string | null; source_domain: string | null; canonical_url: string | null },
+): Promise<SyncFeedItemsResult> {
+  if (claim.claim_status !== "verified") {
+    return { matched: 0, updated: 0 };
+  }
+
+  const db = supabaseAdmin();
+  const wallet = claim.creator_wallet.toLowerCase();
+  const scope = claim.claim_scope;
+  const scopeKey = claim.claim_scope_key;
+
+  // Build list of canonical_urls to match
+  const matchedUrls = new Set<string>();
+
+  // Strategy 1: Match by domain column (fast, indexed)
+  if (claim.source_domain) {
+    const { data } = await db
+      .from("paylabs_feed_items")
+      .select("canonical_url")
+      .eq("domain", claim.source_domain)
+      .eq("is_active", true);
+    if (data) {
+      for (const row of data) {
+        if (row.canonical_url) matchedUrls.add(row.canonical_url);
+      }
+    }
+  }
+
+  // Strategy 2: Exact canonical_url match (for exact_url scope)
+  if (scope === "exact_url" && claim.canonical_url) {
+    matchedUrls.add(claim.canonical_url);
+  }
+  if (claim.source_url) {
+    matchedUrls.add(claim.source_url);
+  }
+
+  // Strategy 3: Parse-based matching for scopes where domain column may not align
+  // This handles github_repo, platform_profile, and host scopes
+  if (scope === "github_repo" && scopeKey) {
+    // github_repo:<owner>/<repo> — match feed items on github.com with same owner/repo
+    const parts = scopeKey.replace("github_repo:", "").split("/");
+    if (parts.length === 2) {
+      const [owner, repo] = parts;
+      const { data } = await db
+        .from("paylabs_feed_items")
+        .select("canonical_url")
+        .eq("is_active", true)
+        .like("canonical_url", `https://github.com/${owner}/${repo}%`);
+      if (data) {
+        for (const row of data) {
+          if (row.canonical_url) matchedUrls.add(row.canonical_url);
+        }
+      }
+    }
+  }
+
+  if (scope === "platform_profile" && scopeKey) {
+    // platform_profile:<platform>:<handle> — match feed items where publisher matches handle
+    const parts = scopeKey.split(":");
+    if (parts.length >= 3) {
+      const handle = parts.slice(2).join(":");
+      const { data } = await db
+        .from("paylabs_feed_items")
+        .select("canonical_url")
+        .eq("is_active", true)
+        .ilike("author_name", handle);
+      if (data) {
+        for (const row of data) {
+          if (row.canonical_url) matchedUrls.add(row.canonical_url);
+        }
+      }
+    }
+  }
+
+  const totalMatched = matchedUrls.size;
+  if (totalMatched === 0) {
+    return { matched: 0, updated: 0 };
+  }
+
+  // Update matching feed items — safe partial update
+  const urlArray = [...matchedUrls];
+
+  // First: set creator_wallet, is_monetized, claim_status on all matched items
+  const { data: updatedRows, error: updateError } = await db
+    .from("paylabs_feed_items")
+    .update({
+      creator_wallet: wallet,
+      is_monetized: true,
+      claim_status: "claimed",
+    })
+    .in("canonical_url", urlArray)
+    .eq("is_active", true)
+    .select("canonical_url");
+
+  if (updateError) {
+    throw new Error(`syncVerifiedCreatorClaimToFeedItems: update failed: ${updateError.message}`);
+  }
+
+  const updatedCount = updatedRows?.length ?? 0;
+
+  // Second: set default prices only where null or 0 (do not overwrite non-zero prices)
+  if (updatedCount > 0) {
+    // For safety, update items where price is 0 — these are the default/unset items
+    try {
+      await db
+        .from("paylabs_feed_items")
+        .update({ price_per_citation_usdc: 0.001, price_per_unlock_usdc: 0.01 })
+        .in("canonical_url", urlArray)
+        .eq("is_active", true)
+        .eq("price_per_citation_usdc", 0)
+        .select("canonical_url");
+    } catch {
+      // Non-critical: prices stay at 0 if this fails
+    }
+  }
+
+  return { matched: totalMatched, updated: updatedCount };
+}
