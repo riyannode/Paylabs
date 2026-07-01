@@ -28,6 +28,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import {
   isDelegatedRuntimeEnabled,
   isDelegatedInlineExecutionEnabled,
+  isAutoTierPreflightEnabled,
 } from "@/lib/paylabs/feature-flags";
 import { isValidExternalTier, DEFAULT_EXTERNAL_TIER } from "@/lib/paylabs/route-tier";
 import type { ExternalRouteTier } from "@/lib/paylabs/route-tier";
@@ -856,6 +857,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { ok: false, error: "budget_usdc must be positive" },
       { status: 400 }
+    );
+  }
+
+  // ── Fail closed: auto-tier requires preflight when flag is ON ──
+  if (isAutoTierPreflightEnabled() && routeTier === ("auto" as unknown as ExternalRouteTier)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "auto_tier_requires_preflight",
+        message:
+          "route_tier:auto must use the route-preflight + execute-locked flow. Use /api/paylabs/dcw/run-paid or send an explicit tier.",
+      },
+      { status: 400 },
     );
   }
 
