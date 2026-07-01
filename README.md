@@ -1,6 +1,6 @@
 # PayLabs
 
-AI search and crawler built with langgraph/langchain runtime, paid via x402 on Arc/Circle, and receipt-backed.
+AI search and crawler built with langgraph/langchain runtime, paid via x402 on Arc/Circle, receipt-backed and creator monetization
 
 Users ask a question, set a USDC budget, connect a wallet, sign one x402 entry payment, and get an AI answer with source context, creator payouts, and a receipt.
 
