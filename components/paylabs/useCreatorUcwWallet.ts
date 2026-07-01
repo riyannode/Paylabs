@@ -41,7 +41,7 @@ function getCreatorUcwRedirectUri(): string {
     window.location.origin;
 
   const origin = new URL(configuredOrigin).origin;
-  return `${origin}/creator-dashboard`;
+  return `${origin}/creator-profile`;
 }
 
 type GoogleLoginConfigInput = {

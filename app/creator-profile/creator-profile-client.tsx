@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import CreatorWalletPanel from "@/components/paylabs/CreatorWalletPanel";
 
 type ClaimStatus = "unclaimed" | "verified" | "rejected" | "revoked" | "unknown";
 type ProofStatus = "not_started" | "pending" | "verified" | "failed" | "manual_required";
@@ -248,23 +249,16 @@ export default function CreatorProfileClient() {
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      {/* Step 1: Wallet */}
-      <section className="card" style={{ display: "grid", gap: 12 }}>
-        <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-          <div style={{ fontSize: 24, fontWeight: 700, color: "var(--muted)" }}>1</div>
-          <div style={{ display: "grid", gap: 6 }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700 }}>Creator Wallet</h2>
-            {loading ? (
-              <p className="muted" style={{ fontSize: 13 }}>Checking creator wallet session…</p>
-            ) : walletAddress ? (
-              <p style={{ fontSize: 14 }}>Connected UCW creator wallet: <strong>{shortAddress(walletAddress)}</strong></p>
-            ) : (
-              <p className="muted" style={{ fontSize: 14 }}>
-                Connect your Creator Wallet first from <a href="/creator-dashboard" style={{ fontWeight: 700 }}>Creator Dashboard</a>.
-              </p>
-            )}
-          </div>
+      {/* Step 1: Wallet — full interactive panel */}
+      <section className="pl-creator-wallet-card">
+        <div className="pl-creator-wallet-card-header">
+          <div style={{ fontSize: 22, fontWeight: 700, color: "var(--muted)" }}>1</div>
+          <h2>Creator Wallet</h2>
         </div>
+        <p className="pl-creator-wallet-card-sub">
+          Connect your Creator Wallet to register and verify your sources.
+        </p>
+        <CreatorWalletPanel />
       </section>
 
       {/* Step 2: Claim Source */}
