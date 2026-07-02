@@ -1,6 +1,7 @@
 "use client";
 
 import PayLabsNavLinks from "./PayLabsNavLinks";
+import PayLabsBrandLogo from "./PayLabsBrandLogo";
 
 type Analytics = {
   uniqueUsers: number;
@@ -15,11 +16,10 @@ type Props = {
 export default function SidebarPanel({ analytics }: Props) {
   return (
     <aside className="pl-sidebar">
-      <div className="pl-brand">PayLabs</div>
+      <PayLabsBrandLogo />
 
       <PayLabsNavLinks />
 
-      {/* User Analytics */}
       <section className="pl-side-card">
         <div className="pl-side-title">User Analytics</div>
         <div className="pl-metrics">
