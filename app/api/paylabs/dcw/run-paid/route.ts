@@ -254,7 +254,7 @@ export async function POST(req: NextRequest) {
         recoverResultById: async (runId: string) => {
           const { data: run } = await supabaseAdmin()
             .from("paylabs_discovery_runs")
-            .select("id, status, final_answer, route_tier, effective_route_tier, brain_route_tier_hint, agent_trace, source_snapshot, error_summary")
+            .select("id, status, final_answer, route_tier, effective_route_tier, brain_route_tier_hint, agent_trace, source_snapshot, error_summary, receipt_ready, entry_payment_status, entry_payment_amount_usdc, entry_payment_tx_hash, entry_payment_explorer_url, entry_payment_settlement_id, entry_payment_batch_tx_hash, entry_payment_batch_explorer_url")
             .eq("id", runId)
             .single();
           if (!run) return null;
@@ -267,12 +267,36 @@ export async function POST(req: NextRequest) {
             discovery_run_id: run.id,
             final_answer: run.final_answer || sourceSnapshot.final_answer || agentTrace.final_answer || null,
             brain_planning: agentTrace.brain_planning || null,
+            _brain_diag: agentTrace._brain_diag || null,
             effective_route_tier: run.effective_route_tier || run.route_tier,
+            route_tier: run.effective_route_tier || run.route_tier,
             brain_route_tier_hint: run.brain_route_tier_hint,
-            source_context: sourceSnapshot.source_context || agentTrace.source_context || null,
+            payment_plan: agentTrace.payment_plan || null,
             payment_graph: agentTrace.payment_graph || null,
+            safe_progress_summaries: agentTrace.safe_progress_summaries || null,
+            budget_snapshot: agentTrace.budget_snapshot || null,
+            tiered_summaries: agentTrace.tiered_summaries || null,
+            source_context: sourceSnapshot.source_context || agentTrace.source_context || null,
             quote: agentTrace.quote || null,
             exit_output: agentTrace.exit_output || null,
+            entry_payment: {
+              status: run.entry_payment_status || "paid",
+              amount_usdc: run.entry_payment_amount_usdc || null,
+              tx_hash: run.entry_payment_tx_hash || null,
+              explorer_url: run.entry_payment_explorer_url || null,
+              settlement_id: run.entry_payment_settlement_id || null,
+              batch_tx_hash: run.entry_payment_batch_tx_hash || null,
+              batch_explorer_url: run.entry_payment_batch_explorer_url || null,
+            },
+            entry_payment_explorer_url: run.entry_payment_explorer_url || null,
+            entry_payment_batch_explorer_url: run.entry_payment_batch_explorer_url || null,
+            entry_payment_settlement_id: run.entry_payment_settlement_id || null,
+            entry_payment_batch_resolver_url: null,
+            receipt_ready: run.receipt_ready ?? true,
+            settled: run.status === "completed" || run.status === "paid_path_available",
+            mode: "x402",
+            error: run.error_summary || null,
+            visibility_error: null,
             _recovered: true,
             _recovery_source: "supabase_poll",
           };

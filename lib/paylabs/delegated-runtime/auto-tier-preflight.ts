@@ -17,6 +17,8 @@
 import type { DelegatedRouteTier, ExecutionPlan } from "./types";
 import type { DelegatedRunQuote } from "./quote-engine";
 import { getTierMacroAllocations } from "./node-registry";
+import type { DcwSigner } from "@/lib/paylabs/x402/buyer-transport";
+import type { SafeBrainLlmDiag, SafeBrainPaymentMeta } from "./paid-brain-planner";
 
 type RequestedPreflightRouteTier = "auto" | "easy" | "normal" | "advanced";
 
@@ -59,6 +61,10 @@ export interface RoutePreflightResult {
   finalEntryPaymentUsdc: number;
   /** Safe Brain reasoning fields (no raw LLM, no secrets) */
   safeBrainFields: RoutePreflightBrainFields;
+  /** Safe Brain LLM diagnostics from /api/paylabs/brain/run */
+  brainLlmDiag: SafeBrainLlmDiag | null;
+  /** Safe Brain x402 payment metadata (controller→brain edge) */
+  brainPaymentMeta: SafeBrainPaymentMeta | null;
 }
 
 /**
@@ -126,6 +132,8 @@ export interface RoutePreflightTraceData {
   locked_selected_services: string[];
   locked_expected_payment_edges: number;
   brain_fields: RoutePreflightBrainFields;
+  brain_llm_diag: SafeBrainLlmDiag | null;
+  brain_payment: SafeBrainPaymentMeta | null;
   routing_payment: RoutePreflightPaymentMeta;
   preflight_completed_at: string;
 }
@@ -254,18 +262,18 @@ export async function runRouteOnlyBrainPreflight(params: {
   userBudgetUsdc: number;
   userWallet: string;
   requestedRouteTier?: RequestedPreflightRouteTier;
+  dcwSigner: DcwSigner;
 }): Promise<RoutePreflightResult> {
-  const { discoveryRunId, userGoal, userBudgetUsdc, userWallet, requestedRouteTier = "auto" } = params;
+  const { discoveryRunId, userGoal, userBudgetUsdc, userWallet, requestedRouteTier = "auto", dcwSigner } = params;
 
-  // ── Step 1: Run Brain LLM planner (plan-only, no payments) ──
-  const { runBrainPlannerGraph } = await import(
-    "../langgraph/brain/brain-planner-graph"
-  );
+  // ── Step 1: Call Brain LLM through Circle x402 seller (parity with old inline) ──
+  const { callPaidBrainPlanner } = await import("./paid-brain-planner");
 
-  const brainResult = await runBrainPlannerGraph({
+  const brainResult = await callPaidBrainPlanner({
+    dcwSigner,
     discoveryRunId,
     userGoal,
-    routeTier: requestedRouteTier as unknown as import("./types").DelegatedRouteTier,
+    routeTier: requestedRouteTier,
     userBudgetUsdc,
     userWallet,
   });
@@ -275,7 +283,30 @@ export async function runRouteOnlyBrainPreflight(params: {
     throw new Error(`route_preflight_brain_failed: ${errMsg}`);
   }
 
-  const bp = brainResult.brainPlanning;
+  const bp = brainResult.brainPlanning as {
+    route_tier_hint?: string;
+    normalized_goal?: string;
+    discovery_strategy?: string;
+    suggested_query_variants?: string[];
+    service_execution_plan?: string[];
+    safe_brain_summary?: string;
+    assistant_response?: string;
+    user_visible_reasoning?: string;
+    tier_decision_reason?: string;
+    plan_rationale?: string;
+    selected_macro_nodes?: string[];
+    selected_services?: string[];
+    max_registry_checks?: number;
+    max_source_accesses?: number;
+    planned_cost_usdc?: number;
+    planned_cost_breakdown?: {
+      brain_treasury_usdc: number;
+      macro_node_fees_usdc: number;
+      service_edge_fees_usdc: number;
+      registry_check_fees_usdc: number;
+      source_access_fees_usdc: number;
+    };
+  };
 
   // ── Step 2: Resolve tier ──
   let selectedTier: import("./types").DelegatedRouteTier;
@@ -370,5 +401,7 @@ export async function runRouteOnlyBrainPreflight(params: {
     expectedInternalX402RoutingUsdc,
     finalEntryPaymentUsdc,
     safeBrainFields,
+    brainLlmDiag: brainResult.brainLlmDiag,
+    brainPaymentMeta: brainResult.brainPaymentMeta,
   };
 }

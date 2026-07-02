@@ -395,6 +395,8 @@ export async function POST(req: NextRequest) {
     const finalEntryPaymentUsdc = Number(preflight.final_entry_payment_usdc);
     const brainFields = preflight.brain_fields as Record<string, unknown>;
     const routingPayment = preflight.routing_payment as Record<string, unknown>;
+    const brainPayment = preflight.brain_payment as Record<string, unknown> | null;
+    const brainLlmDiag = preflight.brain_llm_diag as Record<string, unknown> | null;
 
     // Reconstruct safe brain planning from preflight brain_fields (full parity with inline)
     const safeBrainPlanning = brainFields
@@ -609,6 +611,53 @@ export async function POST(req: NextRequest) {
       buildOutput: buildLockedOutput,
     });
 
+    // ── Prepend controller→brain edge (execution parity with old inline) ──
+    // Old inline payment graph: controller → brain → macro-node → child service
+    // Locked orchestration starts at brain → macro-node. We prepend the brain edge
+    // from preflight brain_payment metadata so the canonical graph is complete.
+    if (brainPayment) {
+      const brainEdge = {
+        edge_id: `brain-${discoveryRunId}`,
+        buyer: "run_budget_controller",
+        seller: "brain",
+        amount_usdc: Number(brainPayment.amount_usdc) || 0.000003,
+        status: "paid",
+        node_type: "brain",
+        tx_hash: (brainPayment.tx_hash as string) ?? null,
+        explorer_url: (brainPayment.explorer_url as string) ?? null,
+        settlement_id: (brainPayment.settlement_id as string) ?? null,
+        settlement_url: (brainPayment.settlement_url as string) ?? null,
+        batch_tx_hash: (brainPayment.batch_tx_hash as string) ?? null,
+        batch_explorer_url: (brainPayment.batch_explorer_url as string) ?? null,
+        batch_resolver_url: (brainPayment.batch_resolver_url as string) ?? null,
+        gateway_accepted: (brainPayment.gateway_accepted as boolean) ?? true,
+        transfer_status: (brainPayment.transfer_status as string) ?? null,
+        error: null,
+        mode: (brainPayment.mode as string) ?? "x402",
+      };
+      // Prepend to result.paymentGraph (mutable push + unshift)
+      result.paymentGraph.unshift({
+        edgeId: brainEdge.edge_id,
+        buyer: brainEdge.buyer,
+        seller: brainEdge.seller,
+        amountUsdc: brainEdge.amount_usdc,
+        status: "paid",
+        nodeType: "brain",
+        paymentRef: null,
+        txHash: brainEdge.tx_hash,
+        explorerUrl: brainEdge.explorer_url,
+        settlementId: brainEdge.settlement_id,
+        settlementUrl: brainEdge.settlement_url,
+        batchTxHash: brainEdge.batch_tx_hash,
+        batchExplorerUrl: brainEdge.batch_explorer_url,
+        batchResolverUrl: brainEdge.batch_resolver_url,
+        gatewayAccepted: brainEdge.gateway_accepted,
+        transferStatus: brainEdge.transfer_status as PaymentGraphEdge["transferStatus"],
+        error: null,
+        mode: brainEdge.mode,
+      } as PaymentGraphEdge);
+    }
+
     // ── Store orchestration result ──────────────────────────
     const completedAt = new Date().toISOString();
     const newStatus = result.status === "completed"
@@ -639,16 +688,46 @@ export async function POST(req: NextRequest) {
           execution_mode: "x402_locked_orchestration",
           x402_enabled: true,
           phases_completed: result.phasesCompleted,
+          _brain_diag: brainLlmDiag
+            ? {
+                error_code: brainLlmDiag.error_code ?? null,
+                error_safe: brainLlmDiag.error_safe ?? null,
+                provider: brainLlmDiag.provider ?? "unknown",
+                model: brainLlmDiag.model ?? "unknown",
+                agent_name: brainLlmDiag.agent_name ?? "unknown",
+                mode: brainLlmDiag.mode ?? "unknown",
+                max_tokens: brainLlmDiag.max_tokens ?? null,
+                timeout_ms: brainLlmDiag.timeout_ms ?? null,
+                streaming: brainLlmDiag.streaming ?? null,
+                force_non_streaming_body: brainLlmDiag.force_non_streaming_body ?? null,
+                json_found: brainLlmDiag.json_found ?? null,
+                parse_ok: brainLlmDiag.parse_ok ?? null,
+                validation_ok: brainLlmDiag.validation_ok ?? null,
+                received_keys: brainLlmDiag.received_keys ?? null,
+                expected_keys: brainLlmDiag.expected_keys ?? null,
+                validation_issue_paths: brainLlmDiag.validation_issue_paths ?? null,
+                content_type: brainLlmDiag.content_type ?? null,
+                content_length: brainLlmDiag.content_length ?? null,
+                safe_error: brainLlmDiag.safe_error ?? null,
+              }
+            : null,
           brain_planning: safeBrainPlanning,
           payment_graph: result.paymentGraph.map((e) => ({
+            edge_id: e.edgeId,
             buyer: e.buyer,
             seller: e.seller,
-            node_type: e.nodeType,
+            amount_usdc: e.amountUsdc,
             status: e.status,
+            node_type: e.nodeType,
             tx_hash: e.txHash ?? null,
             explorer_url: e.explorerUrl ?? null,
             settlement_id: e.settlementId ?? null,
+            settlement_url: e.settlementUrl ?? null,
+            batch_tx_hash: e.batchTxHash ?? null,
+            batch_explorer_url: e.batchExplorerUrl ?? null,
+            batch_resolver_url: e.batchResolverUrl ?? null,
             gateway_accepted: e.gatewayAccepted ?? (e.status === "paid"),
+            transfer_status: e.transferStatus ?? null,
             error: e.error ?? null,
             mode: e.mode ?? null,
           })),
@@ -765,21 +844,6 @@ export async function POST(req: NextRequest) {
       preflight_routing_payment: routingPayment,
       final_entry_payment: finalPaymentMeta,
       user_cost_usdc: Number(preflight.routing_fee_usdc || 0) + finalEntryPaymentUsdc,
-      // Internal payment graph
-      entry_payment: {
-        status: "paid",
-        amount_usdc: finalEntryPaymentUsdc,
-        tx_hash: finalPaymentMeta.tx_hash,
-        explorer_url: finalPaymentMeta.explorer_url,
-        settlement_id: finalPaymentMeta.settlement_id,
-        batch_tx_hash: finalPaymentMeta.batch_tx_hash,
-        batch_explorer_url: finalPaymentMeta.batch_explorer_url,
-        gateway_accepted: finalPaymentMeta.gateway_accepted,
-        customer_wallet: resolvedWallet,
-        customer_wallet_type: "circle_developer_controlled",
-      },
-      entry_payment_explorer_url: finalPaymentMeta.explorer_url,
-      entry_payment_batch_explorer_url: finalPaymentMeta.batch_explorer_url,
       locked_execution_plan: {
         selected_macro_nodes: lockedPlan.selectedMacroNodes,
         selected_services: lockedPlan.selectedServices,
@@ -787,26 +851,59 @@ export async function POST(req: NextRequest) {
         planned_cost_breakdown: lockedPlan.plannedCostBreakdown,
         locked: true,
       },
-      receipt_ready: exitOutput.receipt_ready && !visibilityError,
-      settled: fullySettled,
-      mode: fullySettled ? "x402" : "x402_failed",
-      error: result.error,
-      visibility_error: visibilityError,
       // Brain planning fields (full parity with old inline Vercel)
+      _brain_diag: brainLlmDiag
+        ? {
+            error_code: brainLlmDiag.error_code ?? null,
+            error_safe: brainLlmDiag.error_safe ?? null,
+            provider: brainLlmDiag.provider ?? "unknown",
+            model: brainLlmDiag.model ?? "unknown",
+            agent_name: brainLlmDiag.agent_name ?? "unknown",
+            mode: brainLlmDiag.mode ?? "unknown",
+            max_tokens: brainLlmDiag.max_tokens ?? null,
+            timeout_ms: brainLlmDiag.timeout_ms ?? null,
+            streaming: brainLlmDiag.streaming ?? null,
+            force_non_streaming_body: brainLlmDiag.force_non_streaming_body ?? null,
+            json_found: brainLlmDiag.json_found ?? null,
+            parse_ok: brainLlmDiag.parse_ok ?? null,
+            validation_ok: brainLlmDiag.validation_ok ?? null,
+            received_keys: brainLlmDiag.received_keys ?? null,
+            expected_keys: brainLlmDiag.expected_keys ?? null,
+            validation_issue_paths: brainLlmDiag.validation_issue_paths ?? null,
+            content_type: brainLlmDiag.content_type ?? null,
+            content_length: brainLlmDiag.content_length ?? null,
+            safe_error: brainLlmDiag.safe_error ?? null,
+          }
+        : null,
+      execution_origin: "vercel_execute_locked",
+      execution_mode: "x402_locked_orchestration",
+      worker_used: false,
+      x402_enabled: true,
+      phases_completed: result.phasesCompleted,
       brain_planning: safeBrainPlanning,
+      payment_plan: result.paymentPlan ?? null,
       payment_graph: result.paymentGraph.map((e) => ({
+        edge_id: e.edgeId,
         buyer: e.buyer,
         seller: e.seller,
-        node_type: e.nodeType,
         amount_usdc: e.amountUsdc,
         status: e.status,
+        node_type: e.nodeType,
         tx_hash: e.txHash ?? null,
         explorer_url: e.explorerUrl ?? null,
         settlement_id: e.settlementId ?? null,
+        settlement_url: e.settlementUrl ?? null,
+        batch_tx_hash: e.batchTxHash ?? null,
+        batch_explorer_url: e.batchExplorerUrl ?? null,
+        batch_resolver_url: e.batchResolverUrl ?? null,
         gateway_accepted: e.gatewayAccepted ?? (e.status === "paid"),
+        transfer_status: e.transferStatus ?? null,
         error: e.error ?? null,
         mode: e.mode ?? null,
       })),
+      safe_progress_summaries: result.safeProgressSummaries,
+      budget_snapshot: result.budgetSnapshot,
+      tiered_summaries: result.tieredSummaries,
       exit_output: exitOutput,
       source_context: result.sourceContext ?? {
         sources_used: exitOutput.sources_used ?? [],
@@ -814,6 +911,42 @@ export async function POST(req: NextRequest) {
         source_confidence: exitOutput.source_confidence ?? 0,
         retrieval_mode: exitOutput.source_retrieval_mode ?? null,
       },
+      source_context_error: null,
+      quote: {
+        routeTier: lockedTier,
+        expectedPaymentEdges: lockedPlan.selectedServices.length + lockedPlan.selectedMacroNodes.length,
+        plannedCostUsdc: lockedPlan.plannedCostUsdc,
+        budgetStatus: "within_budget",
+        macroNodeFeesUsdc: lockedPlan.plannedCostBreakdown.macro_node_fees_usdc,
+        serviceEdgeFeesUsdc: lockedPlan.plannedCostBreakdown.service_edge_fees_usdc,
+        registryCheckFeesUsdc: lockedPlan.plannedCostBreakdown.registry_check_fees_usdc,
+        sourceAccessFeesUsdc: lockedPlan.plannedCostBreakdown.source_access_fees_usdc,
+        locked: true,
+      },
+      receipt_ready: exitOutput.receipt_ready && !visibilityError,
+      settled: fullySettled,
+      mode: fullySettled ? "x402" : "x402_failed",
+      entry_payment: {
+        status: "paid",
+        amount_usdc: finalEntryPaymentUsdc,
+        tx_hash: finalPaymentMeta.tx_hash,
+        explorer_url: finalPaymentMeta.explorer_url,
+        settlement_id: finalPaymentMeta.settlement_id,
+        settlement_url: finalPaymentMeta.settlement_url ?? null,
+        batch_tx_hash: finalPaymentMeta.batch_tx_hash,
+        batch_explorer_url: finalPaymentMeta.batch_explorer_url,
+        batch_resolver_url: finalPaymentMeta.batch_resolver_url ?? null,
+        gateway_accepted: finalPaymentMeta.gateway_accepted,
+        transfer_status: (finalPaymentMeta as Record<string, unknown>).transfer_status ?? null,
+        customer_wallet: resolvedWallet,
+        customer_wallet_type: "circle_developer_controlled",
+      },
+      entry_payment_explorer_url: finalPaymentMeta.explorer_url,
+      entry_payment_batch_explorer_url: finalPaymentMeta.batch_explorer_url,
+      entry_payment_settlement_id: finalPaymentMeta.settlement_id,
+      entry_payment_batch_resolver_url: finalPaymentMeta.batch_resolver_url ?? null,
+      error: result.error,
+      visibility_error: visibilityError,
     });
   } catch (e: unknown) {
     const rawMsg = e instanceof Error ? e.message : String(e);

@@ -333,6 +333,10 @@ export async function POST(req: NextRequest) {
     // ── Payment settled — run route-only Brain preflight ────
     const paymentMeta = buildRoutePreflightPaymentMeta(entryResult);
 
+    // Create DCW signer for Brain x402 call (same as old inline)
+    const { createDcwSigner } = await import("@/lib/paylabs/x402/dcw-signer-adapter");
+    const dcwSigner = createDcwSigner();
+
     let preflightResult;
     try {
       preflightResult = await runRouteOnlyBrainPreflight({
@@ -341,6 +345,7 @@ export async function POST(req: NextRequest) {
         userBudgetUsdc: resolvedBudget,
         userWallet: resolvedWallet,
         requestedRouteTier: resolvedRequestedRouteTier as "auto" | "easy" | "normal" | "advanced",
+        dcwSigner,
       });
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message.slice(0, 300) : String(e).slice(0, 300);
@@ -406,6 +411,8 @@ export async function POST(req: NextRequest) {
       locked_selected_services: lockedExecutionPlan.selectedServices,
       locked_expected_payment_edges: lockedQuote.expectedPaymentEdges,
       brain_fields: safeBrainFields,
+      brain_llm_diag: preflightResult.brainLlmDiag ?? null,
+      brain_payment: preflightResult.brainPaymentMeta ?? null,
       routing_payment: paymentMeta,
       preflight_completed_at: new Date().toISOString(),
     };
