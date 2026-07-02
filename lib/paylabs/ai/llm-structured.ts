@@ -52,7 +52,7 @@ function hashPrompt(prompt: string): string {
 function buildMeta(
   agentName: string,
   routeTier: RouteTier,
-  modelConfig: { provider: string; model: string; baseUrl?: string; apiKeyPresent: boolean; agentKey: string; timeoutMs: number; maxTokens: number; streaming?: boolean; forceNonStreamingBody?: boolean },
+  modelConfig: { provider: string; model: string; baseUrl?: string; apiKeyPresent: boolean; agentKey: string; timeoutMs: number; maxTokens: number; streaming?: boolean; forceNonStreamingBody?: boolean; responseFormatJson?: boolean },
   modelName: string,
   promptHash: string,
   retryCount: number,
@@ -73,6 +73,7 @@ function buildMeta(
     max_tokens: modelConfig.maxTokens,
     streaming: modelConfig.streaming ?? null,
     force_non_streaming_body: modelConfig.forceNonStreamingBody ?? null,
+    response_format_json: modelConfig.responseFormatJson ?? null,
   };
 }
 
@@ -234,13 +235,15 @@ export async function generateStructuredJson<T>(
   }
 
   // Env-configurable max attempts per agent
+  // brain_planner defaults to 3 (critical path — paid request, must retry internally)
+  const defaultMax = agentName === "brain_planner" ? 3 : 1;
   const rawMaxAttempts = Number(
     process.env[`PAYLABS_LLM_MAX_ATTEMPTS_${modelConfig.agentKey}`] ??
     process.env.PAYLABS_LLM_MAX_ATTEMPTS_DEFAULT ??
     process.env.PAYLABS_LLM_MAX_ATTEMPTS ??
-    1
+    defaultMax
   );
-  const maxAttempts = Math.max(1, Math.min(rawMaxAttempts || 1, 3));
+  const maxAttempts = Math.max(1, Math.min(rawMaxAttempts || defaultMax, 3));
 
   // Timeout retry behavior: skip for MiMo unless explicitly enabled
   const retryTimeouts = process.env.PAYLABS_LLM_RETRY_TIMEOUTS === "true";
@@ -303,8 +306,9 @@ export async function generateStructuredJson<T>(
       const result = await (model as ChatOpenAI).invoke(strategyMessages);
       const jsonStr = extractJsonFromResponse(result);
 
-      // Safe diagnostics for brain_planner (gated — no raw output, no secrets)
-      if (agentName === "brain_planner" && process.env.NODE_ENV !== "production") {
+      // Safe diagnostics for brain_planner (no raw output, no secrets)
+      // Always log for brain_planner (critical paid path); other agents gated to non-production
+      if (agentName === "brain_planner" || process.env.NODE_ENV !== "production") {
         const msg = result as unknown as Record<string, unknown>;
         const content = msg?.content as string | unknown;
         const expectedKeys = getExpectedKeys(schema);
@@ -361,7 +365,7 @@ export async function generateStructuredJson<T>(
         }
 
         lastError = "No JSON extractable from LLM response";
-        if (attempt === 0) continue;
+        if (attempt < maxAttempts - 1) continue;
         break;
       }
 
@@ -370,7 +374,7 @@ export async function generateStructuredJson<T>(
         parsedJson = JSON.parse(jsonStr);
       } catch (e: unknown) {
         lastError = `JSON parse failed: ${e instanceof Error ? e.message : String(e)}`;
-        if (attempt === 0) continue;
+        if (attempt < maxAttempts - 1) continue;
         break;
       }
 
@@ -385,8 +389,9 @@ export async function generateStructuredJson<T>(
           }
         } catch { /* ignore */ }
 
-        // Safe validation diagnostics (gated — no raw response, no secrets)
-        if (process.env.NODE_ENV !== "production") {
+        // Safe validation diagnostics (no raw response, no secrets)
+        // Always log for brain_planner; other agents gated to non-production
+        if (agentName === "brain_planner" || process.env.NODE_ENV !== "production") {
           console.log("[llm-structured] Zod validation failed:", {
             provider: modelConfig.provider,
             model: modelName,
@@ -457,7 +462,7 @@ export async function generateStructuredJson<T>(
         }
 
         lastError = `Zod validation failed: ${parsed.error.issues.map(i => i.message).join("; ")}`;
-        if (attempt === 0) continue;
+        if (attempt < maxAttempts - 1) continue;
         break;
       }
 
@@ -475,7 +480,7 @@ export async function generateStructuredJson<T>(
         break;
       }
 
-      if (attempt === 0) continue;
+      if (attempt < maxAttempts - 1) continue;
       break;
     }
   }

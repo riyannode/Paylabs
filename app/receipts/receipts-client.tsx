@@ -157,9 +157,8 @@ function PaymentSection({ detail }: { detail: ReceiptDetail }) {
         {detail.sourceAccessFeesUsdc != null && detail.sourceAccessFeesUsdc > 0 && (
           <div><dt>Source Access</dt><dd>{detail.sourceAccessCount ?? 0} accesses × 0.000001 = {formatUsdc(detail.sourceAccessFeesUsdc)}</dd></div>
         )}
-        {detail.creatorReserveUsdc != null && detail.creatorReserveUsdc > 0 && (
-          <div><dt>Creator Reserve</dt><dd>{formatUsdc(detail.creatorReserveUsdc)}</dd></div>
-        )}
+        <div><dt>Creator Paid</dt><dd>{formatUsdc(detail.actualCreatorPaidUsdc)}</dd></div>
+        <div><dt>Creator Reserve / Treasury Unallocated</dt><dd>{formatUsdc(detail.creatorReserveUsdc ?? 0)}</dd></div>
         {detail.totalPaidUsdc != null && (
           <div className="pl-receipt-total"><dt>Total Paid</dt><dd>{formatUsdc(detail.totalPaidUsdc)}</dd></div>
         )}
@@ -172,29 +171,45 @@ function PaymentSection({ detail }: { detail: ReceiptDetail }) {
 
 function CreatorsSection({ detail }: { detail: ReceiptDetail }) {
   const tier = (detail.selectedTier || "").toLowerCase();
+  const isEasyTier = tier === "easy" || tier === "beginner";
+  const creatorPaid = detail.actualCreatorPaidUsdc ?? 0;
+  const creatorReserve = detail.creatorReserveUsdc ?? 0;
 
   return (
     <section className="pl-receipt-section">
       <h3>Creators</h3>
-      {tier === "easy" || tier === "beginner" ? (
-        <p className="muted">No creator payouts for this tier</p>
-      ) : detail.creators.length === 0 ? (
+      {detail.creators.length === 0 ? (
         <div className="pl-safe-empty">
-          <p>No eligible creator payout</p>
-          <span>Creator Cut: {formatUsdc(detail.actualCreatorPaidUsdc)}</span>
-          <span>Treasury / Unallocated: {formatUsdc(detail.pendingCreatorReserveUsdc)}</span>
+          <p>Verified Creator Payouts: 0</p>
+          <span>Creator Paid: {formatUsdc(creatorPaid)}</span>
+          <span>Treasury / Unallocated: {formatUsdc(creatorReserve)}</span>
+          <p className="muted">
+            {isEasyTier
+              ? creatorReserve === 0
+                ? "No creator reserve is charged for this tier."
+                : "Creator reserve was charged but no verified creator payout was executed; reserve remains unallocated/treasury."
+              : creatorReserve === 0
+                ? "No creator reserve was charged for this run."
+                : "No verified creator payout was executed; reserve remains unallocated/treasury."}
+          </p>
         </div>
       ) : (
-        <div className="pl-receipt-rows">
-          {detail.creators.map((creator) => (
-            <article key={creator.id} className="pl-receipt-row">
-              <strong>{creator.sourceTitle || domainFromUrl(creator.sourceUrl) || "Creator payout"}</strong>
-              <span>{formatUsdc(creator.actualAmountUsdc ?? creator.plannedAmountUsdc)}</span>
-              <span className="muted">{label(creator.status)}{creator.creatorWallet ? ` · ${creator.creatorWallet}` : ""}</span>
-              {creator.safeSummary && <small>{creator.safeSummary}</small>}
-            </article>
-          ))}
-        </div>
+        <>
+          <div className="pl-receipt-rows">
+            {detail.creators.map((creator) => (
+              <article key={creator.id} className="pl-receipt-row">
+                <strong>{creator.sourceTitle || domainFromUrl(creator.sourceUrl) || "Creator payout"}</strong>
+                <span>{formatUsdc(creator.actualAmountUsdc ?? creator.plannedAmountUsdc)}</span>
+                <span className="muted">{label(creator.status)}{creator.creatorWallet ? ` · ${creator.creatorWallet}` : ""}</span>
+                {creator.safeSummary && <small>{creator.safeSummary}</small>}
+              </article>
+            ))}
+          </div>
+          <div className="pl-safe-empty" style={{ marginTop: "0.5rem" }}>
+            <span>Creator Paid: {formatUsdc(creatorPaid)}</span>
+            <span>Treasury / Unallocated: {formatUsdc(creatorReserve)}</span>
+          </div>
+        </>
       )}
       {detail.advancedEvaluatorUsed && (
         <p className="muted pl-receipt-summary">
