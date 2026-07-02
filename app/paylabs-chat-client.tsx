@@ -100,11 +100,15 @@ type RecentChatItem = {
 };
 
 const MAX_RECENT_CHATS = 5;
-const RECENT_CHATS_STORAGE_KEY = "paylabs.recentChats.v1";
+const RECENT_CHATS_STORAGE_PREFIX = "paylabs.recentChats.v1";
 
-function loadRecentChats(): RecentChatItem[] {
+function getRecentChatsKey(walletAddress: string): string {
+  return `${RECENT_CHATS_STORAGE_PREFIX}:${walletAddress.toLowerCase()}`;
+}
+
+function loadRecentChats(walletAddress: string): RecentChatItem[] {
   try {
-    const raw = localStorage.getItem(RECENT_CHATS_STORAGE_KEY);
+    const raw = localStorage.getItem(getRecentChatsKey(walletAddress));
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -125,12 +129,20 @@ function loadRecentChats(): RecentChatItem[] {
   }
 }
 
-function saveRecentChats(chats: RecentChatItem[]): void {
+function saveRecentChats(walletAddress: string, chats: RecentChatItem[]): void {
   try {
     localStorage.setItem(
-      RECENT_CHATS_STORAGE_KEY,
+      getRecentChatsKey(walletAddress),
       JSON.stringify(chats.slice(-MAX_RECENT_CHATS)),
     );
+  } catch {
+    // silent
+  }
+}
+
+function clearRecentChats(walletAddress: string): void {
+  try {
+    localStorage.removeItem(getRecentChatsKey(walletAddress));
   } catch {
     // silent
   }
@@ -497,6 +509,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
             if (restored.length > 0) {
               setMessages((prev) => (prev.length === 0 ? restored : prev));
             }
+            setRecentChats(loadRecentChats(dcwSession.walletAddress));
             return; // DCW session restored
           }
         }
@@ -530,6 +543,8 @@ export default function PayLabsChatClient({ analytics }: Props) {
   // ── Recent Chats upsert (defined before submitChat so it can be used inside) ──
   const upsertRecentChat = useCallback(
     (item: RecentChatItem) => {
+      const addr = walletAddressRef.current;
+      if (!addr) return;
       setRecentChats((prev) => {
         const idx = prev.findIndex((c) => c.id === item.id);
         const next =
@@ -537,17 +552,14 @@ export default function PayLabsChatClient({ analytics }: Props) {
             ? prev.map((c) => (c.id === item.id ? { ...c, ...item } : c))
             : [...prev, item];
         const trimmed = next.slice(-MAX_RECENT_CHATS);
-        saveRecentChats(trimmed);
+        saveRecentChats(addr, trimmed);
         return trimmed;
       });
     },
     [],
   );
 
-  // Restore recent chats on mount
-  useEffect(() => {
-    setRecentChats(loadRecentChats());
-  }, []);
+  // Recent chats load on wallet connect (see DCW session restore + onWalletReady)
 
   const handleUseRecentChat = useCallback(
     (chat: RecentChatItem) => {
@@ -713,9 +725,10 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
   // ── Disconnect wallet ──
   const disconnectWallet = useCallback(() => {
-    // Clear persisted chat history and visible chat before clearing wallet state
+    // Clear persisted chat history and recent chats before clearing wallet state
     if (walletAddressRef.current) {
       clearChatStorage(walletAddressRef.current);
+      clearRecentChats(walletAddressRef.current);
     }
     setMessages([]);
     // Destroy DCW session if exists
@@ -874,6 +887,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
             if (restored.length > 0) {
               setMessages((prev) => (prev.length === 0 ? restored : prev));
             }
+            setRecentChats(loadRecentChats(w.address));
           } catch {
             setWalletState("connected");
           }
