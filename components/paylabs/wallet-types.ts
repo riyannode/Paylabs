@@ -42,5 +42,3 @@ export type PayLabsWalletBalance = {
   source: "ucw" | "dcw" | "external_eoa";
 };
 
-/** @deprecated Use PayLabsWalletBalance instead. Kept for UCW component backward compatibility. */
-export type UcwBalance = PayLabsWalletBalance;
