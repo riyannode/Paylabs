@@ -123,8 +123,6 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   const x402Balance = asDecimal(balance.gatewayUsdc);
   const plannedCostNum = asDecimal(plannedCost);
   const needsTopUp = x402Balance < plannedCostNum;
-  const recommendedTopUp = Math.max(plannedCostNum - x402Balance, plannedCostNum);
-  const recommendedStr = recommendedTopUp > 0 ? recommendedTopUp.toFixed(6) : "0.000001";
   const walletAddress = wallet?.address ?? "";
 
   async function handleCopyWalletAddress() {
@@ -817,7 +815,6 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                     <DcwInfoRow label="Pending Batch" value={`${asDecimal(balance.pendingBatchUsdc).toFixed(6)} USDC`} icon={<ClockIcon />} />
                   )}
 
-                  <DcwInfoRow label="Planned Cost" value={`${plannedCostNum.toFixed(6)} USDC`} icon={<TargetIcon />} />
                 </div>
 
                 {/* Status */}
@@ -864,8 +861,6 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                     icon={<BoltIcon />}
                     value={balance.gatewayUsdc != null ? `${x402Balance.toFixed(6)} USDC` : "Checking…"}
                   />
-                  <DcwInfoRow label="Planned Cost" value={`${plannedCostNum.toFixed(6)} USDC`} icon={<TargetIcon />} />
-                  <DcwInfoRow label="Recommended" value={`${recommendedStr} USDC`} icon={<CheckIcon />} />
                 </div>
 
                 {/* Deposit to Gateway */}
