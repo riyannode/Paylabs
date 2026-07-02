@@ -3,18 +3,13 @@
  */
 
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
-import type { RouteTier } from "@/lib/ai/route-config";
+import { toInternalTier, type InternalRouteTier } from "@/lib/paylabs/route-tier";
 
 /**
  * Convert delegated runtime tier to internal RouteTier.
  * Delegated: easy | normal | advanced
  * Internal: normal | advanced | premium
  */
-export function toInternalRouteTier(tier: DelegatedRouteTier): RouteTier {
-  const map: Record<DelegatedRouteTier, RouteTier> = {
-    easy: "normal",
-    normal: "advanced",
-    advanced: "premium",
-  };
-  return map[tier] || "normal";
+export function toInternalRouteTier(tier: DelegatedRouteTier): InternalRouteTier {
+  return toInternalTier(tier);
 }
