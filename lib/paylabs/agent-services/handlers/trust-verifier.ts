@@ -187,7 +187,7 @@ export const trustVerifierHandler: ServiceHandler = async (
   }
 
   // ── Hybrid or LLM mode: use LLM for risk summary ──
-  const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
+  const { generateStructuredJson } = await import("@/lib/paylabs/ai/llm-structured");
   const { toInternalRouteTier } = await import("./helpers");
 
   const result = await generateStructuredJson<z.infer<typeof TrustVerifierSchema>>({

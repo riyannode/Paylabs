@@ -99,7 +99,7 @@ export async function executeDelegatedDiscoveryRun(
       `Brain planning: strategy="${brainResult.data.discovery_strategy.slice(0, 60)}", ${brainResult.data.service_execution_plan.length} services planned, ${brainResult.data.suggested_query_variants.length} query variants`
     );
   } else {
-    const { isLlmRequired } = await import("@/lib/ai/llm");
+    const { isLlmRequired } = await import("@/lib/paylabs/ai/llm");
     if (isLlmRequired()) {
       markOrchestratorComplete(state, "failed", "Brain planning failed and PAYLABS_LLM_REQUIRED=true");
       addProgressSummary(state, "Brain planning failed — LLM required, orchestrator stopped");

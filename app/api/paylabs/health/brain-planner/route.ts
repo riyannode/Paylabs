@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getTutorModelConfig } from "@/lib/ai/llm";
+import { getTutorModelConfig } from "@/lib/paylabs/ai/llm";
 
 const DEFAULT_GOAL =
   "Compare latest Arc x402 documentation, Circle Gateway documentation, and Circle DCW documentation. Include source-backed citations and receipt expectations.";

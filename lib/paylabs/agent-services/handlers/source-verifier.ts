@@ -197,7 +197,7 @@ export const sourceVerifierHandler: ServiceHandler = async (
   }
 
   // LLM mode
-  const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
+  const { generateStructuredJson } = await import("@/lib/paylabs/ai/llm-structured");
   const { toInternalRouteTier } = await import("./helpers");
 
   const SYSTEM_PROMPT = `You are PayLabs Source Verifier.
