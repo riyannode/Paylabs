@@ -463,7 +463,7 @@ export const signalScoutHandler: ServiceHandler = async (
   }
 
   // ── Step 3: Fallback to DB (live_then_db mode only) ──
-  const { listActiveFeedItems } = await import("@/lib/ai/tools");
+  const { listActiveFeedItems } = await import("@/lib/paylabs/sources/queries");
   const dbMaxItems = Number(process.env.PAYLABS_DB_FALLBACK_MAX_ITEMS) || 200;
   const allActiveRaw = await listActiveFeedItems() as Record<string, unknown>[];
 

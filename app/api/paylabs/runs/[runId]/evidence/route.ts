@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 
 /** PR #74: Mask wallet address for safe display: 0x5502…0e8d */
 function shortWalletMask(value: unknown): string | null {

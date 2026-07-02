@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import { short, usdc } from "@/lib/utils";
 import { hrefFromTx } from "@/lib/paylabs/x402/payment-links";
 import BatchResolverLink from "@/components/paylabs/BatchResolverLink";

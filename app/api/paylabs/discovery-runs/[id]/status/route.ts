@@ -5,7 +5,7 @@
 // Visibility from canonical paylabs_service_payment_events (Circle x402-batching paid edges).
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 
 export async function GET(
   _req: NextRequest,

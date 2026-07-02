@@ -6,7 +6,7 @@
  * Phase 1: monetization gate — only verified+monetized sources pass.
  */
 
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 
 // ─── Read-Only Tools ─────────────────────────────────────────────
 

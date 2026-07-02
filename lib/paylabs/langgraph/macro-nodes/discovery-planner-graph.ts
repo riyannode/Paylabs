@@ -422,7 +422,7 @@ export async function runDiscoveryPlannerGraph(
         });
       } else {
         // DB candidate: enrich via getFeedItemById
-        const { getFeedItemById } = await import("../../../ai/tools");
+        const { getFeedItemById } = await import("@/lib/paylabs/sources/queries");
         const feedItem = (await getFeedItemById(candidate.feed_item_id)) as Record<string, unknown> | null;
         sourceCards.push({
           feed_item_id: candidate.feed_item_id,

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import { getSession, refreshSession } from "@/lib/paylabs/ucw";
 import { canonicalUrlMatchesClaim, type ClaimMatchInput } from "@/lib/paylabs/creator-distribution/claim-resolver";
 
