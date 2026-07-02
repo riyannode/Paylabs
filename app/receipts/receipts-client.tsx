@@ -138,17 +138,11 @@ function PaymentSection({ detail }: { detail: ReceiptDetail }) {
       <h3>Payment</h3>
       <dl>
         <div><dt>Tier</dt><dd>{label(detail.selectedTier)}</dd></div>
-        {detail.userCostUsdc != null && (
-          <div><dt>User Cost</dt><dd>{formatUsdc(detail.userCostUsdc)}</dd></div>
-        )}
-        {detail.routingFeeUsdc != null && detail.routingFeeUsdc > 0 && (
-          <div><dt>Preflight Routing</dt><dd>{formatUsdc(detail.routingFeeUsdc)}</dd></div>
-        )}
-        {detail.finalEntryPaymentUsdc != null && detail.finalEntryPaymentUsdc > 0 && (
-          <div><dt>Final Entry Payment</dt><dd>{formatUsdc(detail.finalEntryPaymentUsdc)}</dd></div>
-        )}
         {detail.brainTreasuryUsdc != null && detail.brainTreasuryUsdc > 0 && (
           <div><dt>Brain Treasury</dt><dd>{formatUsdc(detail.brainTreasuryUsdc)}</dd></div>
+        )}
+        {detail.macroPlusServicesUsdc != null && detail.macroPlusServicesUsdc > 0 && (
+          <div><dt>Agent Services</dt><dd>{formatUsdc(detail.macroPlusServicesUsdc)}</dd></div>
         )}
         {detail.registryCheckFeesUsdc != null && detail.registryCheckFeesUsdc > 0 && (
           <div><dt>Registry Checks</dt><dd>{detail.registryCheckCount ?? 0} checks × 0.000001 = {formatUsdc(detail.registryCheckFeesUsdc)}</dd></div>
@@ -159,18 +153,15 @@ function PaymentSection({ detail }: { detail: ReceiptDetail }) {
         {detail.creatorReserveUsdc != null && detail.creatorReserveUsdc > 0 && (
           <div><dt>Creator Reserve</dt><dd>{formatUsdc(detail.creatorReserveUsdc)}</dd></div>
         )}
-        {detail.macroPlusServicesUsdc != null && detail.macroPlusServicesUsdc > 0 && (
-          <div><dt>Macro + Services</dt><dd>{formatUsdc(detail.macroPlusServicesUsdc)}</dd></div>
-        )}
-        {detail.internalAgentPaymentsUsdc != null && detail.internalAgentPaymentsUsdc > 0 && (
-          <div><dt>Internal Agent Payments</dt><dd>{detail.paymentCount ?? 0} edges · {formatUsdc(detail.internalAgentPaymentsUsdc)}</dd></div>
+        {detail.userCostUsdc != null && (
+          <div className="pl-receipt-subtotal"><dt>User Cost</dt><dd>{formatUsdc(detail.userCostUsdc)}</dd></div>
         )}
         {detail.runTotalUsdc != null && detail.runTotalUsdc > 0 && (
           <div className="pl-receipt-total"><dt>Run Total Settled</dt><dd>{formatUsdc(detail.runTotalUsdc)}</dd></div>
         )}
         <div><dt>Payments</dt><dd>{detail.paymentCount ?? 0}</dd></div>
       </dl>
-      {detail.safeReceiptSummary && <p className="muted pl-receipt-summary">{detail.safeReceiptSummary}</p>}
+      <p className="muted pl-receipt-helper">Registry checks and source access cost 0.000001 USDC per unit. Run Total Settled equals User Cost plus internal agent payments.</p>
     </section>
   );
 }

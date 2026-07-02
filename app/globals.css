@@ -2396,6 +2396,28 @@ a:hover { text-decoration: none; }
   color: var(--fg);
 }
 
+.pl-receipt-subtotal {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.pl-receipt-subtotal dt {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.pl-receipt-subtotal dd {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.pl-receipt-helper {
+  margin: 8px 0 0;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
 .pl-receipt-summary {
   margin: 10px 0 0;
   font-size: 12px;
