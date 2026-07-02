@@ -333,6 +333,7 @@ function mapReceiptDetail(
   creators: any[],
   sources: any[],
   userCostUsdc?: number | null,
+  brainTreasuryUsdc?: number | null,
   routeReasoning?: string | null,
   effectiveRouteTier?: string | null,
   brainRouteTierHint?: string | null,
@@ -368,6 +369,8 @@ function mapReceiptDetail(
     batchStatus: batchStatus(row),
     // Derived from agent_trace.auto_tier_preflight (no DB column)
     userCostUsdc: userCostUsdc !== undefined ? userCostUsdc : null,
+    // Brain treasury from preflight breakdown (displayed in receipt UI)
+    brainTreasuryUsdc: brainTreasuryUsdc !== undefined ? brainTreasuryUsdc : null,
     // Route reasoning — safe fields only, no raw trace
     routeReasoning: routeReasoning ?? null,
     effectiveRouteTier: effectiveRouteTier ?? null,
@@ -463,6 +466,12 @@ export async function getRunReceiptDetail(discoveryRunId: string) {
   const userCostUsdc = preflight?.status === "locked"
     ? Number(preflight.routing_fee_usdc || 0) + Number(preflight.final_entry_payment_usdc || 0)
     : null;
+  
+  // Extract brain treasury from preflight breakdown
+  const lockedBreakdown = preflight?.locked_planned_cost_breakdown as Record<string, unknown> | undefined;
+  const brainTreasuryUsdc = preflight?.status === "locked" && lockedBreakdown?.brain_treasury_usdc != null
+    ? Number(lockedBreakdown.brain_treasury_usdc)
+    : null;
 
   // Extract safe route reasoning from agent_trace.brain_planning
   const { routeReasoning, brainRouteTierHint } = extractSafeRouteReasoning(agentTrace);
@@ -474,6 +483,7 @@ export async function getRunReceiptDetail(discoveryRunId: string) {
     creatorsResult.data || [],
     sourcesResult.data || [],
     userCostUsdc,
+    brainTreasuryUsdc,
     routeReasoning,
     effectiveRouteTier,
     resolvedBrainHint,

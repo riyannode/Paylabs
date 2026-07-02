@@ -306,8 +306,7 @@ export async function writePayLabsVisibility(
     last_batch_explorer_url: lastPaid?.batchExplorerUrl ?? null,
     last_payment_at: paidCount > 0 ? now : null,
     safe_receipt_summary:
-      `PayLabs ${routeTier} run: ${paidCount}/${paymentGraph.length} payment edges paid, ` +
-      `${actualSettledUsdc.toFixed(6)} USDC settled.`,
+      `PayLabs ${routeTier} run: ${paidCount}/${paymentGraph.length} payment edges paid.`,
     created_at: now,
   };
 

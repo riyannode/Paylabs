@@ -70,6 +70,7 @@ type ReceiptDetail = {
   displayStatus: DisplayStatus;
   batchStatus: BatchStatus;
   userCostUsdc?: number | null;
+  brainTreasuryUsdc?: number | null;
   routeReasoning?: string | null;
   effectiveRouteTier?: string | null;
   brainRouteTierHint?: string | null;
@@ -125,13 +126,14 @@ function PaymentSection({ detail }: { detail: ReceiptDetail }) {
     <section className="pl-receipt-section">
       <h3>Payment</h3>
       <dl>
-        <div><dt>Network</dt><dd>Arc Testnet</dd></div>
+        {detail.brainTreasuryUsdc != null && detail.brainTreasuryUsdc > 0 && (
+          <div><dt>Brain Treasury</dt><dd>{formatUsdc(detail.brainTreasuryUsdc)}</dd></div>
+        )}
         <div><dt>Tier</dt><dd>{label(detail.selectedTier)}</dd></div>
         <div><dt>Planned Run Cost</dt><dd>{formatUsdc(detail.plannedCostUsdc)}</dd></div>
         {detail.userCostUsdc != null && (
           <div><dt>User Cost</dt><dd>{formatUsdc(detail.userCostUsdc)}</dd></div>
         )}
-        <div><dt>Platform x402 Volume</dt><dd>{formatUsdc(detail.actualSettledUsdc)}</dd></div>
         <div><dt>Payments</dt><dd>{detail.paymentCount ?? 0}</dd></div>
       </dl>
       {detail.safeReceiptSummary && <p className="muted pl-receipt-summary">{detail.safeReceiptSummary}</p>}
