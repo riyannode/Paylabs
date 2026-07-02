@@ -15,6 +15,8 @@ type PreflightPaymentSnapshot = {
   routingPaymentUsdc: number;
   finalEntryPaymentUsdc: number;
   brainTreasuryUsdc: number | null;
+  registryCheckCount: number;
+  sourceAccessCount: number;
 };
 
 function safeNumber(value: unknown): number {
@@ -40,6 +42,8 @@ async function readPreflightPaymentSnapshot(
       routingPaymentUsdc: 0,
       finalEntryPaymentUsdc: 0,
       brainTreasuryUsdc: null,
+      registryCheckCount: 0,
+      sourceAccessCount: 0,
     };
   }
 
@@ -54,11 +58,16 @@ async function readPreflightPaymentSnapshot(
   );
   const brainTreasuryRaw = lockedBreakdown?.brain_treasury_usdc;
 
+  const registryCheckFees = safeNumber(lockedBreakdown?.registry_check_fees_usdc);
+  const sourceAccessFees = safeNumber(lockedBreakdown?.source_access_fees_usdc);
+
   return {
     isPreflight: true,
     routingPaymentUsdc,
     finalEntryPaymentUsdc,
     brainTreasuryUsdc: brainTreasuryRaw == null ? null : safeNumber(brainTreasuryRaw),
+    registryCheckCount: Math.round(registryCheckFees / 0.000001),
+    sourceAccessCount: Math.round(sourceAccessFees / 0.000001),
   };
 }
 
@@ -306,7 +315,9 @@ export async function writePayLabsVisibility(
     last_batch_explorer_url: lastPaid?.batchExplorerUrl ?? null,
     last_payment_at: paidCount > 0 ? now : null,
     safe_receipt_summary:
-      `PayLabs ${routeTier} run: ${paidCount}/${paymentGraph.length} payment edges paid.`,
+      `This quote includes ${preflightSnapshot.registryCheckCount} registry checks and ${preflightSnapshot.sourceAccessCount} source accesses. ` +
+      `Each unit costs 0.000001 USDC and is included in User Cost. ` +
+      `Run Total equals User Cost plus internal agent payments.`,
     created_at: now,
   };
 

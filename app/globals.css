@@ -2380,6 +2380,22 @@ a:hover { text-decoration: none; }
   overflow-wrap: anywhere;
 }
 
+.pl-receipt-total {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.pl-receipt-total dt {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.pl-receipt-total dd {
+  font-weight: 700;
+  color: var(--fg);
+}
+
 .pl-receipt-summary {
   margin: 10px 0 0;
   font-size: 12px;

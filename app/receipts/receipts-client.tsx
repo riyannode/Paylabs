@@ -76,6 +76,8 @@ type ReceiptDetail = {
   sourceAccessFeesUsdc?: number | null;
   registryCheckCount?: number | null;
   sourceAccessCount?: number | null;
+  internalAgentPaymentsUsdc?: number | null;
+  runTotalUsdc?: number | null;
   routeReasoning?: string | null;
   effectiveRouteTier?: string | null;
   brainRouteTierHint?: string | null;
@@ -144,6 +146,12 @@ function PaymentSection({ detail }: { detail: ReceiptDetail }) {
         )}
         {detail.sourceAccessFeesUsdc != null && detail.sourceAccessFeesUsdc > 0 && (
           <div><dt>Source Access</dt><dd>{detail.sourceAccessCount ?? 0} · {formatUsdc(detail.sourceAccessFeesUsdc)}</dd></div>
+        )}
+        {detail.internalAgentPaymentsUsdc != null && detail.internalAgentPaymentsUsdc > 0 && (
+          <div><dt>Internal Agent Payments</dt><dd>{detail.paymentCount ?? 0} edges · {formatUsdc(detail.internalAgentPaymentsUsdc)}</dd></div>
+        )}
+        {detail.runTotalUsdc != null && (
+          <div className="pl-receipt-total"><dt>Run Total</dt><dd>{formatUsdc(detail.runTotalUsdc)}</dd></div>
         )}
         <div><dt>Payments</dt><dd>{detail.paymentCount ?? 0}</dd></div>
       </dl>

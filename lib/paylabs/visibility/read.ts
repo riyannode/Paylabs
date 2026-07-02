@@ -383,6 +383,16 @@ function mapReceiptDetail(
     sourceAccessFeesUsdc: sourceAccessFeesUsdc !== undefined ? sourceAccessFeesUsdc : null,
     registryCheckCount: registryCheckCount !== undefined ? registryCheckCount : null,
     sourceAccessCount: sourceAccessCount !== undefined ? sourceAccessCount : null,
+    // Internal agent payments = actualSettled - userCost (graph edges beyond entry)
+    internalAgentPaymentsUsdc: (() => {
+      const settled = toNumber(row.actual_settled_usdc);
+      const cost = userCostUsdc !== undefined ? userCostUsdc : null;
+      if (settled == null || cost == null) return null;
+      const diff = settled - cost;
+      return Number.isFinite(diff) && diff > 0 ? diff : 0;
+    })(),
+    // Run Total = actualSettledUsdc (matches receipt list header amount)
+    runTotalUsdc: toNumber(row.actual_settled_usdc),
     // Route reasoning — safe fields only, no raw trace
     routeReasoning: routeReasoning ?? null,
     effectiveRouteTier: effectiveRouteTier ?? null,
