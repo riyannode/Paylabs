@@ -78,7 +78,7 @@ Each service supports 3 execution modes: `deterministic` (default), `llm`, `hybr
 | `trust_verifier` | ✅ | deterministic | Trust checks ALWAYS deterministic. LLM only writes risk summary |
 | `payment_decider` | ❌ 🔒 | deterministic | **Hard-locked.** Pure aggregator. No LLM regardless of env |
 | `creator_attribution` | ❌ | deterministic | Pure DB query + claim resolver. No LLM ever |
-| `advanced_evidence_evaluator` |  LLM  | Determistic/Deep Agent with 7 tools (memory read/write, source comparison) |
+| `advanced_evidence_evaluator` | ✅ | LLM  | Deep Agent with 7 tools (memory read/write, source comparison) |
 | `creator_payout_router` | ❌ | deterministic | Deterministic split (85/10/5) + ledger. No LLM ever |
 
 Key rules:
