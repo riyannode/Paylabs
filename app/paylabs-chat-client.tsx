@@ -302,8 +302,8 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [dcwBalance, setDcwBalance] = useState<PayLabsWalletBalance | null>(null);
   const [walletCopied, setWalletCopied] = useState(false);
 
-  // Debug log — gated behind env var, stripped from production
-  const dcwDebug = process.env.NEXT_PUBLIC_PAYLABS_UCW_DEBUG === "1";
+  // Debug log — gated behind DCW env var with legacy UCW fallback
+  const dcwDebug = process.env.NEXT_PUBLIC_PAYLABS_DCW_DEBUG === "1" || process.env.NEXT_PUBLIC_PAYLABS_UCW_DEBUG === "1";
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const dbg = useCallback((msg: string) => {
     if (!dcwDebug) return;
