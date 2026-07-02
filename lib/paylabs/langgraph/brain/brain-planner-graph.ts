@@ -237,7 +237,7 @@ function computeTierHint(goal: string): string {
 
 async function brainPlanningNode(state: BrainPlannerStateType) {
   try {
-    const { generateStructuredJson } = await import("../../../ai/llm-structured");
+    const { generateStructuredJson } = await import("../../ai/llm-structured");
 
     // Deterministic tier hint as nudge — Brain still outputs final route_tier_hint
     const tierHintCandidate = computeTierHint(state.userGoal);
@@ -407,7 +407,7 @@ async function validatePlanNode(state: BrainPlannerStateType) {
   if (state.error) {
     // Brain planning failed — for auto tier this is fatal (no deterministic fallback)
     try {
-      const { isLlmRequired } = await import("../../../ai/llm");
+      const { isLlmRequired } = await import("../../ai/llm");
       if (isLlmRequired()) {
         return {
           progressSummaries: ["Brain planning failed — PAYLABS_LLM_REQUIRED=true, cannot continue"],

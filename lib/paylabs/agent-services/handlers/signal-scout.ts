@@ -527,7 +527,7 @@ export const signalScoutHandler: ServiceHandler = async (
   }
 
   // LLM mode — rank only top deterministic candidates (not all active items)
-  const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
+  const { generateStructuredJson } = await import("@/lib/paylabs/ai/llm-structured");
   const { toInternalRouteTier } = await import("./helpers");
 
   // Pre-score all active items, keep top 20 for LLM reranking

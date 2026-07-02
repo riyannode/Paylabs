@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
     const { runBrainPlannerGraph } = await import(
       "@/lib/paylabs/langgraph/brain/brain-planner-graph"
     );
-    const { getTutorModelConfig } = await import("@/lib/ai/llm");
+    const { getTutorModelConfig } = await import("@/lib/paylabs/ai/llm");
 
     const discoveryRunId = `debug-${crypto.randomUUID()}`;
 
