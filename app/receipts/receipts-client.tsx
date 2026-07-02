@@ -142,8 +142,11 @@ function PaymentSection({ detail }: { detail: ReceiptDetail }) {
       <h3>Payment</h3>
       <dl>
         <div><dt>Tier</dt><dd>{label(detail.selectedTier)}</dd></div>
-        {detail.brainTreasuryUsdc != null && detail.brainTreasuryUsdc > 0 && (
-          <div><dt>Brain Treasury</dt><dd>{formatUsdc(detail.brainTreasuryUsdc)}</dd></div>
+        {detail.brainPlusPreflightUsdc != null && detail.brainPlusPreflightUsdc > 0 && (
+          <div><dt>Brain + Preflight</dt><dd>{formatUsdc(detail.brainPlusPreflightUsdc)}</dd></div>
+        )}
+        {detail.brainPlusPreflightUsdc == null && detail.brainTreasuryUsdc != null && detail.brainTreasuryUsdc > 0 && (
+          <div><dt>Brain + Preflight</dt><dd>{formatUsdc(detail.brainTreasuryUsdc)}</dd></div>
         )}
         {detail.agentServicesUsdc != null && detail.agentServicesUsdc > 0 && (
           <div><dt>Agent Services</dt><dd>{formatUsdc(detail.agentServicesUsdc)}</dd></div>
@@ -162,7 +165,7 @@ function PaymentSection({ detail }: { detail: ReceiptDetail }) {
         )}
         <div><dt>Payments</dt><dd>{detail.paymentCount ?? 0}</dd></div>
       </dl>
-      <p className="muted pl-receipt-helper">Preflight routing fee: 0.000001 USDC, included in Total Paid. User pays the gross run charge upfront. PayLabs routes the funded amount through Brain, macro nodes, and child services.</p>
+
     </section>
   );
 }

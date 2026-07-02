@@ -49,11 +49,13 @@ export interface RoutePreflightResult {
   lockedQuote: DelegatedRunQuote;
   /** Routing fee charged for preflight (always 0.000001 USDC) */
   routingFeeUsdc: number;
-  /** Gross user charge = lockedQuote.plannedCostUsdc + expectedInternalX402RoutingUsdc */
+  /** Gross user charge = total user wallet outflow (preflight routing + gross run charge) */
   grossUserChargeUsdc: number;
+  /** Gross run charge = lockedQuote.plannedCostUsdc + expectedInternalX402RoutingUsdc (without preflight) */
+  grossRunChargeUsdc: number;
   /** Expected internal x402 routing volume = macro allocation + child service edges */
   expectedInternalX402RoutingUsdc: number;
-  /** Final entry payment = grossUserChargeUsdc - routingFeeUsdc */
+  /** Final entry payment = grossRunChargeUsdc (preflight not credited) */
   finalEntryPaymentUsdc: number;
   /** Safe Brain reasoning fields (no raw LLM, no secrets) */
   safeBrainFields: RoutePreflightBrainFields;
@@ -314,12 +316,17 @@ export async function runRouteOnlyBrainPreflight(params: {
   const childPaymentVolumeUsdc = lockedQuote.serviceEdgeFeesUsdc;
   const expectedInternalX402RoutingUsdc = totalMacroAllocationUsdc + childPaymentVolumeUsdc;
 
-  const grossUserChargeUsdc = lockedQuote.plannedCostUsdc + expectedInternalX402RoutingUsdc;
-  const finalEntryPaymentUsdc = grossUserChargeUsdc - ROUTE_PREFLIGHT_ROUTING_FEE_USDC;
+  // grossRunCharge = planned cost + internal x402 routing volume
+  const grossRunChargeUsdc = lockedQuote.plannedCostUsdc + expectedInternalX402RoutingUsdc;
+  // totalUserPaid = preflight routing fee + gross run charge (all user wallet outflow)
+  const totalUserPaidUsdc = grossRunChargeUsdc + ROUTE_PREFLIGHT_ROUTING_FEE_USDC;
+  // finalEntry = gross run charge (preflight is NOT credited against it)
+  const finalEntryPaymentUsdc = grossRunChargeUsdc;
 
-  if (finalEntryPaymentUsdc < 0) {
+  // Guard total user outflow (preflight + final entry)
+  if (totalUserPaidUsdc > userBudgetUsdc) {
     throw new Error(
-      `route_preflight_invalid_quote: locked quote ${lockedQuote.plannedCostUsdc} < routing fee ${ROUTE_PREFLIGHT_ROUTING_FEE_USDC}`
+      `route_preflight_budget_exceeded: total user outflow ${totalUserPaidUsdc.toFixed(6)} USDC exceeds user budget ${userBudgetUsdc.toFixed(6)} USDC`
     );
   }
 
@@ -340,7 +347,10 @@ export async function runRouteOnlyBrainPreflight(params: {
     lockedExecutionPlan: lockedPlan,
     lockedQuote,
     routingFeeUsdc: ROUTE_PREFLIGHT_ROUTING_FEE_USDC,
-    grossUserChargeUsdc,
+    // gross_user_charge_usdc = total user wallet outflow (preflight + final entry)
+    grossUserChargeUsdc: totalUserPaidUsdc,
+    // gross_run_charge_usdc = planned cost + internal routing (without preflight)
+    grossRunChargeUsdc,
     expectedInternalX402RoutingUsdc,
     finalEntryPaymentUsdc,
     safeBrainFields,
