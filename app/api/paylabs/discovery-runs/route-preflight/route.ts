@@ -54,6 +54,16 @@ export async function POST(req: NextRequest) {
     const userWallet = (body.user_wallet || "").trim().toLowerCase();
     const budgetUsdc = Number(body.budget_usdc) || 0.01;
 
+    // ── Requested tier (auto by default, explicit for normal/advanced) ──
+    const requestedRouteTierRaw = body.route_tier || body.routeTier || "auto";
+    const requestedRouteTier = requestedRouteTierRaw === "standard" ? "auto" : requestedRouteTierRaw;
+    if (!["auto", "easy", "normal", "advanced"].includes(requestedRouteTier)) {
+      return NextResponse.json(
+        { ok: false, error: `Unsupported route tier: ${requestedRouteTierRaw}` },
+        { status: 400 },
+      );
+    }
+
     // ── Retry detection ─────────────────────────────────────
     const customerPaymentSignature =
       req.headers.get("payment-signature") ||
@@ -122,6 +132,7 @@ export async function POST(req: NextRequest) {
     let resolvedGoal = goal;
     let resolvedWallet = userWallet;
     let resolvedBudget = budgetUsdc;
+    let resolvedRequestedRouteTier = requestedRouteTier;
 
     if (retryRunId) {
       // Paid retry: load existing row (same pattern as inline route)
@@ -150,6 +161,11 @@ export async function POST(req: NextRequest) {
       resolvedGoal = existingRun.goal || goal;
       resolvedWallet = existingRun.user_wallet?.toLowerCase() || userWallet;
       resolvedBudget = Number(existingRun.budget_usdc) || budgetUsdc;
+
+      // Load requested tier from stored trace when body does not provide it
+      const existingTrace = (existingRun.agent_trace as Record<string, unknown>) || {};
+      const existingPreflight = existingTrace.auto_tier_preflight as Record<string, unknown> | undefined;
+      resolvedRequestedRouteTier = (existingPreflight?.requested_route_tier as string | undefined) || requestedRouteTier || "auto";
     } else {
       // First request: create new row
       const now = new Date().toISOString();
@@ -158,7 +174,7 @@ export async function POST(req: NextRequest) {
         .insert({
           goal: resolvedGoal.slice(0, 2000),
           user_wallet: resolvedWallet,
-          route_tier: "auto",
+          route_tier: requestedRouteTier === "auto" ? "auto" : requestedRouteTier,
           status: "running",
           started_at: now,
           budget_usdc: resolvedBudget,
@@ -166,6 +182,7 @@ export async function POST(req: NextRequest) {
           agent_trace: {
             auto_tier_preflight: {
               status: "preflight_pending",
+              requested_route_tier: requestedRouteTier,
             },
           },
         })
@@ -210,6 +227,7 @@ export async function POST(req: NextRequest) {
             ...((existingTrace?.agent_trace as Record<string, unknown>) || {}),
             auto_tier_preflight: {
               status: "awaiting_payment",
+              requested_route_tier: resolvedRequestedRouteTier,
               routing_fee_usdc: ROUTE_PREFLIGHT_ROUTING_FEE_USDC,
             },
           },
@@ -322,6 +340,7 @@ export async function POST(req: NextRequest) {
         userGoal: resolvedGoal,
         userBudgetUsdc: resolvedBudget,
         userWallet: resolvedWallet,
+        requestedRouteTier: resolvedRequestedRouteTier as "auto" | "easy" | "normal" | "advanced",
       });
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message.slice(0, 300) : String(e).slice(0, 300);
@@ -371,6 +390,7 @@ export async function POST(req: NextRequest) {
     } = preflightResult;
 
     const traceData = {
+      requested_route_tier: resolvedRequestedRouteTier,
       selected_tier: selectedTier,
       routing_fee_usdc: routingFeeUsdc,
       final_entry_payment_usdc: finalEntryPaymentUsdc,

@@ -2380,6 +2380,44 @@ a:hover { text-decoration: none; }
   overflow-wrap: anywhere;
 }
 
+.pl-receipt-total {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.pl-receipt-total dt {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.pl-receipt-total dd {
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.pl-receipt-subtotal {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.pl-receipt-subtotal dt {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.pl-receipt-subtotal dd {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.pl-receipt-helper {
+  margin: 8px 0 0;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
 .pl-receipt-summary {
   margin: 10px 0 0;
   font-size: 12px;
