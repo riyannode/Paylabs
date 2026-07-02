@@ -210,8 +210,19 @@ async function processSignalResult(state: DiscoveryPlannerStateType) {
     retrieval_mode?: string;
   };
 
+  const rankedCandidates = data.ranked_candidates || [];
+
+  // Diagnostic: log signal_scout → process_signal checkpoint
+  console.log(JSON.stringify({
+    log: "[discovery_planner:process_signal]",
+    signal_service: signalEval.serviceName,
+    ranked_candidates_count: rankedCandidates.length,
+    retrieval_mode: data.retrieval_mode || null,
+    top_candidates_count: (data.top_candidates || []).length,
+  }));
+
   return {
-    rankedCandidates: data.ranked_candidates || [],
+    rankedCandidates,
     topCandidates: data.top_candidates || [],
     retrievalMode: data.retrieval_mode || undefined,
   };

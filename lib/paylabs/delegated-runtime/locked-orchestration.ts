@@ -33,6 +33,11 @@ import {
   FIXED_FEES_USDC,
 } from "./quote-engine";
 import { randomUUID } from "node:crypto";
+import {
+  createSourceResolutionDiagnostic,
+  resolveDiagnosticScenario,
+  type SourceResolutionDiagnostic,
+} from "./source-resolution-diagnostic";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -87,6 +92,7 @@ export interface LockedOrchestrationParams {
 export interface LockedOrchestrationResult {
   output: OrchestratorOutput;
   _lockedPlan: ExecutionPlan;
+  _sourceResolutionDiagnostic?: SourceResolutionDiagnostic;
 }
 
 // ─── Reconstruct ExecutionPlan from preflight trace ──────────
@@ -349,6 +355,8 @@ export async function executeLockedMacroNodePipeline(
   );
 
   // ── Source context resolution (mirrors inline/route.ts lines 545-616) ──
+  // ── Diagnostic: trace source resolution for each checkpoint ──
+  const srcDiag = createSourceResolutionDiagnostic();
   let sourceContext: import("../sources/types").SourceContext | undefined;
   let serviceRetrievalMode: string | undefined;
   const discoveryMacroResult = macroNodeResults["discovery_planner"];
@@ -369,6 +377,62 @@ export async function executeLockedMacroNodePipeline(
         relevance_score: number;
       }>) ||
       [];
+
+    // ── Diagnostic checkpoint 3: locked-orchestration extraction ──
+    srcDiag.locked_orchestration_ranked_candidates_count = rankedCandidates.length;
+    srcDiag.ranked_candidates_have_url_count = rankedCandidates.filter(
+      (c) => !!(c as Record<string, unknown>).source_url
+    ).length;
+    srcDiag.ranked_candidates_have_feed_item_id_count = rankedCandidates.filter(
+      (c) => !!c.feed_item_id
+    ).length;
+
+    // ── Diagnostic checkpoint 2: discovery_planner output ──
+    // Also check serviceEvaluations for the signal_scout output
+    const serviceEvals = dData.serviceEvaluations as Array<{
+      serviceName: string;
+      output?: Record<string, unknown>;
+      status?: string;
+    }> | undefined;
+    if (serviceEvals) {
+      const signalEval = serviceEvals.find(
+        (e) => (e.serviceName === "signal_scout" || e.serviceName === "signal_scout_basics") && e.output
+      );
+      if (signalEval?.output) {
+        const signalCandidates = (signalEval.output.ranked_candidates as unknown[]) || [];
+        srcDiag.signal_scout_ranked_candidates_count = signalCandidates.length;
+      }
+      // Extract live diagnostics from signal_scout if available
+      const signalOutput = serviceEvals.find(
+        (e) => (e.serviceName === "signal_scout" || e.serviceName === "signal_scout_basics")
+      )?.output as Record<string, unknown> | undefined;
+      if (signalOutput) {
+        const liveDiag = signalOutput.live_diagnostics as Record<string, unknown> | undefined;
+        if (liveDiag) {
+          srcDiag.live_items_fetched_count = (liveDiag.fetched_routes as number) || 0;
+          srcDiag.topic_routes_attempted = (liveDiag.topic_routes_count as number) || 0;
+          // route_candidates ≈ resolved routes
+          srcDiag.topic_routes_success_count = (liveDiag.resolved_routes as number) || 0;
+        }
+        // Extract topic candidates count from signal output
+        const topicCount = signalOutput.topic_candidates_count as number | undefined;
+        if (topicCount !== undefined) {
+          srcDiag.live_items_after_validation_count = topicCount;
+        }
+        srcDiag.retrieval_mode = (signalOutput.retrieval_mode as string) || null;
+      }
+      // Extract entity_terms and expanded_queries from query_builder output
+      const qbEval = serviceEvals.find(
+        (e) => e.serviceName === "query_builder" && e.output
+      );
+      if (qbEval?.output) {
+        srcDiag.entity_terms_count = ((qbEval.output.entity_terms as string[]) || []).length;
+        srcDiag.expanded_queries = (qbEval.output.expanded_queries as string[]) || [];
+      }
+    }
+
+    // discovery_planner output = rankedCandidates (already extracted above)
+    srcDiag.discovery_planner_ranked_candidates_count = rankedCandidates.length;
 
     serviceRetrievalMode = dData.retrieval_mode as string | undefined;
     if (!serviceRetrievalMode) {
@@ -405,19 +469,37 @@ export async function executeLockedMacroNodePipeline(
           }
         }
 
+        // ── Diagnostic: entity terms from resolver input ──
+        if (srcDiag.entity_terms_count === 0) {
+          srcDiag.entity_terms_count = entityTerms.length;
+        }
+
+        // ── Diagnostic checkpoint 4: resolveSources call ──
+        srcDiag.resolve_sources_called = true;
+
         const resolverResult = await resolveSources({
           rankedCandidates,
           normalizedGoal,
           entityTerms,
         });
+
+        srcDiag.resolve_sources_ok = resolverResult.ok;
+        srcDiag.resolver_sources_used_count = resolverResult.sourceContext?.sources_used?.length ?? 0;
+
         if (resolverResult.ok) {
           sourceContext = resolverResult.sourceContext;
           if (serviceRetrievalMode && !sourceContext.retrieval_mode) {
             sourceContext.retrieval_mode =
               serviceRetrievalMode as import("../sources/types").SourceContext["retrieval_mode"];
           }
+        } else {
+          srcDiag.resolve_sources_error_safe = resolverResult.error?.slice(0, 200) || "unknown";
         }
       } catch (e: unknown) {
+        srcDiag.resolve_sources_called = true;
+        srcDiag.resolve_sources_ok = false;
+        srcDiag.resolve_sources_error_safe =
+          e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200);
         console.error("[locked_orchestration] source resolve failed", {
           error:
             e instanceof Error
@@ -437,6 +519,27 @@ export async function executeLockedMacroNodePipeline(
     }
   }
 
+  // ── Diagnostic checkpoint 5: final source context ──
+  srcDiag.final_source_context_count = sourceContext?.sources_used?.length ?? 0;
+  srcDiag.detected_topic = brainData
+    ? String(brainData.normalized_goal || "").slice(0, 100)
+    : null;
+
+  // ── Diagnostic: resolve scenario ──
+  srcDiag.scenario = resolveDiagnosticScenario(srcDiag);
+
+  console.log(JSON.stringify({
+    log: "[source_resolution_diagnostic]",
+    scenario: srcDiag.scenario,
+    live_items_fetched_count: srcDiag.live_items_fetched_count,
+    signal_scout_ranked: srcDiag.signal_scout_ranked_candidates_count,
+    discovery_planner_ranked: srcDiag.discovery_planner_ranked_candidates_count,
+    locked_orchestration_ranked: srcDiag.locked_orchestration_ranked_candidates_count,
+    resolver_sources_used: srcDiag.resolver_sources_used_count,
+    final_source_context_count: srcDiag.final_source_context_count,
+    notes: srcDiag.notes,
+  }));
+
   // ── Build output ──
   const output = buildOutput(
     discoveryRunId,
@@ -452,5 +555,5 @@ export async function executeLockedMacroNodePipeline(
     lockedPlan,
   );
 
-  return { output, _lockedPlan: lockedPlan };
+  return { output, _lockedPlan: lockedPlan, _sourceResolutionDiagnostic: srcDiag };
 }

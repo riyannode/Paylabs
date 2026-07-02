@@ -225,6 +225,16 @@ async function executeMacroNode(
         sourcePreferences: graphResult.sourcePreferences || [],
       };
 
+      // Diagnostic: log discovery_planner macro-node output
+      console.log(JSON.stringify({
+        log: "[macro_node:discovery_planner:output]",
+        ranked_candidates_count: graphResult.rankedCandidates.length,
+        retrieval_mode: graphResult.retrievalMode || null,
+        entity_terms_count: (graphResult.entityTerms || []).length,
+        expanded_queries_count: (graphResult.expandedQueries || []).length,
+        service_evaluations_count: (graphResult.serviceEvaluations || []).length,
+      }));
+
     } else if (nodeName === "payment_decision") {
       const { runPaymentDecisionGraph } = await import("@/lib/paylabs/langgraph/macro-nodes/payment-decision-graph");
       const rankedCandidates = (payload?.ranked_candidates || []) as Array<{

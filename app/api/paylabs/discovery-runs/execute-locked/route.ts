@@ -598,7 +598,7 @@ export async function POST(req: NextRequest) {
     const dcwSigner = createDcwSigner();
 
     // ── Run locked macro-node pipeline ──────────────────────
-    const { output: result } = await executeLockedMacroNodePipeline({
+    const { output: result, _sourceResolutionDiagnostic } = await executeLockedMacroNodePipeline({
       discoveryRunId,
       userGoal: resolvedGoal,
       userWallet: resolvedWallet,
@@ -780,6 +780,7 @@ export async function POST(req: NextRequest) {
           },
           settled: fullySettled,
           mode: fullySettled ? "x402" : "x402_failed",
+          source_resolution_diagnostic: _sourceResolutionDiagnostic ?? null,
         },
       })
       .eq("id", discoveryRunId);
@@ -795,6 +796,11 @@ export async function POST(req: NextRequest) {
       exitOutput.source_confidence = result.sourceContext.source_confidence;
       exitOutput.source_count = result.sourceContext.source_count;
       exitOutput.source_retrieval_mode = result.sourceContext.retrieval_mode;
+    }
+
+    // Source resolution diagnostic (safe — no secrets, no raw RSS)
+    if (_sourceResolutionDiagnostic) {
+      (exitOutput as Record<string, unknown>)["_source_resolution_diagnostic"] = _sourceResolutionDiagnostic;
     }
 
     // Final answer
