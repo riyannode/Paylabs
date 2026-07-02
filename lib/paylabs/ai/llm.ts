@@ -123,6 +123,14 @@ export function getTutorModel(agentName?: string): ChatOpenAI | null {
   // modelKwargs spreads AFTER stream in invocationParams(), so it overrides.
   const forceNonStreamingBody = cfg.provider.toLowerCase() === "openai-compatible" || !!cfg.baseUrl;
 
+  // Build modelKwargs: stream:false + response_format for openai-compatible
+  // response_format: json_object enforces JSON at API level (critical for 9Router model rotation)
+  const modelKwargs: Record<string, unknown> = {};
+  if (forceNonStreamingBody) modelKwargs.stream = false;
+  if (cfg.provider.toLowerCase() === "openai-compatible" || cfg.baseUrl) {
+    modelKwargs.response_format = { type: "json_object" };
+  }
+
   // Include forceNonStreaming in cache key to avoid stale model from warm instances
   const cacheKey = buildCacheKey(cfg, forceNonStreamingBody);
   const cached = modelCache.get(cacheKey);
@@ -135,7 +143,7 @@ export function getTutorModel(agentName?: string): ChatOpenAI | null {
     maxTokens: cfg.maxTokens,
     timeout: cfg.timeoutMs,
     streaming: cfg.streaming,
-    ...(forceNonStreamingBody ? { modelKwargs: { stream: false } } : {}),
+    modelKwargs,
     ...(cfg.baseUrl ? { configuration: { baseURL: cfg.baseUrl } } : {}),
   });
 
@@ -157,9 +165,11 @@ export function getTutorModelConfig(agentName?: string): {
   maxTokens: number;
   streaming: boolean;
   forceNonStreamingBody: boolean;
+  responseFormatJson: boolean;
 } {
   const cfg = resolveConfig(agentName);
   const forceNonStreamingBody = cfg.provider.toLowerCase() === "openai-compatible" || !!cfg.baseUrl;
+  const responseFormatJson = forceNonStreamingBody; // response_format: json_object for openai-compatible
   return {
     provider: cfg.provider,
     model: cfg.model,
@@ -170,6 +180,7 @@ export function getTutorModelConfig(agentName?: string): {
     maxTokens: cfg.maxTokens,
     streaming: cfg.streaming,
     forceNonStreamingBody,
+    responseFormatJson,
   };
 }
 
