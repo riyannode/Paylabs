@@ -10,8 +10,8 @@
  * - Re-lock execution plan (locked in agent_trace.auto_tier_preflight)
  *
  * Payment graph accounting:
- * - Locked execution skips Brain x402, so payment graph starts at
- *   brain → macro-node edges (no controller → brain edge).
+ * * - Brain x402 occurs during route-preflight. Canonical payment graph includes
+ * *   controller → brain → macro-node → child service edges.
  * - User Cost = routing_fee + final_entry_payment (stored separately).
  * - Platform x402 Volume = internal macro/service graph only.
  */
@@ -144,7 +144,7 @@ export function reconstructLockedPlan(preflight: {
  * Execute macro-nodes with a pre-locked plan (no Brain x402).
  *
  * Same macro-node loop + source context resolution as inline/route.ts,
- * but skips Brain x402 call entirely. Uses locked plan from preflight.
+ * * Uses locked plan from preflight. Brain x402 was settled during route-preflight.
  */
 export async function executeLockedMacroNodePipeline(
   params: LockedOrchestrationParams,

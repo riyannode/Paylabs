@@ -2,7 +2,7 @@
  * POST /api/paylabs/discovery-runs/execute-locked
  *
  * Execute a full delegated run with a pre-locked plan from route-preflight.
- * Skips Brain x402 — uses locked tier + plan from agent_trace.auto_tier_preflight.
+ * Obtains Brain via route-preflight paid Brain seller. Uses locked tier + plan from agent_trace.auto_tier_preflight.
  *
  * Flow:
  *   1st request (no payment) → 402 + final entry payment challenge
@@ -14,7 +14,7 @@
  * Payment accounting:
  *   User Cost = routing_fee + final_entry_payment (stored as user payment metadata)
  *   Platform x402 Volume = internal macro/service graph (paymentGraph)
- *   These are separate — locked execution skips Brain x402 edge.
+ *   Brain x402 payment occurs during route-preflight. Controller→brain edge is prepended from preflight brain_payment metadata.
  */
 
 export const maxDuration = 300;
@@ -141,7 +141,7 @@ function buildLockedOutput(
     .filter((e) => e.status === "paid")
     .reduce((sum, e) => sum + e.amountUsdc, 0);
 
-  // User budget spend (brain→macro edges only — no controller→brain in locked)
+  // User budget spend (controller→brain + brain→macro edges)
   const userBudgetSpendEdges = paymentGraph.filter(
     (e) => e.buyer === "brain" && e.nodeType === "macro_node",
   );
@@ -196,7 +196,7 @@ function buildLockedOutput(
       userBudgetUsdc,
       userBudgetUsedUsdc,
       remainingBudgetUsdc: Math.max(0, userBudgetUsdc - userBudgetUsedUsdc),
-      treasuryFeeUsdc: 0, // locked execution skips controller→brain x402
+      treasuryFeeUsdc: 0,
       macroAllocationUsdc: userBudgetUsedUsdc, // all spend is brain→macro level
       childPaymentVolumeUsdc,
       grossPaymentVolumeUsdc,
@@ -658,6 +658,38 @@ export async function POST(req: NextRequest) {
       } as PaymentGraphEdge);
     }
 
+    // ── Recompute budget snapshot to include controller→brain edge ──
+    // buildLockedOutput computes budgetSnapshot before brain edge is prepended.
+    // Recompute key fields now that the canonical graph includes controller→brain.
+    if (brainPayment) {
+      const brainAmount = Number(brainPayment.amount_usdc) || 0.000003;
+      const allPaidEdges = result.paymentGraph.filter((e) => e.status === "paid");
+      const controllerBrainPaid = allPaidEdges.filter(
+        (e) => e.buyer === "run_budget_controller" && e.seller === "brain"
+      );
+      const brainMacroPaid = allPaidEdges.filter(
+        (e) => e.buyer === "brain" && e.nodeType === "macro_node"
+      );
+      const childPaid = allPaidEdges.filter((e) => e.nodeType === "service");
+
+      const treasuryFee = controllerBrainPaid.reduce((s, e) => s + e.amountUsdc, 0);
+      const macroAlloc = brainMacroPaid.reduce((s, e) => s + e.amountUsdc, 0);
+      const childVol = childPaid.reduce((s, e) => s + e.amountUsdc, 0);
+      const userBudgetUsed = treasuryFee + macroAlloc;
+
+      result.budgetSnapshot = {
+        ...result.budgetSnapshot,
+        spentUsdc: userBudgetUsed,
+        remainingUsdc: Math.max(0, resolvedBudget - userBudgetUsed),
+        userBudgetUsedUsdc: userBudgetUsed,
+        remainingBudgetUsdc: Math.max(0, resolvedBudget - userBudgetUsed),
+        treasuryFeeUsdc: treasuryFee || brainAmount,
+        macroAllocationUsdc: macroAlloc,
+        childPaymentVolumeUsdc: childVol,
+        grossPaymentVolumeUsdc: userBudgetUsed + childVol,
+      };
+    }
+
     // ── Store orchestration result ──────────────────────────
     const completedAt = new Date().toISOString();
     const newStatus = result.status === "completed"
@@ -731,9 +763,20 @@ export async function POST(req: NextRequest) {
             error: e.error ?? null,
             mode: e.mode ?? null,
           })),
-          budget_snapshot: {
-            settled_service_fees_usdc: result.budgetSnapshot.settledServiceFeesUsdc,
-            estimated_service_fees_usdc: result.budgetSnapshot.estimatedServiceFeesUsdc,
+          budget_snapshot: result.budgetSnapshot,
+          payment_plan: result.paymentPlan ?? null,
+          safe_progress_summaries: result.safeProgressSummaries,
+          tiered_summaries: result.tieredSummaries,
+          quote: {
+            routeTier: lockedTier,
+            expectedPaymentEdges: 1 + lockedPlan.selectedMacroNodes.length + lockedPlan.selectedServices.length,
+            plannedCostUsdc: lockedPlan.plannedCostUsdc,
+            budgetStatus: "within_budget",
+            macroNodeFeesUsdc: lockedPlan.plannedCostBreakdown.macro_node_fees_usdc,
+            serviceEdgeFeesUsdc: lockedPlan.plannedCostBreakdown.service_edge_fees_usdc,
+            registryCheckFeesUsdc: lockedPlan.plannedCostBreakdown.registry_check_fees_usdc,
+            sourceAccessFeesUsdc: lockedPlan.plannedCostBreakdown.source_access_fees_usdc,
+            locked: true,
           },
           settled: fullySettled,
           mode: fullySettled ? "x402" : "x402_failed",
@@ -802,6 +845,7 @@ export async function POST(req: NextRequest) {
                 })),
               },
               final_answer: finalAnswer,
+              exit_output: exitOutput,
             },
           })
           .eq("id", discoveryRunId);
@@ -914,7 +958,7 @@ export async function POST(req: NextRequest) {
       source_context_error: null,
       quote: {
         routeTier: lockedTier,
-        expectedPaymentEdges: lockedPlan.selectedServices.length + lockedPlan.selectedMacroNodes.length,
+        expectedPaymentEdges: 1 + lockedPlan.selectedMacroNodes.length + lockedPlan.selectedServices.length,
         plannedCostUsdc: lockedPlan.plannedCostUsdc,
         budgetStatus: "within_budget",
         macroNodeFeesUsdc: lockedPlan.plannedCostBreakdown.macro_node_fees_usdc,
