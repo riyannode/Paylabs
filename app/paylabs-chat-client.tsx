@@ -695,8 +695,8 @@ export default function PayLabsChatClient({ analytics }: Props) {
         )}
 
         <section className="pl-hero">
-          <h1>Ask PayLabs</h1>
-          <p>Source Discovery, receipts, and x402 payments.</p>
+          <h1>AI search that <span style={{ color: "var(--info)" }}>pays creators</span>.</h1>
+          <p>PayLabs finds answers with AI and pays verified creators when their sources are used.</p>
 
           <div className={`pl-chat-shell ${messages.length > 0 ? "has-thread" : ""}`}>
             {messages.length > 0 && (
