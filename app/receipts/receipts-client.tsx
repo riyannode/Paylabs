@@ -226,18 +226,20 @@ function BatchSection({ detail }: { detail: ReceiptDetail }) {
 }
 
 function RouteReasoningSection({ detail }: { detail: ReceiptDetail }) {
-  const hasReasoning = !!detail.routeReasoning;
-  const hasTier = !!detail.effectiveRouteTier;
-  if (!hasReasoning && !hasTier) return null;
+  const selectedRoute = detail.effectiveRouteTier || detail.selectedTier || detail.brainRouteTierHint || null;
+  const reasoning = detail.routeReasoning || detail.safeReceiptSummary || null;
+  if (!reasoning && !detail.brainRouteTierHint && !detail.effectiveRouteTier && !detail.selectedTier) {
+    return null;
+  }
 
   return (
     <section className="pl-receipt-section pl-receipt-route-reasoning">
       <h3>Why this route?</h3>
       <dl>
-        {hasTier && (
+        {selectedRoute && (
           <div>
             <dt>Selected Route</dt>
-            <dd>{detail.effectiveRouteTier}</dd>
+            <dd>{selectedRoute}</dd>
           </div>
         )}
         {detail.brainRouteTierHint && (
@@ -247,7 +249,7 @@ function RouteReasoningSection({ detail }: { detail: ReceiptDetail }) {
           </div>
         )}
       </dl>
-      {hasReasoning && <p className="pl-receipt-summary">{detail.routeReasoning}</p>}
+      {reasoning && <p className="pl-receipt-summary">{reasoning}</p>}
     </section>
   );
 }

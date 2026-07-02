@@ -204,8 +204,10 @@ function isGenericReasoningText(text: string): boolean {
 function extractSafeRouteReasoning(
   agentTrace: Record<string, unknown>,
 ): { routeReasoning: string | null; brainRouteTierHint: string | null } {
+  const nestedTrace = agentTrace.agent_trace as Record<string, unknown> | undefined;
   const bp =
-    (agentTrace?.brain_planning as Record<string, unknown>) ?? undefined;
+    (agentTrace?.brain_planning as Record<string, unknown>) ??
+    (nestedTrace?.brain_planning as Record<string, unknown>);
   if (!bp) return { routeReasoning: null, brainRouteTierHint: null };
 
   const candidates = [

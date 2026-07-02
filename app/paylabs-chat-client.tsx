@@ -115,7 +115,9 @@ function loadRecentChats(): RecentChatItem[] {
           typeof item === "object" &&
           typeof (item as RecentChatItem).id === "string" &&
           typeof (item as RecentChatItem).content === "string" &&
-          typeof (item as RecentChatItem).createdAt === "number",
+          typeof (item as RecentChatItem).createdAt === "number" &&
+          ((item as RecentChatItem).runId == null ||
+            typeof (item as RecentChatItem).runId === "string"),
       )
       .slice(-MAX_RECENT_CHATS);
   } catch {
