@@ -18,13 +18,13 @@
 
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
-import { fetchTopicRoutesLiveSources } from "@/lib/rsshub/rsshub-topic-live-search";
-import { detectTopics } from "@/lib/rsshub/topic-routes";
+import { fetchTopicRoutesLiveSources } from "@/lib/paylabs/rsshub/rsshub-topic-live-search";
+import { detectTopics } from "@/lib/paylabs/rsshub/topic-routes";
 import {
   passesAiSourceGuard,
   passesCryptoSourceGuard,
   isGenericCatchAllSource,
-} from "@/lib/rsshub/topic-source-guards";
+} from "@/lib/paylabs/rsshub/topic-source-guards";
 
 // ─── Stopwords — generic words that should never count as relevance signals ──
 const STOPWORDS = new Set([
@@ -193,7 +193,7 @@ async function searchRsshubLive(
   };
 
   try {
-    const { liveSearchRsshub } = await import("@/lib/rsshub/rsshub-live-search");
+    const { liveSearchRsshub } = await import("@/lib/paylabs/rsshub/rsshub-live-search");
 
     const userGoal = expandedQueries.length > 0
       ? expandedQueries.join(" ")
@@ -279,7 +279,7 @@ async function searchRsshubLive(
 }
 
 // ─── Topic Route Fetching (delegated to shared helper) ──────
-// fetchTopicRoutesLiveSources imported from @/lib/rsshub/rsshub-topic-live-search
+// fetchTopicRoutesLiveSources imported from @/lib/paylabs/rsshub/rsshub-topic-live-search
 
 // ─── Handler ────────────────────────────────────────────────
 

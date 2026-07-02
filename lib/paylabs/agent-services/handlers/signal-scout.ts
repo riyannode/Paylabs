@@ -18,13 +18,13 @@ import { z } from "zod";
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 import { shouldRunServiceAsDeterministic } from "../execution-mode";
-import { fetchTopicRoutesLiveSources } from "@/lib/rsshub/rsshub-topic-live-search";
-import { detectTopics } from "@/lib/rsshub/topic-routes";
+import { fetchTopicRoutesLiveSources } from "@/lib/paylabs/rsshub/rsshub-topic-live-search";
+import { detectTopics } from "@/lib/paylabs/rsshub/topic-routes";
 import {
   passesAiSourceGuard,
   passesCryptoSourceGuard,
   isGenericCatchAllSource,
-} from "@/lib/rsshub/topic-source-guards";
+} from "@/lib/paylabs/rsshub/topic-source-guards";
 
 const SignalScoutSchema = z.object({
   ranked_sources: z.array(z.object({
@@ -227,7 +227,7 @@ async function runLiveSearch(
   reason: string;
 }> | null> {
   try {
-    const { liveSearchRsshub } = await import("@/lib/rsshub/rsshub-live-search");
+    const { liveSearchRsshub } = await import("@/lib/paylabs/rsshub/rsshub-live-search");
 
     // Finding 5: Build resolver query from ALL variants, not just the first one
     // Route resolver needs to see all query variants to extract entities like openai/codex

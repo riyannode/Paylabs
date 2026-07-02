@@ -16,12 +16,12 @@ import type {
   SourceResolverOutput,
 } from "./types";
 import { sanitizeEntityTerms, hasBoundaryTerm } from "./source-term-matching";
-import { detectTopics } from "@/lib/rsshub/topic-routes";
+import { detectTopics } from "@/lib/paylabs/rsshub/topic-routes";
 import {
   passesAiSourceGuard,
   passesCryptoSourceGuard,
   isGenericCatchAllSource,
-} from "@/lib/rsshub/topic-source-guards";
+} from "@/lib/paylabs/rsshub/topic-source-guards";
 
 // ─── Topic-aware source validation ────────────────────────
 
