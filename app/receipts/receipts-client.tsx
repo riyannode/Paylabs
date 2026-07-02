@@ -80,6 +80,10 @@ type ReceiptDetail = {
   registryCheckCount?: number | null;
   sourceAccessCount?: number | null;
   macroPlusServicesUsdc?: number | null;
+  grossUserChargeUsdc?: number | null;
+  expectedInternalX402RoutingUsdc?: number | null;
+  agentServicesUsdc?: number | null;
+  totalPaidUsdc?: number | null;
   internalAgentPaymentsUsdc?: number | null;
   runTotalUsdc?: number | null;
   routeReasoning?: string | null;
@@ -138,11 +142,14 @@ function PaymentSection({ detail }: { detail: ReceiptDetail }) {
       <h3>Payment</h3>
       <dl>
         <div><dt>Tier</dt><dd>{label(detail.selectedTier)}</dd></div>
-        {detail.brainTreasuryUsdc != null && detail.brainTreasuryUsdc > 0 && (
-          <div><dt>Brain Treasury</dt><dd>{formatUsdc(detail.brainTreasuryUsdc)}</dd></div>
+        {detail.brainPlusPreflightUsdc != null && detail.brainPlusPreflightUsdc > 0 && (
+          <div><dt>Brain + Preflight</dt><dd>{formatUsdc(detail.brainPlusPreflightUsdc)}</dd></div>
         )}
-        {detail.macroPlusServicesUsdc != null && detail.macroPlusServicesUsdc > 0 && (
-          <div><dt>Agent Services</dt><dd>{formatUsdc(detail.macroPlusServicesUsdc)}</dd></div>
+        {detail.brainPlusPreflightUsdc == null && detail.brainTreasuryUsdc != null && detail.brainTreasuryUsdc > 0 && (
+          <div><dt>Brain + Preflight</dt><dd>{formatUsdc(detail.brainTreasuryUsdc)}</dd></div>
+        )}
+        {detail.agentServicesUsdc != null && detail.agentServicesUsdc > 0 && (
+          <div><dt>Agent Services</dt><dd>{formatUsdc(detail.agentServicesUsdc)}</dd></div>
         )}
         {detail.registryCheckFeesUsdc != null && detail.registryCheckFeesUsdc > 0 && (
           <div><dt>Registry Checks</dt><dd>{detail.registryCheckCount ?? 0} checks × 0.000001 = {formatUsdc(detail.registryCheckFeesUsdc)}</dd></div>
@@ -153,15 +160,12 @@ function PaymentSection({ detail }: { detail: ReceiptDetail }) {
         {detail.creatorReserveUsdc != null && detail.creatorReserveUsdc > 0 && (
           <div><dt>Creator Reserve</dt><dd>{formatUsdc(detail.creatorReserveUsdc)}</dd></div>
         )}
-        {detail.userCostUsdc != null && (
-          <div className="pl-receipt-subtotal"><dt>User Cost</dt><dd>{formatUsdc(detail.userCostUsdc)}</dd></div>
-        )}
-        {detail.runTotalUsdc != null && detail.runTotalUsdc > 0 && (
-          <div className="pl-receipt-total"><dt>Run Total Settled</dt><dd>{formatUsdc(detail.runTotalUsdc)}</dd></div>
+        {detail.totalPaidUsdc != null && (
+          <div className="pl-receipt-total"><dt>Total Paid</dt><dd>{formatUsdc(detail.totalPaidUsdc)}</dd></div>
         )}
         <div><dt>Payments</dt><dd>{detail.paymentCount ?? 0}</dd></div>
       </dl>
-      <p className="muted pl-receipt-helper">Registry checks and source access cost 0.000001 USDC per unit. Run Total Settled equals User Cost plus internal agent payments.</p>
+
     </section>
   );
 }
@@ -356,7 +360,7 @@ export default function ReceiptsClient({ initialRunId }: Props) {
             receiptId: selectedDetail.receiptId,
             createdAt: selectedDetail.createdAt,
             selectedTier: selectedDetail.selectedTier,
-            amountUsdc: selectedDetail.actualSettledUsdc ?? selectedDetail.plannedCostUsdc,
+            amountUsdc: selectedDetail.totalPaidUsdc ?? selectedDetail.actualSettledUsdc ?? selectedDetail.plannedCostUsdc,
             paymentCount: selectedDetail.paymentCount,
             sourceCount: selectedDetail.sources.length,
             displayStatus: selectedDetail.displayStatus,
