@@ -11,6 +11,7 @@ import { BrainIcon } from "@/components/paylabs/chat/BrainIcon";
 import { ChatResultCard } from "@/components/paylabs/chat/ChatResultCard";
 import { ChatTypingIndicator } from "@/components/paylabs/chat/ChatTypingIndicator";
 import { ChatErrorDisplay } from "@/components/paylabs/chat/ChatErrorDisplay";
+import { WalletPill } from "@/components/paylabs/chat/WalletPill";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -574,6 +575,19 @@ export default function PayLabsChatClient({ analytics }: Props) {
     }
   }, [walletInfo?.address]);
 
+  const handleRefreshBalance = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    try {
+      const dcwBal = await fetchDcwBalance();
+      setDcwBalance(dcwBal);
+    } catch { /* refresh failed */ }
+  }, []);
+
+  const handleDisconnectWalletClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    disconnectWallet();
+  }, [disconnectWallet]);
+
   return (
     <>
       <MobileNav />
@@ -584,69 +598,16 @@ export default function PayLabsChatClient({ analytics }: Props) {
         <div className="pl-topbar">
           <div />
 
-          <button
-            type="button"
-            className={`pl-wallet-pill ${walletInfo?.address ? "connected" : ""}`}
-            onClick={openDcwWalletModal}
-            title={walletInfo?.address || "Connect Payment Wallet"}
-          >
-            {walletInfo?.address ? (
-              <>
-                <span className="pl-wallet-dot" />
-                <span className="pl-wallet-pill-address">{short(walletInfo.address)}</span>
-                <span className="pl-wallet-pill-network">Arc</span>
-                <span className="pl-wallet-pill-balance">
-                  x402: {dcwBalance?.gatewayUsdc ?? "0.00"} USDC
-                </span>
-                {dcwBalance?.walletUsdc && dcwBalance.walletUsdc !== "0" && (
-                  <span className="pl-wallet-pill-balance" style={{ fontSize: 10, opacity: 0.7, marginLeft: 6 }}>
-                    wallet: {dcwBalance.walletUsdc}
-                  </span>
-                )}
-                {walletInfo?.walletType === "circle_developer_controlled" && (
-                  <button
-                    type="button"
-                    className="pl-wallet-copy-btn"
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      try {
-                        const dcwBal = await fetchDcwBalance();
-                        setDcwBalance(dcwBal);
-                      } catch { /* refresh failed */ }
-                    }}
-                    aria-label="Refresh balance"
-                    title="Refresh DCW balance"
-                  >
-                    ↻
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="pl-wallet-copy-btn"
-                  onClick={copyWalletAddress}
-                  aria-label="Copy wallet address"
-                  title="Copy wallet address"
-                >
-                  {walletCopied ? "✓" : "⧉"}
-                </button>
-                <button
-                  type="button"
-                  className="pl-wallet-copy-btn"
-                  onClick={(e) => { e.stopPropagation(); disconnectWallet(); }}
-                  aria-label="Disconnect wallet"
-                  title="Disconnect wallet"
-                  style={{ marginLeft: 2, fontSize: 12 }}
-                >
-                  ✕
-                </button>
-              </>
-            ) : (
-              <>
-                <span className="pl-wallet-dot idle" />
-                <span>Connect Payment Wallet</span>
-              </>
-            )}
-          </button>
+          <WalletPill
+            walletInfo={walletInfo}
+            dcwBalance={dcwBalance}
+            walletCopied={walletCopied}
+            shortAddress={short}
+            onOpenWallet={openDcwWalletModal}
+            onRefreshBalance={handleRefreshBalance}
+            onCopyAddress={copyWalletAddress}
+            onDisconnect={handleDisconnectWalletClick}
+          />
         </div>
 
         {walletModeError && (
