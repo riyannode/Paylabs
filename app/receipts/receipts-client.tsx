@@ -158,7 +158,7 @@ function PaymentSection({ detail }: { detail: ReceiptDetail }) {
           <div><dt>Source Access</dt><dd>{detail.sourceAccessCount ?? 0} accesses × 0.000001 = {formatUsdc(detail.sourceAccessFeesUsdc)}</dd></div>
         )}
         <div><dt>Creator Paid</dt><dd>{formatUsdc(detail.actualCreatorPaidUsdc)}</dd></div>
-        <div><dt>Creator Reserve / Treasury Unallocated</dt><dd>{formatUsdc(detail.pendingCreatorReserveUsdc ?? detail.creatorReserveUsdc)}</dd></div>
+        <div><dt>Creator Reserve / Treasury Unallocated</dt><dd>{formatUsdc(detail.creatorReserveUsdc ?? 0)}</dd></div>
         {detail.totalPaidUsdc != null && (
           <div className="pl-receipt-total"><dt>Total Paid</dt><dd>{formatUsdc(detail.totalPaidUsdc)}</dd></div>
         )}
@@ -173,7 +173,7 @@ function CreatorsSection({ detail }: { detail: ReceiptDetail }) {
   const tier = (detail.selectedTier || "").toLowerCase();
   const isEasyTier = tier === "easy" || tier === "beginner";
   const creatorPaid = detail.actualCreatorPaidUsdc ?? 0;
-  const creatorReserve = detail.pendingCreatorReserveUsdc ?? detail.creatorReserveUsdc ?? 0;
+  const creatorReserve = detail.creatorReserveUsdc ?? 0;
 
   return (
     <section className="pl-receipt-section">
