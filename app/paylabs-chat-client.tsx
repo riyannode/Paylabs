@@ -6,6 +6,11 @@ import MobileNav from "@/components/paylabs/MobileNav";
 import type { WalletState, WalletInfo, PayLabsWalletBalance } from "@/components/paylabs/wallet-types";
 import DcwModal from "@/components/paylabs/DcwModal";
 import { safeExplorerUrl as validateExplorerUrl } from "@/lib/paylabs/x402/payment-links";
+import type { SafeRunResult, SourceLink, ChatMessage } from "@/components/paylabs/chat/types";
+import { BrainIcon } from "@/components/paylabs/chat/BrainIcon";
+import { ChatResultCard } from "@/components/paylabs/chat/ChatResultCard";
+import { ChatTypingIndicator } from "@/components/paylabs/chat/ChatTypingIndicator";
+import { ChatErrorDisplay } from "@/components/paylabs/chat/ChatErrorDisplay";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -18,50 +23,6 @@ type Analytics = {
 type Props = {
   analytics: Analytics;
 };
-
-type SourceLink = {
-  title: string;
-  url: string;
-  domain: string | null;
-  summary: string;
-  rank: number;
-  relevance_score: number;
-};
-
-type SafeRunResult = {
-  ok: boolean;
-  runId: string | null;
-  status: string | null;
-  requestedTier: string | null;
-  tier: string | null;
-  effectiveTier: string | null;
-  brainRouteTierHint: string | null;
-  entryPaymentStatus: string | null;
-  plannedCostUsdc: number | null;
-  paidEdges: number;
-  totalEdges: number;
-  receiptReady: boolean;
-  safeSummary: string;
-  assistantResponse: string | null;
-  userVisibleReasoning: string | null;
-  brainRationale: string | null;
-  sourceFinalAnswer: string | null;
-  lockedNodes: string[];
-  lockedServices: string[];
-  tierDecisionReason: string | null;
-  sourcesUsed: SourceLink[];
-  // Payment link fields — chat renders direct explorer link only, never settlement UUID
-  entryExplorerUrl: string | null;
-  entrySettlementId: string | null;
-  entryTransferStatus: string | null;
-  entryGatewayAccepted: boolean;
-  entryBatchExplorerUrl: string | null;
-  entryBatchTxHash: string | null;
-};
-
-type ChatMessage =
-  | { id: string; role: "user"; content: string; createdAt: number; }
-  | { id: string; role: "assistant"; status: "running" | "done" | "error"; result?: SafeRunResult | null; error?: string | null; createdAt: number; };
 
 function makeChatId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -720,19 +681,13 @@ export default function PayLabsChatClient({ analytics }: Props) {
                         </div>
                         <div className="pl-assistant-card">
                           {msg.status === "running" && (
-                            <div className="pl-typing-row">
-                              <div className="pl-typing-dot" />
-                              <div className="pl-typing-dot" />
-                              <div className="pl-typing-dot" />
-                              {signingPhase && <span className="pl-signing-phase">{signingPhase}</span>}
-                              {/* Cancel button removed — DCW paid flow is now synchronous */}
-                            </div>
+                            <ChatTypingIndicator signingPhase={signingPhase} />
                           )}
                           {msg.status === "error" && (
-                            <div className="pl-error-msg">{msg.error || "Something went wrong."}</div>
+                            <ChatErrorDisplay error={msg.error || "Something went wrong."} />
                           )}
                           {msg.status === "done" && msg.result && (
-                            <ResultCard result={msg.result} onReset={resetChat} />
+                            <ChatResultCard result={msg.result} onReset={resetChat} />
                           )}
                         </div>
                       </div>
@@ -837,155 +792,5 @@ export default function PayLabsChatClient({ analytics }: Props) {
       />
     </div>
     </>
-  );
-}
-
-// ─── Result Card ────────────────────────────────────────────
-
-function BrainIcon() {
-  return (
-    <svg className="pl-brain-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M8.2 4.2C6.4 4.2 5 5.6 5 7.4c0 .2 0 .5.1.7A3.3 3.3 0 0 0 3.5 11c0 1.2.6 2.3 1.5 2.9v1.2c0 2 1.6 3.7 3.7 3.7 1.2 0 2.3-.6 3-1.5.7.9 1.8 1.5 3 1.5 2 0 3.7-1.6 3.7-3.7v-1.2c.9-.6 1.5-1.7 1.5-2.9 0-1.2-.6-2.3-1.6-2.9.1-.2.1-.5.1-.7 0-1.8-1.4-3.2-3.2-3.2-1.1 0-2.1.6-2.7 1.5-.6-.9-1.6-1.5-2.7-1.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M11.7 6v11.3M8.1 8.2c1.1 0 2 .9 2 2M8 14.4c1.2 0 2.1-.8 2.3-2M15.3 8.2c-1.1 0-2 .9-2 2M15.4 14.4c-1.2 0-2.1-.8-2.3-2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function ResultCard({ result, onReset }: { result: SafeRunResult; onReset: () => void }) {
-  const [rationaleOpen, setRationaleOpen] = useState(false);
-  const [sourceSummaryOpen, setSourceSummaryOpen] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  // Filter out generic processing text from route reasoning
-  const GENERIC_PATTERNS = [
-    /i am processing/i, /i will gather/i, /saya sedang memproses/i,
-    /processing your request/i, /gathering information/i, /searching for/i,
-    /i'll look/i, /let me find/i, /memproses permintaan/i,
-  ];
-  const isGenericText = (text: string | null): boolean =>
-    !!text && GENERIC_PATTERNS.some((p) => p.test(text)) && text.length < 120;
-  const rationaleCandidates = [result.brainRationale, result.userVisibleReasoning].filter(Boolean) as string[];
-  const rationaleText = rationaleCandidates.find((text) => !isGenericText(text)) ?? null;
-  return (
-    <div className="pl-result-card">
-      {result.assistantResponse && (
-        <div className="pl-assistant-answer">
-          <div className="pl-assistant-label">Answer</div>
-          <div>{result.assistantResponse}</div>
-        </div>
-      )}
-      {rationaleText && (
-        <div className="pl-rationale-block">
-          <button
-            className="pl-rationale-toggle"
-            onClick={() => setRationaleOpen(!rationaleOpen)}
-            type="button"
-          >
-            <span className="pl-rationale-title">Route reasoning</span>
-            <span className="pl-rationale-caret">{rationaleOpen ? "▾" : "▸"}</span>
-          </button>
-          {rationaleOpen && (
-            <div className="pl-rationale-content">{rationaleText}</div>
-          )}
-        </div>
-      )}
-      {result.sourceFinalAnswer && result.sourceFinalAnswer !== result.assistantResponse && (
-        <div className="pl-source-summary-pill-wrap">
-          <button
-            className="pl-source-summary-pill"
-            onClick={() => setSourceSummaryOpen(!sourceSummaryOpen)}
-            type="button"
-          >
-            <span>Source summary</span>
-            <span>{sourceSummaryOpen ? "▾" : "▸"}</span>
-          </button>
-          {sourceSummaryOpen && (
-            <div className="pl-source-summary-content">{result.sourceFinalAnswer}</div>
-          )}
-        </div>
-      )}
-      {result.sourcesUsed.length > 0 && (
-        <div className="pl-source-links-row">
-          {result.sourcesUsed.slice(0, 3).map((s, i) => (
-            <a key={s.url} href={s.url} target="_blank" rel="noopener noreferrer" title={s.title}>
-              Link {i + 1}
-              <span className="pl-source-link-meta">{s.title || s.domain || ""}</span>
-            </a>
-          ))}
-        </div>
-      )}
-      <div className="pl-rationale-block">
-        <button
-          className="pl-rationale-toggle"
-          onClick={() => setDetailsOpen(!detailsOpen)}
-        >
-          <span className="pl-rationale-title">Run details</span>
-          <span className="pl-rationale-caret">{detailsOpen ? "▾" : "▸"}</span>
-        </button>
-        {detailsOpen && (
-          <div className="pl-result-grid">
-            <div className="pl-result-pill">
-              <span>Status</span>
-              <b>{result.ok ? "Completed" : "Failed"}</b>
-            </div>
-            <div className="pl-result-pill">
-              <span>Tier</span>
-              <b style={{ textTransform: "capitalize" }}>{result.effectiveTier || result.tier || "—"}</b>
-            </div>
-            {result.requestedTier && (
-              <div className="pl-result-pill">
-                <span>Requested</span>
-                <b style={{ textTransform: "capitalize" }}>{result.requestedTier}</b>
-              </div>
-            )}
-            {result.brainRouteTierHint && (
-              <div className="pl-result-pill">
-                <span>Brain selected</span>
-                <b style={{ textTransform: "capitalize" }}>{result.brainRouteTierHint}</b>
-              </div>
-            )}
-            {result.tierDecisionReason && (
-              <div className="pl-result-pill">
-                <span>Why</span>
-                <b>{result.tierDecisionReason}</b>
-              </div>
-            )}
-            <div className="pl-result-pill">
-              <span>Entry</span>
-              <b style={{ textTransform: "capitalize" }}>{result.entryPaymentStatus || "—"}</b>
-            </div>
-            <div className="pl-result-pill">
-              <span>Edges</span>
-              <b>{result.paidEdges}/{result.totalEdges}</b>
-            </div>
-            <div className="pl-result-pill">
-              <span>Cost</span>
-              <b>{result.plannedCostUsdc != null ? `${result.plannedCostUsdc} USDC` : "—"}</b>
-            </div>
-            <div className="pl-result-pill">
-              <span>Receipt</span>
-              <b>{result.receiptReady ? "Ready" : "Pending"}</b>
-            </div>
-            {result.lockedNodes.length > 0 && (
-              <div className="pl-result-pill">
-                <span>Nodes</span>
-                <b>{result.lockedNodes.join(" → ")}</b>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-      {result.entrySettlementId && !result.entryBatchExplorerUrl && !result.entryBatchTxHash && (
-        <div className="pl-payment-links-inline" style={{ fontSize: "0.85em", opacity: 0.7, marginTop: 4 }}>
-          ✓ Gateway accepted — queued for batch settlement
-        </div>
-      )}
-      {result.runId && (
-        <div className="pl-result-links">
-          <a href={`/receipts?run=${result.runId}`}>View receipt</a>
-          <a href={`/explorer?run=${result.runId}`}>View details</a>
-          <button onClick={onReset} className="pl-new-run">New run</button>
-        </div>
-      )}
-    </div>
   );
 }
