@@ -24,7 +24,7 @@
 export const maxDuration = 300;
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import {
   isDelegatedRuntimeEnabled,
   isDelegatedInlineExecutionEnabled,

@@ -6,7 +6,7 @@
  * raw signatures, secrets, or private keys.
  */
 
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 
 // ─── Creator Memory ───────────────────────────────────────────
 
