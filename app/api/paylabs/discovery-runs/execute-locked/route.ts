@@ -849,6 +849,7 @@ export async function POST(req: NextRequest) {
                   source_kind: s.source_kind,
                   provider: s.provider,
                 })),
+                _diagnostic: ((result.sourceContext as unknown as Record<string, unknown>)?._diagnostic) ?? null,
               },
               final_answer: finalAnswer,
               exit_output: exitOutput,

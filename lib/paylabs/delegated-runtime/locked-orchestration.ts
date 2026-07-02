@@ -540,6 +540,13 @@ export async function executeLockedMacroNodePipeline(
     notes: srcDiag.notes,
   }));
 
+  // ── Embed diagnostic in sourceContext for reliable persistence ──
+  // source_context is persisted independently via the source_context path
+  // which doesn't race with the agent_trace update.
+  if (sourceContext) {
+    (sourceContext as unknown as Record<string, unknown>)["_diagnostic"] = srcDiag;
+  }
+
   // ── Build output ──
   const output = buildOutput(
     discoveryRunId,
