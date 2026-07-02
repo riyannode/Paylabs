@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import WalletConnectModal from "./WalletConnectModal";
+import UcwConnectModal from "./UcwConnectModal";
 import { useCreatorUcwWallet } from "./useCreatorUcwWallet";
 
 
@@ -116,7 +116,7 @@ export default function CreatorWalletPanel() {
 
       {dcwConflict && (
         <div className="pl-wallet-error-v3" style={{ marginTop: 8 }}>
-          User Test Wallet is connected.
+          PayLabs Payment Wallet is connected.
           <button
             type="button"
             className="pl-primary-v3"
@@ -128,7 +128,7 @@ export default function CreatorWalletPanel() {
         </div>
       )}
 
-      <WalletConnectModal
+      <UcwConnectModal
         open={open}
         onClose={() => setOpen(false)}
         walletState={walletState}

@@ -1,20 +1,20 @@
 /**
  * Customer Entry Payment — x402 Gate
  *
- * Customer (Circle User-Controlled Wallet) signs ONE x402 payment
- * to Brain/platform entry endpoint BEFORE internal delegated runtime.
+ * PayLabs Payment Wallet / DCW signs x402 entry payment for chat execution.
+ * One x402 payment to Brain/platform entry endpoint BEFORE internal delegated runtime.
  *
  * Flow:
  *   1. Backend computes quote → returns x402 challenge (HTTP 402)
- *   2. Customer wallet signs x402 challenge (frontend SDK)
- *   3. Customer retries with PAYMENT-SIGNATURE header
+ *   2. DCW wallet signs x402 challenge (frontend SDK)
+ *   3. DCW retries with PAYMENT-SIGNATURE header
  *   4. Backend verifies + settles via BatchFacilitatorClient
  *   5. Only after settlement → run internal delegated runtime
  *
  * Client-side signing requirement:
  *   Frontend MUST use @circle-fin/x402-batching BatchEvmScheme.createPaymentPayload()
  *   to sign the EIP-712 authorization. The SDK handles the validity window buffer
- *   (GATEWAY_AUTH_VALIDITY_WINDOW_SECONDS = 604900s). Raw EIP-712 signing will
+ *   (GATEWAY_AUTH_VALIDITY_WINDOW_SECONDS). Raw EIP-712 signing will
  *   produce authorization_validity_too_short errors from Gateway.
  *
  *   After BatchEvmScheme returns {x402Version, payload}, the client MUST wrap:
@@ -22,7 +22,10 @@
  *   Then base64-encode that JSON as the PAYMENT-SIGNATURE header value.
  *
  * Internal edges remain unchanged (platform DCW wallets).
- * Customer signs only ONCE for the entry payment.
+ * DCW signs only ONCE for the entry payment.
+ *
+ * NOTE: UCW (Creator Wallet) is for creator identity and source monetization only.
+ *       UCW does NOT sign x402 chat payments. DCW / PayLabs Payment Wallet is used here.
  */
 
 import {

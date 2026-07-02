@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
       case "gateway-balance": {
         return NextResponse.json(
           {
-            error: "Creator Wallet does not support x402/Gateway actions. Use User Test Wallet for x402 payments.",
+            error: "Creator Wallet is for creator identity and source monetization only. Use PayLabs Payment Wallet for x402 chat payments.",
             activeWalletMode: "ucw_creator_only",
           },
           { status: 410 },
@@ -147,7 +147,7 @@ export async function POST(req: NextRequest) {
           });
           return NextResponse.json(
             {
-              error: "User Test Wallet is already connected. Disconnect it before connecting Creator Wallet.",
+              error: "PayLabs Payment Wallet is already connected. Disconnect it before connecting Creator Wallet.",
               activeWalletMode: "dcw",
             },
             { status: 409 },
