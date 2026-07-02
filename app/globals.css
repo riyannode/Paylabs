@@ -431,6 +431,49 @@ a:hover { text-decoration: none; }
   padding: 8px;
 }
 
+/* ── Recent Chats ── */
+
+.pl-recent-chats-card { border: 0; background: transparent; box-shadow: none; padding: 0 2px; }
+.pl-recent-chats-list {
+  display: grid;
+  gap: 4px;
+}
+
+.pl-recent-chat-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--card-soft);
+  border: 0;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--foreground);
+  text-align: left;
+  transition: background 0.12s;
+  width: 100%;
+}
+
+.pl-recent-chat-item:hover {
+  background: var(--border);
+}
+
+.pl-recent-chat-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.pl-recent-chat-meta {
+  color: var(--muted-2);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
 /* ── Main area ── */
 
 .pl-main {
@@ -2340,6 +2383,10 @@ a:hover { text-decoration: none; }
 .pl-receipt-summary {
   margin: 10px 0 0;
   font-size: 12px;
+}
+
+.pl-receipt-route-reasoning {
+  margin-bottom: 12px;
 }
 
 .pl-receipt-rows,
