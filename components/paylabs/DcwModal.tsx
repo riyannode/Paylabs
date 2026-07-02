@@ -123,8 +123,6 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   const x402Balance = asDecimal(balance.gatewayUsdc);
   const plannedCostNum = asDecimal(plannedCost);
   const needsTopUp = x402Balance < plannedCostNum;
-  const recommendedTopUp = Math.max(plannedCostNum - x402Balance, plannedCostNum);
-  const recommendedStr = recommendedTopUp > 0 ? recommendedTopUp.toFixed(6) : "0.000001";
   const walletAddress = wallet?.address ?? "";
 
   async function handleCopyWalletAddress() {
