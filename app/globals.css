@@ -433,6 +433,7 @@ a:hover { text-decoration: none; }
 
 /* ── Recent Chats ── */
 
+.pl-recent-chats-card { border: 0; background: transparent; box-shadow: none; padding: 0 2px; }
 .pl-recent-chats-list {
   display: grid;
   gap: 4px;

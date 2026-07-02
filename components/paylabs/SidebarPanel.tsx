@@ -59,7 +59,7 @@ export default function SidebarPanel({
       </section>
 
       {recentChats && recentChats.length > 0 && (
-        <section className="pl-side-card">
+        <section className="pl-side-card pl-recent-chats-card">
           <div className="pl-side-title">Recent Chats</div>
           <div className="pl-recent-chats-list">
             {recentChats
