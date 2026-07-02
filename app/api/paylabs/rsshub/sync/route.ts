@@ -4,7 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { syncRsshub } from "@/lib/rsshub/rsshub-sync";
+import { syncRsshub } from "@/lib/paylabs/rsshub/rsshub-sync";
 
 export const dynamic = "force-dynamic";
 
