@@ -334,6 +334,11 @@ function mapReceiptDetail(
   sources: any[],
   userCostUsdc?: number | null,
   brainTreasuryUsdc?: number | null,
+  brainPlusPreflightUsdc?: number | null,
+  registryCheckFeesUsdc?: number | null,
+  sourceAccessFeesUsdc?: number | null,
+  registryCheckCount?: number | null,
+  sourceAccessCount?: number | null,
   routeReasoning?: string | null,
   effectiveRouteTier?: string | null,
   brainRouteTierHint?: string | null,
@@ -371,6 +376,13 @@ function mapReceiptDetail(
     userCostUsdc: userCostUsdc !== undefined ? userCostUsdc : null,
     // Brain treasury from preflight breakdown (displayed in receipt UI)
     brainTreasuryUsdc: brainTreasuryUsdc !== undefined ? brainTreasuryUsdc : null,
+    // Brain + Preflight combined (brain_treasury + routing_fee)
+    brainPlusPreflightUsdc: brainPlusPreflightUsdc !== undefined ? brainPlusPreflightUsdc : null,
+    // Registry/source fee breakdown from preflight
+    registryCheckFeesUsdc: registryCheckFeesUsdc !== undefined ? registryCheckFeesUsdc : null,
+    sourceAccessFeesUsdc: sourceAccessFeesUsdc !== undefined ? sourceAccessFeesUsdc : null,
+    registryCheckCount: registryCheckCount !== undefined ? registryCheckCount : null,
+    sourceAccessCount: sourceAccessCount !== undefined ? sourceAccessCount : null,
     // Route reasoning — safe fields only, no raw trace
     routeReasoning: routeReasoning ?? null,
     effectiveRouteTier: effectiveRouteTier ?? null,
@@ -467,11 +479,25 @@ export async function getRunReceiptDetail(discoveryRunId: string) {
     ? Number(preflight.routing_fee_usdc || 0) + Number(preflight.final_entry_payment_usdc || 0)
     : null;
   
-  // Extract brain treasury from preflight breakdown
+  // Extract preflight fee breakdown from agent_trace
   const lockedBreakdown = preflight?.locked_planned_cost_breakdown as Record<string, unknown> | undefined;
   const brainTreasuryUsdc = preflight?.status === "locked" && lockedBreakdown?.brain_treasury_usdc != null
     ? Number(lockedBreakdown.brain_treasury_usdc)
     : null;
+  const routingFeeUsdc = preflight?.status === "locked" && preflight.routing_fee_usdc != null
+    ? Number(preflight.routing_fee_usdc)
+    : null;
+  const brainPlusPreflightUsdc = brainTreasuryUsdc != null && routingFeeUsdc != null
+    ? brainTreasuryUsdc + routingFeeUsdc
+    : null;
+  const registryCheckFeesUsdc = preflight?.status === "locked" && lockedBreakdown?.registry_check_fees_usdc != null
+    ? Number(lockedBreakdown.registry_check_fees_usdc)
+    : null;
+  const sourceAccessFeesUsdc = preflight?.status === "locked" && lockedBreakdown?.source_access_fees_usdc != null
+    ? Number(lockedBreakdown.source_access_fees_usdc)
+    : null;
+  const registryCheckCount = registryCheckFeesUsdc != null ? Math.round(registryCheckFeesUsdc / 0.000001) : null;
+  const sourceAccessCount = sourceAccessFeesUsdc != null ? Math.round(sourceAccessFeesUsdc / 0.000001) : null;
 
   // Extract safe route reasoning from agent_trace.brain_planning
   const { routeReasoning, brainRouteTierHint } = extractSafeRouteReasoning(agentTrace);
@@ -484,6 +510,11 @@ export async function getRunReceiptDetail(discoveryRunId: string) {
     sourcesResult.data || [],
     userCostUsdc,
     brainTreasuryUsdc,
+    brainPlusPreflightUsdc,
+    registryCheckFeesUsdc,
+    sourceAccessFeesUsdc,
+    registryCheckCount,
+    sourceAccessCount,
     routeReasoning,
     effectiveRouteTier,
     resolvedBrainHint,
