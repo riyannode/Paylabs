@@ -183,6 +183,44 @@ function shortHash(value: unknown): string | null {
   return `${s.slice(0, 8)}…${s.slice(-6)}`;
 }
 
+// ─── Route reasoning helpers ──────────────────────────────
+
+function textOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+const GENERIC_REASONING_RE =
+  /^(i will find|i will search|i am processing|let me find|i'll look|i'll search|saya akan mencari|saya sedang memproses|mohon tunggu sebentar|gathering information|i'm searching for|i'm looking for|saya sedang mencari)/i;
+
+function isGenericReasoningText(text: string): boolean {
+  return GENERIC_REASONING_RE.test(text) && text.length < 200;
+}
+
+/**
+ * Extract safe, user-visible route reasoning from agent_trace.
+ * Reads brain_planning fields only — never exposes raw trace or chain-of-thought.
+ * Supports both agent_trace.brain_planning and top-level brain_planning.
+ */
+function extractSafeRouteReasoning(
+  agentTrace: Record<string, unknown>,
+): { routeReasoning: string | null; brainRouteTierHint: string | null } {
+  const bp =
+    (agentTrace?.brain_planning as Record<string, unknown>) ?? undefined;
+  if (!bp) return { routeReasoning: null, brainRouteTierHint: null };
+
+  const candidates = [
+    textOrNull(bp.user_visible_reasoning),
+    textOrNull(bp.tier_decision_reason),
+    textOrNull(bp.plan_rationale),
+  ];
+
+  const routeReasoning =
+    candidates.find((c) => c !== null && !isGenericReasoningText(c)) ?? null;
+  const brainRouteTierHint = textOrNull(bp.route_tier_hint);
+
+  return { routeReasoning, brainRouteTierHint };
+}
+
 function safeGatewayStatus(row: Record<string, unknown>): string | null {
   const mode = String(row.mode || "");
   const summary = String(row.safe_summary || "").toLowerCase();
@@ -288,7 +326,15 @@ function batchStatus(row: any): BatchStatus {
   return "pending";
 }
 
-function mapReceiptDetail(row: any, creators: any[], sources: any[], userCostUsdc?: number | null) {
+function mapReceiptDetail(
+  row: any,
+  creators: any[],
+  sources: any[],
+  userCostUsdc?: number | null,
+  routeReasoning?: string | null,
+  effectiveRouteTier?: string | null,
+  brainRouteTierHint?: string | null,
+) {
   return {
     id: row.discovery_run_id,
     discoveryRunId: row.discovery_run_id,
@@ -320,6 +366,10 @@ function mapReceiptDetail(row: any, creators: any[], sources: any[], userCostUsd
     batchStatus: batchStatus(row),
     // Derived from agent_trace.auto_tier_preflight (no DB column)
     userCostUsdc: userCostUsdc !== undefined ? userCostUsdc : null,
+    // Route reasoning — safe fields only, no raw trace
+    routeReasoning: routeReasoning ?? null,
+    effectiveRouteTier: effectiveRouteTier ?? null,
+    brainRouteTierHint: brainRouteTierHint ?? null,
     creators: creators.map((creator) => ({
       id: String(creator.id),
       routeTier: creator.route_tier ?? null,
@@ -394,10 +444,10 @@ export async function getRunReceiptDetail(discoveryRunId: string) {
       .eq("discovery_run_id", discoveryRunId)
       .order("final_score", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: true }),
-    // Fetch agent_trace to derive userCostUsdc (no DB column needed)
+    // Fetch agent_trace + tier columns for userCostUsdc and route reasoning
     supabaseAdmin()
       .from("paylabs_discovery_runs")
-      .select("agent_trace")
+      .select("agent_trace, effective_route_tier, brain_route_tier_hint")
       .eq("id", discoveryRunId)
       .maybeSingle(),
   ]);
@@ -412,7 +462,20 @@ export async function getRunReceiptDetail(discoveryRunId: string) {
     ? Number(preflight.routing_fee_usdc || 0) + Number(preflight.final_entry_payment_usdc || 0)
     : null;
 
-  return mapReceiptDetail(receipt, creatorsResult.data || [], sourcesResult.data || [], userCostUsdc);
+  // Extract safe route reasoning from agent_trace.brain_planning
+  const { routeReasoning, brainRouteTierHint } = extractSafeRouteReasoning(agentTrace);
+  const effectiveRouteTier = toStringOrNull(runResult.data?.effective_route_tier);
+  const resolvedBrainHint = brainRouteTierHint ?? toStringOrNull(runResult.data?.brain_route_tier_hint);
+
+  return mapReceiptDetail(
+    receipt,
+    creatorsResult.data || [],
+    sourcesResult.data || [],
+    userCostUsdc,
+    routeReasoning,
+    effectiveRouteTier,
+    resolvedBrainHint,
+  );
 }
 
 export async function getRecentReceiptList(limit = 25) {

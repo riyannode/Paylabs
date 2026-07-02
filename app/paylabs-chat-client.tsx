@@ -91,6 +91,49 @@ function clearChatStorage(walletAddress: string): void {
   }
 }
 
+// ─── Recent Chats ─────────────────────────────────────────
+type RecentChatItem = {
+  id: string;
+  content: string;
+  createdAt: number;
+  runId?: string | null;
+};
+
+const MAX_RECENT_CHATS = 5;
+const RECENT_CHATS_STORAGE_KEY = "paylabs.recentChats.v1";
+
+function loadRecentChats(): RecentChatItem[] {
+  try {
+    const raw = localStorage.getItem(RECENT_CHATS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (item): item is RecentChatItem =>
+          !!item &&
+          typeof item === "object" &&
+          typeof (item as RecentChatItem).id === "string" &&
+          typeof (item as RecentChatItem).content === "string" &&
+          typeof (item as RecentChatItem).createdAt === "number",
+      )
+      .slice(-MAX_RECENT_CHATS);
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentChats(chats: RecentChatItem[]): void {
+  try {
+    localStorage.setItem(
+      RECENT_CHATS_STORAGE_KEY,
+      JSON.stringify(chats.slice(-MAX_RECENT_CHATS)),
+    );
+  } catch {
+    // silent
+  }
+}
+
 // Planned cost comes from backend /api/paylabs/quote. No frontend constants.
 
 function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
@@ -340,6 +383,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
 
   // Chat message history
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [recentChats, setRecentChats] = useState<RecentChatItem[]>([]);
   const chatThreadRef = useRef<HTMLDivElement | null>(null);
 
   // Wallet state — DCW only
@@ -481,6 +525,39 @@ export default function PayLabsChatClient({ analytics }: Props) {
     setDcwOpen(true);
   }, []);
 
+  // ── Recent Chats upsert (defined before submitChat so it can be used inside) ──
+  const upsertRecentChat = useCallback(
+    (item: RecentChatItem) => {
+      setRecentChats((prev) => {
+        const idx = prev.findIndex((c) => c.id === item.id);
+        const next =
+          idx >= 0
+            ? prev.map((c) => (c.id === item.id ? { ...c, ...item } : c))
+            : [...prev, item];
+        const trimmed = next.slice(-MAX_RECENT_CHATS);
+        saveRecentChats(trimmed);
+        return trimmed;
+      });
+    },
+    [],
+  );
+
+  // Restore recent chats on mount
+  useEffect(() => {
+    setRecentChats(loadRecentChats());
+  }, []);
+
+  const handleUseRecentChat = useCallback(
+    (chat: RecentChatItem) => {
+      if (chat.runId) {
+        window.location.href = `/receipts?run=${encodeURIComponent(chat.runId)}`;
+      } else {
+        setPrompt(chat.content);
+      }
+    },
+    [],
+  );
+
   // ── Submit chat ──
   const submitChat = useCallback(async () => {
     if (!prompt.trim()) return;
@@ -511,6 +588,14 @@ export default function PayLabsChatClient({ analytics }: Props) {
     setStatus("running");
     setError(null);
     setResult(null);
+
+    // Recent Chats: first upsert — save prompt immediately (no runId yet)
+    upsertRecentChat({
+      id: userMsg.id,
+      content: userMsg.content,
+      createdAt: userMsg.createdAt,
+      runId: null,
+    });
 
     const finishAssistant = (patch: Partial<Extract<ChatMessage, { role: "assistant" }>>) => {
       setMessages((prev) => prev.map((msg) =>
@@ -585,6 +670,14 @@ export default function PayLabsChatClient({ analytics }: Props) {
            finishAssistant({ status: "done", result: safeResult });
            setResult(safeResult);
            setStatus("done");
+
+           // Recent Chats: second upsert — update with runId from result
+           upsertRecentChat({
+             id: userMsg.id,
+             content: userMsg.content,
+             createdAt: userMsg.createdAt,
+             runId: safeResult.runId,
+           });
            return;
          } catch (e: unknown) {
            const errMsg = e instanceof Error ? e.message : "DCW payment request failed.";
@@ -602,7 +695,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
       setError(errMsg);
       setStatus("error");
     }
-  }, [prompt, budget, walletInfo, dcwBalance, planned, openDcwWalletModal]);
+  }, [prompt, budget, walletInfo, dcwBalance, planned, openDcwWalletModal, upsertRecentChat]);
 
   const resetChat = useCallback(() => {
     setPrompt("");
@@ -669,7 +762,11 @@ export default function PayLabsChatClient({ analytics }: Props) {
     <>
       <MobileNav />
     <div className="pl-app">
-      <SidebarPanel analytics={analytics} />
+      <SidebarPanel
+        analytics={analytics}
+        recentChats={recentChats}
+        onUseRecentChat={handleUseRecentChat}
+      />
 
       <main className="pl-main">
         <div className="pl-topbar">
