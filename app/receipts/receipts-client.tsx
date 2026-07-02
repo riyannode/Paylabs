@@ -274,14 +274,8 @@ function RouteReasoningSection({ detail }: { detail: ReceiptDetail }) {
       <dl>
         {selectedRoute && (
           <div>
-            <dt>Selected Route</dt>
+            <dt>Route</dt>
             <dd>{selectedRoute}</dd>
-          </div>
-        )}
-        {detail.brainRouteTierHint && (
-          <div>
-            <dt>Brain Selected</dt>
-            <dd>{detail.brainRouteTierHint}</dd>
           </div>
         )}
       </dl>
