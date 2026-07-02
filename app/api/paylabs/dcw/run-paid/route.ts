@@ -29,7 +29,6 @@ function getAllowedSellerUrl(path: string): string | null {
   if (!baseUrl) return null;
 
   const allowedPaths = [
-    "/api/paylabs/discovery-runs/inline",
     "/api/paylabs/discovery-runs/route-preflight",
     "/api/paylabs/discovery-runs/execute-locked",
     "/api/paylabs/macro-nodes",
@@ -131,8 +130,26 @@ export async function POST(req: NextRequest) {
     const userBudgetUsdc = requestedBudget > 0 ? requestedBudget : 0.01;
     const maxAmountUsdc = Math.min(userBudgetUsdc, SERVER_MAX_BUDGET_USDC).toFixed(6);
 
-    // ─── Auto-tier preflight path (flag on + auto tier) ─────
-    if (isAutoTierPreflightEnabled() && routeTier === "auto") {
+    // ─── Preflight-only: all future paid runs ──────────────
+    const normalizedRouteTier = routeTier === "standard" ? "auto" : routeTier;
+
+    if (!isAutoTierPreflightEnabled()) {
+      return NextResponse.json(
+        { ok: false, error: "preflight_required: paid runs require route-preflight and execute-locked" },
+        { status: 410 },
+      );
+    }
+
+    if (!["auto", "easy", "normal", "advanced"].includes(normalizedRouteTier)) {
+      return NextResponse.json(
+        { ok: false, error: `Unsupported route tier for preflight: ${routeTier}` },
+        { status: 400 },
+      );
+    }
+
+    // All future paid runs go through route-preflight → execute-locked.
+    // auto: Brain selects tier. explicit easy/normal/advanced: preflight locks requested tier.
+    {
       // Step 1: Route-preflight (0.000001 USDC)
       const preflightSellerPath = "/api/paylabs/discovery-runs/route-preflight";
       const preflightSellerUrl = getAllowedSellerUrl(preflightSellerPath);
@@ -147,6 +164,8 @@ export async function POST(req: NextRequest) {
           goal,
           user_wallet: normalizedWallet,
           budget_usdc: maxAmountUsdc,
+          route_tier: normalizedRouteTier,
+          routeTier: normalizedRouteTier,
         },
         headers: {},
         buyerWalletId: wallet.wallet_id,
@@ -291,94 +310,6 @@ export async function POST(req: NextRequest) {
         entry_payment_batch_explorer_url: lockedEntryPayment.batch_explorer_url,
       }, { status: lockedResult.ok ? 200 : 502 });
     }
-
-    // ─── Old flow: inline seller (flag off or explicit tier) ──
-    const sellerPath = "/api/paylabs/discovery-runs/inline";
-    const sellerUrl = getAllowedSellerUrl(sellerPath);
-    if (!sellerUrl) {
-      return NextResponse.json({ ok: false, error: `Seller path not allowed: ${sellerPath}` }, { status: 500 });
-    }
-
-    // 6. Execute paid request — request-bound (synchronous)
-    const result = await callPaidSeller(dcwSigner, {
-      sellerUrl,
-      method: "POST",
-      body: {
-        goal,
-        route_tier: routeTier || "auto",
-        user_wallet: normalizedWallet,
-        budget_usdc: maxAmountUsdc,
-      },
-      headers: {},
-      buyerWalletId: wallet.wallet_id,
-      buyerAgentName: "paylabs-dcw-user",
-      sellerServiceName: "discovery",
-      maxAmountUsdc,
-      requirePayment: true,
-      recoverResultById: async (runId: string) => {
-        const { data: run } = await supabaseAdmin()
-          .from("paylabs_discovery_runs")
-          .select("id, status, final_answer, route_tier, effective_route_tier, brain_route_tier_hint, agent_trace, source_snapshot, error_summary")
-          .eq("id", runId)
-          .single();
-
-        if (!run) return null;
-        if (run.status !== "completed" && run.status !== "paid_path_available") return null;
-
-        const sourceSnapshot = (run.source_snapshot as Record<string, unknown>) || {};
-        const agentTrace = (run.agent_trace as Record<string, unknown>) || {};
-
-        return {
-          ok: true,
-          status: "completed",
-          discovery_run_id: run.id,
-          final_answer: run.final_answer || sourceSnapshot.final_answer || agentTrace.final_answer || null,
-          effective_route_tier: run.effective_route_tier || run.route_tier,
-          brain_route_tier_hint: run.brain_route_tier_hint,
-          source_context: sourceSnapshot.source_context || agentTrace.source_context || null,
-          payment_graph: agentTrace.payment_graph || null,
-          quote: agentTrace.quote || null,
-          exit_output: agentTrace.exit_output || null,
-          _brain_diag: agentTrace._brain_diag || null,
-          _recovered: true,
-          _recovery_source: "supabase_poll",
-        };
-      },
-    });
-
-    // 7. Build entry_payment shape
-    const paymentMetadata = result.paymentMetadata ?? null;
-    const resultData = result.data as Record<string, unknown> | null | undefined;
-    const dataEntry = (resultData?.entry_payment as Record<string, unknown> | null | undefined) ?? null;
-
-    const entryPayment = {
-      status: result.ok ? "paid" : "failed",
-      tx_hash: paymentMetadata?.txHash ?? (dataEntry?.tx_hash as string | null | undefined) ?? null,
-      explorer_url: paymentMetadata?.explorerUrl ?? (dataEntry?.explorer_url as string | null | undefined) ?? null,
-      settlement_id: paymentMetadata?.settlementId ?? (dataEntry?.settlement_id as string | null | undefined) ?? null,
-      settlement_url: paymentMetadata?.settlementUrl ?? (dataEntry?.settlement_url as string | null | undefined) ?? null,
-      transfer_status: paymentMetadata?.transferStatus ?? (dataEntry?.transfer_status as string | null | undefined) ?? null,
-      gateway_accepted: paymentMetadata?.gatewayAccepted ?? (dataEntry?.gateway_accepted as boolean | undefined) ?? result.ok,
-      batch_tx_hash: paymentMetadata?.batchTxHash ?? (dataEntry?.batch_tx_hash as string | null | undefined) ?? null,
-      batch_explorer_url: paymentMetadata?.batchExplorerUrl ?? (dataEntry?.batch_explorer_url as string | null | undefined) ?? null,
-      batch_resolver_url: paymentMetadata?.batchResolverUrl ?? (dataEntry?.batch_resolver_url as string | null | undefined) ?? null,
-      customer_wallet: normalizedWallet,
-      customer_wallet_type: "circle_developer_controlled" as const,
-    };
-
-    // 8. Return final result directly
-    return NextResponse.json({
-      ok: result.ok,
-      status: result.status,
-      data: result.data,
-      error: result.error,
-      paymentMetadata,
-      freeResponse: result.freeResponse,
-      entry_payment: entryPayment,
-      entry_payment_explorer_url: entryPayment.explorer_url,
-      entry_payment_batch_explorer_url: entryPayment.batch_explorer_url,
-      _brain_diag: (resultData?._brain_diag as Record<string, unknown>) ?? null,
-    }, { status: result.ok ? 200 : 502 });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[dcw/run-paid] Error:", msg);
