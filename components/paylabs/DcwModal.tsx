@@ -254,6 +254,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
       text: "continue_with",
       shape: "rectangular",
       width,
+      locale: "en",
     });
   }, [handleGoogleSignIn]);
 
@@ -267,7 +268,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
     if (!existing) {
       const script = document.createElement("script");
       script.id = "google-identity-script";
-      script.src = "https://accounts.google.com/gsi/client";
+      script.src = "https://accounts.google.com/gsi/client?hl=en";
       script.async = true;
       script.defer = true;
       script.onload = renderGoogleButton;
