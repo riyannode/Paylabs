@@ -14,13 +14,17 @@
  * This module bridges the two without renaming the whole codebase.
  */
 
-import type { RouteTier } from "@/lib/ai/route-config";
-
 /** External tier names used in delegated runtime API surface */
 export type ExternalRouteTier = "easy" | "normal" | "advanced";
 
 /** Internal tier names used by 15-agent LangGraph */
-export type InternalRouteTier = RouteTier; // "normal" | "advanced" | "premium"
+export type InternalRouteTier = "normal" | "advanced" | "premium";
+
+/**
+ * Backward-compatible internal route tier alias.
+ * Legacy internal tier names are still normal/advanced/premium.
+ */
+export type RouteTier = InternalRouteTier;
 
 const EXTERNAL_TO_INTERNAL: Record<ExternalRouteTier, InternalRouteTier> = {
   easy: "normal",
