@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import CreatorWalletPanel from "@/components/paylabs/CreatorWalletPanel";
+import { platformLabel } from "@/components/paylabs/creator/creator-labels";
 
 type ClaimStatus = "unclaimed" | "verified" | "rejected" | "revoked" | "unknown";
 type ProofStatus = "not_started" | "pending" | "verified" | "failed" | "manual_required";
@@ -107,19 +108,7 @@ function shortAddress(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
-function platformLabel(platform?: string | null): string {
-  if (!platform) return "Website";
-  if (platform === "github") return "GitHub Repository";
-  if (platform === "github_pages") return "GitHub Pages";
-  if (platform === "vercel") return "Vercel";
-  if (platform === "netlify") return "Netlify";
-  if (platform === "rss_publisher") return "RSS Publisher";
-  if (platform === "twitter") return "X / Twitter";
-  if (platform === "youtube") return "YouTube";
-  if (platform === "medium") return "Medium";
-  if (platform === "substack") return "Substack";
-  return "Website";
-}
+
 
 function scopeLabel(claim?: CreatorClaim | null): string {
   if (!claim) return "";
