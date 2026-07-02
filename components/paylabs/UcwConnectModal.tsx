@@ -1,37 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
-
-export type WalletState =
-  | "not_connected"
-  | "connecting"
-  | "connected"
-  | "needs_gateway_deposit"
-  | "ready_to_approve"
-  | "approving"
-  | "paid"
-  | "failed";
-
-export type WalletInfo = {
-  address: string;
-  walletType: "external_eoa" | "circle_user_controlled" | "circle_developer_controlled";
-  network: string;
-};
-
-export type UcwBalance = {
-  walletUsdc: string | null;
-  gatewayUsdc: string | null;
-  pendingBatchUsdc?: string;
-  gatewayError?: string | null;
-  source: "ucw" | "dcw" | "external_eoa";
-};
+import type { WalletState, WalletInfo, PayLabsWalletBalance } from "./wallet-types";
 
 type Props = {
   open: boolean;
   onClose: () => void;
   walletState: WalletState;
   walletInfo: WalletInfo | null;
-  ucwBalance: UcwBalance | null;
+  ucwBalance: PayLabsWalletBalance | null;
   error: string | null;
   onConnectGoogle: () => void;
   onConnectEmail: (email: string) => void;
@@ -67,7 +44,7 @@ function walletTypeLabel(wt?: string): string {
   }
 }
 
-export default function WalletConnectModal({
+export default function UcwConnectModal({
   open,
   onClose,
   walletState,
