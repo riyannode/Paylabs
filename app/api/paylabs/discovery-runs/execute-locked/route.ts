@@ -856,6 +856,28 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Persist exit_output unconditionally — recovery path reads agentTrace.exit_output
+    if (!exitOutput.source_retrieval_mode && !(exitOutput.sources_used && exitOutput.sources_used.length > 0)) {
+      try {
+        const { data: traceRow } = await supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .select("agent_trace")
+          .eq("id", discoveryRunId)
+          .single();
+        const mergedTrace = (traceRow?.agent_trace as Record<string, unknown>) || {};
+        await supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .update({
+            agent_trace: { ...mergedTrace, exit_output: exitOutput },
+          })
+          .eq("id", discoveryRunId);
+      } catch (e: unknown) {
+        console.error("[execute_locked] exit_output persist failed", {
+          error: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
+        });
+      }
+    }
+
     // ── Write visibility ────────────────────────────────────
     let visibilityError: string | null = null;
     try {
