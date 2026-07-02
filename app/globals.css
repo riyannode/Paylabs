@@ -215,6 +215,59 @@ a:hover { text-decoration: none; }
   padding: 0 4px;
 }
 
+/* ── PayLabs brand logo ── */
+
+.pl-brand-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 148px;
+  max-width: 100%;
+  height: auto;
+  margin: 0 0 18px;
+  padding: 0 2px;
+  text-decoration: none;
+  line-height: 0;
+}
+
+.pl-brand-logo-img {
+  width: 100%;
+  height: auto;
+  display: block;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.pl-brand-logo:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 4px;
+  border-radius: 8px;
+}
+
+.pl-brand-logo-compact {
+  width: 118px;
+  margin: 0;
+  padding: 0;
+}
+
+.pl-mobile-brand-logo {
+  flex: 0 0 auto;
+}
+
+.pl-mobile-drawer-brand-logo {
+  width: 148px;
+  margin: 0;
+  padding: 0;
+}
+
+/* Keep old text class harmless if still used elsewhere */
+.pl-mobile-brand {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
 .pl-nav {
   display: grid;
   gap: 2px;
