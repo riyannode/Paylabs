@@ -389,8 +389,12 @@ function mapReceiptDetail(
     routingFeeUsdc: routingFeeUsdc !== undefined ? routingFeeUsdc : null,
     // Final entry payment
     finalEntryPaymentUsdc: finalEntryPaymentUsdc !== undefined ? finalEntryPaymentUsdc : null,
-    // Creator reserve (pending or planned pool)
-    creatorReserveUsdc: toNumber(row.pending_creator_reserve_usdc) ?? toNumber(row.planned_creator_pool_usdc),
+    // Creator reserve = planned pool minus actual paid (never negative)
+    creatorReserveUsdc: (() => {
+      const planned = toNumber(row.planned_creator_pool_usdc) ?? 0;
+      const paid = toNumber(row.actual_creator_paid_usdc) ?? 0;
+      return Math.max(0, planned - paid);
+    })(),
     // Registry/source fee breakdown from preflight
     registryCheckFeesUsdc: registryCheckFeesUsdc !== undefined ? registryCheckFeesUsdc : null,
     sourceAccessFeesUsdc: sourceAccessFeesUsdc !== undefined ? sourceAccessFeesUsdc : null,
