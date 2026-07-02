@@ -333,6 +333,10 @@ function mapReceiptDetail(
   creators: any[],
   sources: any[],
   userCostUsdc?: number | null,
+  totalPaidUsdc?: number | null,
+  grossUserChargeUsdc?: number | null,
+  expectedInternalX402RoutingUsdc?: number | null,
+  agentServicesUsdc?: number | null,
   brainTreasuryUsdc?: number | null,
   brainPlusPreflightUsdc?: number | null,
   routingFeeUsdc?: number | null,
@@ -394,6 +398,14 @@ function mapReceiptDetail(
     sourceAccessCount: sourceAccessCount !== undefined ? sourceAccessCount : null,
     // Macro + Services combined
     macroPlusServicesUsdc: macroPlusServicesUsdc !== undefined ? macroPlusServicesUsdc : null,
+    // Gross user charge (what user actually paid)
+    grossUserChargeUsdc: grossUserChargeUsdc !== undefined ? grossUserChargeUsdc : null,
+    // Expected internal x402 routing volume
+    expectedInternalX402RoutingUsdc: expectedInternalX402RoutingUsdc !== undefined ? expectedInternalX402RoutingUsdc : null,
+    // Agent Services = macro/service + expected internal routing
+    agentServicesUsdc: agentServicesUsdc !== undefined ? agentServicesUsdc : null,
+    // Total Paid = gross user charge (or fallback to userCostUsdc)
+    totalPaidUsdc: totalPaidUsdc !== undefined ? totalPaidUsdc : null,
     // Internal agent payments = actualSettled - userCost (graph edges beyond entry)
     internalAgentPaymentsUsdc: (() => {
       const settled = toNumber(row.actual_settled_usdc);
@@ -402,7 +414,7 @@ function mapReceiptDetail(
       const diff = settled - cost;
       return Number.isFinite(diff) && diff > 0 ? diff : 0;
     })(),
-    // Run Total = actualSettledUsdc (matches receipt list header amount)
+    // Run Total = actualSettledUsdc (gross protocol volume, not user-paid total)
     runTotalUsdc: toNumber(row.actual_settled_usdc),
     // Route reasoning — safe fields only, no raw trace
     routeReasoning: routeReasoning ?? null,
@@ -499,7 +511,13 @@ export async function getRunReceiptDetail(discoveryRunId: string) {
   const userCostUsdc = preflight?.status === "locked"
     ? Number(preflight.routing_fee_usdc || 0) + Number(preflight.final_entry_payment_usdc || 0)
     : null;
-  
+  const grossUserChargeUsdc = preflight?.status === "locked" && preflight.gross_user_charge_usdc != null
+    ? Number(preflight.gross_user_charge_usdc)
+    : null;
+  const expectedInternalX402RoutingUsdc = preflight?.status === "locked" && preflight.expected_internal_x402_routing_usdc != null
+    ? Number(preflight.expected_internal_x402_routing_usdc)
+    : null;
+  const totalPaidUsdc = grossUserChargeUsdc ?? userCostUsdc;
   // Extract preflight fee breakdown from agent_trace
   const lockedBreakdown = preflight?.locked_planned_cost_breakdown as Record<string, unknown> | undefined;
   const brainTreasuryUsdc = preflight?.status === "locked" && lockedBreakdown?.brain_treasury_usdc != null
@@ -531,6 +549,9 @@ export async function getRunReceiptDetail(discoveryRunId: string) {
   const macroPlusServicesUsdc = macroNodeFeesUsdc != null && serviceEdgeFeesUsdc != null
     ? macroNodeFeesUsdc + serviceEdgeFeesUsdc
     : macroNodeFeesUsdc ?? serviceEdgeFeesUsdc;
+  const agentServicesUsdc = macroPlusServicesUsdc != null && expectedInternalX402RoutingUsdc != null
+    ? macroPlusServicesUsdc + expectedInternalX402RoutingUsdc
+    : macroPlusServicesUsdc;
 
   // Extract safe route reasoning from agent_trace.brain_planning
   const { routeReasoning, brainRouteTierHint } = extractSafeRouteReasoning(agentTrace);
@@ -542,6 +563,10 @@ export async function getRunReceiptDetail(discoveryRunId: string) {
     creatorsResult.data || [],
     sourcesResult.data || [],
     userCostUsdc,
+    totalPaidUsdc,
+    grossUserChargeUsdc,
+    expectedInternalX402RoutingUsdc,
+    agentServicesUsdc,
     brainTreasuryUsdc,
     brainPlusPreflightUsdc,
     routingFeeUsdc,
@@ -567,16 +592,37 @@ export async function getRecentReceiptList(limit = 25) {
 
   if (error) throw new Error(`recent_receipts_failed: ${error.message}`);
 
-  return (data || []).map((row: any) => ({
-      discoveryRunId: row.discovery_run_id,
-      receiptId: receiptId(row.discovery_run_id),
-      createdAt: row.created_at,
-      selectedTier: row.selected_tier ?? null,
-      amountUsdc: toNumber(row.actual_settled_usdc) ?? toNumber(row.planned_cost_usdc),
-      paymentCount: toNumber(row.payment_count),
-      sourceCount: null,
-      displayStatus: displayStatus(row),
-      batchStatus: batchStatus(row),
+  const rows = data || [];
+
+  // Fetch agent_trace for gross_user_charge_usdc (preflight rows)
+  const runIds = rows.map((r: any) => r.discovery_run_id).filter(Boolean);
+  const grossChargeMap = new Map<string, number>();
+  if (runIds.length > 0) {
+    const { data: runs } = await supabaseAdmin()
+      .from("paylabs_discovery_runs")
+      .select("id, agent_trace")
+      .in("id", runIds);
+    for (const run of runs || []) {
+      const trace = (run.agent_trace as Record<string, unknown>) || {};
+      const pf = trace.auto_tier_preflight as Record<string, unknown> | undefined;
+      if (pf?.status === "locked" && pf.gross_user_charge_usdc != null) {
+        grossChargeMap.set(run.id, Number(pf.gross_user_charge_usdc));
+      }
+    }
+  }
+
+  return rows.map((row: any) => ({
+    discoveryRunId: row.discovery_run_id,
+    receiptId: receiptId(row.discovery_run_id),
+    createdAt: row.created_at,
+    selectedTier: row.selected_tier ?? null,
+    amountUsdc: grossChargeMap.get(row.discovery_run_id)
+      ?? toNumber(row.actual_settled_usdc)
+      ?? toNumber(row.planned_cost_usdc),
+    paymentCount: toNumber(row.payment_count),
+    sourceCount: null,
+    displayStatus: displayStatus(row),
+    batchStatus: batchStatus(row),
   }));
 }
 
