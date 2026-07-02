@@ -12,6 +12,8 @@ import { ChatResultCard } from "@/components/paylabs/chat/ChatResultCard";
 import { ChatTypingIndicator } from "@/components/paylabs/chat/ChatTypingIndicator";
 import { ChatErrorDisplay } from "@/components/paylabs/chat/ChatErrorDisplay";
 import { WalletPill } from "@/components/paylabs/chat/WalletPill";
+import { ChatInputPanel } from "@/components/paylabs/chat/ChatInputPanel";
+import { RouteGuideBlock } from "@/components/paylabs/chat/RouteGuideBlock";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -233,7 +235,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SafeRunResult | null>(null);
   const [signingPhase, setSigningPhase] = useState<string | null>(null);
-  const [guideOpen, setGuideOpen] = useState(false);
+
 
   // ── Batch link polling ──────────────────────────────────────
   // When settlementId exists but batch link is missing, poll the
@@ -658,68 +660,15 @@ export default function PayLabsChatClient({ analytics }: Props) {
               </div>
             )}
 
-            <div className="pl-chat-composer">
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Ask for a route, receipt, or source-backed payment…"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    submitChat();
-                  }
-                }}
-              />
-              <div className="pl-search-actions">
-                <span className="pl-x402-badge">x402 protected</span>
-                <button
-                  className="pl-run-btn"
-                  onClick={submitChat}
-                  disabled={status === "running" || !prompt.trim()}
-                >
-                  {status === "running" ? "…" : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>}
-                </button>
-              </div>
-            </div>
+            <ChatInputPanel
+              prompt={prompt}
+              status={status}
+              onPromptChange={setPrompt}
+              onSubmit={submitChat}
+            />
           </div>
 
-          <div className="pl-guide-block">
-            <button
-              className="pl-guide-toggle"
-              onClick={() => setGuideOpen(!guideOpen)}
-            >
-              <span>Route guide — Brain auto routes by task complexity</span>
-              <span>{guideOpen ? "▾" : "▸"}</span>
-            </button>
-            {guideOpen && (
-              <div className="pl-guide-rows">
-                <div className="pl-guide-row">
-                  <div className="pl-guide-info">
-                    <b>Quick answer</b>
-                    <span>Best for: Explain, define, summarize</span>
-                    <span className="pl-guide-example">Explain Arc x402 simply using source-backed info.</span>
-                  </div>
-                  <button className="pl-guide-use" onClick={() => setPrompt("Explain Arc x402 simply using source-backed info.")}>Use</button>
-                </div>
-                <div className="pl-guide-row">
-                  <div className="pl-guide-info">
-                    <b>Standard research</b>
-                    <span>Best for: Compare, verify, fact-check</span>
-                    <span className="pl-guide-example">Compare Arc x402 and Circle Gateway and verify the main claims.</span>
-                  </div>
-                  <button className="pl-guide-use" onClick={() => setPrompt("Compare Arc x402 and Circle Gateway and verify the main claims.")}>Use</button>
-                </div>
-                <div className="pl-guide-row">
-                  <div className="pl-guide-info">
-                    <b>Deep research</b>
-                    <span>Best for: Multi-source, current, attribution</span>
-                    <span className="pl-guide-example">What are the latest developments in open source AI agent frameworks, compare the strongest projects, verify with multiple current sources, and show which sources influenced the answer?</span>
-                  </div>
-                  <button className="pl-guide-use" onClick={() => setPrompt("What are the latest developments in open source AI agent frameworks, compare the strongest projects, verify with multiple current sources, and show which sources influenced the answer?")}>Use</button>
-                </div>
-              </div>
-            )}
-          </div>
+          <RouteGuideBlock onUsePrompt={setPrompt} />
         </section>
       </main>
 
