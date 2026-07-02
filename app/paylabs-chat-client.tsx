@@ -446,10 +446,10 @@ export default function PayLabsChatClient({ analytics }: Props) {
             setDcwBalance(dcwBal);
             const x402Bal = parseFloat(dcwBal.gatewayUsdc ?? "0");
             setWalletState(x402Bal > 0 ? "ready_to_approve" : "needs_gateway_deposit");
-            // Restore persisted chat history for this wallet
-            if (messages.length === 0) {
-              const restored = loadChatFromStorage(dcwSession.walletAddress);
-              if (restored.length > 0) setMessages(restored);
+            // Restore persisted chat history for this wallet (functional-safe: no closure stale read)
+            const restored = loadChatFromStorage(dcwSession.walletAddress);
+            if (restored.length > 0) {
+              setMessages((prev) => (prev.length === 0 ? restored : prev));
             }
             return; // DCW session restored
           }
@@ -770,10 +770,10 @@ export default function PayLabsChatClient({ analytics }: Props) {
             setDcwBalance(dcwBal);
             const x402Bal = parseFloat(dcwBal.gatewayUsdc ?? "0");
             setWalletState(x402Bal > 0 ? "ready_to_approve" : "needs_gateway_deposit");
-            // Restore persisted chat history for this wallet
-            if (messages.length === 0) {
-              const restored = loadChatFromStorage(w.address);
-              if (restored.length > 0) setMessages(restored);
+            // Restore persisted chat history for this wallet (functional-safe: no closure stale read)
+            const restored = loadChatFromStorage(w.address);
+            if (restored.length > 0) {
+              setMessages((prev) => (prev.length === 0 ? restored : prev));
             }
           } catch {
             setWalletState("connected");
