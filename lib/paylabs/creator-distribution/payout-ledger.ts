@@ -14,7 +14,7 @@
  * - No raw secrets, no raw signatures, no raw Gateway responses
  */
 
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 
 // ─── Types ────────────────────────────────────────────────────
 

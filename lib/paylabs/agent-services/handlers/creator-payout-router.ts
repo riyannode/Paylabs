@@ -261,7 +261,7 @@ export async function creatorPayoutRouterHandler(
       // but the transfer may have reached the Gateway (indeterminate state).
       // Leave as pending with transfer_started=true so stale-pending path
       // rejects reclaim and flags reconciliation_required.
-      const db = (await import("@/lib/supabase/server")).supabaseAdmin();
+      const db = (await import("@/lib/paylabs/db/server")).supabaseAdmin();
       await db
         .from("paylabs_payout_ledger")
         .update({

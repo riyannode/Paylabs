@@ -16,7 +16,7 @@
 export const maxDuration = 300; // safety margin for x402 handshake
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import { getSession } from "@/lib/paylabs/auth/session";
 import { createDcwSigner } from "@/lib/paylabs/x402/dcw-signer-adapter";
 import { callPaidSeller } from "@/lib/paylabs/x402/buyer-transport";

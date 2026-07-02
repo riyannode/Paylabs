@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 
 type DisplayStatus = "paid" | "settled" | "pending" | "failed";
 type BatchStatus = "settled" | "queued" | "pending";
