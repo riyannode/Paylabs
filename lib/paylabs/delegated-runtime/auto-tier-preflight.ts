@@ -16,6 +16,7 @@
 
 import type { DelegatedRouteTier, ExecutionPlan } from "./types";
 import type { DelegatedRunQuote } from "./quote-engine";
+import { getTierMacroAllocations } from "./node-registry";
 
 type RequestedPreflightRouteTier = "auto" | "easy" | "normal" | "advanced";
 
@@ -48,7 +49,11 @@ export interface RoutePreflightResult {
   lockedQuote: DelegatedRunQuote;
   /** Routing fee charged for preflight (always 0.000001 USDC) */
   routingFeeUsdc: number;
-  /** Final entry payment = lockedQuote.plannedCostUsdc - routingFeeUsdc */
+  /** Gross user charge = lockedQuote.plannedCostUsdc + expectedInternalX402RoutingUsdc */
+  grossUserChargeUsdc: number;
+  /** Expected internal x402 routing volume = macro allocation + child service edges */
+  expectedInternalX402RoutingUsdc: number;
+  /** Final entry payment = grossUserChargeUsdc - routingFeeUsdc */
   finalEntryPaymentUsdc: number;
   /** Safe Brain reasoning fields (no raw LLM, no secrets) */
   safeBrainFields: RoutePreflightBrainFields;
@@ -304,7 +309,13 @@ export async function runRouteOnlyBrainPreflight(params: {
   }
 
   // ── Step 5: Compute final entry payment ──
-  const finalEntryPaymentUsdc = lockedQuote.plannedCostUsdc - ROUTE_PREFLIGHT_ROUTING_FEE_USDC;
+  const { totalMacroAllocationUsdc } = getTierMacroAllocations(selectedTier);
+  // Use lockedQuote.serviceEdgeFeesUsdc (derived from locked selected services, not static config)
+  const childPaymentVolumeUsdc = lockedQuote.serviceEdgeFeesUsdc;
+  const expectedInternalX402RoutingUsdc = totalMacroAllocationUsdc + childPaymentVolumeUsdc;
+
+  const grossUserChargeUsdc = lockedQuote.plannedCostUsdc + expectedInternalX402RoutingUsdc;
+  const finalEntryPaymentUsdc = grossUserChargeUsdc - ROUTE_PREFLIGHT_ROUTING_FEE_USDC;
 
   if (finalEntryPaymentUsdc < 0) {
     throw new Error(
@@ -329,6 +340,8 @@ export async function runRouteOnlyBrainPreflight(params: {
     lockedExecutionPlan: lockedPlan,
     lockedQuote,
     routingFeeUsdc: ROUTE_PREFLIGHT_ROUTING_FEE_USDC,
+    grossUserChargeUsdc,
+    expectedInternalX402RoutingUsdc,
     finalEntryPaymentUsdc,
     safeBrainFields,
   };

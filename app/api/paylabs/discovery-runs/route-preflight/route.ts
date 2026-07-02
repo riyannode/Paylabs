@@ -387,13 +387,17 @@ export async function POST(req: NextRequest) {
       safeBrainFields,
       routingFeeUsdc,
       finalEntryPaymentUsdc,
-    } = preflightResult;
+      grossUserChargeUsdc,
+      expectedInternalX402RoutingUsdc,
+      } = preflightResult;
 
     const traceData = {
       requested_route_tier: resolvedRequestedRouteTier,
       selected_tier: selectedTier,
       routing_fee_usdc: routingFeeUsdc,
       final_entry_payment_usdc: finalEntryPaymentUsdc,
+      gross_user_charge_usdc: grossUserChargeUsdc,
+      expected_internal_x402_routing_usdc: expectedInternalX402RoutingUsdc,
       locked_planned_cost_usdc: lockedQuote.plannedCostUsdc,
       locked_planned_cost_breakdown: lockedExecutionPlan.plannedCostBreakdown,
       locked_selected_macro_nodes: lockedExecutionPlan.selectedMacroNodes,
