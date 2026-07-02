@@ -396,6 +396,28 @@ export async function POST(req: NextRequest) {
     const brainFields = preflight.brain_fields as Record<string, unknown>;
     const routingPayment = preflight.routing_payment as Record<string, unknown>;
 
+    // Reconstruct safe brain planning from preflight brain_fields (full parity with inline)
+    const safeBrainPlanning = brainFields
+      ? {
+          normalized_goal: brainFields.normalized_goal ?? null,
+          route_tier_hint: brainFields.route_tier_hint ?? lockedTier,
+          discovery_strategy: brainFields.discovery_strategy ?? null,
+          suggested_query_variants: brainFields.suggested_query_variants ?? [],
+          service_execution_plan: brainFields.service_execution_plan ?? [],
+          safe_brain_summary: brainFields.safe_brain_summary ?? null,
+          assistant_response: brainFields.assistant_response ?? null,
+          user_visible_reasoning: brainFields.user_visible_reasoning ?? null,
+          tier_decision_reason: brainFields.tier_decision_reason ?? null,
+          plan_rationale: brainFields.plan_rationale ?? null,
+          selected_macro_nodes: brainFields.selected_macro_nodes ?? preflight.locked_selected_macro_nodes ?? [],
+          selected_services: brainFields.selected_services ?? preflight.locked_selected_services ?? [],
+          max_registry_checks: brainFields.max_registry_checks ?? null,
+          max_source_accesses: brainFields.max_source_accesses ?? null,
+          planned_cost_usdc: preflight.locked_planned_cost_usdc ?? null,
+          planned_cost_breakdown: preflight.locked_planned_cost_breakdown ?? null,
+        }
+      : null;
+
     // ── Import x402 primitives ──────────────────────────────
     const {
       buildCustomerEntryChallenge,
@@ -617,18 +639,7 @@ export async function POST(req: NextRequest) {
           execution_mode: "x402_locked_orchestration",
           x402_enabled: true,
           phases_completed: result.phasesCompleted,
-          brain_planning: brainFields
-            ? {
-                route_tier_hint: lockedTier,
-                safe_summary: brainFields.safe_brain_summary,
-                user_visible_reasoning: brainFields.user_visible_reasoning,
-                tier_decision_reason: brainFields.tier_decision_reason,
-                plan_rationale: brainFields.plan_rationale,
-                selected_macro_nodes: lockedPlan.selectedMacroNodes,
-                selected_services: lockedPlan.selectedServices,
-                planned_cost_usdc: lockedPlan.plannedCostUsdc,
-              }
-            : null,
+          brain_planning: safeBrainPlanning,
           payment_graph: result.paymentGraph.map((e) => ({
             buyer: e.buyer,
             seller: e.seller,
@@ -781,6 +792,28 @@ export async function POST(req: NextRequest) {
       mode: fullySettled ? "x402" : "x402_failed",
       error: result.error,
       visibility_error: visibilityError,
+      // Brain planning fields (full parity with old inline Vercel)
+      brain_planning: safeBrainPlanning,
+      payment_graph: result.paymentGraph.map((e) => ({
+        buyer: e.buyer,
+        seller: e.seller,
+        node_type: e.nodeType,
+        amount_usdc: e.amountUsdc,
+        status: e.status,
+        tx_hash: e.txHash ?? null,
+        explorer_url: e.explorerUrl ?? null,
+        settlement_id: e.settlementId ?? null,
+        gateway_accepted: e.gatewayAccepted ?? (e.status === "paid"),
+        error: e.error ?? null,
+        mode: e.mode ?? null,
+      })),
+      exit_output: exitOutput,
+      source_context: result.sourceContext ?? {
+        sources_used: exitOutput.sources_used ?? [],
+        source_count: exitOutput.source_count ?? 0,
+        source_confidence: exitOutput.source_confidence ?? 0,
+        retrieval_mode: exitOutput.source_retrieval_mode ?? null,
+      },
     });
   } catch (e: unknown) {
     const rawMsg = e instanceof Error ? e.message : String(e);

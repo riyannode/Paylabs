@@ -66,10 +66,21 @@ export interface RoutePreflightResult {
  * Never includes raw LLM output, chain-of-thought, or secrets.
  */
 export interface RoutePreflightBrainFields {
+  normalized_goal: string;
+  route_tier_hint: string;
+  discovery_strategy: string;
+  suggested_query_variants: string[];
+  service_execution_plan: string[];
   safe_brain_summary: string;
+  assistant_response: string;
   user_visible_reasoning: string;
   tier_decision_reason: string;
   plan_rationale: string;
+  selected_macro_nodes: string[];
+  selected_services: string[];
+  max_registry_checks: number;
+  max_source_accesses: number;
+  planned_cost_usdc: number;
   planned_cost_breakdown: {
     brain_treasury_usdc: number;
     macro_node_fees_usdc: number;
@@ -77,9 +88,6 @@ export interface RoutePreflightBrainFields {
     registry_check_fees_usdc: number;
     source_access_fees_usdc: number;
   };
-  normalized_goal: string;
-  discovery_strategy: string;
-  suggested_query_variants: string[];
 }
 
 /**
@@ -330,16 +338,24 @@ export async function runRouteOnlyBrainPreflight(params: {
     );
   }
 
-  // ── Step 6: Build safe Brain fields ──
+  // ── Step 6: Build safe Brain fields (full parity with /api/paylabs/brain/run) ──
   const safeBrainFields: RoutePreflightBrainFields = {
+    normalized_goal: bp.normalized_goal || "",
+    route_tier_hint: bp.route_tier_hint || selectedTier,
+    discovery_strategy: bp.discovery_strategy || "",
+    suggested_query_variants: bp.suggested_query_variants || [],
+    service_execution_plan: bp.service_execution_plan || [],
     safe_brain_summary: bp.safe_brain_summary || "",
+    assistant_response: bp.assistant_response || "",
     user_visible_reasoning: bp.user_visible_reasoning || "",
     tier_decision_reason: bp.tier_decision_reason || "",
     plan_rationale: bp.plan_rationale || "",
+    selected_macro_nodes: bp.selected_macro_nodes || lockedPlan.selectedMacroNodes,
+    selected_services: bp.selected_services || lockedPlan.selectedServices,
+    max_registry_checks: bp.max_registry_checks ?? 0,
+    max_source_accesses: bp.max_source_accesses ?? 0,
+    planned_cost_usdc: lockedQuote.plannedCostUsdc,
     planned_cost_breakdown: lockedPlan.plannedCostBreakdown,
-    normalized_goal: bp.normalized_goal || "",
-    discovery_strategy: bp.discovery_strategy || "",
-    suggested_query_variants: bp.suggested_query_variants || [],
   };
 
   return {
