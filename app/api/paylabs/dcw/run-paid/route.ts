@@ -254,13 +254,60 @@ export async function POST(req: NextRequest) {
         recoverResultById: async (runId: string) => {
           const { data: run } = await supabaseAdmin()
             .from("paylabs_discovery_runs")
-            .select("id, status, final_answer, route_tier, effective_route_tier, brain_route_tier_hint, agent_trace, source_snapshot, error_summary, receipt_ready, entry_payment_status, entry_payment_amount_usdc, entry_payment_tx_hash, entry_payment_explorer_url, entry_payment_settlement_id, entry_payment_batch_tx_hash, entry_payment_batch_explorer_url")
+            .select("id, status, final_answer, route_tier, effective_route_tier, brain_route_tier_hint, user_wallet, agent_trace, source_snapshot, error_summary, receipt_ready, entry_payment_status, entry_payment_amount_usdc, entry_payment_tx_hash, entry_payment_explorer_url, entry_payment_settlement_id, entry_payment_batch_tx_hash, entry_payment_batch_explorer_url")
             .eq("id", runId)
             .single();
           if (!run) return null;
           if (run.status !== "completed" && run.status !== "paid_path_available") return null;
           const sourceSnapshot = (run.source_snapshot as Record<string, unknown>) || {};
           const agentTrace = (run.agent_trace as Record<string, unknown>) || {};
+
+          // ── Preflight trace data ──
+          const pf = agentTrace.auto_tier_preflight as Record<string, unknown> | undefined;
+          const ex = agentTrace.auto_tier_execution as Record<string, unknown> | undefined;
+          const routingPayment = (pf?.routing_payment as Record<string, unknown>) || null;
+          const finalPaymentMeta = (ex?.final_payment as Record<string, unknown>) || null;
+
+          // ── Reconstruct entry_payment with full metadata parity ──
+          // Source: DB columns → agent_trace.auto_tier_execution.final_payment → fallback
+          const entryPayment = {
+            status: run.entry_payment_status || "paid",
+            amount_usdc: run.entry_payment_amount_usdc || pf?.final_entry_payment_usdc || null,
+            tx_hash: run.entry_payment_tx_hash || (finalPaymentMeta?.tx_hash as string) || null,
+            explorer_url: run.entry_payment_explorer_url || (finalPaymentMeta?.explorer_url as string) || null,
+            settlement_id: run.entry_payment_settlement_id || (finalPaymentMeta?.settlement_id as string) || null,
+            settlement_url: (finalPaymentMeta?.settlement_url as string) || null,
+            batch_tx_hash: run.entry_payment_batch_tx_hash || (finalPaymentMeta?.batch_tx_hash as string) || null,
+            batch_explorer_url: run.entry_payment_batch_explorer_url || (finalPaymentMeta?.batch_explorer_url as string) || null,
+            batch_resolver_url: (finalPaymentMeta?.batch_resolver_url as string) || null,
+            gateway_accepted: (finalPaymentMeta?.gateway_accepted as boolean) ?? true,
+            transfer_status: (finalPaymentMeta?.transfer_status as string) || null,
+            customer_wallet: run.user_wallet || null,
+            customer_wallet_type: "circle_developer_controlled" as const,
+          };
+
+          // ── Reconstruct locked_execution_plan from preflight trace ──
+          const lockedExecutionPlan = pf
+            ? {
+                selected_macro_nodes: (pf.locked_selected_macro_nodes as string[]) || [],
+                selected_services: (pf.locked_selected_services as string[]) || [],
+                planned_cost_usdc: (pf.locked_planned_cost_usdc as number) || 0,
+                planned_cost_breakdown: pf.locked_planned_cost_breakdown || {
+                  brain_treasury_usdc: 0,
+                  macro_node_fees_usdc: 0,
+                  service_edge_fees_usdc: 0,
+                  registry_check_fees_usdc: 0,
+                  source_access_fees_usdc: 0,
+                },
+                locked: true,
+              }
+            : null;
+
+          // ── Compute user_cost_usdc ──
+          const routingFeeUsdc = Number(pf?.routing_fee_usdc) || 0;
+          const finalEntryUsdc = Number(pf?.final_entry_payment_usdc) || 0;
+          const userCostUsdc = routingFeeUsdc + finalEntryUsdc;
+
           return {
             ok: true,
             status: "completed",
@@ -271,27 +318,30 @@ export async function POST(req: NextRequest) {
             effective_route_tier: run.effective_route_tier || run.route_tier,
             route_tier: run.effective_route_tier || run.route_tier,
             brain_route_tier_hint: run.brain_route_tier_hint,
+            requested_route_tier: (pf?.requested_route_tier as string) || "auto",
+            locked_execution_plan: lockedExecutionPlan,
+            execution_origin: (agentTrace.execution_origin as string) || "vercel_execute_locked",
+            execution_mode: (agentTrace.execution_mode as string) || "x402_locked_orchestration",
+            worker_used: false,
+            x402_enabled: true,
+            phases_completed: agentTrace.phases_completed || null,
+            preflight_routing_payment: routingPayment,
+            final_entry_payment: finalPaymentMeta,
+            user_cost_usdc: userCostUsdc,
             payment_plan: agentTrace.payment_plan || null,
             payment_graph: agentTrace.payment_graph || null,
             safe_progress_summaries: agentTrace.safe_progress_summaries || null,
             budget_snapshot: agentTrace.budget_snapshot || null,
             tiered_summaries: agentTrace.tiered_summaries || null,
             source_context: sourceSnapshot.source_context || agentTrace.source_context || null,
+            source_context_error: agentTrace.source_context_error || null,
             quote: agentTrace.quote || null,
             exit_output: agentTrace.exit_output || null,
-            entry_payment: {
-              status: run.entry_payment_status || "paid",
-              amount_usdc: run.entry_payment_amount_usdc || null,
-              tx_hash: run.entry_payment_tx_hash || null,
-              explorer_url: run.entry_payment_explorer_url || null,
-              settlement_id: run.entry_payment_settlement_id || null,
-              batch_tx_hash: run.entry_payment_batch_tx_hash || null,
-              batch_explorer_url: run.entry_payment_batch_explorer_url || null,
-            },
-            entry_payment_explorer_url: run.entry_payment_explorer_url || null,
-            entry_payment_batch_explorer_url: run.entry_payment_batch_explorer_url || null,
-            entry_payment_settlement_id: run.entry_payment_settlement_id || null,
-            entry_payment_batch_resolver_url: null,
+            entry_payment: entryPayment,
+            entry_payment_explorer_url: entryPayment.explorer_url,
+            entry_payment_batch_explorer_url: entryPayment.batch_explorer_url,
+            entry_payment_settlement_id: entryPayment.settlement_id,
+            entry_payment_batch_resolver_url: entryPayment.batch_resolver_url,
             receipt_ready: run.receipt_ready ?? true,
             settled: run.status === "completed" || run.status === "paid_path_available",
             mode: "x402",
