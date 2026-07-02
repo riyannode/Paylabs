@@ -17,6 +17,8 @@
 import type { DelegatedRouteTier, ExecutionPlan } from "./types";
 import type { DelegatedRunQuote } from "./quote-engine";
 
+type RequestedPreflightRouteTier = "auto" | "easy" | "normal" | "advanced";
+
 // ─── Constants ────────────────────────────────────────────────
 
 /**
@@ -236,8 +238,9 @@ export async function runRouteOnlyBrainPreflight(params: {
   userGoal: string;
   userBudgetUsdc: number;
   userWallet: string;
+  requestedRouteTier?: RequestedPreflightRouteTier;
 }): Promise<RoutePreflightResult> {
-  const { discoveryRunId, userGoal, userBudgetUsdc, userWallet } = params;
+  const { discoveryRunId, userGoal, userBudgetUsdc, userWallet, requestedRouteTier = "auto" } = params;
 
   // ── Step 1: Run Brain LLM planner (plan-only, no payments) ──
   const { runBrainPlannerGraph } = await import(
@@ -247,7 +250,7 @@ export async function runRouteOnlyBrainPreflight(params: {
   const brainResult = await runBrainPlannerGraph({
     discoveryRunId,
     userGoal,
-    routeTier: "auto" as unknown as import("./types").DelegatedRouteTier,
+    routeTier: requestedRouteTier as unknown as import("./types").DelegatedRouteTier,
     userBudgetUsdc,
     userWallet,
   });
@@ -259,15 +262,19 @@ export async function runRouteOnlyBrainPreflight(params: {
 
   const bp = brainResult.brainPlanning;
 
-  // ── Step 2: Resolve auto tier from Brain's route_tier_hint ──
-  const { resolveAutoTier } = await import("./state");
+  // ── Step 2: Resolve tier ──
+  let selectedTier: import("./types").DelegatedRouteTier;
 
-  const tierResult = resolveAutoTier("auto", bp.route_tier_hint);
-  if (!tierResult.ok) {
-    throw new Error(`route_preflight_tier_resolve_failed: ${tierResult.error}`);
+  if (requestedRouteTier === "auto") {
+    const { resolveAutoTier } = await import("./state");
+    const tierResult = resolveAutoTier("auto", bp.route_tier_hint);
+    if (!tierResult.ok) {
+      throw new Error(`route_preflight_tier_resolve_failed: ${tierResult.error}`);
+    }
+    selectedTier = tierResult.tier;
+  } else {
+    selectedTier = requestedRouteTier as import("./types").DelegatedRouteTier;
   }
-
-  const selectedTier = tierResult.tier;
 
   // ── Step 3: Lock execution plan from Brain proposal + canonical tier ──
   const { validateAndLockExecutionPlan } = await import("./state");

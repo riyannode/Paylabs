@@ -8,9 +8,63 @@ import {
   paidEdges,
 } from "./types";
 
+// ─── Preflight payment snapshot for Platform x402 Volume ────
+
+type PreflightPaymentSnapshot = {
+  isPreflight: boolean;
+  routingPaymentUsdc: number;
+  finalEntryPaymentUsdc: number;
+  brainTreasuryUsdc: number | null;
+};
+
+function safeNumber(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+async function readPreflightPaymentSnapshot(
+  discoveryRunId: string,
+): Promise<PreflightPaymentSnapshot> {
+  const { data } = await supabaseAdmin()
+    .from("paylabs_discovery_runs")
+    .select("agent_trace, entry_payment_amount_usdc")
+    .eq("id", discoveryRunId)
+    .single();
+
+  const trace = (data?.agent_trace as Record<string, unknown>) || {};
+  const preflight = trace.auto_tier_preflight as Record<string, unknown> | undefined;
+
+  if (!preflight || preflight.status !== "locked") {
+    return {
+      isPreflight: false,
+      routingPaymentUsdc: 0,
+      finalEntryPaymentUsdc: 0,
+      brainTreasuryUsdc: null,
+    };
+  }
+
+  const routingPayment = preflight.routing_payment as Record<string, unknown> | undefined;
+  const lockedBreakdown = preflight.locked_planned_cost_breakdown as Record<string, unknown> | undefined;
+
+  const routingPaymentUsdc = safeNumber(
+    routingPayment?.amount_usdc ?? preflight.routing_fee_usdc,
+  );
+  const finalEntryPaymentUsdc = safeNumber(
+    data?.entry_payment_amount_usdc ?? preflight.final_entry_payment_usdc,
+  );
+  const brainTreasuryRaw = lockedBreakdown?.brain_treasury_usdc;
+
+  return {
+    isPreflight: true,
+    routingPaymentUsdc,
+    finalEntryPaymentUsdc,
+    brainTreasuryUsdc: brainTreasuryRaw == null ? null : safeNumber(brainTreasuryRaw),
+  };
+}
+
 /**
  * Write canonical x402 visibility rows from orchestrator output.
- * Called after runX402Orchestration() completes in the inline route.
+ * Called by execute-locked route (and legacy inline route).
  *
  * Writes:
  *  1. paylabs_run_events — one per payment graph edge
@@ -184,10 +238,17 @@ export async function writePayLabsVisibility(
     created_at: now,
   }));
 
-  const actualSettledUsdc = sumPaidUsdc(paymentGraph);
+  const internalGraphSettledUsdc = sumPaidUsdc(paymentGraph);
   const lastTxHash = lastPaidTx(paymentGraph);
   const paidCount = paidEdges(paymentGraph).length;
   const lastPaid = paidEdges(paymentGraph).slice(-1)[0] ?? null;
+
+  // Platform x402 Volume: for preflight runs, include routing + final entry + internal graph.
+  // For legacy inline runs (no preflight trace), use internal graph only.
+  const preflightSnapshot = await readPreflightPaymentSnapshot(discoveryRunId);
+  const actualSettledUsdc = preflightSnapshot.isPreflight
+    ? internalGraphSettledUsdc + preflightSnapshot.routingPaymentUsdc + preflightSnapshot.finalEntryPaymentUsdc
+    : internalGraphSettledUsdc;
 
   // ── Receipt ──
   const receipt = {
