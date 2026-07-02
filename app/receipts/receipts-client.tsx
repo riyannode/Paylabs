@@ -70,6 +70,9 @@ type ReceiptDetail = {
   displayStatus: DisplayStatus;
   batchStatus: BatchStatus;
   userCostUsdc?: number | null;
+  routeReasoning?: string | null;
+  effectiveRouteTier?: string | null;
+  brainRouteTierHint?: string | null;
   creators: CreatorReceiptRow[];
   sources: SourceReceiptRow[];
 };
@@ -222,6 +225,35 @@ function BatchSection({ detail }: { detail: ReceiptDetail }) {
   );
 }
 
+function RouteReasoningSection({ detail }: { detail: ReceiptDetail }) {
+  const selectedRoute = detail.effectiveRouteTier || detail.selectedTier || detail.brainRouteTierHint || null;
+  const reasoning = detail.routeReasoning || detail.safeReceiptSummary || null;
+  if (!reasoning && !detail.brainRouteTierHint && !detail.effectiveRouteTier && !detail.selectedTier) {
+    return null;
+  }
+
+  return (
+    <section className="pl-receipt-section pl-receipt-route-reasoning">
+      <h3>Why this route?</h3>
+      <dl>
+        {selectedRoute && (
+          <div>
+            <dt>Selected Route</dt>
+            <dd>{selectedRoute}</dd>
+          </div>
+        )}
+        {detail.brainRouteTierHint && (
+          <div>
+            <dt>Brain Selected</dt>
+            <dd>{detail.brainRouteTierHint}</dd>
+          </div>
+        )}
+      </dl>
+      {reasoning && <p className="pl-receipt-summary">{reasoning}</p>}
+    </section>
+  );
+}
+
 function ReceiptCard({ item, initiallyOpen }: { item: ReceiptListItem; initiallyOpen: boolean }) {
   const [open, setOpen] = useState(initiallyOpen);
   const [detail, setDetail] = useState<ReceiptDetail | null>(null);
@@ -263,12 +295,15 @@ function ReceiptCard({ item, initiallyOpen }: { item: ReceiptListItem; initially
           {loading && <p className="muted">Loading receipt details…</p>}
           {error && <p className="muted">{error}</p>}
           {detail && (
-            <div className="pl-receipt-grid">
-              <PaymentSection detail={detail} />
-              <CreatorsSection detail={detail} />
-              <SourcesSection detail={detail} />
-              <BatchSection detail={detail} />
-            </div>
+            <>
+              <RouteReasoningSection detail={detail} />
+              <div className="pl-receipt-grid">
+                <PaymentSection detail={detail} />
+                <CreatorsSection detail={detail} />
+                <SourcesSection detail={detail} />
+                <BatchSection detail={detail} />
+              </div>
+            </>
           )}
         </div>
       )}
