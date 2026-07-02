@@ -3,7 +3,7 @@
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import SidebarPanel from "@/components/paylabs/SidebarPanel";
 import MobileNav from "@/components/paylabs/MobileNav";
-import type { WalletState, WalletInfo, UcwBalance } from "@/components/paylabs/WalletConnectModal";
+import type { WalletState, WalletInfo, PayLabsWalletBalance } from "@/components/paylabs/wallet-types";
 import DcwModal from "@/components/paylabs/DcwModal";
 import { safeExplorerUrl as validateExplorerUrl } from "@/lib/paylabs/x402/payment-links";
 
@@ -232,7 +232,7 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
 }
 
 /** Fetch DCW balance — on-chain wallet USDC + Gateway x402 balance */
-async function fetchDcwBalance(): Promise<UcwBalance> {
+async function fetchDcwBalance(): Promise<PayLabsWalletBalance> {
   const resp = await fetch("/api/paylabs/dcw/balance", { credentials: "include" });
   if (!resp.ok) return { walletUsdc: "0", gatewayUsdc: "0", source: "dcw" };
   const data = await resp.json();
@@ -335,7 +335,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [walletInfo, setWalletInfo] = useState<WalletInfo | null>(null);
   const [walletError, setWalletError] = useState<string | null>(null);
   const [walletModeError, setWalletModeError] = useState<string | null>(null);
-  const [ucwBalance, setUcwBalance] = useState<UcwBalance | null>(null);
+  const [dcwBalance, setDcwBalance] = useState<PayLabsWalletBalance | null>(null);
   const [walletCopied, setWalletCopied] = useState(false);
 
   // Debug log — gated behind env var, stripped from production
@@ -418,7 +418,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
               network: "ARC-TESTNET",
             });
             const dcwBal = await fetchDcwBalance();
-            setUcwBalance(dcwBal);
+            setDcwBalance(dcwBal);
             const x402Bal = parseFloat(dcwBal.gatewayUsdc ?? "0");
             setWalletState(x402Bal > 0 ? "ready_to_approve" : "needs_gateway_deposit");
             return; // DCW session restored
@@ -441,7 +441,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
     try {
       const ucwActive = await hasActiveCreatorWalletSession();
       if (ucwActive) {
-        setWalletModeError("Creator Wallet is connected. Disconnect it before connecting User Test Wallet.");
+        setWalletModeError("Creator Wallet is connected. Disconnect it before connecting PayLabs Payment Wallet.");
         return;
       }
     } catch {
@@ -462,8 +462,8 @@ export default function PayLabsChatClient({ analytics }: Props) {
     }
 
     // Run gating: must have sufficient x402 Balance for planned cost
-    if (ucwBalance) {
-      const x402Bal = parseFloat(ucwBalance.gatewayUsdc ?? "0");
+    if (dcwBalance) {
+      const x402Bal = parseFloat(dcwBalance.gatewayUsdc ?? "0");
       const costNum = parseFloat(planned);
       if (x402Bal < costNum) {
         // Insufficient x402 balance — open DCW modal with top-up tab
@@ -572,7 +572,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
       setError(errMsg);
       setStatus("error");
     }
-  }, [prompt, budget, walletInfo, ucwBalance, planned, openDcwWalletModal]);
+  }, [prompt, budget, walletInfo, dcwBalance, planned, openDcwWalletModal]);
 
   const resetChat = useCallback(() => {
     setPrompt("");
@@ -589,7 +589,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
     // Clear all wallet state
     setWalletInfo(null);
     setWalletState("not_connected");
-    setUcwBalance(null);
+    setDcwBalance(null);
     setWalletError(null);
   }, []);
 
@@ -627,7 +627,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
             type="button"
             className={`pl-wallet-pill ${walletInfo?.address ? "connected" : ""}`}
             onClick={openDcwWalletModal}
-            title={walletInfo?.address || "Connect wallet"}
+            title={walletInfo?.address || "Connect Payment Wallet"}
           >
             {walletInfo?.address ? (
               <>
@@ -635,11 +635,11 @@ export default function PayLabsChatClient({ analytics }: Props) {
                 <span className="pl-wallet-pill-address">{short(walletInfo.address)}</span>
                 <span className="pl-wallet-pill-network">Arc</span>
                 <span className="pl-wallet-pill-balance">
-                  x402: {ucwBalance?.gatewayUsdc ?? "0.00"} USDC
+                  x402: {dcwBalance?.gatewayUsdc ?? "0.00"} USDC
                 </span>
-                {ucwBalance?.walletUsdc && ucwBalance.walletUsdc !== "0" && (
+                {dcwBalance?.walletUsdc && dcwBalance.walletUsdc !== "0" && (
                   <span className="pl-wallet-pill-balance" style={{ fontSize: 10, opacity: 0.7, marginLeft: 6 }}>
-                    wallet: {ucwBalance.walletUsdc}
+                    wallet: {dcwBalance.walletUsdc}
                   </span>
                 )}
                 {walletInfo?.walletType === "circle_developer_controlled" && (
@@ -650,7 +650,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
                       e.stopPropagation();
                       try {
                         const dcwBal = await fetchDcwBalance();
-                        setUcwBalance(dcwBal);
+                        setDcwBalance(dcwBal);
                       } catch { /* refresh failed */ }
                     }}
                     aria-label="Refresh balance"
@@ -682,7 +682,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
             ) : (
               <>
                 <span className="pl-wallet-dot idle" />
-                <span>Connect wallet</span>
+                <span>Connect Payment Wallet</span>
               </>
             )}
           </button>
@@ -812,7 +812,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
         onClose={() => setDcwOpen(false)}
         plannedCost={planned}
         onBalanceUpdate={(bal) => {
-          setUcwBalance({
+          setDcwBalance({
             walletUsdc: bal.walletUsdc,
             gatewayUsdc: bal.gatewayUsdc,
             pendingBatchUsdc: bal.pendingBatchUsdc,
@@ -827,7 +827,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
           });
           try {
             const dcwBal = await fetchDcwBalance();
-            setUcwBalance(dcwBal);
+            setDcwBalance(dcwBal);
             const x402Bal = parseFloat(dcwBal.gatewayUsdc ?? "0");
             setWalletState(x402Bal > 0 ? "ready_to_approve" : "needs_gateway_deposit");
           } catch {

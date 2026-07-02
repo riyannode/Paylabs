@@ -44,7 +44,7 @@ async function rejectIfCreatorWalletActive(req: NextRequest) {
   return NextResponse.json(
     {
       ok: false,
-      error: "Creator Wallet is already connected. Disconnect it before connecting User Test Wallet.",
+      error: "Creator Wallet is already connected. Disconnect it before connecting PayLabs Payment Wallet.",
       activeWalletMode: "ucw",
     },
     { status: 409 },

@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import type { WalletState, WalletInfo, UcwBalance } from "./WalletConnectModal";
+import type { WalletState, WalletInfo, PayLabsWalletBalance } from "./wallet-types";
 import type { W3SSdk as CircleW3SSdk } from "@circle-fin/w3s-pw-web-sdk";
 import { SocialLoginProvider } from "@circle-fin/w3s-pw-web-sdk/dist/src/types";
 
 // ── Session helpers (server-side, tokens never touch client) ──
 
-async function fetchSessionBalance(): Promise<UcwBalance> {
+async function fetchSessionBalance(): Promise<PayLabsWalletBalance> {
   const resp = await fetch("/api/paylabs/wallet/ucw?action=session-balance", { method: "POST", credentials: "include" });
   if (!resp.ok) return { walletUsdc: "0", gatewayUsdc: null, source: "ucw" };
   const data = (await resp.json()) as { usdc: string };
@@ -98,7 +98,7 @@ async function safeResponseError(resp: Response): Promise<string | number> {
   const err = (await resp.json().catch(() => ({}))) as { error?: string };
   const error = err.error;
   if (resp.status === 409 && error === "wallet_mode_conflict") {
-    return "User Test Wallet is connected. Switch to Creator Wallet first.";
+    return "PayLabs Payment Wallet is connected. Disconnect it before connecting Creator Wallet.";
   }
   if (resp.status === 401 && (!error || error === "No session" || error === "no_session")) {
     return "Creator Wallet session expired. Reopen the modal and try again.";
@@ -123,7 +123,7 @@ type FinalizeCallbacks = {
   setWalletError: (e: string | null) => void;
   setUcwWalletId: (id: string | null) => void;
   setWalletInfo: (info: WalletInfo | null) => void;
-  setUcwBalance: (b: UcwBalance | null) => void;
+  setUcwBalance: (b: PayLabsWalletBalance | null) => void;
 };
 
 async function finalizeWalletAfterLogin(
@@ -189,7 +189,7 @@ export function useCreatorUcwWallet() {
   const [walletState, setWalletState] = useState<WalletState>("not_connected");
   const [walletInfo, setWalletInfo] = useState<WalletInfo | null>(null);
   const [walletError, setWalletError] = useState<string | null>(null);
-  const [ucwBalance, setUcwBalance] = useState<UcwBalance | null>(null);
+  const [ucwBalance, setUcwBalance] = useState<PayLabsWalletBalance | null>(null);
   const [ucwWalletId, setUcwWalletId] = useState<string | null>(null);
   const [authMethod, setAuthMethod] = useState<"google" | "email" | "pin" | null>(null);
   const [defaultShowEmailInput, setDefaultShowEmailInput] = useState(false);
