@@ -2556,6 +2556,7 @@ a:hover { text-decoration: none; }
   margin-top: 14px;
   padding: 14px;
   border: 1px dashed var(--border);
+  border-color: transparent;
   border-radius: 16px;
   background: #fff;
   display: grid;
