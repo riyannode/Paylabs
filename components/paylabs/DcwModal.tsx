@@ -697,7 +697,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                 aria-expanded={showPasskeyForm}
               >
                 <span className="pl-login-icon-v3"><PasskeyIcon /></span>
-                <b>Use Passkey</b>
+                Use Passkey
               </button>
             </div>
 
