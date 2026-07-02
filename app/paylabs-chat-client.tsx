@@ -43,6 +43,54 @@ function short(value?: string | null, chars = 6): string {
   return `${value.slice(0, chars)}…${value.slice(-chars)}`;
 }
 
+// ─── Chat history persistence ───────────────────────────────
+const MAX_PERSISTED_CHAT_MESSAGES = 5;
+const CHAT_STORAGE_PREFIX = "paylabs.chat.v1";
+
+function getChatStorageKey(walletAddress: string): string {
+  return `${CHAT_STORAGE_PREFIX}:${walletAddress.toLowerCase()}`;
+}
+
+function saveChatToStorage(walletAddress: string, msgs: ChatMessage[]): void {
+  try {
+    const key = getChatStorageKey(walletAddress);
+    const safeMessages = msgs.slice(-MAX_PERSISTED_CHAT_MESSAGES);
+    localStorage.setItem(key, JSON.stringify(safeMessages));
+  } catch {
+    // localStorage unavailable or quota exceeded — silent
+  }
+}
+
+function loadChatFromStorage(walletAddress: string): ChatMessage[] {
+  try {
+    const key = getChatStorageKey(walletAddress);
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    // Validate each message has required fields
+    const valid = parsed.filter((msg): msg is ChatMessage => {
+      if (!msg || typeof msg !== "object") return false;
+      if (typeof msg.id !== "string" || typeof msg.createdAt !== "number") return false;
+      if (msg.role === "user") return typeof (msg as { content?: unknown }).content === "string";
+      if (msg.role === "assistant") return typeof (msg as { status?: unknown }).status === "string";
+      return false;
+    });
+    return valid.slice(-MAX_PERSISTED_CHAT_MESSAGES);
+  } catch {
+    // Corrupt data, invalid JSON, or localStorage unavailable
+    return [];
+  }
+}
+
+function clearChatStorage(walletAddress: string): void {
+  try {
+    localStorage.removeItem(getChatStorageKey(walletAddress));
+  } catch {
+    // silent
+  }
+}
+
 // Planned cost comes from backend /api/paylabs/quote. No frontend constants.
 
 function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
@@ -241,6 +289,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
   // When settlementId exists but batch link is missing, poll the
   // batch resolver endpoint until the link appears or we give up.
   const batchPollRef = useRef<{ attempts: number; timer: ReturnType<typeof setTimeout> | null }>({ attempts: 0, timer: null });
+  const walletAddressRef = useRef<string | null>(null);
   // dcwJobRef removed — DCW paid flow is now synchronous (request-bound)
 
 
@@ -349,6 +398,18 @@ export default function PayLabsChatClient({ analytics }: Props) {
     chatThreadRef.current?.scrollTo({ top: chatThreadRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
+  // Keep wallet address ref in sync for use in callbacks that close over stale state
+  useEffect(() => {
+    walletAddressRef.current = walletInfo?.address ?? null;
+  }, [walletInfo?.address]);
+
+  // Persist chat history when messages change and wallet is known
+  useEffect(() => {
+    if (!walletInfo?.address) return;
+    if (messages.length === 0) return; // don't persist empty — resetChat clears localStorage explicitly
+    saveChatToStorage(walletInfo.address, messages);
+  }, [messages, walletInfo?.address]);
+
   // ── Defensive: redirect UCW OAuth callback to /creator-dashboard ──
   // If Google/Circle OAuth returns to root "/" with hash material,
   // redirect to /creator-dashboard so the UCW hook can process the callback.
@@ -385,6 +446,11 @@ export default function PayLabsChatClient({ analytics }: Props) {
             setDcwBalance(dcwBal);
             const x402Bal = parseFloat(dcwBal.gatewayUsdc ?? "0");
             setWalletState(x402Bal > 0 ? "ready_to_approve" : "needs_gateway_deposit");
+            // Restore persisted chat history for this wallet
+            if (messages.length === 0) {
+              const restored = loadChatFromStorage(dcwSession.walletAddress);
+              if (restored.length > 0) setMessages(restored);
+            }
             return; // DCW session restored
           }
         }
@@ -544,10 +610,19 @@ export default function PayLabsChatClient({ analytics }: Props) {
     setError(null);
     setStatus("idle");
     setMessages([]);
+    // Clear persisted chat history for current wallet
+    if (walletAddressRef.current) {
+      clearChatStorage(walletAddressRef.current);
+    }
   }, []);
 
   // ── Disconnect wallet ──
   const disconnectWallet = useCallback(() => {
+    // Clear persisted chat history and visible chat before clearing wallet state
+    if (walletAddressRef.current) {
+      clearChatStorage(walletAddressRef.current);
+    }
+    setMessages([]);
     // Destroy DCW session if exists
     fetch("/api/paylabs/auth/session", { method: "DELETE", credentials: "include" }).catch(() => {});
     // Clear all wallet state
@@ -695,6 +770,11 @@ export default function PayLabsChatClient({ analytics }: Props) {
             setDcwBalance(dcwBal);
             const x402Bal = parseFloat(dcwBal.gatewayUsdc ?? "0");
             setWalletState(x402Bal > 0 ? "ready_to_approve" : "needs_gateway_deposit");
+            // Restore persisted chat history for this wallet
+            if (messages.length === 0) {
+              const restored = loadChatFromStorage(w.address);
+              if (restored.length > 0) setMessages(restored);
+            }
           } catch {
             setWalletState("connected");
           }
