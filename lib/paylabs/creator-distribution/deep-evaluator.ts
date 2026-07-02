@@ -20,7 +20,7 @@
  * - No raw chain-of-thought exposed
  */
 
-import { getTutorModel } from "@/lib/ai/llm";
+import { getTutorModel } from "@/lib/paylabs/ai/llm";
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";

@@ -98,7 +98,7 @@ export async function getBrainRefundRecommendation(
   safeContext: BrainSafeRefundContext
 ): Promise<BrainRefundRecommendation | null> {
   try {
-    const { generateStructuredJson } = await import("../../ai/llm-structured");
+    const { generateStructuredJson } = await import("../ai/llm-structured");
 
     const result = await generateStructuredJson({
       agentName: "brain_refund_advisor",

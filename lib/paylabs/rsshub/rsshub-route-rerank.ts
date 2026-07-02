@@ -63,7 +63,7 @@ export async function rerankRouteCandidates(input: {
   }
 
   try {
-    const { generateStructuredJson } = await import("@/lib/ai/llm-structured");
+    const { generateStructuredJson } = await import("@/lib/paylabs/ai/llm-structured");
     const { toInternalRouteTier } = await import(
       "@/lib/paylabs/agent-services/handlers/helpers"
     );
