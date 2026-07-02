@@ -72,10 +72,14 @@ type ReceiptDetail = {
   userCostUsdc?: number | null;
   brainTreasuryUsdc?: number | null;
   brainPlusPreflightUsdc?: number | null;
+  routingFeeUsdc?: number | null;
+  finalEntryPaymentUsdc?: number | null;
+  creatorReserveUsdc?: number | null;
   registryCheckFeesUsdc?: number | null;
   sourceAccessFeesUsdc?: number | null;
   registryCheckCount?: number | null;
   sourceAccessCount?: number | null;
+  macroPlusServicesUsdc?: number | null;
   internalAgentPaymentsUsdc?: number | null;
   runTotalUsdc?: number | null;
   routeReasoning?: string | null;
@@ -133,25 +137,36 @@ function PaymentSection({ detail }: { detail: ReceiptDetail }) {
     <section className="pl-receipt-section">
       <h3>Payment</h3>
       <dl>
-        {detail.brainPlusPreflightUsdc != null && detail.brainPlusPreflightUsdc > 0 && (
-          <div><dt>Brain + Preflight</dt><dd>{formatUsdc(detail.brainPlusPreflightUsdc)}</dd></div>
-        )}
         <div><dt>Tier</dt><dd>{label(detail.selectedTier)}</dd></div>
-        <div><dt>Planned Run Cost</dt><dd>{formatUsdc(detail.plannedCostUsdc)}</dd></div>
         {detail.userCostUsdc != null && (
           <div><dt>User Cost</dt><dd>{formatUsdc(detail.userCostUsdc)}</dd></div>
         )}
+        {detail.routingFeeUsdc != null && detail.routingFeeUsdc > 0 && (
+          <div><dt>Preflight Routing</dt><dd>{formatUsdc(detail.routingFeeUsdc)}</dd></div>
+        )}
+        {detail.finalEntryPaymentUsdc != null && detail.finalEntryPaymentUsdc > 0 && (
+          <div><dt>Final Entry Payment</dt><dd>{formatUsdc(detail.finalEntryPaymentUsdc)}</dd></div>
+        )}
+        {detail.brainTreasuryUsdc != null && detail.brainTreasuryUsdc > 0 && (
+          <div><dt>Brain Treasury</dt><dd>{formatUsdc(detail.brainTreasuryUsdc)}</dd></div>
+        )}
         {detail.registryCheckFeesUsdc != null && detail.registryCheckFeesUsdc > 0 && (
-          <div><dt>Registry Checks</dt><dd>{detail.registryCheckCount ?? 0} · {formatUsdc(detail.registryCheckFeesUsdc)}</dd></div>
+          <div><dt>Registry Checks</dt><dd>{detail.registryCheckCount ?? 0} checks × 0.000001 = {formatUsdc(detail.registryCheckFeesUsdc)}</dd></div>
         )}
         {detail.sourceAccessFeesUsdc != null && detail.sourceAccessFeesUsdc > 0 && (
-          <div><dt>Source Access</dt><dd>{detail.sourceAccessCount ?? 0} · {formatUsdc(detail.sourceAccessFeesUsdc)}</dd></div>
+          <div><dt>Source Access</dt><dd>{detail.sourceAccessCount ?? 0} accesses × 0.000001 = {formatUsdc(detail.sourceAccessFeesUsdc)}</dd></div>
+        )}
+        {detail.creatorReserveUsdc != null && detail.creatorReserveUsdc > 0 && (
+          <div><dt>Creator Reserve</dt><dd>{formatUsdc(detail.creatorReserveUsdc)}</dd></div>
+        )}
+        {detail.macroPlusServicesUsdc != null && detail.macroPlusServicesUsdc > 0 && (
+          <div><dt>Macro + Services</dt><dd>{formatUsdc(detail.macroPlusServicesUsdc)}</dd></div>
         )}
         {detail.internalAgentPaymentsUsdc != null && detail.internalAgentPaymentsUsdc > 0 && (
           <div><dt>Internal Agent Payments</dt><dd>{detail.paymentCount ?? 0} edges · {formatUsdc(detail.internalAgentPaymentsUsdc)}</dd></div>
         )}
-        {detail.runTotalUsdc != null && (
-          <div className="pl-receipt-total"><dt>Run Total</dt><dd>{formatUsdc(detail.runTotalUsdc)}</dd></div>
+        {detail.runTotalUsdc != null && detail.runTotalUsdc > 0 && (
+          <div className="pl-receipt-total"><dt>Run Total Settled</dt><dd>{formatUsdc(detail.runTotalUsdc)}</dd></div>
         )}
         <div><dt>Payments</dt><dd>{detail.paymentCount ?? 0}</dd></div>
       </dl>

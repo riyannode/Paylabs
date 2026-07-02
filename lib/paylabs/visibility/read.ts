@@ -335,10 +335,13 @@ function mapReceiptDetail(
   userCostUsdc?: number | null,
   brainTreasuryUsdc?: number | null,
   brainPlusPreflightUsdc?: number | null,
+  routingFeeUsdc?: number | null,
+  finalEntryPaymentUsdc?: number | null,
   registryCheckFeesUsdc?: number | null,
   sourceAccessFeesUsdc?: number | null,
   registryCheckCount?: number | null,
   sourceAccessCount?: number | null,
+  macroPlusServicesUsdc?: number | null,
   routeReasoning?: string | null,
   effectiveRouteTier?: string | null,
   brainRouteTierHint?: string | null,
@@ -378,11 +381,19 @@ function mapReceiptDetail(
     brainTreasuryUsdc: brainTreasuryUsdc !== undefined ? brainTreasuryUsdc : null,
     // Brain + Preflight combined (brain_treasury + routing_fee)
     brainPlusPreflightUsdc: brainPlusPreflightUsdc !== undefined ? brainPlusPreflightUsdc : null,
+    // Preflight routing fee
+    routingFeeUsdc: routingFeeUsdc !== undefined ? routingFeeUsdc : null,
+    // Final entry payment
+    finalEntryPaymentUsdc: finalEntryPaymentUsdc !== undefined ? finalEntryPaymentUsdc : null,
+    // Creator reserve (pending or planned pool)
+    creatorReserveUsdc: toNumber(row.pending_creator_reserve_usdc) ?? toNumber(row.planned_creator_pool_usdc),
     // Registry/source fee breakdown from preflight
     registryCheckFeesUsdc: registryCheckFeesUsdc !== undefined ? registryCheckFeesUsdc : null,
     sourceAccessFeesUsdc: sourceAccessFeesUsdc !== undefined ? sourceAccessFeesUsdc : null,
     registryCheckCount: registryCheckCount !== undefined ? registryCheckCount : null,
     sourceAccessCount: sourceAccessCount !== undefined ? sourceAccessCount : null,
+    // Macro + Services combined
+    macroPlusServicesUsdc: macroPlusServicesUsdc !== undefined ? macroPlusServicesUsdc : null,
     // Internal agent payments = actualSettled - userCost (graph edges beyond entry)
     internalAgentPaymentsUsdc: (() => {
       const settled = toNumber(row.actual_settled_usdc);
@@ -497,6 +508,9 @@ export async function getRunReceiptDetail(discoveryRunId: string) {
   const routingFeeUsdc = preflight?.status === "locked" && preflight.routing_fee_usdc != null
     ? Number(preflight.routing_fee_usdc)
     : null;
+  const finalEntryPaymentUsdc = preflight?.status === "locked" && preflight.final_entry_payment_usdc != null
+    ? Number(preflight.final_entry_payment_usdc)
+    : null;
   const brainPlusPreflightUsdc = brainTreasuryUsdc != null && routingFeeUsdc != null
     ? brainTreasuryUsdc + routingFeeUsdc
     : null;
@@ -508,6 +522,15 @@ export async function getRunReceiptDetail(discoveryRunId: string) {
     : null;
   const registryCheckCount = registryCheckFeesUsdc != null ? Math.round(registryCheckFeesUsdc / 0.000001) : null;
   const sourceAccessCount = sourceAccessFeesUsdc != null ? Math.round(sourceAccessFeesUsdc / 0.000001) : null;
+  const macroNodeFeesUsdc = preflight?.status === "locked" && lockedBreakdown?.macro_node_fees_usdc != null
+    ? Number(lockedBreakdown.macro_node_fees_usdc)
+    : null;
+  const serviceEdgeFeesUsdc = preflight?.status === "locked" && lockedBreakdown?.service_edge_fees_usdc != null
+    ? Number(lockedBreakdown.service_edge_fees_usdc)
+    : null;
+  const macroPlusServicesUsdc = macroNodeFeesUsdc != null && serviceEdgeFeesUsdc != null
+    ? macroNodeFeesUsdc + serviceEdgeFeesUsdc
+    : macroNodeFeesUsdc ?? serviceEdgeFeesUsdc;
 
   // Extract safe route reasoning from agent_trace.brain_planning
   const { routeReasoning, brainRouteTierHint } = extractSafeRouteReasoning(agentTrace);
@@ -521,10 +544,13 @@ export async function getRunReceiptDetail(discoveryRunId: string) {
     userCostUsdc,
     brainTreasuryUsdc,
     brainPlusPreflightUsdc,
+    routingFeeUsdc,
+    finalEntryPaymentUsdc,
     registryCheckFeesUsdc,
     sourceAccessFeesUsdc,
     registryCheckCount,
     sourceAccessCount,
+    macroPlusServicesUsdc,
     routeReasoning,
     effectiveRouteTier,
     resolvedBrainHint,
@@ -542,15 +568,15 @@ export async function getRecentReceiptList(limit = 25) {
   if (error) throw new Error(`recent_receipts_failed: ${error.message}`);
 
   return (data || []).map((row: any) => ({
-    discoveryRunId: row.discovery_run_id,
-    receiptId: receiptId(row.discovery_run_id),
-    createdAt: row.created_at,
-    selectedTier: row.selected_tier ?? null,
-    amountUsdc: toNumber(row.actual_settled_usdc) ?? toNumber(row.planned_cost_usdc),
-    paymentCount: toNumber(row.payment_count),
-    sourceCount: null,
-    displayStatus: displayStatus(row),
-    batchStatus: batchStatus(row),
+      discoveryRunId: row.discovery_run_id,
+      receiptId: receiptId(row.discovery_run_id),
+      createdAt: row.created_at,
+      selectedTier: row.selected_tier ?? null,
+      amountUsdc: toNumber(row.actual_settled_usdc) ?? toNumber(row.planned_cost_usdc),
+      paymentCount: toNumber(row.payment_count),
+      sourceCount: null,
+      displayStatus: displayStatus(row),
+      batchStatus: batchStatus(row),
   }));
 }
 

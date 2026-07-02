@@ -315,9 +315,8 @@ export async function writePayLabsVisibility(
     last_batch_explorer_url: lastPaid?.batchExplorerUrl ?? null,
     last_payment_at: paidCount > 0 ? now : null,
     safe_receipt_summary:
-      `This quote includes ${preflightSnapshot.registryCheckCount} registry checks and ${preflightSnapshot.sourceAccessCount} source accesses. ` +
-      `Each unit costs 0.000001 USDC and is included in User Cost. ` +
-      `Run Total equals User Cost plus internal agent payments.`,
+      `Run Total Settled equals User Cost plus internal agent payments. ` +
+      `Registry checks and source access are included in User Cost at 0.000001 USDC per unit.`,
     created_at: now,
   };
 
