@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 import type { ChatOpenAI } from "@langchain/openai";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { getTutorModel, getTutorModelName, getTutorModelConfig, isLlmRequired } from "./llm";
-import type { RouteTier } from "./route-config";
+import type { RouteTier } from "@/lib/paylabs/route-tier";
 
 // ─── Types ──────────────────────────────────────────────────────
 
