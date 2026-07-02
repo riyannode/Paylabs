@@ -18,7 +18,7 @@ import type {
   CreatorPayoutResult,
 } from "./types";
 import { USDC_DECIMALS } from "./split-policy";
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 
 // ─── Payment Transport Interface ──────────────────────────────
 

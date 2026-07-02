@@ -13,7 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import { createSession, sessionCookieOptions } from "@/lib/paylabs/auth/session";
 
 import { getSession as getUcwSession } from "@/lib/paylabs/ucw";

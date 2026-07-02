@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import PayLabsChatClient from "./paylabs-chat-client";
 
 export const dynamic = "force-dynamic";

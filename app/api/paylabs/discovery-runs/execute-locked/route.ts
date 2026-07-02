@@ -20,7 +20,7 @@
 export const maxDuration = 300;
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import { isAutoTierPreflightEnabled } from "@/lib/paylabs/feature-flags";
 import type { DelegatedRouteTier, ExecutionPlan } from "@/lib/paylabs/delegated-runtime/types";
 import type { OrchestratorOutput, PaymentGraphEdge } from "@/lib/paylabs/delegated-runtime/types";

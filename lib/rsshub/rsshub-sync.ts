@@ -12,7 +12,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import { fetchRoute, type NormalizedFeedItem } from "./rsshub-client";
 import { resolveCreatorClaimsBatch, type ResolvedClaim } from "@/lib/paylabs/creator-distribution/claim-resolver";
 

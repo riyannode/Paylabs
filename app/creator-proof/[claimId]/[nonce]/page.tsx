@@ -15,7 +15,7 @@
  * If any check fails, shows a generic "not found" page (no leak).
  */
 
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import { notFound } from "next/navigation";
 
 interface PageProps {

@@ -24,7 +24,7 @@ import type {
   ApprovedCreatorItem,
   CreatorAttribution,
 } from "../../creator-distribution/types";
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 
 async function persistAttributions(
   discoveryRunId: string,

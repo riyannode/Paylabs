@@ -74,7 +74,7 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
   }
 
   // Load feed items for metadata (wallet, price, claim status)
-  const { getFeedItemById } = await import("../../../ai/tools");
+  const { getFeedItemById } = await import("@/lib/paylabs/sources/queries");
 
   // Collect live source URLs for batch claim resolution
   const liveSourceUrls: string[] = [];

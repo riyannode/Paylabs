@@ -18,7 +18,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createRequire } from "node:module";
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import { getSession } from "@/lib/paylabs/auth/session";
 import {
   USDC_CONTRACT_ADDRESS,
