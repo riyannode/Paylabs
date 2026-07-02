@@ -731,6 +731,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
       clearRecentChats(walletAddressRef.current);
     }
     setMessages([]);
+    setRecentChats([]);
     // Destroy DCW session if exists
     fetch("/api/paylabs/auth/session", { method: "DELETE", credentials: "include" }).catch(() => {});
     // Clear all wallet state
