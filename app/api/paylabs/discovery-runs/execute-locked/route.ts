@@ -849,7 +849,11 @@ export async function POST(req: NextRequest) {
                   source_kind: s.source_kind,
                   provider: s.provider,
                 })),
-                _diagnostic: ((result.sourceContext as unknown as Record<string, unknown>)?._diagnostic) ?? null,
+                _diagnostic: (() => {
+                  const diagVal = ((result.sourceContext as unknown as Record<string, unknown>)?._diagnostic) ?? null;
+                  console.log(JSON.stringify({ log: "[execute_locked:source_context_persist]", has_diagnostic: diagVal !== null, sourceContext_keys: result.sourceContext ? Object.keys(result.sourceContext) : [] }));
+                  return diagVal;
+                })(),
               },
               final_answer: finalAnswer,
               exit_output: exitOutput,
