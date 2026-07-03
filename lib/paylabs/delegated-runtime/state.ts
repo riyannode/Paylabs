@@ -145,25 +145,6 @@ export function addServiceEvaluation(
   state.serviceEvaluations.push(evaluation);
 }
 
-export function updateBudgetSnapshot(
-  state: OrchestratorRunState,
-  serviceName: ServiceName,
-  costUsdc: number,
-  settled: boolean = false
-): void {
-  state.budgetSnapshot.serviceSpend[serviceName] =
-    (state.budgetSnapshot.serviceSpend[serviceName] || 0) + costUsdc;
-  state.budgetSnapshot.spentUsdc += costUsdc;
-  state.budgetSnapshot.remainingUsdc =
-    state.budgetSnapshot.totalBudgetUsdc - state.budgetSnapshot.spentUsdc;
-
-  if (settled) {
-    state.budgetSnapshot.settledServiceFeesUsdc += costUsdc;
-  } else {
-    state.budgetSnapshot.estimatedServiceFeesUsdc += costUsdc;
-  }
-}
-
 export function setMacroPhaseStatus(
   state: OrchestratorRunState,
   phase: MacroNodePhase,

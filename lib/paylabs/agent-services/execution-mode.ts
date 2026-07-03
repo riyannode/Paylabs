@@ -136,26 +136,6 @@ function getServiceLlmEnabled(serviceName: string): boolean {
 // ─── Public API ──────────────────────────────────────────────
 
 /**
- * Get the global agent service execution mode from env.
- * Default: "deterministic"
- *
- * @deprecated Use shouldRunServiceAsDeterministic(serviceName) for per-service resolution.
- */
-export function getAgentServiceExecutionMode(): AgentServiceExecutionMode {
-  return getServiceMode("default");
-}
-
-/**
- * Check if service-level LLM calls are enabled.
- * Default: false
- *
- * @deprecated Use shouldRunServiceAsDeterministic(serviceName) for per-service resolution.
- */
-export function isAgentServiceLlmEnabled(): boolean {
-  return getServiceLlmEnabled("default");
-}
-
-/**
  * Should this service run in deterministic mode?
  * True when:
  *   - service is hard-locked (payment_decider), OR

@@ -32,13 +32,6 @@ const EXTERNAL_TO_INTERNAL: Record<ExternalRouteTier, InternalRouteTier> = {
   advanced: "premium",
 };
 
-const INTERNAL_TO_EXTERNAL: Record<InternalRouteTier, ExternalRouteTier> = {
-  normal: "easy",
-  advanced: "normal",
-  premium: "advanced",
-};
-
-export const DEFAULT_EXTERNAL_TIER: ExternalRouteTier = "easy";
 export const DEFAULT_INTERNAL_TIER: InternalRouteTier = "normal";
 
 /**
@@ -50,26 +43,6 @@ export function toInternalTier(external: string): InternalRouteTier {
     return EXTERNAL_TO_INTERNAL[external as ExternalRouteTier];
   }
   return DEFAULT_INTERNAL_TIER;
-}
-
-/**
- * Convert internal tier to external.
- * Falls back to default if invalid.
- */
-export function toExternalTier(internal: string): ExternalRouteTier {
-  if (internal in INTERNAL_TO_EXTERNAL) {
-    return INTERNAL_TO_EXTERNAL[internal as InternalRouteTier];
-  }
-  return DEFAULT_EXTERNAL_TIER;
-}
-
-/**
- * Validate external tier.
- */
-export function isValidExternalTier(
-  tier: string
-): tier is ExternalRouteTier {
-  return tier === "easy" || tier === "normal" || tier === "advanced";
 }
 
 // ─── Discovery Fee Tiers (removed — dead code, never imported)

@@ -89,8 +89,3 @@ export function isDelegatedInlineExecutionEnabled(): boolean {
 export function isAutoTierPreflightEnabled(): boolean {
   return process.env.PAYLABS_AUTO_TIER_PREFLIGHT_ENABLED === "true";
 }
-
-export {
-  getAgentServiceExecutionMode,
-  isAgentServiceLlmEnabled,
-} from "./agent-services/execution-mode";
