@@ -250,6 +250,14 @@ Advanced:
   = 0.000057 USDC base quote
 ```
 
+Auto-tier: Brain selects optimal tier via two-step preflight (route-preflight → execute-locked).
+
+Expected x402 payment edges:
+- Easy: 5 edges = controller→brain + 1 macro edge + 3 child service edges
+- Normal: 14 edges = controller→brain + 3 macro edges + 10 child service edges
+- Advanced: 15 edges = controller→brain + 3 macro edges + 11 child service edges
+
+
 ### Paid Run Formula
 
 PayLabs uses a paid route preflight before final execution. The preflight locks the selected route, execution plan, quote, and final entry payment before the full agent workflow runs.
@@ -281,6 +289,8 @@ if total_user_paid > user_budget:
   fail closed before final execution
 ```
 
+
+
 This means every paid run is priced deterministically before execution. The route can be selected by the Brain planner, but the final price is locked by the Quote Engine and enforced by the payment runtime.
 
 ### LLM vs Deterministic per service
@@ -300,7 +310,7 @@ Each service supports 3 execution modes: `deterministic` (default), `llm`, `hybr
 | `trust_verifier` | ✅ | deterministic | Trust checks ALWAYS deterministic. LLM only writes risk summary |
 | `payment_decider` | ❌ 🔒 | deterministic | **Hard-locked.** Pure aggregator. No LLM regardless of env |
 | `creator_attribution` | ❌ | deterministic | Pure DB query + claim resolver. No LLM ever |
-| `advanced_evidence_evaluator` | ✅ | LLM  | Deep Agent with 7 tools (memory read/write, source comparison) |
+| `advanced_evidence_evaluator` | ✅ | LLM  | Agent with 7 tools (memory read/write, source comparison) |
 | `creator_payout_router` | ❌ | deterministic | Deterministic split (85/10/5) + ledger. No LLM ever |
 
 9 LLM-capable/Hybrid delegated service agents that run in production:
@@ -386,22 +396,6 @@ Every payout goes through `claim-before-transfer`:
 5. `markPaid()` or `markFailed()` — update with real settlement metadata
 
 This prevents double-pay on retry, crash recovery, and concurrent requests.
-
-## Route Tiers
-
-| Tier | Macro Nodes | Creator Slots | Use Case |
-|------|------------|---------------|----------|
-| **Easy** | discovery_planner | 0 | Quick source discovery, no creator payout |
-| **Normal** | discovery_planner, payment_decision, settlement_memory | 1 | Source-backed answer with creator attribution and 1 creator payout slot |
-| **Advanced** | discovery_planner, payment_decision, settlement_memory | 2 | Deep evidence evaluation with up to 2 creator payout slots | 
-
-Auto-tier: Brain selects optimal tier via two-step preflight (route-preflight → execute-locked).
-
-Expected x402 payment edges:
-- Easy: 5 edges = controller→brain + 1 macro edge + 3 child service edges
-- Normal: 14 edges = controller→brain + 3 macro edges + 10 child service edges
-- Advanced: 15 edges = controller→brain + 3 macro edges + 11 child service edges
-
 
 ## Wallets
 
