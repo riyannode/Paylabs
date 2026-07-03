@@ -13,6 +13,8 @@ Users ask a question, connect a PayLabs payment wallet, run an x402-paid AI sear
 
 **Live Stats & Traction:** 
 ------
+**PayLabs is live and actively processing x402-paid searches on Arc testnet.  
+Real micropayments flow through the agent runtime, with automatic USDC distribution to verified creators.**
 - **Live Production:** [https://paylabs.vercel.app/](https://paylabs.vercel.app/)
 - **Receipt**: [https://paylabs.vercel.app/explorer](https://paylabs.vercel.app/receipts)
 - **Explorer** : [https://paylabs.vercel.app/explorer](https://paylabs.vercel.app/explorer)
@@ -42,7 +44,7 @@ Users ask a question, connect a PayLabs payment wallet, run an x402-paid AI sear
 
 ## Agent Stack
 
-PayLabs runs on a LangGraph Brain planner + custom TypeScript x402 agent runtime. LangGraph handles route planning and tier selection, while the custom runtime handles budget checks, Circle DCW signing, x402 paid service edges, Gateway settlement, receipts, and explorer visibility.
+PayLabs runs on a LangGraph Brain planner + custom TypeScript x402 agent runtime.
 
 A user starts with an x402 entry payment. The Brain creates a locked quote and execution plan, then pays selected macro-node phases through x402. Each macro node runs a LangGraph phase and pays its child service nodes through x402 service edges. Circle Gateway batch these x402 payment edges into Arc explorer submitBatch transactions, while PayLabs records safe receipt and proof metadata.
 
