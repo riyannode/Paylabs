@@ -435,28 +435,86 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
             : item.relevance_score,
       }));
 
-    return {
-      ok: true,
-      serviceName: "signal_scout_basics",
-      data: {
-        ranked_candidates: rescored,
-        top_candidates: rescored.slice(0, 3).map((r) => r.feed_item_id),
-        quick_relevance_notes: rescored.slice(0, 5).map((r) => r.reason),
-        safe_signal_summary: `[basic] Live RSSHub: ${rescored.length} source(s) found${topicCandidates.length > 0 ? `, ${topicCandidates.length} from topic routes` : ""}.`,
-        retrieval_mode: "rsshub_live",
-        source_strategy: topicResult.candidates.length > 0 && liveResults.length > 0
-          ? "topic_routes_plus_catalog"
-          : topicResult.candidates.length > 0
-            ? "topic_routes"
-            : "catalog",
-        topic_routes_count: topicResult.diagnostics.topic_routes_count,
-        topic_candidates_count: topicResult.candidates.length,
-        live_diagnostics: diagnostics,
-      },
-      safeSummary: `[basic] Live RSSHub: ${rescored.length} source(s) found.`,
-      settled: false,
-      error: null,
-    };
+    // Only return if rescored has results; otherwise fall through to Tavily fallback
+    if (rescored.length > 0) {
+      return {
+        ok: true,
+        serviceName: "signal_scout_basics",
+        data: {
+          ranked_candidates: rescored,
+          top_candidates: rescored.slice(0, 3).map((r) => r.feed_item_id),
+          quick_relevance_notes: rescored.slice(0, 5).map((r) => r.reason),
+          safe_signal_summary: `[basic] Live RSSHub: ${rescored.length} source(s) found${topicCandidates.length > 0 ? `, ${topicCandidates.length} from topic routes` : ""}.`,
+          retrieval_mode: "rsshub_live",
+          source_strategy: topicResult.candidates.length > 0 && liveResults.length > 0
+            ? "topic_routes_plus_catalog"
+            : topicResult.candidates.length > 0
+              ? "topic_routes"
+              : "catalog",
+          topic_routes_count: topicResult.diagnostics.topic_routes_count,
+          topic_candidates_count: topicResult.candidates.length,
+          live_diagnostics: diagnostics,
+        },
+        safeSummary: `[basic] Live RSSHub: ${rescored.length} source(s) found.`,
+        settled: false,
+        error: null,
+      };
+    }
+    // rescored.length === 0: fall through to Tavily fallback below
+  }
+
+  // ── Step 2b: Tavily fallback for AI/Crypto when RSSHub returns 0 ──
+  // Check after ALL RSSHub filtering (merged + rescored) to catch cases where
+  // merged had items but they were all filtered out by scoring/domain guards.
+  const hasRelevantTopic = queryHasAiTopic || queryHasCryptoTopic;
+  if (hasRelevantTopic) {
+    const tavilyEnabled = process.env.PAYLABS_TAVILY_ENABLED === "true";
+    const tavilyKeyExists = !!(process.env.TAVILY_API_KEY && process.env.TAVILY_API_KEY.length > 0);
+
+    if (tavilyEnabled && tavilyKeyExists) {
+      try {
+        const { isTavilyEnabled, fetchTavilyLiveSources } = await import(
+          "@/lib/paylabs/web-search/tavily-live-search"
+        );
+
+        if (isTavilyEnabled()) {
+          const primaryTopic = detectedTopics.find((t) => t.subcategory) || detectedTopics[0];
+          const tavilyResult = await fetchTavilyLiveSources({
+            userGoal: queryGoalText,
+            entityTerms: entity_terms || [],
+            topicCategory: primaryTopic.category,
+            topicSubcategory: primaryTopic.subcategory,
+            callerTag: "signal_scout_basics",
+          });
+
+          if (tavilyResult.candidates.length > 0) {
+            return {
+              ok: true,
+              serviceName: "signal_scout_basics",
+              data: {
+                ranked_candidates: tavilyResult.candidates,
+                top_candidates: tavilyResult.candidates.slice(0, 3).map((r) => r.feed_item_id),
+                quick_relevance_notes: tavilyResult.candidates.slice(0, 5).map((r) => r.reason),
+                safe_signal_summary: `[basic] RSSHub returned 0 ${primaryTopic.category} sources. Tavily web search returned ${tavilyResult.candidates.length} link(s).`,
+                retrieval_mode: "rsshub_empty_tavily_live",
+                source_strategy: "tavily_links_only_after_rsshub_empty",
+                topic_routes_count: topicResult.diagnostics.topic_routes_count,
+                topic_candidates_count: topicResult.candidates.length,
+                live_diagnostics: diagnostics,
+              },
+              safeSummary: `[basic] RSSHub returned 0 sources. Tavily found ${tavilyResult.candidates.length} link(s).`,
+              settled: false,
+              error: null,
+            };
+          }
+        }
+      } catch (tavilyErr: unknown) {
+        // Tavily failure must not fail the run — log and continue
+        console.warn("[signal_scout_basics] Tavily fallback failed", {
+          error: tavilyErr instanceof Error ? tavilyErr.message.slice(0, 100) : String(tavilyErr).slice(0, 100),
+        });
+      }
+    }
   }
 
   // ── Step 3: No live results — return empty with diagnostics (NO DB fallback) ──
