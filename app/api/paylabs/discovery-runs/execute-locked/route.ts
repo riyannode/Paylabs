@@ -598,7 +598,7 @@ export async function POST(req: NextRequest) {
     const dcwSigner = createDcwSigner();
 
     // ── Run locked macro-node pipeline ──────────────────────
-    const { output: result, _sourceResolutionDiagnostic } = await executeLockedMacroNodePipeline({
+    const pipelineResult = await executeLockedMacroNodePipeline({
       discoveryRunId,
       userGoal: resolvedGoal,
       userWallet: resolvedWallet,
@@ -610,6 +610,13 @@ export async function POST(req: NextRequest) {
       callMacroNode: callMacroNodeX402,
       buildOutput: buildLockedOutput,
     });
+
+    // Extract result + diagnostic with dual-path fallback
+    const result = pipelineResult.output;
+    const _sourceResolutionDiagnostic =
+      pipelineResult._sourceResolutionDiagnostic ??
+      (result as unknown as Record<string, unknown>)["_sourceResolutionDiagnostic"] as import("@/lib/paylabs/delegated-runtime/source-resolution-diagnostic").SourceResolutionDiagnostic ??
+      null;
 
     // ── Prepend controller→brain edge (execution parity with old inline) ──
     // Old inline payment graph: controller → brain → macro-node → child service

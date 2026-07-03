@@ -554,5 +554,9 @@ export async function executeLockedMacroNodePipeline(
     lockedPlan,
   );
 
+  // Embed diagnostic directly on output object for reliable persistence
+  // TypeScript interface doesn't declare this, but JS objects carry extra props
+  (output as unknown as Record<string, unknown>)["_sourceResolutionDiagnostic"] = srcDiag;
+
   return { output, _lockedPlan: lockedPlan, _sourceResolutionDiagnostic: srcDiag };
 }
