@@ -328,7 +328,9 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 
 > **Accounting note:** Platform x402 Volume represents cumulative gross x402 activity since PayLabs first opened. Treasury / Unallocated represents retained or unallocated ledger entries recorded after the treasury tracking layer was wired on July 2.
 
+## Known Limitations / Next Patch
 
+- **Advanced scraper link hardening:** PayLabs already supports the main source discovery and paid agent flow, but advanced scraper deep-link coverage still needs one follow-up patch for broader URL normalization, retries, and edge-case source formats.
 
 
 ## Tech Stack
