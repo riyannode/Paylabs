@@ -42,7 +42,7 @@ Users ask a question, connect a PayLabs payment wallet, run an x402-paid AI sear
 
 ## Agent Stack
 
-PayLabs runs on a **Langchain/LangGraph based x402 agent runtime** — a directed graph of LLM-powered and deterministic service nodes connected by circle x402 batch payment edges.
+PayLabs runs on a LangGraph Brain planner + custom TypeScript x402 agent runtime. LangGraph handles route planning and tier selection, while the custom runtime handles budget checks, Circle DCW signing, x402 paid service edges, Gateway settlement, receipts, and explorer visibility.
 
 A user starts with an x402 entry payment. The Brain creates a locked quote and execution plan, then pays selected macro-node phases through x402. Each macro node runs a LangGraph phase and pays its child service nodes through x402 service edges. Circle Gateway batch these x402 payment edges into Arc explorer submitBatch transactions, while PayLabs records safe receipt and proof metadata.
 
