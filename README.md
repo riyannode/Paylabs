@@ -14,39 +14,123 @@ Users ask a question, connect a PayLabs payment wallet, run an x402-paid AI sear
 
 ## Agent Stack
 
-PayLabs runs on a **Langchain/LangGraph-based x402 agent runtime** — a directed graph of LLM-powered and deterministic service nodes connected by real x402 payment edges.
+PayLabs runs on a **Langchain/LangGraph based x402 agent runtime** — a directed graph of LLM-powered and deterministic service nodes connected by circle x402 batch payment edges.
 
-A user starts with an x402 entry payment. The Brain creates a locked quote and execution plan, then pays selected macro-node phases through x402. Each macro node runs a LangGraph phase and pays its child service nodes through x402 service edges. Circle Gateway may batch these payment edges into Arc submitBatch transactions, while PayLabs records safe receipt and proof metadata.
+A user starts with an x402 entry payment. The Brain creates a locked quote and execution plan, then pays selected macro-node phases through x402. Each macro node runs a LangGraph phase and pays its child service nodes through x402 service edges. Circle Gateway batch these x402 payment edges into Arc explorer submitBatch transactions, while PayLabs records safe receipt and proof metadata.
 
+```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "background": "#000000",
+    "mainBkg": "#000000",
+    "primaryColor": "#17191a",
+    "primaryBorderColor": "#6f6f6f",
+    "primaryTextColor": "#d8d8d8",
+    "lineColor": "#8a8a8a",
+    "textColor": "#d8d8d8",
+    "edgeLabelBackground": "#2b2d2e",
+    "fontFamily": "Inter, ui-sans-serif, system-ui"
+  },
+  "flowchart": {
+    "curve": "basis",
+    "htmlLabels": true,
+    "padding": 20,
+    "nodeSpacing": 48,
+    "rankSpacing": 68
+  }
+}}%%
+
+graph TD
+    User["User"]
+    EntryGate["Entry Gate"]
+    CircleGateway["Circle Gateway"]
+    Brain["Brain (LLM Planner)"]
+
+    Discovery["Discovery Phase"]
+    Payment["Payment Decision Phase"]
+    Settlement["Settlement Phase"]
+
+    DiscoveryEdges["x402 Service Edges"]
+    PaymentEdges["x402 Service Edges"]
+    SettlementEdges["x402 Service Edges"]
+
+    D1["intent_planner"]
+    D2["query_builder"]
+    D3["signal_scout"]
+
+    P1["intent_matcher"]
+    P2["source_verifier"]
+    P3["value_allocator"]
+    P4["trust_verifier"]
+    P5["payment_decider"]
+
+    S1["creator_attribution"]
+    S2["advanced_evidence_evaluator"]
+    S3["creator_payout_router"]
+
+    EasyOutput["Easy Output<br/>Discovery children only<br/>No creator payout<br/>User summary"]
+    NormalOutput["Normal Output<br/>Discovery + payment + settlement children<br/>Creator payout<br/>User summary"]
+    AdvancedOutput["Advanced Output<br/>Normal output + evidence evaluation<br/>Creator payout<br/>User summary"]
+
+    Creator["Creator Wallet"]
+
+    User -->|"x402 Payment"| EntryGate
+    EntryGate -->|"route-preflight"| Brain
+
+    Brain -->|"x402 Macro Edge"| Discovery
+    Brain -->|"x402 Macro Edge"| Payment
+    Brain -->|"x402 Macro Edge"| Settlement
+
+    Discovery --> DiscoveryEdges
+    DiscoveryEdges --> D1
+    DiscoveryEdges --> D2
+    DiscoveryEdges --> D3
+
+    Payment --> PaymentEdges
+    PaymentEdges --> P1
+    PaymentEdges --> P2
+    PaymentEdges --> P3
+    PaymentEdges --> P4
+    PaymentEdges --> P5
+
+    Settlement --> SettlementEdges
+    SettlementEdges --> S1
+    SettlementEdges --> S2
+    SettlementEdges --> S3
+
+    S3 -->|"USDC Payout"| Creator
+
+    CircleGateway -.->|"Batch x402 txs"| EntryGate
+    CircleGateway -.->|"Batch x402 txs"| Brain
+    CircleGateway -.-> Discovery
+    CircleGateway -.-> Payment
+    CircleGateway -.-> Settlement
+
+    D3 -->|"Easy tier"| EasyOutput
+    P5 -->|"Normal tier"| NormalOutput
+    S3 -->|"Normal payout"| NormalOutput
+    S2 -->|"Advanced tier"| AdvancedOutput
+    S3 -->|"Advanced payout"| AdvancedOutput
+
+    classDef node fill:#17191a,stroke:#6f6f6f,color:#d8d8d8,stroke-width:1px;
+    classDef service fill:#151718,stroke:#5f5f5f,color:#d0d0d0,stroke-width:1px;
+    classDef label fill:#2b2d2e,stroke:#2b2d2e,color:#d8d8d8,stroke-width:1px,font-size:12px;
+    classDef output fill:#202325,stroke:#7a7a7a,color:#e5e5e5,stroke-width:1px;
+
+    class User,EntryGate,CircleGateway,Brain,Discovery,Payment,Settlement,Creator node;
+    class D1,D2,D3,P1,P2,P3,P4,P5,S1,S2,S3 service;
+    class DiscoveryEdges,PaymentEdges,SettlementEdges label;
+    class EasyOutput,NormalOutput,AdvancedOutput output;
+
+    linkStyle 20 stroke:transparent,stroke-width:0px,color:transparent;
+    linkStyle 21 stroke:transparent,stroke-width:0px,color:transparent;
+    linkStyle 22 stroke:transparent,stroke-width:0px,color:transparent;
+    linkStyle 23 stroke:transparent,stroke-width:0px,color:transparent;
+    linkStyle 24 stroke:transparent,stroke-width:0px,color:transparent;
 ```
-USER ──x402──► ENTRY GATE ──► BRAIN Choose node (LLM)
-                                 │
-                  ┌──────────x402────────────┐
-                  |              |               |
-                  ▼             ▼               ▼
-             DISCOVERY        PAYMENT          SETTLEMENT
-             PLANNER          DECISION         MEMORY
-                │                │                  │
-                |x402            |x402              |x402
-         ┌─────┼─────┐   ┌────┼────┐       ┌───┼───┐
-         ▼     ▼     ▼   ▼    ▼     ▼      ▼   ▼   ▼
-        child  child child child child child child child child
 
-  ◄── Discovery ──►  ◄── Payment Decision ──►  ◄─ Settlement ─►
-       3 services          5 services             3 services
-
-  Each arrow = x402 payment edge (Circle Gateway batched)
-  Each service = independent LangGraph node
-```
 Note: Settlement has 2 services on Normal (`creator_attribution`, `creator_payout_router`) and 3 services on Advanced, where `advanced_evidence_evaluator` is added for deeper source comparison.
-
-**Creator payout flow:**
-
-```
-sources used ──► creator_attribution ──► creator_payout_router ──► creator wallet
-                  (claim resolver,        (85/10/5 split,           (x402 USDC)
-                   deterministic)          idempotent ledger)
-```
 
 **12 agent services** across 3 macro-node phases:
 
@@ -55,10 +139,6 @@ sources used ──► creator_attribution ──► creator_payout_router ─�
 | **Discovery** | `intent_planner`, `query_builder`, `signal_scout` / `signal_scout_basics` | Understand user goal, build search queries, discover sources via RSSHub |
 | **Payment Decision** | `intent_matcher`, `source_verifier`, `value_allocator`, `trust_verifier`, `payment_decider` | Match sources to intent, verify credibility, allocate value, decide payments |
 | **Settlement** | `creator_attribution`, `advanced_evidence_evaluator`, `creator_payout_router` | Attribute sources to verified creators, evaluate evidence quality, route payouts |
-
-PayLabs defines 12 available service modules, but each run executes a tier-specific subset: Easy runs 3 services, Normal runs 10, and Advanced runs 11. `signal_scout_basics` and `signal_scout` are mutually exclusive scout variants.
-
-Each service runs as an independent LangGraph node with its own x402 payment edge.
 
 **Brain** = LLM planner. Chooses tier, services, search strategy. Advisory only — cannot set prices, wallets, or payment refs.
 
