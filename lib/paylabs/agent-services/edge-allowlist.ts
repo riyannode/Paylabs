@@ -88,13 +88,6 @@ export function assertAllowedAgentServiceEdge(
 }
 
 /**
- * Returns all allowed edges for inspection (read-only).
- */
-export function getAllowedEdges(): ReadonlyArray<readonly [string, ServiceName]> {
-  return ALLOWED_EDGES;
-}
-
-/**
  * Returns the count of allowlisted edges.
  */
 export function getAllowedEdgeCount(): number {
