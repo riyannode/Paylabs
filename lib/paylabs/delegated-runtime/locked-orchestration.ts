@@ -441,21 +441,23 @@ export async function executeLockedMacroNodePipeline(
                     topicCategory: primaryTopic.category,
                     topicSubcategory: primaryTopic.subcategory,
                     callerTag: "locked_orchestration",
+                    routeTier: lockedTier,
                   });
 
-                  if (_tavilyDebugEnabled) {
-                    console.log(JSON.stringify({
-                      log: "[locked_orchestration] tavily_fallback",
-                      caller: "locked_orchestration",
-                      source_count_before: _sourceCountBefore,
-                      retrieval_mode_before: _retrievalModeBefore,
-                      tavily_enabled: _tavilyEnabled,
-                      topic_category: primaryTopic.category,
-                      topic_subcategory: primaryTopic.subcategory || null,
-                      tavily_candidate_count: tavilyResult.candidates.length,
-                      accepted_domains: [...new Set(tavilyResult.candidates.map((c) => c.domain).filter(Boolean))].slice(0, 10),
-                    }));
-                  }
+                  // Always-on diagnostic for paid-path Tavily fallback
+                  console.log(JSON.stringify({
+                    log: "[locked_orchestration] tavily_fallback",
+                    caller: "locked_orchestration",
+                    source_count_before: _sourceCountBefore,
+                    retrieval_mode_before: _retrievalModeBefore,
+                    tavily_enabled: _tavilyEnabled,
+                    topic_category: primaryTopic.category,
+                    topic_subcategory: primaryTopic.subcategory || null,
+                    tavily_raw_result_count: tavilyResult.result_count,
+                    tavily_candidate_count: tavilyResult.candidates.length,
+                    tavily_error_class: tavilyResult.error_class,
+                    accepted_domains: [...new Set(tavilyResult.candidates.map((c) => c.domain).filter(Boolean))].slice(0, 10),
+                  }));
 
                   if (tavilyResult.candidates.length > 0) {
                     const tavilySources = tavilyResult.candidates.map((c) => ({
@@ -488,14 +490,13 @@ export async function executeLockedMacroNodePipeline(
                 }
               }
             } catch (tavilyErr: unknown) {
-              if (_tavilyDebugEnabled) {
-                console.warn("[locked_orchestration] Tavily fallback error", {
-                  caller: "locked_orchestration",
-                  source_count_before: _sourceCountBefore,
-                  retrieval_mode_before: _retrievalModeBefore,
-                  error: tavilyErr instanceof Error ? tavilyErr.message.slice(0, 100) : String(tavilyErr).slice(0, 100),
-                });
-              }
+              // Always-on error diagnostic for paid-path Tavily fallback
+              console.warn("[locked_orchestration] Tavily fallback error", {
+                caller: "locked_orchestration",
+                source_count_before: _sourceCountBefore,
+                retrieval_mode_before: _retrievalModeBefore,
+                error: tavilyErr instanceof Error ? tavilyErr.message.slice(0, 100) : String(tavilyErr).slice(0, 100),
+              });
             }
           }
         }
@@ -565,21 +566,23 @@ export async function executeLockedMacroNodePipeline(
               topicCategory: primaryTopic.category,
               topicSubcategory: primaryTopic.subcategory,
               callerTag: "locked_orchestration_empty",
+              routeTier: lockedTier,
             });
 
-            if (_tavilyDebugEnabled0) {
-              console.log(JSON.stringify({
-                log: "[locked_orchestration] tavily_fallback_empty",
-                caller: "locked_orchestration_empty",
-                source_count_before: 0,
-                retrieval_mode_before: serviceRetrievalMode,
-                tavily_enabled: _tavilyEnabled0,
-                topic_category: primaryTopic.category,
-                topic_subcategory: primaryTopic.subcategory || null,
-                tavily_candidate_count: tavilyResult.candidates.length,
-                accepted_domains: [...new Set(tavilyResult.candidates.map((c) => c.domain).filter(Boolean))].slice(0, 10),
-              }));
-            }
+            // Always-on diagnostic for paid-path Tavily fallback (empty path)
+            console.log(JSON.stringify({
+              log: "[locked_orchestration] tavily_fallback_empty",
+              caller: "locked_orchestration_empty",
+              source_count_before: 0,
+              retrieval_mode_before: serviceRetrievalMode,
+              tavily_enabled: _tavilyEnabled0,
+              topic_category: primaryTopic.category,
+              topic_subcategory: primaryTopic.subcategory || null,
+              tavily_raw_result_count: tavilyResult.result_count,
+              tavily_candidate_count: tavilyResult.candidates.length,
+              tavily_error_class: tavilyResult.error_class,
+              accepted_domains: [...new Set(tavilyResult.candidates.map((c) => c.domain).filter(Boolean))].slice(0, 10),
+            }));
 
             if (tavilyResult.candidates.length > 0) {
               const tavilySources = tavilyResult.candidates.map((c) => ({
@@ -612,14 +615,13 @@ export async function executeLockedMacroNodePipeline(
           }
         }
       } catch (tavilyErr: unknown) {
-        if (_tavilyDebugEnabled0) {
-          console.warn("[locked_orchestration] Tavily fallback error (empty path)", {
-            caller: "locked_orchestration_empty",
-            source_count_before: 0,
-            retrieval_mode_before: serviceRetrievalMode,
-            error: tavilyErr instanceof Error ? tavilyErr.message.slice(0, 100) : String(tavilyErr).slice(0, 100),
-          });
-        }
+        // Always-on error diagnostic for paid-path Tavily fallback
+        console.warn("[locked_orchestration] Tavily fallback error (empty path)", {
+          caller: "locked_orchestration_empty",
+          source_count_before: 0,
+          retrieval_mode_before: serviceRetrievalMode,
+          error: tavilyErr instanceof Error ? tavilyErr.message.slice(0, 100) : String(tavilyErr).slice(0, 100),
+        });
       }
     }
   }
