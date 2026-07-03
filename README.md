@@ -331,7 +331,10 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 ## Known Limitations / Next Patch
 
 - **Advanced scraper link hardening:** PayLabs already supports the main source discovery and paid agent flow, but advanced scraper deep-link coverage still needs one follow-up patch for broader URL normalization, retries, and edge-case source formats.
+- If the chat looks stuck or the answer does not appear immediately, please wait. 
+The backend may still be processing and should return the final answer when the run finishes.
 
+After each completed run, we also creates a receipt. The explorer view shows the services used, payment edges, settlement metadata, and visibility for each service in the run.
 
 ## Tech Stack
 
