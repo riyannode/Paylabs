@@ -4,13 +4,17 @@
  * Deterministic-only source discovery for EASY tier.
  * No LLM. No reranking. Pure keyword/entity scoring.
  *
- * LIVE-ONLY: Never falls back to DB. If RSSHub returns no sources,
- * returns empty candidates with live_diagnostics.
+ * Primary source discovery: RSSHub live/topic routes.
+ * Secondary fallback: Tavily links-only for AI/Crypto when
+ * RSSHub produces 0 usable sources (gated by PAYLABS_TAVILY_ENABLED).
+ * No DB fallback. No LLM.
  *
  * Flow:
- *   1. RSSHub live search (deterministic API call)
- *   2. Keyword/entity match scoring
- *   3. Sort by score → ranked_candidates
+ *   1. RSSHub topic/live search (deterministic API call)
+ *   2. Source guard filtering (AI/Crypto relevance)
+ *   3. Keyword/entity match scoring
+ *   4. If 0 usable sources → Tavily links-only fallback (AI/Crypto only)
+ *   5. Sort by score → ranked_candidates
  *
  * Macro-node: discovery_planner
  * Requires LLM: no
