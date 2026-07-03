@@ -188,6 +188,101 @@ Note: Settlement has 2 services on Normal (`creator_attribution`, `creator_payou
 
 **Quote Engine** = deterministic pricing. Computes cost from tier + selected services. No LLM-generated prices.
 
+## Pricing / Quote Engine
+
+PayLabs uses a deterministic Quote Engine as the single source of truth for pricing and budget validation. The Brain planner can recommend a route, but it cannot set prices, wallet addresses, payment references, or settlement references.
+
+Brain chooses logic. Quote Engine chooses cost.
+
+### Fixed Fees
+
+| Component | Fee |
+|---|---:|
+| Brain treasury | `0.000003 USDC` |
+| Macro-node base fee | `0.000001 USDC` |
+| Child service edge | `0.000001 USDC` |
+| Registry check | `0.000001 USDC` |
+| Source access | `0.000001 USDC` |
+| Creator payout unit | `0.000020 USDC` |
+| Route preflight fee | `0.000001 USDC` |
+
+### Quote Formula
+
+```txt
+execution_fee =
+  brain_treasury
+  + macro_node_base_fees
+  + child_service_edge_fees
+  + registry_check_fees
+  + source_access_fees
+
+creator_pool =
+  creator_payout_unit * creator_slots
+
+locked_quote =
+  execution_fee + creator_pool
+```
+
+### Base Tier Quotes
+
+These are the base route quotes before additional registry checks, source access, or internal x402 routing volume.
+
+```txt
+Easy:
+  brain 0.000003
+  + 1 macro node * 0.000001
+  + 3 child services * 0.000001
+  + 0 creator slots
+  = 0.000007 USDC base quote
+
+Normal:
+  brain 0.000003
+  + 3 macro nodes * 0.000001
+  + 10 child services * 0.000001
+  + 1 creator slot * 0.000020
+  = 0.000036 USDC base quote
+
+Advanced:
+  brain 0.000003
+  + 3 macro nodes * 0.000001
+  + 11 child services * 0.000001
+  + 2 creator slots * 0.000020
+  = 0.000057 USDC base quote
+```
+
+### Paid Run Formula
+
+PayLabs uses a paid route preflight before final execution. The preflight locks the selected route, execution plan, quote, and final entry payment before the full agent workflow runs.
+
+```txt
+preflight_routing_fee =
+  0.000001 USDC
+
+internal_x402_routing =
+  macro_node_allocations
+  + child_service_payment_edges
+
+gross_run_charge =
+  locked_quote
+  + internal_x402_routing
+
+final_entry_payment =
+  gross_run_charge
+
+total_user_paid =
+  preflight_routing_fee
+  + final_entry_payment
+```
+
+### Budget Guard
+
+```txt
+if total_user_paid > user_budget:
+  fail closed before final execution
+```
+
+This means every paid run is priced deterministically before execution. The route can be selected by the Brain planner, but the final price is locked by the Quote Engine and enforced by the payment runtime.
+
 ### LLM vs Deterministic per service
 
 Each service supports 3 execution modes: `deterministic` (default), `llm`, `hybrid`.
@@ -208,9 +303,11 @@ Each service supports 3 execution modes: `deterministic` (default), `llm`, `hybr
 | `advanced_evidence_evaluator` | ✅ | LLM  | Deep Agent with 7 tools (memory read/write, source comparison) |
 | `creator_payout_router` | ❌ | deterministic | Deterministic split (85/10/5) + ledger. No LLM ever |
 
-9 LLM-capable delegated service agents that run in production:
+9 LLM-capable/Hybrid delegated service agents that run in production:
 
-Each key maps to `PAYLABS_LLM_PROVIDER_<KEY>`, `PAYLABS_TUTOR_MODEL_<KEY>`, `PAYLABS_LLM_BASE_URL_<KEY>`, `PAYLABS_LLM_API_KEY_<KEY>`, `PAYLABS_LLM_TIMEOUT_MS_<KEY>`, `PAYLABS_LLM_MAX_TOKENS_<KEY>`.
+Each key maps to 
+`PAYLABS_LLM_PROVIDER_<KEY>`, `PAYLABS_TUTOR_MODEL_<KEY>`, `PAYLABS_LLM_BASE_URL_<KEY>`, `PAYLABS_LLM_API_KEY_<KEY>`, `PAYLABS_LLM_TIMEOUT_MS_<KEY>`, `PAYLABS_LLM_MAX_TOKENS_<KEY>`.
+
 
 Key rules:
 - `value_allocator` and `trust_verifier`: financial decisions (budget math, trust scores) are ALWAYS deterministic. LLM only generates human-readable explanation text
