@@ -11,8 +11,6 @@ import { initiateUserControlledWalletsClient } from "@circle-fin/user-controlled
 import type { Blockchain } from "@circle-fin/user-controlled-wallets";
 import { randomUUID } from "crypto";
 import { createClient } from "@supabase/supabase-js";
-import { createPublicClient, http, isAddress } from "viem";
-import { arcTestnet } from "viem/chains";
 
 // ---------------------------------------------------------------------------
 // Server-side UCW session store — Supabase-backed (production-safe)
@@ -111,7 +109,6 @@ function getClient() {
 const ARC_TESTNET_BLOCKCHAIN = "ARC-TESTNET" as Blockchain;
 const USDC_ARC_TESTNET = "0x3600000000000000000000000000000000000000";
 const GATEWAY_WALLET_ARC_TESTNET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
-const GATEWAY_REST_BASE = "https://gateway-api-testnet.circle.com/v1";
 const ARC_TESTNET_DOMAIN = 26;
 
 // ---------------------------------------------------------------------------
@@ -220,114 +217,6 @@ export async function getWalletTokenBalance(walletId: string, userToken: string)
 }
 
 // ---------------------------------------------------------------------------
-// signTypedData challenge (for x402 EIP-712 signing)
-//
-// Circle UCW API requires `data` as a JSON STRING containing the full
-// EIP-712 structure: { domain, types (WITH EIP712Domain), primaryType, message }.
-// All uint256 values must be decimal strings, not hex.
-// ---------------------------------------------------------------------------
-
-export async function createSignTypedDataChallenge(
-  userToken: string,
-  walletId: string,
-  data: Record<string, unknown>,
-) {
-  const client = getClient();
-  // Ensure EIP712Domain is present in types — Circle API requires it
-  const types = data.types as Record<string, unknown> | undefined;
-  if (types && !types.EIP712Domain) {
-    (data.types as Record<string, unknown>).EIP712Domain = [
-      { name: "name", type: "string" },
-      { name: "version", type: "string" },
-      { name: "chainId", type: "uint256" },
-      { name: "verifyingContract", type: "address" },
-    ];
-  }
-
-  // Circle UCW API expects `data` as a JSON string
-  const dataString = JSON.stringify(data, (_key, value) =>
-    typeof value === "bigint" ? value.toString() : value,
-  );
-
-  const resp = await client.signTypedData({
-    userToken,
-    walletId,
-    data: dataString,
-  });
-  return { challengeId: resp.data?.challengeId };
-}
-
-// ---------------------------------------------------------------------------
-// Contract execution challenge (for Gateway deposit: approve + deposit)
-// ---------------------------------------------------------------------------
-
-export async function createApproveChallenge(
-  userToken: string,
-  walletId: string,
-  amountAtomic: string,
-) {
-  const client = getClient();
-  const approveSelector = "0x095ea7b3";
-  const paddedGateway = GATEWAY_WALLET_ARC_TESTNET.slice(2).padStart(64, "0");
-  const paddedAmount = BigInt(amountAtomic).toString(16).padStart(64, "0");
-  const callData = `${approveSelector}${paddedGateway}${paddedAmount}` as `0x${string}`;
-
-  const resp = await client.createUserTransactionContractExecutionChallenge({
-    userToken,
-    walletId,
-    contractAddress: USDC_ARC_TESTNET,
-    callData,
-    fee: { type: "level", config: { feeLevel: "MEDIUM" } },
-    idempotencyKey: randomUUID(),
-  });
-  return { challengeId: resp.data?.challengeId };
-}
-
-export async function createDepositChallenge(
-  userToken: string,
-  walletId: string,
-  amountAtomic: string,
-) {
-  const client = getClient();
-  const depositSelector = "0x47e7ef24";
-  const paddedUsdc = USDC_ARC_TESTNET.slice(2).padStart(64, "0");
-  const paddedAmount = BigInt(amountAtomic).toString(16).padStart(64, "0");
-  const callData = `${depositSelector}${paddedUsdc}${paddedAmount}` as `0x${string}`;
-
-  const resp = await client.createUserTransactionContractExecutionChallenge({
-    userToken,
-    walletId,
-    contractAddress: GATEWAY_WALLET_ARC_TESTNET,
-    callData,
-    fee: { type: "level", config: { feeLevel: "MEDIUM" } },
-    idempotencyKey: randomUUID(),
-  });
-  return { challengeId: resp.data?.challengeId };
-}
-
-// ---------------------------------------------------------------------------
-// Gateway balance (permissionless REST)
-// ---------------------------------------------------------------------------
-
-export async function getGatewayBalance(walletAddress: string) {
-  const resp = await fetch(`${GATEWAY_REST_BASE}/balances`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      token: "USDC",
-      sources: [{ domain: ARC_TESTNET_DOMAIN, depositor: walletAddress.toLowerCase() }],
-    }),
-  });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`Gateway balance API error ${resp.status}: ${text}`);
-  }
-  const data = await resp.json();
-  const balance = data.balances?.[0]?.balance ?? "0";
-  return { balance, domain: ARC_TESTNET_DOMAIN };
-}
-
-// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -337,33 +226,3 @@ export {
   ARC_TESTNET_BLOCKCHAIN,
   ARC_TESTNET_DOMAIN,
 };
-
-// ---------------------------------------------------------------------------
-// On-chain allowance check (viem readContract — no wallet needed)
-// ---------------------------------------------------------------------------
-
-const ERC20_ABI = [
-  {
-    type: "function",
-    name: "allowance",
-    stateMutability: "view",
-    inputs: [
-      { name: "owner", type: "address" },
-      { name: "spender", type: "address" },
-    ],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-] as const;
-
-const publicClient = createPublicClient({ chain: arcTestnet, transport: http(process.env.ARC_RPC_URL || undefined) });
-
-export async function checkAllowance(owner: string): Promise<string> {
-  if (!isAddress(owner)) throw new Error("Invalid wallet address");
-  const allowance = await publicClient.readContract({
-    address: USDC_ARC_TESTNET as `0x${string}`,
-    abi: ERC20_ABI,
-    functionName: "allowance",
-    args: [owner as `0x${string}`, GATEWAY_WALLET_ARC_TESTNET as `0x${string}`],
-  });
-  return allowance.toString();
-}
