@@ -444,7 +444,7 @@ export const signalScoutHandler: ServiceHandler = async (
     };
   }
 
-  // ── Step 2b: If live-only mode, do NOT fallback to DB ──
+  // ── Step 2c: If live-only mode, do NOT fallback to DB ──
   if (liveOnly) {
     return {
       ok: true,

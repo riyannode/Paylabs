@@ -12,6 +12,7 @@
  *   timeout:    PAYLABS_LLM_TIMEOUT_<AGENT_KEY>   → PAYLABS_LLM_TIMEOUT_DEFAULT  → PAYLABS_LLM_TIMEOUT_MS → 20000
  *   maxTokens:  PAYLABS_LLM_MAX_TOKENS_<AGENT_KEY> → PAYLABS_LLM_MAX_TOKENS_DEFAULT → PAYLABS_LLM_MAX_TOKENS → 1024
  *   streaming:  PAYLABS_LLM_STREAMING_<AGENT_KEY> → PAYLABS_LLM_STREAMING_DEFAULT → false
+ *   temperature: PAYLABS_LLM_TEMPERATURE_<AGENT_KEY> → PAYLABS_LLM_TEMPERATURE_DEFAULT → PAYLABS_LLM_TEMPERATURE → 0
  *
  * If PAYLABS_LLM_REQUIRED=true and no API key, throws.
  * No secrets printed.
@@ -83,6 +84,7 @@ export function resolveConfig(agentName?: string): {
   timeoutMs: number;
   maxTokens: number;
   streaming: boolean;
+  temperature: number;
 } {
   const agentKey = agentName ? AGENT_KEY_MAP[agentName] || agentName.toUpperCase() : "DEFAULT";
   const provider = envOrDefault(`PAYLABS_LLM_PROVIDER_${agentKey}`) ?? envOrDefault("PAYLABS_LLM_PROVIDER_DEFAULT") ?? "openai";
@@ -93,8 +95,9 @@ export function resolveConfig(agentName?: string): {
   const maxTokens = resolveNumberConfig(agentKey, "PAYLABS_LLM_MAX_TOKENS", 1024);
   const defaultStreaming = provider.toLowerCase() === "openai" && !baseUrl;
   const streaming = resolveBooleanConfig(agentKey, "PAYLABS_LLM_STREAMING", defaultStreaming);
+  const temperature = resolveNumberConfig(agentKey, "PAYLABS_LLM_TEMPERATURE", 0);
 
-  return { provider, apiKey, baseUrl, model, agentKey, timeoutMs, maxTokens, streaming };
+  return { provider, apiKey, baseUrl, model, agentKey, timeoutMs, maxTokens, streaming, temperature };
 }
 
 function buildCacheKey(cfg: {
@@ -105,8 +108,9 @@ function buildCacheKey(cfg: {
   timeoutMs: number;
   maxTokens: number;
   streaming: boolean;
+  temperature: number;
 }, forceNonStreaming?: boolean): string {
-  return `${cfg.provider}:${cfg.baseUrl || "default"}:${cfg.model}:${cfg.agentKey}:${cfg.timeoutMs}:${cfg.maxTokens}:${cfg.streaming}:${forceNonStreaming ? "nostream" : "std"}`;
+  return `${cfg.provider}:${cfg.baseUrl || "default"}:${cfg.model}:${cfg.agentKey}:${cfg.timeoutMs}:${cfg.maxTokens}:${cfg.streaming}:${cfg.temperature}:${forceNonStreaming ? "nostream" : "std"}`;
 }
 
 export function getTutorModel(agentName?: string): ChatOpenAI | null {
@@ -139,7 +143,7 @@ export function getTutorModel(agentName?: string): ChatOpenAI | null {
   const model = new ChatOpenAI({
     model: cfg.model,
     apiKey: cfg.apiKey,
-    temperature: 0,
+    temperature: cfg.temperature,
     maxTokens: cfg.maxTokens,
     timeout: cfg.timeoutMs,
     streaming: cfg.streaming,
@@ -164,6 +168,7 @@ export function getTutorModelConfig(agentName?: string): {
   timeoutMs: number;
   maxTokens: number;
   streaming: boolean;
+  temperature: number;
   forceNonStreamingBody: boolean;
   responseFormatJson: boolean;
 } {
@@ -179,6 +184,7 @@ export function getTutorModelConfig(agentName?: string): {
     timeoutMs: cfg.timeoutMs,
     maxTokens: cfg.maxTokens,
     streaming: cfg.streaming,
+    temperature: cfg.temperature,
     forceNonStreamingBody,
     responseFormatJson,
   };
