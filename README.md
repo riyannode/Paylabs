@@ -38,6 +38,7 @@ USER ──x402──► ENTRY GATE ──► BRAIN Choose node (LLM)
   Each arrow = x402 payment edge (Circle Gateway batched)
   Each service = independent LangGraph node
 ```
+Note: Settlement has 2 services on Normal (`creator_attribution`, `creator_payout_router`) and 3 services on Advanced, where `advanced_evidence_evaluator` is added for deeper source comparison.
 
 **Creator payout flow:**
 
@@ -54,6 +55,8 @@ sources used ──► creator_attribution ──► creator_payout_router ─�
 | **Discovery** | `intent_planner`, `query_builder`, `signal_scout` / `signal_scout_basics` | Understand user goal, build search queries, discover sources via RSSHub |
 | **Payment Decision** | `intent_matcher`, `source_verifier`, `value_allocator`, `trust_verifier`, `payment_decider` | Match sources to intent, verify credibility, allocate value, decide payments |
 | **Settlement** | `creator_attribution`, `advanced_evidence_evaluator`, `creator_payout_router` | Attribute sources to verified creators, evaluate evidence quality, route payouts |
+
+PayLabs defines 12 available service modules, but each run executes a tier-specific subset: Easy runs 3 services, Normal runs 10, and Advanced runs 11. `signal_scout_basics` and `signal_scout` are mutually exclusive scout variants.
 
 Each service runs as an independent LangGraph node with its own x402 payment edge.
 
@@ -165,9 +168,15 @@ This prevents double-pay on retry, crash recovery, and concurrent requests.
 |------|------------|---------------|----------|
 | **Easy** | discovery_planner | 0 | Quick source discovery, no creator payout |
 | **Normal** | discovery_planner, payment_decision, settlement_memory | 1 | Source-backed answer with creator attribution and 1 creator payout slot |
-| **Advanced** | discovery_planner, payment_decision, settlement_memory | 2 | Deep evidence evaluation with up to 2 creator payout slots | |
+| **Advanced** | discovery_planner, payment_decision, settlement_memory | 2 | Deep evidence evaluation with up to 2 creator payout slots | 
 
 Auto-tier: Brain selects optimal tier via two-step preflight (route-preflight → execute-locked).
+
+Expected x402 payment edges:
+- Easy: 5 edges = controller→brain + 1 macro edge + 3 child service edges
+- Normal: 14 edges = controller→brain + 3 macro edges + 10 child service edges
+- Advanced: 15 edges = controller→brain + 3 macro edges + 11 child service edges
+
 
 ## Payment Flow
 
