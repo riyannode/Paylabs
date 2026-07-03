@@ -100,15 +100,31 @@ Key rules:
 6. Payout executor sends USDC to creator's wallet via x402/Gateway
 ```
 
-### Revenue split (per creator slot)
 
-| Recipient | Share | Per slot (USDC) |
-|-----------|-------|-----------------|
-| **Creator** | 85% | 0.000017 |
-| **Bot** | 10% | 0.000002 |
-| **Service** | 5% | 0.000001 |
+### Creator slot split
 
-Per-slot unit: 20 atomic (0.000020 USDC). Tier limits: Normal = 1 creator slot, Advanced = 2 creator slots. Easy = no creator payout.
+PayLabs uses an atomic-safe creator distribution slot.
+
+USDC has 6 decimals, so `0.000001 USDC` is 1 atomic unit. A creator distribution slot is 20 atomic units:
+
+| Recipient | Share | Atomic units | Per slot |
+|---|---:|---:|---:|
+| Creator | 85% | 17 | 0.000017 USDC |
+| Bot | 10% | 2 | 0.000002 USDC |
+| Service | 5% | 1 | 0.000001 USDC |
+| Total | 100% | 20 | 0.000020 USDC |
+
+This split applies only to the creator distribution slot, not to the full user payment.
+
+Tier slot limits:
+
+| Tier | Creator slots | Creator slot reserve |
+|---|---:|---:|
+| Easy | 0 | 0.000000 USDC |
+| Normal | 1 | 0.000020 USDC |
+| Advanced | 2 | 0.000040 USDC |
+
+Only verified creator claims can receive creator payouts. If no verified creator payout is executed, the unused slot remains Treasury / Unallocated. Bot and Service shares are internal platform accounting rows and are paid only for successful creator-paid slots.
 
 ### Verification methods
 
