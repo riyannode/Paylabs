@@ -15,10 +15,16 @@ Users ask a question, connect a PayLabs payment wallet, run an x402-paid AI sear
 ------
 **PayLabs is live and actively processing x402-paid searches on Arc testnet.  
 Real micropayments flow through the agent runtime, with automatic USDC distribution to verified creators.**
-- **Live Production:** [https://paylabs.vercel.app/](https://paylabs.vercel.app/)
-- **Receipt**: [https://paylabs.vercel.app/explorer](https://paylabs.vercel.app/receipts)
-- **Explorer** : [https://paylabs.vercel.app/explorer](https://paylabs.vercel.app/explorer)
 
+| Metric | Count |
+|---|---:|
+| Receipts generated across Easy / Normal / Advanced routes | **500+** |
+| x402 service payment service processed | **3,000+** |
+| Users / testers onboarded | **50+** |
+
+- **Live Production:** [https://paylabs.vercel.app/](https://paylabs.vercel.app/)
+- **Receipt**: [https://paylabs.vercel.app/explorer](https://paylabs.vercel.app/receipts) 
+- **Explorer** : [https://paylabs.vercel.app/explorer](https://paylabs.vercel.app/explorer) 
 
 **Circle Tools Usage:**
 ------
