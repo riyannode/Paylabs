@@ -28,12 +28,18 @@ Real micropayments flow through the agent runtime, with automatic USDC distribut
 
 **Agentic Sophistication**
 -----
-- **LangGraph Brain:** [lib/paylabs/langgraph/brain](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/langgraph/brain)
-- **LangGraph Macro Nodes:** [lib/paylabs/langgraph/macro-nodes](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/langgraph/macro-nodes)
-- **LangGraph Service Nodes:** [lib/paylabs/langgraph/services](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/langgraph/services)
-- **LangGraph Shared State:** [lib/paylabs/langgraph/shared](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/langgraph/shared)
-- **Delegated Runtime Orchestrator:** [lib/paylabs/delegated-runtime](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/delegated-runtime)
-- **Delegated Agent Services:** [lib/paylabs/agent-services](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/agent-services)
+PayLabs runs a **LangGraph-orchestrated agent system** with clear separation between planning and execution:
+
+- A **Brain Planner** (LLM) handles high-level decisions: selecting the appropriate tier, search strategy, and which services to activate.
+- A **custom TypeScript runtime** manages budget enforcement, x402 payment edges, Circle DCW signing, Gateway batch settlement, and receipt generation.
+- Financial decisions (pricing, value allocation, trust verification, and payout routing) are **hard-locked to deterministic logic**, while the LLM is restricted to advisory and explanatory roles only.
+
+This architecture enables meaningful agent autonomy while maintaining strong safety guarantees around money movement.
+
+Implementation is split across:
+- [`lib/paylabs/langgraph`](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/langgraph) — Brain and macro-node orchestration
+- [`lib/paylabs/delegated-runtime`](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/delegated-runtime) — Quote engine and runtime coordination
+- [`lib/paylabs/agent-services`](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/agent-services) — Individual service implementations
 
 **Innovation**
 -----
@@ -46,7 +52,9 @@ Real micropayments flow through the agent runtime, with automatic USDC distribut
 
 PayLabs runs on a LangGraph Brain planner + custom TypeScript x402 agent runtime.
 
-A user starts with an x402 entry payment. The Brain creates a locked quote and execution plan, then pays selected macro-node phases through x402. Each macro node runs a LangGraph phase and pays its child service nodes through x402 service edges. Circle Gateway batch these x402 payment edges into Arc explorer submitBatch transactions, while PayLabs records safe receipt and proof metadata.
+A run begins with an **x402 entry payment**. The Brain Planner generates a locked quote and execution plan. It then triggers selected macro-node phases through **x402 macro edges**. Each macro node executes its LangGraph phase and pays its child service nodes via **x402 service edges**.
+
+Circle Gateway batches these payment edges into `submitBatch` transactions on Arc, while PayLabs records complete receipt and proof metadata for transparency and auditability.
 
 ```mermaid
 %%{init: {
@@ -194,6 +202,8 @@ Each service supports 3 execution modes: `deterministic` (default), `llm`, `hybr
 | `advanced_evidence_evaluator` | ✅ | LLM  | Deep Agent with 7 tools (memory read/write, source comparison) |
 | `creator_payout_router` | ❌ | deterministic | Deterministic split (85/10/5) + ledger. No LLM ever |
 
+
+
 Key rules:
 - `value_allocator` and `trust_verifier`: financial decisions (budget math, trust scores) are ALWAYS deterministic. LLM only generates human-readable explanation text
 - `payment_decider`: hard-locked to deterministic — no env var can override
@@ -287,18 +297,6 @@ Expected x402 payment edges:
 - Normal: 14 edges = controller→brain + 3 macro edges + 10 child service edges
 - Advanced: 15 edges = controller→brain + 3 macro edges + 11 child service edges
 
-
-## Payment Flow
-
-```
-User starts an x402-paid run through the PayLabs payment wallet/DCW
-  → Brain plans tier + services
-  → Quote engine prices the run (deterministic)
-  → Agent wallets pay macro nodes + child services via x402
-  → Creator attribution identifies eligible creators
-  → Payout executor sends USDC to creator wallets
-  → Receipt generated with full payment graph
-```
 
 ## Wallets
 
