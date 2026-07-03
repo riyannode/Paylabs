@@ -61,6 +61,8 @@ const KNOWN_ENTITIES = new Set([
   "etf",
   // L1
   "l1",
+  // Circle/Arc specific
+  "dcw", "ucw", "cctp", "arcscan", "facilitator",
 ]);
 
 // ─── Core Helpers ───────────────────────────────────────────
