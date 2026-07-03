@@ -97,14 +97,22 @@ const TOPIC_KEYWORDS: Array<{ keywords: string[]; category: "ai" | "crypto"; sub
   { keywords: ["claude", "anthropic", "gemini", "google ai", "midjourney", "stable diffusion", "ai image", "ai video", "ai audio"], category: "ai" },
 
   // Crypto — broad
-  { keywords: ["cryptocurrency", "crypto", "crypto news", "crypto market", "blockchain", "defi", "decentralized finance", "web3", "nft", "token", "altcoin"], category: "crypto" },
+  { keywords: ["cryptocurrency", "crypto", "crypto news", "crypto market", "blockchain", "defi", "decentralized finance", "web3", "nft", "token", "altcoin", "etf"], category: "crypto" },
   // Crypto — specific
   { keywords: ["bitcoin", "btc", "ethereum", "eth", "solana", "sol"], category: "crypto", subcategory: "news" },
+  { keywords: ["bitcoin etf", "btc etf", "ethereum etf", "eth etf", "spot etf", "crypto etf"], category: "crypto", subcategory: "news" },
   { keywords: ["binance", "coinbase", "kraken", "exchange"], category: "crypto", subcategory: "binance" },
   { keywords: ["airdrop", "token listing", "delisting", "new coin"], category: "crypto", subcategory: "binance" },
   { keywords: ["crypto regulation", "crypto policy", "sec crypto", "crypto law"], category: "crypto", subcategory: "policy" },
   { keywords: ["crypto company", "crypto startup", "crypto funding", "crypto investment"], category: "crypto", subcategory: "companies" },
   { keywords: ["stablecoin", "usdc", "usdt", "dai"], category: "crypto" },
+  // Staking & validators
+  { keywords: ["staking", "stake", "staking rewards", "validator", "validators", "proof of stake", "pos", "delegator", "delegation"], category: "crypto", subcategory: "news" },
+  { keywords: ["restaking", "eigenlayer", "liquid staking", "lido", "steth", "rseth", "ethfi", "ether.fi", "staking yield"], category: "crypto", subcategory: "ecosystems" },
+  // Layer 1 / Layer 2 / Scaling
+  { keywords: ["layer 1", "layer1", "l1", "layer 2", "layer2", "l2", "rollup", "rollups", "optimistic rollup", "zk rollup", "zk-rollup", "zkrollup"], category: "crypto", subcategory: "ecosystems" },
+  { keywords: ["arbitrum", "optimism", "base", "polygon", "zksync", "starknet", "linea", "scroll", "blast", "mantle", "mode"], category: "crypto", subcategory: "ecosystems" },
+  { keywords: ["blockchain scaling", "scalability", "scaling", "modular blockchain", "data availability", "data availability layer", "da layer", "celestia", "eip-4844", "proto-danksharding", "blob"], category: "crypto", subcategory: "ecosystems" },
   // x402/nanopayment: qualified phrases only
   { keywords: ["x402", "nanopayment", "nanopayments", "micropayment", "pay-per-request"], category: "crypto", subcategory: "news" },
   // Circle: qualified phrases only (bare "circle" removed — false positive on geometry queries)
