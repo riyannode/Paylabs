@@ -4,7 +4,28 @@ AI search/crawler + creator monetization platform. Every search is budgeted, eve
 
 Users ask a question, connect a PayLabs payment wallet, run an x402-paid AI search, and get an AI answer — where the creators behind the sources used in that answer automatically receive USDC payouts.
 
-**Production:** `https://paylabs.vercel.app/`
+**Live Stats & Traction:** 
+------
+- **Live Production:** [https://paylabs.vercel.app/](https://paylabs.vercel.app/)
+- **Receipt**: [https://paylabs.vercel.app/explorer](https://paylabs.vercel.app/receipts)
+- **Explorer** : [https://paylabs.vercel.app/explorer](https://paylabs.vercel.app/explorer)
+
+
+**Circle Tools Usage:**
+------
+- **Developer Controlled Wallet:** [DCW wallet, balance, and Gateway deposit routes](https://github.com/riyannode/Paylabs/tree/main/app/api/paylabs/dcw)
+- **User Controlled Wallet:** [UCW creator wallet session route](https://github.com/riyannode/Paylabs/tree/main/app/api/paylabs/wallet/ucw)
+- **X402 Batching Nanopayment:** [x402 batching challenge, settlement, and receipt helpers](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/x402)
+
+**Agentic Sophistication**
+-----
+- **LangGraph Brain:** [lib/paylabs/langgraph/brain](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/langgraph/brain)
+- **LangGraph Macro Nodes:** [lib/paylabs/langgraph/macro-nodes](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/langgraph/macro-nodes)
+- **LangGraph Service Nodes:** [lib/paylabs/langgraph/services](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/langgraph/services)
+- **LangGraph Shared State:** [lib/paylabs/langgraph/shared](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/langgraph/shared)
+- **Delegated Runtime Orchestrator:** [lib/paylabs/delegated-runtime](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/delegated-runtime)
+- **Delegated Agent Services:** [lib/paylabs/agent-services](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/agent-services)
+
 
 ## What PayLabs Does
 
