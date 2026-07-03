@@ -28,6 +28,7 @@ type Props = {
   autoPrepareGoogleLogin?: boolean;
   showEmailLogin?: boolean;
   onDisconnect?: () => void;
+  finalizingCreatorWallet?: boolean;
 };
 
 function shortAddr(addr?: string | null) {
@@ -69,6 +70,7 @@ export default function UcwConnectModal({
   autoPrepareGoogleLogin = true,
   showEmailLogin = true,
   onDisconnect,
+  finalizingCreatorWallet = false,
 }: Props) {
   const [showEmailInput, setShowEmailInput] = useState(defaultShowEmailInput);
   const [emailValue, setEmailValue] = useState("");
@@ -104,79 +106,101 @@ export default function UcwConnectModal({
         {!isConnected ? (
           <div className="pl-wallet-content-v3">
             <div className="pl-login-stack-v3">
-              <div style={{ marginBottom: 4 }}>
-                <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.02em" }}>
-                  Connect Creator Wallet
+              {finalizingCreatorWallet && walletState === "connecting" ? (
+                <div style={{ textAlign: "center", padding: "24px 0" }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.02em" }}>
+                    Finalizing Creator Wallet...
+                  </div>
+                  <div style={{ fontSize: 13, color: "#64748b", marginTop: 8, lineHeight: 1.5 }}>
+                    This can take a few seconds on mobile. Please keep this page open.
+                  </div>
+                  <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
+                    <div className="pl-spinner" style={{
+                      width: 24, height: 24,
+                      border: "3px solid #e2e8f0",
+                      borderTopColor: "#6366f1",
+                      borderRadius: "50%",
+                      animation: "pl-spin 0.8s linear infinite",
+                    }} />
+                  </div>
                 </div>
-                <div style={{ fontSize: 13, color: "#64748b", marginTop: 4, lineHeight: 1.5 }}>
-                  Use Circle User-Controlled Wallet to manage creator identity and monetization.
-                </div>
-              </div>
-              <button
-                className="pl-login-option-v3"
-                onClick={ucwGoogleError && onRetryPrepareGoogleLogin ? onRetryPrepareGoogleLogin : onConnectGoogle}
-                disabled={walletState === "connecting" || ucwGooglePreparing}
-              >
-                <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
-                <b>
-                  {ucwGooglePreparing
-                    ? "Preparing Google login..."
-                    : ucwGoogleError
-                      ? "Retry Google login setup"
-                      : "Continue with Google"}
-                </b>
-              </button>
-
-              {showEmailLogin && (
-                <button
-                  className="pl-login-option-v3"
-                  onClick={() => setShowEmailInput(!showEmailInput)}
-                  disabled={walletState === "connecting" || ucwGooglePreparing}
-                >
-                  <span className="pl-login-icon-v3"><MailIcon /></span>
-                  <b>Email</b>
-                </button>
-              )}
-
-              {showEmailLogin && showEmailInput && (
-                <div className="pl-email-input-row">
-                  <input
-                    className="pl-email-otp-input"
-                    type="email"
-                    placeholder="you@example.com"
-                    value={emailValue}
-                    onChange={(e) => setEmailValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && emailValue.includes("@")) {
-                        onConnectEmail(emailValue);
-                      }
-                    }}
-                    autoFocus
-                  />
+              ) : (
+                <>
+                  <div style={{ marginBottom: 4 }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.02em" }}>
+                      Connect Creator Wallet
+                    </div>
+                    <div style={{ fontSize: 13, color: "#64748b", marginTop: 4, lineHeight: 1.5 }}>
+                      Use Circle User-Controlled Wallet to manage creator identity and monetization.
+                    </div>
+                  </div>
                   <button
-                    className="pl-email-submit-btn"
-                    onClick={() => {
-                      if (emailValue.includes("@")) onConnectEmail(emailValue);
-                    }}
-                    disabled={walletState === "connecting" || ucwGooglePreparing || !emailValue.includes("@")}>
-                    Send OTP
+                    className="pl-login-option-v3"
+                    onClick={ucwGoogleError && onRetryPrepareGoogleLogin ? onRetryPrepareGoogleLogin : onConnectGoogle}
+                    disabled={walletState === "connecting" || ucwGooglePreparing}
+                  >
+                    <span className="pl-login-icon-v3 google"><GoogleIcon /></span>
+                    <b>
+                      {ucwGooglePreparing
+                        ? "Preparing Google login..."
+                        : ucwGoogleError
+                          ? "Retry Google login setup"
+                          : "Continue with Google"}
+                    </b>
                   </button>
-                </div>
-              )}
 
-              <button
-                className="pl-login-option-v3"
-                onClick={onConnectPin}
-                disabled={walletState === "connecting" || ucwGooglePreparing}
-              >
-                <span className="pl-login-icon-v3"><LockIcon /></span>
-                <b>PIN</b>
-              </button>
+                  {showEmailLogin && (
+                    <button
+                      className="pl-login-option-v3"
+                      onClick={() => setShowEmailInput(!showEmailInput)}
+                      disabled={walletState === "connecting" || ucwGooglePreparing}
+                    >
+                      <span className="pl-login-icon-v3"><MailIcon /></span>
+                      <b>Email</b>
+                    </button>
+                  )}
 
-              {showEoaFallback && onConnectEoa && (
-                <button className="pl-eoa-fallback-v3" onClick={onConnectEoa}>
-                  Browser wallet
-                </button>
+                  {showEmailLogin && showEmailInput && (
+                    <div className="pl-email-input-row">
+                      <input
+                        className="pl-email-otp-input"
+                        type="email"
+                        placeholder="you@example.com"
+                        value={emailValue}
+                        onChange={(e) => setEmailValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && emailValue.includes("@")) {
+                            onConnectEmail(emailValue);
+                          }
+                        }}
+                        autoFocus
+                      />
+                      <button
+                        className="pl-email-submit-btn"
+                        onClick={() => {
+                          if (emailValue.includes("@")) onConnectEmail(emailValue);
+                        }}
+                        disabled={walletState === "connecting" || ucwGooglePreparing || !emailValue.includes("@")}>
+                        Send OTP
+                      </button>
+                    </div>
+                  )}
+
+                  <button
+                    className="pl-login-option-v3"
+                    onClick={onConnectPin}
+                    disabled={walletState === "connecting" || ucwGooglePreparing}
+                  >
+                    <span className="pl-login-icon-v3"><LockIcon /></span>
+                    <b>PIN</b>
+                  </button>
+
+                  {showEoaFallback && onConnectEoa && (
+                    <button className="pl-eoa-fallback-v3" onClick={onConnectEoa}>
+                      Browser wallet
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
