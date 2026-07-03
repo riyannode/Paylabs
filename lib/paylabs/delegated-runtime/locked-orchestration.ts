@@ -441,6 +441,7 @@ export async function executeLockedMacroNodePipeline(
                     topicCategory: primaryTopic.category,
                     topicSubcategory: primaryTopic.subcategory,
                     callerTag: "locked_orchestration",
+                    routeTier: lockedTier,
                   });
 
                   // Always-on diagnostic for paid-path Tavily fallback
@@ -565,6 +566,7 @@ export async function executeLockedMacroNodePipeline(
               topicCategory: primaryTopic.category,
               topicSubcategory: primaryTopic.subcategory,
               callerTag: "locked_orchestration_empty",
+              routeTier: lockedTier,
             });
 
             // Always-on diagnostic for paid-path Tavily fallback (empty path)

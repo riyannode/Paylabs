@@ -64,9 +64,13 @@ export function isTavilyEnabled(): boolean {
  * Returns normalized results — never raw Tavily payload.
  *
  * @param query — safe query string (already sanitized by caller)
+ * @param freshness — optional Tavily freshness filter: "day" | "week" | "month" | "year"
  * @returns TavilySearchResponse with safe fields only
  */
-export async function tavilySearch(query: string): Promise<TavilySearchResponse> {
+export async function tavilySearch(
+  query: string,
+  freshness?: "day" | "week" | "month" | "year",
+): Promise<TavilySearchResponse> {
   const config = getTavilyConfig();
 
   if (!config.enabled || !config.apiKey) {
@@ -107,6 +111,7 @@ export async function tavilySearch(query: string): Promise<TavilySearchResponse>
         include_answer: false,
         include_raw_content: false,
         include_images: false,
+        ...(freshness ? { freshness } : {}),
       }),
       signal: controller.signal,
     });
