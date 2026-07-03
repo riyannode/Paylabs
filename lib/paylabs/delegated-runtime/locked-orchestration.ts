@@ -39,6 +39,14 @@ import {
   type SourceResolutionDiagnostic,
 } from "./source-resolution-diagnostic";
 
+// ─── Module-level diagnostic store (last run) ─────────────
+let _lastDiagnostic: SourceResolutionDiagnostic | null = null;
+
+/** Get the diagnostic from the last executeLockedMacroNodePipeline call */
+export function getLastSourceResolutionDiagnostic(): SourceResolutionDiagnostic | null {
+  return _lastDiagnostic;
+}
+
 // ─── Types ───────────────────────────────────────────────────
 
 export interface X402CallResult {
@@ -563,6 +571,9 @@ export async function executeLockedMacroNodePipeline(
   // Embed diagnostic directly on output object for reliable persistence
   // TypeScript interface doesn't declare this, but JS objects carry extra props
   (output as unknown as Record<string, unknown>)["_sourceResolutionDiagnostic"] = srcDiag;
+
+  // Store in module-level variable for guaranteed access
+  _lastDiagnostic = srcDiag;
 
   return { output, _lockedPlan: lockedPlan, _sourceResolutionDiagnostic: srcDiag };
 }

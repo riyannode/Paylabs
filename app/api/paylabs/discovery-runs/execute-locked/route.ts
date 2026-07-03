@@ -611,14 +611,16 @@ export async function POST(req: NextRequest) {
       buildOutput: buildLockedOutput,
     });
 
-    // Extract result + diagnostic with triple-path fallback
+    // Extract result + diagnostic with quadruple-path fallback
     const result = pipelineResult.output;
+    const { getLastSourceResolutionDiagnostic } = await import("@/lib/paylabs/delegated-runtime/locked-orchestration");
     let _sourceResolutionDiagnostic =
       pipelineResult._sourceResolutionDiagnostic ??
       (result as unknown as Record<string, unknown>)["_sourceResolutionDiagnostic"] as import("@/lib/paylabs/delegated-runtime/source-resolution-diagnostic").SourceResolutionDiagnostic ??
+      getLastSourceResolutionDiagnostic() ??
       null;
 
-    // Fallback: parse from safeProgressSummaries (guaranteed persistence path)
+    // Fallback: parse from safeProgressSummaries (last resort)
     if (!_sourceResolutionDiagnostic) {
       const summaries = result.safeProgressSummaries || [];
       for (const s of summaries) {
