@@ -335,7 +335,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
   // Chat state
   const [prompt, setPrompt] = useState("");
 
-  const [budget, setBudget] = useState("0.0001");
+  const [budget, setBudget] = useState("0.001");
   const [status, setStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SafeRunResult | null>(null);

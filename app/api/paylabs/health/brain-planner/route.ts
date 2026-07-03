@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
       discoveryRunId,
       userGoal: goal,
       routeTier: "normal",
-      userBudgetUsdc: 0.0001,
+      userBudgetUsdc: 0.001,
       userWallet: "0x0000000000000000000000000000000000000000",
     });
 
