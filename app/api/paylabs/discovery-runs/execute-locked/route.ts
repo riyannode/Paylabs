@@ -837,6 +837,7 @@ export async function POST(req: NextRequest) {
           .update({
             agent_trace: {
               ...trace,
+              source_resolution_diagnostic: _sourceResolutionDiagnostic ?? trace.source_resolution_diagnostic ?? null,
               source_context: {
                 source_count: exitOutput.source_count || 0,
                 source_confidence: exitOutput.source_confidence || 0,
@@ -849,11 +850,6 @@ export async function POST(req: NextRequest) {
                   source_kind: s.source_kind,
                   provider: s.provider,
                 })),
-                _diagnostic: (() => {
-                  const diagVal = ((result.sourceContext as unknown as Record<string, unknown>)?._diagnostic) ?? null;
-                  console.log(JSON.stringify({ log: "[execute_locked:source_context_persist]", has_diagnostic: diagVal !== null, sourceContext_keys: result.sourceContext ? Object.keys(result.sourceContext) : [] }));
-                  return diagVal;
-                })(),
               },
               final_answer: finalAnswer,
               exit_output: exitOutput,
@@ -879,7 +875,11 @@ export async function POST(req: NextRequest) {
         await supabaseAdmin()
           .from("paylabs_discovery_runs")
           .update({
-            agent_trace: { ...mergedTrace, exit_output: exitOutput },
+            agent_trace: {
+              ...mergedTrace,
+              source_resolution_diagnostic: _sourceResolutionDiagnostic ?? mergedTrace.source_resolution_diagnostic ?? null,
+              exit_output: exitOutput,
+            },
           })
           .eq("id", discoveryRunId);
       } catch (e: unknown) {

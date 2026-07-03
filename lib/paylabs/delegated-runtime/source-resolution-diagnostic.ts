@@ -29,7 +29,9 @@ export interface SourceResolutionDiagnostic {
   topic_routes_success_count: number;
 
   // ── Phase 1: Live fetch ──
-  live_items_fetched_count: number;
+  /** Number of RSSHub routes successfully fetched (not items) */
+  rsshub_routes_fetched_count: number;
+  /** Number of topic candidate items that passed validation */
   live_items_after_validation_count: number;
 
   // ── Phase 2: signal_scout output ──
@@ -72,7 +74,7 @@ export function createSourceResolutionDiagnostic(): SourceResolutionDiagnostic {
     detected_topic: null,
     topic_routes_attempted: 0,
     topic_routes_success_count: 0,
-    live_items_fetched_count: 0,
+    rsshub_routes_fetched_count: 0,
     live_items_after_validation_count: 0,
     signal_scout_ranked_candidates_count: 0,
     discovery_planner_ranked_candidates_count: 0,
@@ -99,15 +101,15 @@ export function resolveDiagnosticScenario(
   diag: SourceResolutionDiagnostic,
 ): DiagnosticScenario {
   // Phase 1: Did live fetch produce anything?
-  if (diag.live_items_fetched_count === 0) {
-    diag.notes.push("RSSHub returned 0 live items — check RSSHub endpoint availability or topic route matching.");
+  if (diag.rsshub_routes_fetched_count === 0) {
+    diag.notes.push("RSSHub returned 0 fetched routes — check RSSHub endpoint availability or topic route matching.");
     return "A_RANKED_CANDIDATES_EMPTY";
   }
 
   // Phase 2: Did signal_scout produce ranked candidates?
   if (diag.signal_scout_ranked_candidates_count === 0) {
     diag.notes.push(
-      `Live items fetched (${diag.live_items_fetched_count}) but signal_scout ranked 0. ` +
+      `Routes fetched (${diag.rsshub_routes_fetched_count}) but signal_scout ranked 0. ` +
       "Bug is in signal_scout scoring/acceptance gate or domain guards."
     );
     return "A_RANKED_CANDIDATES_EMPTY";

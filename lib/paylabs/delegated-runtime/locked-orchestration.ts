@@ -409,7 +409,7 @@ export async function executeLockedMacroNodePipeline(
       if (signalOutput) {
         const liveDiag = signalOutput.live_diagnostics as Record<string, unknown> | undefined;
         if (liveDiag) {
-          srcDiag.live_items_fetched_count = (liveDiag.fetched_routes as number) || 0;
+          srcDiag.rsshub_routes_fetched_count = (liveDiag.fetched_routes as number) || 0;
           srcDiag.topic_routes_attempted = (liveDiag.topic_routes_count as number) || 0;
           // route_candidates ≈ resolved routes
           srcDiag.topic_routes_success_count = (liveDiag.resolved_routes as number) || 0;
@@ -531,21 +531,13 @@ export async function executeLockedMacroNodePipeline(
   console.log(JSON.stringify({
     log: "[source_resolution_diagnostic]",
     scenario: srcDiag.scenario,
-    live_items_fetched_count: srcDiag.live_items_fetched_count,
+    rsshub_routes_fetched: srcDiag.rsshub_routes_fetched_count,
     signal_scout_ranked: srcDiag.signal_scout_ranked_candidates_count,
     discovery_planner_ranked: srcDiag.discovery_planner_ranked_candidates_count,
     locked_orchestration_ranked: srcDiag.locked_orchestration_ranked_candidates_count,
     resolver_sources_used: srcDiag.resolver_sources_used_count,
-    final_source_context_count: srcDiag.final_source_context_count,
-    notes: srcDiag.notes,
+    final_source_context: srcDiag.final_source_context_count,
   }));
-
-  // ── Embed diagnostic in sourceContext for reliable persistence ──
-  // source_context is persisted independently via the source_context path
-  // which doesn't race with the agent_trace update.
-  if (sourceContext) {
-    (sourceContext as unknown as Record<string, unknown>)["_diagnostic"] = srcDiag;
-  }
 
   // ── Build output ──
   const output = buildOutput(
