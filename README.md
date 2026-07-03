@@ -202,7 +202,9 @@ Each service supports 3 execution modes: `deterministic` (default), `llm`, `hybr
 | `advanced_evidence_evaluator` | ✅ | LLM  | Deep Agent with 7 tools (memory read/write, source comparison) |
 | `creator_payout_router` | ❌ | deterministic | Deterministic split (85/10/5) + ledger. No LLM ever |
 
+9 LLM-capable delegated service agents that run in production:
 
+Each key maps to `PAYLABS_LLM_PROVIDER_<KEY>`, `PAYLABS_TUTOR_MODEL_<KEY>`, `PAYLABS_LLM_BASE_URL_<KEY>`, `PAYLABS_LLM_API_KEY_<KEY>`, `PAYLABS_LLM_TIMEOUT_MS_<KEY>`, `PAYLABS_LLM_MAX_TOKENS_<KEY>`.
 
 Key rules:
 - `value_allocator` and `trust_verifier`: financial decisions (budget math, trust scores) are ALWAYS deterministic. LLM only generates human-readable explanation text
@@ -466,24 +468,6 @@ PAYLABS_AGENT_SERVICE_LLM_ENABLED_INTENT_PLANNER=true
 PAYLABS_AGENT_SERVICE_EXECUTION_MODE_SIGNAL_SCOUT=hybrid
 PAYLABS_AGENT_SERVICE_LLM_ENABLED_SIGNAL_SCOUT=true
 ```
-
-### Agent keys
-
-9 LLM-capable delegated service agents that run in production:
-
-| Agent Key | Phase | LLM-Capable |
-|-----------|-------|-------------|
-| `brain_planner` | Brain | ✅ always LLM |
-| `intent_planner` | Discovery | ✅ |
-| `query_builder` | Discovery | ✅ |
-| `signal_scout` | Discovery | ✅ |
-| `intent_matcher` | Payment Decision | ✅ |
-| `source_verifier` | Payment Decision | ✅ |
-| `value_allocator` | Payment Decision | ✅ |
-| `trust_verifier` | Payment Decision | ✅ |
-| `advanced_evidence_evaluator` | Settlement | ✅ |
-
-Each key maps to `PAYLABS_LLM_PROVIDER_<KEY>`, `PAYLABS_TUTOR_MODEL_<KEY>`, `PAYLABS_LLM_BASE_URL_<KEY>`, `PAYLABS_LLM_API_KEY_<KEY>`, `PAYLABS_LLM_TIMEOUT_MS_<KEY>`, `PAYLABS_LLM_MAX_TOKENS_<KEY>`.
 
 ## Development
 
