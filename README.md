@@ -2,7 +2,7 @@
 
 AI search/crawler + creator monetization platform. Every search is budgeted, every source is paid, every creator gets their share.
 
-Users ask a question, connect a wallet, sign one x402 entry payment, and get an AI answer — where the creators behind the sources used in that answer automatically receive USDC payouts.
+Users ask a question, connect a PayLabs payment wallet, run an x402-paid AI search, and get an AI answer — where the creators behind the sources used in that answer automatically receive USDC payouts.
 
 **Production:** `https://paylabs.vercel.app/`
 
@@ -181,7 +181,7 @@ Expected x402 payment edges:
 ## Payment Flow
 
 ```
-User signs x402 entry payment
+User starts an x402-paid run through the PayLabs payment wallet/DCW
   → Brain plans tier + services
   → Quote engine prices the run (deterministic)
   → Agent wallets pay macro nodes + child services via x402
@@ -230,10 +230,10 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 | **Framework** | Next.js 15, React 19, TypeScript |
 | **Database** | Supabase (Postgres, RLS) |
 | **Agent Runtime** | LangChain / LangGraph — directed graph orchestration |
-| **Wallets** | Circle UCW (Creator-facing), Circle DCW (chat user) |
+| **Wallets** | Circle UCW (creator-facing), Circle DCW (chat user) |
 | **Payments** | x402 protocol, Circle Gateway, x402 batching |
 | **Blockchain** | Arc Testnet (chain ID 5042002), viem |
-| **Sources** | RSSHub — feed ingestion, route catalog, live search |
+| **Sources** | RSShub — feed ingestion, route catalog, live search |
 | **Auth** | jose (JWT), Resend (email), SimpleWebAuthn (passkeys) |
 | **Validation** | Zod — schemas for all agent service I/O |
 
