@@ -155,32 +155,43 @@ function extractDomain(url: string): string | null {
   }
 }
 
+export type TavilyRejectionReason =
+  | "invalid_url"
+  | "empty_title"
+  | "no_domain"
+  | "rejected_domain"
+  | "rejected_title"
+  | "empty_content_required"
+  | null;
+
 function passesTavilyQualityGuard(result: {
   title: string;
   url: string;
   content: string;
   domain: string | null;
-}): boolean {
+}): { pass: boolean; reason: TavilyRejectionReason } {
   // Must have valid HTTP(S) URL
-  if (!/^https?:\/\//.test(result.url)) return false;
+  if (!/^https?:\/\//.test(result.url)) return { pass: false, reason: "invalid_url" };
 
   // Must have non-empty title
-  if (!result.title || result.title.trim().length === 0) return false;
+  if (!result.title || result.title.trim().length === 0) return { pass: false, reason: "empty_title" };
 
   // Must have domain
-  if (!result.domain) return false;
+  if (!result.domain) return { pass: false, reason: "no_domain" };
 
   // Reject parked/dead domains
-  if (REJECTED_DOMAIN_PATTERNS.some((re) => re.test(result.domain!))) return false;
-  if (REJECTED_DOMAIN_PATTERNS.some((re) => re.test(result.title))) return false;
+  if (REJECTED_DOMAIN_PATTERNS.some((re) => re.test(result.domain!))) return { pass: false, reason: "rejected_domain" };
+  if (REJECTED_DOMAIN_PATTERNS.some((re) => re.test(result.title))) return { pass: false, reason: "rejected_domain" };
 
   // Reject login/gated pages
-  if (REJECTED_TITLE_PATTERNS.some((re) => re.test(result.title))) return false;
+  if (REJECTED_TITLE_PATTERNS.some((re) => re.test(result.title))) return { pass: false, reason: "rejected_title" };
 
-  // Reject pages with no meaningful content
-  if (result.content && result.content.trim().length < 20) return false;
+  // Content length: only reject if content is completely empty (not just short).
+  // Tavily Search "basic" depth often returns short snippets (< 20 chars).
+  // A valid URL + title + domain + score is sufficient for links-only fallback.
+  if (!result.content || result.content.trim().length === 0) return { pass: false, reason: "empty_content_required" };
 
-  return true;
+  return { pass: true, reason: null };
 }
 
 // ─── Public API ─────────────────────────────────────────────
@@ -229,13 +240,17 @@ export async function fetchTavilyLiveSources(input: {
   // Normalize results into inline candidate shape
   const candidates: TavilyLiveCandidate[] = [];
   const seenUrls = new Set<string>();
+  const rejectionReasonCounts: Record<string, number> = {};
 
   for (let i = 0; i < tavilyResponse.results.length; i++) {
     const r = tavilyResponse.results[i];
     const domain = extractDomain(r.url);
 
-    // Quality guard
-    if (!passesTavilyQualityGuard({ title: r.title, url: r.url, content: r.content, domain })) {
+    // Quality guard (returns structured rejection reason for diagnostics)
+    const guard = passesTavilyQualityGuard({ title: r.title, url: r.url, content: r.content, domain });
+    if (!guard.pass) {
+      const reasonKey = guard.reason || "unknown";
+      rejectionReasonCounts[reasonKey] = (rejectionReasonCounts[reasonKey] || 0) + 1;
       continue;
     }
 
@@ -269,15 +284,20 @@ export async function fetchTavilyLiveSources(input: {
   // Assign final ranks
   candidates.forEach((c, i) => { c.rank = i + 1; });
 
-  // Safe log
-  console.log(JSON.stringify({
+  // Safe log — includes rejection reasons when raw results exist but accepted_count is 0
+  const safeLog: Record<string, unknown> = {
     log: `[${callerTag}] tavily_search_complete`,
     query_topic: `${input.topicCategory}/${input.topicSubcategory || "general"}`,
-    tavily_result_count: tavilyResponse.result_count,
-    accepted_count: candidates.length,
+    tavily_raw_result_count: tavilyResponse.result_count,
+    tavily_accepted_count: candidates.length,
     latency_ms: tavilyResponse.latency_ms,
     domains: candidates.map((c) => c.domain).filter(Boolean).slice(0, 5),
-  }));
+  };
+  // Add rejection breakdown when raw results > 0 but accepted = 0
+  if (tavilyResponse.result_count > 0 && candidates.length === 0) {
+    safeLog.tavily_rejection_reason_counts = rejectionReasonCounts;
+  }
+  console.log(JSON.stringify(safeLog));
 
   return {
     candidates,
