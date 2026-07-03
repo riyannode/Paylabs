@@ -424,7 +424,21 @@ export async function executeLockedMacroNodePipeline(
               const topics = detectTopics(normalizedGoal, entityTerms);
               const hasAiOrCrypto = topics.some((t) => t.category === "ai" || t.category === "crypto");
 
-              if (hasAiOrCrypto) {
+              // Diagnostic: log Tavily decision path
+              const tavilyEnabledEnv = process.env.PAYLABS_TAVILY_ENABLED;
+              const tavilyKeyExists = !!(process.env.TAVILY_API_KEY && process.env.TAVILY_API_KEY.length > 0);
+              console.log(JSON.stringify({
+                log: "[locked_orchestration] tavily_check",
+                source_count: sourceContext.source_count,
+                retrieval_mode: sourceContext.retrieval_mode,
+                normalized_goal: normalizedGoal.slice(0, 80),
+                topics: topics.map(t => `${t.category}/${t.subcategory || '*'}`),
+                hasAiOrCrypto,
+                tavilyEnabledEnv,
+                tavilyKeyExists,
+              }));
+
+              if (hasAiOrCrypto && tavilyEnabledEnv === "true" && tavilyKeyExists) {
                 const { isTavilyEnabled, fetchTavilyLiveSources } = await import(
                   "../web-search/tavily-live-search"
                 );
