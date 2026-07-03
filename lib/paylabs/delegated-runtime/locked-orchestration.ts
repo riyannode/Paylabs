@@ -416,6 +416,65 @@ export async function executeLockedMacroNodePipeline(
             sourceContext.retrieval_mode =
               serviceRetrievalMode as import("../sources/types").SourceContext["retrieval_mode"];
           }
+
+          // Tavily fallback: if resolver returned 0 sources for AI/Crypto topic
+          if (sourceContext.source_count === 0 && sourceContext.retrieval_mode !== "db_fallback") {
+            try {
+              const { detectTopics } = await import("../rsshub/topic-routes");
+              const topics = detectTopics(normalizedGoal, entityTerms);
+              const hasAiOrCrypto = topics.some((t) => t.category === "ai" || t.category === "crypto");
+
+              if (hasAiOrCrypto) {
+                const { isTavilyEnabled, fetchTavilyLiveSources } = await import(
+                  "../web-search/tavily-live-search"
+                );
+
+                if (isTavilyEnabled()) {
+                  const primaryTopic = topics.find((t) => t.subcategory) || topics[0];
+                  const tavilyResult = await fetchTavilyLiveSources({
+                    userGoal: normalizedGoal,
+                    entityTerms,
+                    topicCategory: primaryTopic.category,
+                    topicSubcategory: primaryTopic.subcategory,
+                    callerTag: "locked_orchestration",
+                  });
+
+                  if (tavilyResult.candidates.length > 0) {
+                    const tavilySources = tavilyResult.candidates.map((c) => ({
+                      feed_item_id: c.feed_item_id,
+                      title: c.title,
+                      url: c.source_url,
+                      domain: c.domain,
+                      summary: c.summary,
+                      author: c.author,
+                      published_at: c.published_at,
+                      route_path: c.route_path,
+                      trust_status: "unverified" as const,
+                      claim_status: "unclaimed" as const,
+                      rank: c.rank,
+                      relevance_score: c.relevance_score,
+                      source_kind: "tavily_live" as const,
+                      provider: "tavily" as const,
+                      reason: c.reason,
+                    }));
+
+                    sourceContext = {
+                      sources_used: tavilySources,
+                      source_selection_summary: `RSSHub returned 0 ${primaryTopic.category} sources. Tavily web search found ${tavilySources.length} link(s).`,
+                      source_confidence: 0.50,
+                      source_count: tavilySources.length,
+                      retrieval_mode: "rsshub_empty_tavily_live",
+                      source_strategy: "tavily_links_only_after_rsshub_empty",
+                    };
+                  }
+                }
+              }
+            } catch (tavilyErr: unknown) {
+              console.warn("[locked_orchestration] Tavily fallback failed", {
+                error: tavilyErr instanceof Error ? tavilyErr.message.slice(0, 100) : String(tavilyErr).slice(0, 100),
+              });
+            }
+          }
         }
       } catch (e: unknown) {
         console.error("[locked_orchestration] source resolve failed", {
