@@ -162,7 +162,7 @@ Every payout goes through `claim-before-transfer`:
 
 This prevents double-pay on retry, crash recovery, and concurrent requests.
 
-## Citations
+## Route Tiers
 
 | Tier | Macro Nodes | Creator Slots | Use Case |
 |------|------------|---------------|----------|
@@ -192,9 +192,9 @@ User signs x402 entry payment
 
 ## Wallets
 
-**UCW (User-Controlled Wallet)** — For Creator. Social login, email OTP, PIN flow. User signs x402 entry payments. Circle W3S Web SDK in browser.
+**UCW (User-Controlled Wallet)** — For creators. Social login, email OTP, and PIN flow for creator onboarding, profile ownership, and source monetization. Circle W3S Web SDK in browser.
 
-**DCW (Developer-Controlled Wallet)** — For chat user. Google OAuth + email OTP + passkey auth. Paid runs execute synchronously in-request.
+**DCW (Developer-Controlled Wallet)** — For chat users / PayLabs payment wallet. Google OAuth, email OTP, and passkey auth. Paid x402 runs execute synchronously in-request through the app-controlled payment flow.
 
 ## Auth
 
