@@ -159,13 +159,13 @@ Every payout goes through `claim-before-transfer`:
 
 This prevents double-pay on retry, crash recovery, and concurrent requests.
 
-## Route Tiers
+## Citations
 
 | Tier | Macro Nodes | Creator Slots | Use Case |
 |------|------------|---------------|----------|
-| **Easy** | discovery_planner | 0 | Quick answer, no creator payout |
-| **Normal** | discovery_planner, payment_decision | 1 | Source-backed answer with creator payout |
-| **Advanced** | discovery_planner, payment_decision, settlement_memory | 2 | Deep evidence evaluation, 2 creator payouts |
+| **Easy** | discovery_planner | 0 | Quick source discovery, no creator payout |
+| **Normal** | discovery_planner, payment_decision, settlement_memory | 1 | Source-backed answer with creator attribution and 1 creator payout slot |
+| **Advanced** | discovery_planner, payment_decision, settlement_memory | 2 | Deep evidence evaluation with up to 2 creator payout slots | |
 
 Auto-tier: Brain selects optimal tier via two-step preflight (route-preflight → execute-locked).
 
@@ -359,7 +359,7 @@ PAYLABS_AGENT_SERVICE_LLM_ENABLED_SIGNAL_SCOUT=true
 | `source_verifier` | Payment Decision | ✅ |
 | `value_allocator` | Payment Decision | ✅ |
 | `trust_verifier` | Payment Decision | ✅ |
-| `advanced_evidence_evaluator` | Settlement | ✅ always LLM |
+| `advanced_evidence_evaluator` | Settlement | ✅ |
 
 Each key maps to `PAYLABS_LLM_PROVIDER_<KEY>`, `PAYLABS_TUTOR_MODEL_<KEY>`, `PAYLABS_LLM_BASE_URL_<KEY>`, `PAYLABS_LLM_API_KEY_<KEY>`, `PAYLABS_LLM_TIMEOUT_MS_<KEY>`, `PAYLABS_LLM_MAX_TOKENS_<KEY>`.
 
