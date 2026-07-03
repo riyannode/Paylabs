@@ -18,6 +18,7 @@ async function hasActiveUserTestWalletSession() {
 export default function CreatorWalletPanel() {
   const [open, setOpen] = useState(false);
   const [dcwConflict, setDcwConflict] = useState(false);
+  const [finalizingCreatorWallet, setFinalizingCreatorWallet] = useState(false);
   const {
     walletState,
     walletInfo,
@@ -49,6 +50,34 @@ export default function CreatorWalletPanel() {
   useEffect(() => {
     refreshDcwConflict();
   }, [refreshDcwConflict]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const hash = window.location.hash;
+    const isOAuthReturn =
+      hash.includes("access_token") ||
+      hash.includes("id_token") ||
+      hash.includes("error");
+
+    if (isOAuthReturn) {
+      setOpen(true);
+      setFinalizingCreatorWallet(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (walletInfo?.address) {
+      setFinalizingCreatorWallet(false);
+      setOpen(false);
+    }
+  }, [walletInfo?.address]);
+
+  useEffect(() => {
+    if (walletError) {
+      setFinalizingCreatorWallet(false);
+    }
+  }, [walletError]);
 
   const openCreatorWalletModal = useCallback(async () => {
     try {
@@ -150,6 +179,7 @@ export default function CreatorWalletPanel() {
         autoPrepareGoogleLogin={false}
         showEmailLogin={false}
         onDisconnect={disconnect}
+        finalizingCreatorWallet={finalizingCreatorWallet}
       />
     </>
   );
