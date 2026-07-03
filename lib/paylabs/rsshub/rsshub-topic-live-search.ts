@@ -80,7 +80,7 @@ const STOPWORDS = new Set([
 
 const MEANINGFUL_SHORT_TOKENS = new Set([
   "ai", "ml", "llm", "btc", "eth", "sol", "nft", "dao", "dex",
-  "api", "usdc", "x402", "evm", "l2", "cefi", "gpt", "cv",
+  "api", "usdc", "x402", "evm", "l1", "l2", "cefi", "gpt", "cv",
 ]);
 
 function escapeRegexLocal(s: string): string {

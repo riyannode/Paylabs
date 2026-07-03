@@ -97,22 +97,37 @@ const TOPIC_KEYWORDS: Array<{ keywords: string[]; category: "ai" | "crypto"; sub
   { keywords: ["claude", "anthropic", "gemini", "google ai", "midjourney", "stable diffusion", "ai image", "ai video", "ai audio"], category: "ai" },
 
   // Crypto — broad
-  { keywords: ["cryptocurrency", "crypto", "crypto news", "crypto market", "blockchain", "defi", "decentralized finance", "web3", "nft", "token", "altcoin"], category: "crypto" },
+  { keywords: ["cryptocurrency", "crypto", "crypto news", "crypto market", "blockchain", "defi", "decentralized finance", "web3", "nft", "token", "altcoin", "etf"], category: "crypto" },
   // Crypto — specific
   { keywords: ["bitcoin", "btc", "ethereum", "eth", "solana", "sol"], category: "crypto", subcategory: "news" },
+  { keywords: ["bitcoin etf", "btc etf", "ethereum etf", "eth etf", "spot etf", "crypto etf"], category: "crypto", subcategory: "news" },
   { keywords: ["binance", "coinbase", "kraken", "exchange"], category: "crypto", subcategory: "binance" },
   { keywords: ["airdrop", "token listing", "delisting", "new coin"], category: "crypto", subcategory: "binance" },
   { keywords: ["crypto regulation", "crypto policy", "sec crypto", "crypto law"], category: "crypto", subcategory: "policy" },
   { keywords: ["crypto company", "crypto startup", "crypto funding", "crypto investment"], category: "crypto", subcategory: "companies" },
   { keywords: ["stablecoin", "usdc", "usdt", "dai"], category: "crypto" },
+  // Staking & validators
+  { keywords: ["staking", "stake", "staking rewards", "validator", "validators", "proof of stake", "pos", "delegator", "delegation"], category: "crypto", subcategory: "news" },
+  { keywords: ["restaking", "eigenlayer", "liquid staking", "lido", "steth", "rseth", "ethfi", "ether.fi", "staking yield"], category: "crypto", subcategory: "ecosystems" },
+  // Layer 1 / Layer 2 / Scaling
+  { keywords: ["layer 1", "layer1", "l1", "layer 2", "layer2", "l2", "rollup", "rollups", "optimistic rollup", "zk rollup", "zk-rollup", "zkrollup"], category: "crypto", subcategory: "ecosystems" },
+  { keywords: ["arbitrum", "optimism", "base", "polygon", "zksync", "starknet", "linea", "scroll", "blast", "mantle", "mode"], category: "crypto", subcategory: "ecosystems" },
+  { keywords: ["blockchain scaling", "scalability", "scaling", "modular blockchain", "data availability", "data availability layer", "da layer", "celestia", "eip-4844", "proto-danksharding", "blob"], category: "crypto", subcategory: "ecosystems" },
   // x402/nanopayment: qualified phrases only
-  { keywords: ["x402", "nanopayment", "nanopayments", "micropayment", "pay-per-request"], category: "crypto", subcategory: "news" },
+  { keywords: ["x402", "nanopayment", "nanopayments", "micropayment", "pay-per-request"], category: "crypto", subcategory: "nanopayments" },
+  { keywords: ["x402 protocol", "x402 payments", "x402 payment", "x402 middleware", "x402 agent", "x402 agents", "x402 api", "x402 header"], category: "crypto", subcategory: "nanopayments" },
+  { keywords: ["x402 gateway", "x402 facilitator", "x402 settle", "x402 settlement", "pay per request", "machine payments"], category: "crypto", subcategory: "nanopayments" },
+  { keywords: ["agent payments", "agentic payments", "ai agent payments", "autonomous payments", "nanopayment sdk", "nanopayments sdk", "micropayment api"], category: "crypto", subcategory: "nanopayments" },
   // Circle: qualified phrases only (bare "circle" removed — false positive on geometry queries)
-  { keywords: ["circle usdc", "circle gateway", "circle financial", "circle stablecoin", "circle x402", "circle wallet"], category: "crypto", subcategory: "news" },
+  { keywords: ["circle usdc", "circle gateway", "circle financial", "circle stablecoin", "circle x402", "circle wallet"], category: "crypto", subcategory: "circle" },
+  { keywords: ["circle developer controlled wallet", "circle dcw", "circle user controlled wallet", "circle ucw", "circle wallets", "circle programmable wallets", "circle wallet sdk"], category: "crypto", subcategory: "circle" },
+  { keywords: ["circle gateway api", "circle gateway wallet", "circle gateway wallet batched", "circle usdc payments", "circle stablecoin payments", "circle payments network", "circle cctp", "circle usdc transfer", "usdc gateway", "usdc payments"], category: "crypto", subcategory: "circle" },
   // Gateway: qualified phrases only (bare "gateway" removed — false positive on AWS API Gateway etc.)
   { keywords: ["circle gateway", "gateway wallet", "gateway deposit", "unified balance", "x402 gateway"], category: "crypto", subcategory: "ecosystems" },
   // Arc: qualified phrases only (bare "arc" removed — false positive on research, search, March)
-  { keywords: ["arc blockchain", "arc testnet", "arc layer", "arc network", "arclayer", "arc x402"], category: "crypto", subcategory: "ecosystems" },
+  { keywords: ["arc blockchain", "arc testnet", "arc layer", "arc network", "arclayer", "arc x402"], category: "crypto", subcategory: "arc" },
+  { keywords: ["arc chain", "arc payments", "arc stablecoin", "arc usdc", "arc rpc", "arc explorer", "arcscan", "arc testnet explorer"], category: "crypto", subcategory: "arc" },
+  { keywords: ["arc x402 payments", "x402 arc", "usdc on arc"], category: "crypto", subcategory: "arc" },
   // Cloudflare/AWS: qualified phrases only (bare "cloudflare" removed — false positive on CDN/WAF queries)
   { keywords: ["cloudflare x402", "cloudflare bot monetization", "cloudflare payment", "cloudflare ai bot", "cloudflare pay per request", "aws waf x402", "aws waf ai traffic monetization", "aws ai traffic monetization", "aws bot monetization"], category: "crypto", subcategory: "news" },
   { keywords: ["ai agent payment", "ai agent wallet", "agent commerce", "agentic payment"], category: "crypto", subcategory: "news" },

@@ -49,6 +49,20 @@ const KNOWN_ENTITIES = new Set([
   "binance", "coinbase", "stripe", "supabase", "vercel",
   "langchain", "langgraph", "mcp",
   "crypto", "blockchain", "token", "altcoin", "stablecoin",
+  // Staking & scaling
+  "staking", "stake", "validator", "validators", "rollup", "rollups",
+  "eigenlayer", "lido", "steth", "restaking",
+  // L2 ecosystem
+  "arbitrum", "optimism", "base", "polygon", "zksync", "starknet",
+  "linea", "scroll", "blast", "mantle",
+  // Scaling infra
+  "celestia", "blob", "da",
+  // ETF
+  "etf",
+  // L1
+  "l1",
+  // Circle/Arc specific
+  "dcw", "ucw", "cctp", "arcscan", "facilitator",
 ]);
 
 // ─── Core Helpers ───────────────────────────────────────────
