@@ -26,7 +26,7 @@ export type ExitOutput = {
   source_selection_summary?: string;
   source_confidence?: number;
   source_count?: number;
-  source_retrieval_mode?: "rsshub_live" | "db_fallback" | "rsshub_live_empty";
+  source_retrieval_mode?: "rsshub_live" | "db_fallback" | "rsshub_live_empty" | "rsshub_empty_tavily_live" | "tavily_live";
 };
 
 function sumPaid(edges: PaymentGraphEdge[]): number {
