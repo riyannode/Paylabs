@@ -230,7 +230,7 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 | **Framework** | Next.js 15, React 19, TypeScript |
 | **Database** | Supabase (Postgres, RLS) |
 | **Agent Runtime** | LangChain / LangGraph — directed graph orchestration |
-| **Wallets** | Circle UCW (user-facing), Circle DCW (server-side) |
+| **Wallets** | Circle UCW (Creator-facing), Circle DCW (chat user) |
 | **Payments** | x402 protocol, Circle Gateway, x402 batching |
 | **Blockchain** | Arc Testnet (chain ID 5042002), viem |
 | **Sources** | RSSHub — feed ingestion, route catalog, live search |
