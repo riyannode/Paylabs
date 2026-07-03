@@ -539,6 +539,12 @@ export async function executeLockedMacroNodePipeline(
     final_source_context: srcDiag.final_source_context_count,
   }));
 
+  // Embed diagnostic in safeProgressSummaries for guaranteed persistence
+  // Parsed by execute-locked route for agent_trace.source_resolution_diagnostic
+  safeProgressSummaries.push(
+    `[diagnostic]${JSON.stringify(srcDiag)}`,
+  );
+
   // ── Build output ──
   const output = buildOutput(
     discoveryRunId,

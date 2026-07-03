@@ -611,12 +611,25 @@ export async function POST(req: NextRequest) {
       buildOutput: buildLockedOutput,
     });
 
-    // Extract result + diagnostic with dual-path fallback
+    // Extract result + diagnostic with triple-path fallback
     const result = pipelineResult.output;
-    const _sourceResolutionDiagnostic =
+    let _sourceResolutionDiagnostic =
       pipelineResult._sourceResolutionDiagnostic ??
       (result as unknown as Record<string, unknown>)["_sourceResolutionDiagnostic"] as import("@/lib/paylabs/delegated-runtime/source-resolution-diagnostic").SourceResolutionDiagnostic ??
       null;
+
+    // Fallback: parse from safeProgressSummaries (guaranteed persistence path)
+    if (!_sourceResolutionDiagnostic) {
+      const summaries = result.safeProgressSummaries || [];
+      for (const s of summaries) {
+        if (typeof s === "string" && s.startsWith("[diagnostic]")) {
+          try {
+            _sourceResolutionDiagnostic = JSON.parse(s.slice("[diagnostic]".length));
+          } catch { /* malformed */ }
+          break;
+        }
+      }
+    }
 
     // ── Prepend controller→brain edge (execution parity with old inline) ──
     // Old inline payment graph: controller → brain → macro-node → child service
