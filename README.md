@@ -20,8 +20,8 @@ Users ask a question, connect a PayLabs payment wallet, run an x402-paid AI sear
 
 **Circle Tools Usage:**
 ------
-- **Developer Controlled Wallet:** [DCW wallet, balance, and Gateway deposit routes](https://github.com/riyannode/Paylabs/tree/main/app/api/paylabs/dcw)
-- **User Controlled Wallet:** [UCW creator wallet session route](https://github.com/riyannode/Paylabs/tree/main/app/api/paylabs/wallet/ucw)
+- **Developer Controlled Wallet:** [DCW API routes](https://github.com/riyannode/Paylabs/tree/main/app/api/paylabs/dcw), [DCW signer adapter](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/x402/dcw-signer-adapter.ts), [DCW wallet modal design](https://github.com/riyannode/Paylabs/blob/main/components/paylabs/DcwModal.tsx), [Chat → DCW paid run](https://github.com/riyannode/Paylabs/blob/main/app/paylabs-chat-client.tsx)
+- **User Controlled Wallet:** [UCW API route](https://github.com/riyannode/Paylabs/tree/main/app/api/paylabs/wallet/ucw), [UCW backend wrapper](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/ucw.ts), [UCW frontend hook/UI](https://github.com/riyannode/Paylabs/tree/main/components/paylabs)
 - **X402 Batching Nanopayment:** [x402 batching challenge, settlement, and receipt helpers](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/x402)
 
 **Agentic Sophistication**
@@ -34,12 +34,10 @@ Users ask a question, connect a PayLabs payment wallet, run an x402-paid AI sear
 - **Delegated Agent Services:** [lib/paylabs/agent-services](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/agent-services)
 
 **Innovation**
-------
+-----
 - **PayLabs explores an agent-native economy model where AI search, source discovery, x402 nanopayments, and creator monetization run inside one delegated agent runtime.**
 
-- **Instead of treating sources as passive citations, PayLabs treats source usage as part of a payment graph. A user query can trigger Brain planning, LangGraph macro-node execution, delegated service agents, source verification, payment decisions, and creator payout routing.**
- 
-- **The key design insight is separation of authority: the LLM Brain can plan and recommend, but deterministic controllers lock pricing, wallet usage, payment refs, and settlement behavior. This makes autonomous paid-agent workflows safer than letting an LLM directly control payment execution.**
+- **The key design insight is separation of authority: the LLM Brain can plan and recommend, but deterministic controllers lock pricing, wallet usage, payment refs, and settlement behavior.**
 
 
 ## Agent Stack
