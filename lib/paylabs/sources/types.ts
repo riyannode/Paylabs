@@ -35,7 +35,7 @@ export interface SourceContext {
   source_confidence: number;
   source_count: number;
   /** How sources were retrieved: live RSSHub, DB fallback, or empty */
-  retrieval_mode?: "rsshub_live" | "db_fallback" | "rsshub_live_empty";
+  retrieval_mode?: "rsshub_live" | "db_fallback" | "rsshub_live_empty" | "rsshub_empty_tavily_live" | "tavily_live";
   /** Source discovery strategy: topic_routes, catalog, topic_routes_plus_catalog */
   source_strategy?: string;
   /** Number of topic route candidates selected */
