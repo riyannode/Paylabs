@@ -69,68 +69,6 @@ export async function buildSourceContextFromResult(
 
   if (!resolverResult.ok) return null;
 
-  // Tavily fallback: if resolver returned 0 sources for AI/Crypto topic, try Tavily
-  if (resolverResult.sourceContext.source_count === 0 && retrievalMode !== "db_fallback") {
-    const { detectTopics } = await import("@/lib/paylabs/rsshub/topic-routes");
-    const topics = detectTopics(normalizedGoal, entityTerms);
-    const hasAiOrCrypto = topics.some((t) => t.category === "ai" || t.category === "crypto");
-
-    if (hasAiOrCrypto) {
-      try {
-        const { isTavilyEnabled, fetchTavilyLiveSources } = await import(
-          "@/lib/paylabs/web-search/tavily-live-search"
-        );
-
-        if (isTavilyEnabled()) {
-          const primaryTopic = topics.find((t) => t.subcategory) || topics[0];
-          const tavilyResult = await fetchTavilyLiveSources({
-            userGoal: normalizedGoal,
-            entityTerms,
-            topicCategory: primaryTopic.category,
-            topicSubcategory: primaryTopic.subcategory,
-            callerTag: "source_context",
-          });
-
-          if (tavilyResult.candidates.length > 0) {
-            // Convert Tavily candidates to SourceItems
-            const tavilySources = tavilyResult.candidates.map((c) => ({
-              feed_item_id: c.feed_item_id,
-              title: c.title,
-              url: c.source_url,
-              domain: c.domain,
-              summary: c.summary,
-              author: c.author,
-              published_at: c.published_at,
-              route_path: c.route_path,
-              trust_status: "unverified" as const,
-              claim_status: "unclaimed" as const,
-              rank: c.rank,
-              relevance_score: c.relevance_score,
-              source_kind: "tavily_live" as const,
-              provider: "tavily" as const,
-              reason: c.reason,
-            }));
-
-            return {
-              sources_used: tavilySources,
-              source_selection_summary: `RSSHub returned 0 ${primaryTopic.category} sources. Tavily web search found ${tavilySources.length} link(s).`,
-              source_confidence: 0.50,
-              source_count: tavilySources.length,
-              retrieval_mode: "rsshub_empty_tavily_live",
-              source_strategy: "tavily_links_only_after_rsshub_empty",
-              topic_routes_count: signalData.topic_routes_count,
-              topic_candidates_count: signalData.topic_candidates_count,
-            };
-          }
-        }
-      } catch (tavilyErr: unknown) {
-        console.warn("[source_context] Tavily fallback failed", {
-          error: tavilyErr instanceof Error ? tavilyErr.message.slice(0, 100) : String(tavilyErr).slice(0, 100),
-        });
-      }
-    }
-  }
-
   // Propagate retrieval_mode from signal_scout
   return {
     ...resolverResult.sourceContext,

@@ -444,57 +444,6 @@ export const signalScoutHandler: ServiceHandler = async (
     };
   }
 
-  // ── Step 2b: Tavily fallback for AI/Crypto when RSSHub returns 0 ──
-  if (mergedLive.length === 0 && queryHasDomainTopic) {
-    const tavilyEnabled = process.env.PAYLABS_TAVILY_ENABLED === "true";
-    const tavilyKeyExists = !!(process.env.TAVILY_API_KEY && process.env.TAVILY_API_KEY.length > 0);
-
-    if (tavilyEnabled && tavilyKeyExists) {
-      try {
-        const { isTavilyEnabled, fetchTavilyLiveSources } = await import(
-          "@/lib/paylabs/web-search/tavily-live-search"
-        );
-
-        if (isTavilyEnabled()) {
-          // Pick the most specific topic for Tavily query
-          const primaryTopic = detectedTopics.find((t) => t.subcategory) || detectedTopics[0];
-          const tavilyResult = await fetchTavilyLiveSources({
-            userGoal: userGoalText,
-            entityTerms: entity_terms || [],
-            topicCategory: primaryTopic.category,
-            topicSubcategory: primaryTopic.subcategory,
-            callerTag: "signal_scout",
-          });
-
-          if (tavilyResult.candidates.length > 0) {
-            return {
-              ok: true,
-              serviceName: "signal_scout",
-              data: {
-                ranked_candidates: tavilyResult.candidates,
-                top_candidates: tavilyResult.candidates.slice(0, 3).map((r) => r.feed_item_id),
-                quick_relevance_notes: tavilyResult.candidates.slice(0, 5).map((r) => r.reason),
-                safe_signal_summary: `RSSHub returned 0 ${primaryTopic.category} sources. Tavily web search returned ${tavilyResult.candidates.length} link(s).`,
-                retrieval_mode: "rsshub_empty_tavily_live",
-                source_strategy: "tavily_links_only_after_rsshub_empty",
-                topic_routes_count: topicResult.diagnostics.topic_routes_count,
-                topic_candidates_count: topicResult.candidates.length,
-              },
-              safeSummary: `RSSHub returned 0 sources. Tavily found ${tavilyResult.candidates.length} link(s).`,
-              settled: false,
-              error: null,
-            };
-          }
-        }
-      } catch (tavilyErr: unknown) {
-        // Tavily failure must not fail the run — log and continue
-        console.warn("[signal_scout] Tavily fallback failed", {
-          error: tavilyErr instanceof Error ? tavilyErr.message.slice(0, 100) : String(tavilyErr).slice(0, 100),
-        });
-      }
-    }
-  }
-
   // ── Step 2c: If live-only mode, do NOT fallback to DB ──
   if (liveOnly) {
     return {

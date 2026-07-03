@@ -419,6 +419,9 @@ export async function executeLockedMacroNodePipeline(
 
           // Tavily fallback: if resolver returned 0 sources for AI/Crypto topic
           if (sourceContext.source_count === 0 && sourceContext.retrieval_mode !== "db_fallback") {
+            const _tavilyDebugEnabled = process.env.PAYLABS_TAVILY_DEBUG === "true";
+            const _sourceCountBefore = sourceContext.source_count;
+            const _retrievalModeBefore = sourceContext.retrieval_mode;
             try {
               const { detectTopics } = await import("../rsshub/topic-routes");
               const topics = detectTopics(normalizedGoal, entityTerms);
@@ -428,8 +431,9 @@ export async function executeLockedMacroNodePipeline(
                 const { isTavilyEnabled, fetchTavilyLiveSources } = await import(
                   "../web-search/tavily-live-search"
                 );
+                const _tavilyEnabled = isTavilyEnabled();
 
-                if (isTavilyEnabled()) {
+                if (_tavilyEnabled) {
                   const primaryTopic = topics.find((t) => t.subcategory) || topics[0];
                   const tavilyResult = await fetchTavilyLiveSources({
                     userGoal: normalizedGoal,
@@ -438,6 +442,20 @@ export async function executeLockedMacroNodePipeline(
                     topicSubcategory: primaryTopic.subcategory,
                     callerTag: "locked_orchestration",
                   });
+
+                  if (_tavilyDebugEnabled) {
+                    console.log(JSON.stringify({
+                      log: "[locked_orchestration] tavily_fallback",
+                      caller: "locked_orchestration",
+                      source_count_before: _sourceCountBefore,
+                      retrieval_mode_before: _retrievalModeBefore,
+                      tavily_enabled: _tavilyEnabled,
+                      topic_category: primaryTopic.category,
+                      topic_subcategory: primaryTopic.subcategory || null,
+                      tavily_candidate_count: tavilyResult.candidates.length,
+                      accepted_domains: [...new Set(tavilyResult.candidates.map((c) => c.domain).filter(Boolean))].slice(0, 10),
+                    }));
+                  }
 
                   if (tavilyResult.candidates.length > 0) {
                     const tavilySources = tavilyResult.candidates.map((c) => ({
@@ -470,9 +488,14 @@ export async function executeLockedMacroNodePipeline(
                 }
               }
             } catch (tavilyErr: unknown) {
-              console.warn("[locked_orchestration] Tavily fallback failed", {
-                error: tavilyErr instanceof Error ? tavilyErr.message.slice(0, 100) : String(tavilyErr).slice(0, 100),
-              });
+              if (_tavilyDebugEnabled) {
+                console.warn("[locked_orchestration] Tavily fallback error", {
+                  caller: "locked_orchestration",
+                  source_count_before: _sourceCountBefore,
+                  retrieval_mode_before: _retrievalModeBefore,
+                  error: tavilyErr instanceof Error ? tavilyErr.message.slice(0, 100) : String(tavilyErr).slice(0, 100),
+                });
+              }
             }
           }
         }
