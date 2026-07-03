@@ -4,6 +4,13 @@ AI search/crawler + creator monetization platform. Every search is budgeted, eve
 
 Users ask a question, connect a PayLabs payment wallet, run an x402-paid AI search, and get an AI answer — where the creators behind the sources used in that answer automatically receive USDC payouts.
 
+## What PayLabs Does
+
+**For users:** AI-powered source discovery. Ask a question, get answers backed by real sources from across the RSShub, with full transparency on what was searched, which sources were used, and what it cost.
+
+**For creators:** Automatic monetization. Register your GitHub repos, blogs, or domains as sources. When PayLabs uses your content in an answer, you get paid in USDC — no manual invoicing, no chasing payments.
+
+
 **Live Stats & Traction:** 
 ------
 - **Live Production:** [https://paylabs.vercel.app/](https://paylabs.vercel.app/)
@@ -26,12 +33,14 @@ Users ask a question, connect a PayLabs payment wallet, run an x402-paid AI sear
 - **Delegated Runtime Orchestrator:** [lib/paylabs/delegated-runtime](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/delegated-runtime)
 - **Delegated Agent Services:** [lib/paylabs/agent-services](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/agent-services)
 
+**Innovation**
+------
+- **PayLabs explores an agent-native economy model where AI search, source discovery, x402 nanopayments, and creator monetization run inside one delegated agent runtime.**
 
-## What PayLabs Does
+- **Instead of treating sources as passive citations, PayLabs treats source usage as part of a payment graph. A user query can trigger Brain planning, LangGraph macro-node execution, delegated service agents, source verification, payment decisions, and creator payout routing.**
+ 
+- **The key design insight is separation of authority: the LLM Brain can plan and recommend, but deterministic controllers lock pricing, wallet usage, payment refs, and settlement behavior. This makes autonomous paid-agent workflows safer than letting an LLM directly control payment execution.**
 
-**For users:** AI-powered source discovery. Ask a question, get answers backed by real sources from across the RSShub, with full transparency on what was searched, which sources were used, and what it cost.
-
-**For creators:** Automatic monetization. Register your GitHub repos, blogs, or domains as sources. When PayLabs uses your content in an answer, you get paid in USDC — no manual invoicing, no chasing payments.
 
 ## Agent Stack
 
