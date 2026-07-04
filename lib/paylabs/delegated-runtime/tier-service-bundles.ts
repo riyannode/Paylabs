@@ -82,59 +82,45 @@ export function getMacroNodeServicesForTier(
   return [];
 }
 
-// ─── Scout Variant Helper ─────────────────────────────────────
-
-export interface DiscoveryScoutVariant {
-  serviceName: ServiceName;
-  debugLabel: string;
-  tierScope: string;
-}
-
-/**
- * Get the signal scout variant for a given tier.
- * Easy → signal_scout_basics, Normal/Advanced → signal_scout
- */
-export function getDiscoveryScoutVariant(
-  routeTier: DelegatedRouteTier
-): DiscoveryScoutVariant {
-  if (routeTier === "easy") {
-    return {
-      serviceName: "signal_scout_basics",
-      debugLabel: "basic_rsshub_only",
-      tierScope: "easy_only",
-    };
-  }
-
-  return {
-    serviceName: "signal_scout",
-    debugLabel:
-      routeTier === "normal" ? "normal_signal_scout" : "advanced_signal_scout",
-    tierScope: routeTier,
-  };
-}
-
 // ─── Scout Bundle Guard ───────────────────────────────────────
 
 /**
- * Fail-closed guard: ensures exactly one scout variant is selected.
- * Never both signal_scout AND signal_scout_basics.
- * Never neither.
+ * Fail-closed guard: ensures the correct scout variant is selected for the tier.
+ *
+ * Rules:
+ * - Easy → must include signal_scout_basics, must NOT include signal_scout
+ * - Normal/Advanced → must include signal_scout, must NOT include signal_scout_basics
+ * - Never both variants in the same run
+ * - Never neither variant
  */
 export function assertValidDiscoveryScoutBundle(
-  selectedServices: ServiceName[]
+  routeTier: DelegatedRouteTier,
+  selectedServices: ServiceName[],
 ): void {
   const hasBasic = selectedServices.includes("signal_scout_basics");
   const hasFull = selectedServices.includes("signal_scout");
 
   if (hasBasic && hasFull) {
     throw new Error(
-      "invalid_discovery_scout_bundle: both signal_scout and signal_scout_basics selected"
+      `invalid_discovery_scout_bundle: both signal_scout and signal_scout_basics selected (tier=${routeTier})`
     );
   }
 
   if (!hasBasic && !hasFull) {
     throw new Error(
-      "invalid_discovery_scout_bundle: no scout service selected"
+      `invalid_discovery_scout_bundle: no scout service selected (tier=${routeTier})`
+    );
+  }
+
+  if (routeTier === "easy" && !hasBasic) {
+    throw new Error(
+      `invalid_discovery_scout_bundle: easy tier requires signal_scout_basics, got signal_scout`
+    );
+  }
+
+  if ((routeTier === "normal" || routeTier === "advanced") && !hasFull) {
+    throw new Error(
+      `invalid_discovery_scout_bundle: ${routeTier} tier requires signal_scout, got signal_scout_basics`
     );
   }
 }
