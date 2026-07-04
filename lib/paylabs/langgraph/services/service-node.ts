@@ -217,11 +217,3 @@ export function createServiceNode(
     };
   };
 }
-
-/**
- * Selection guard — check if a service should run.
- */
-export function isSelected(selectedServices: string[] | undefined, name: string): boolean {
-  if (!selectedServices || selectedServices.length === 0) return true;
-  return selectedServices.includes(name);
-}

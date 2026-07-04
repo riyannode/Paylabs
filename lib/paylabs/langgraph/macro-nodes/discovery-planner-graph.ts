@@ -19,12 +19,7 @@ import { DiscoveryPlannerState, type DiscoveryPlannerStateType } from "../shared
 import { createServiceNode } from "../services/service-node";
 import type { ServiceName } from "../../agent-services/types";
 import type { BudgetSnapshot, SafeSourceCard } from "../../delegated-runtime/types";
-
-// ─── Local Discovery Planner Service Presets ────────────────
-// Single source of truth for discovery planner routing.
-// TIER_SERVICE_PRESETS from quote-engine includes macro-node-level services
-// (discovery_planner, payment_decision, settlement_memory) that are NOT
-// graph-internal child services. These presets are graph-internal only.
+import { DISCOVERY_PLANNER_SERVICE_PRESETS } from "../../delegated-runtime/tier-service-bundles";
 
 // ─── Claim Status Normalization ────────────────────────────
 // paylabs_feed_items uses 'claimed'/'unclaimed' (migration 12).
@@ -38,12 +33,6 @@ function normalizeClaimStatus(...statuses: unknown[]): string {
   }
   return "unclaimed";
 }
-
-const DISCOVERY_PLANNER_SERVICE_PRESETS: Record<string, ServiceName[]> = {
-  easy: ["intent_planner", "query_builder", "signal_scout_basics"],
-  normal: ["intent_planner", "query_builder", "signal_scout"],
-  advanced: ["intent_planner", "query_builder", "signal_scout"],
-};
 
 // ─── Node: Intent Planner ───────────────────────────────────
 
