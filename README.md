@@ -56,7 +56,7 @@ Implementation is split across:
 
 ## Agent Stack
 
-PayLabs runs on a LangGraph Brain planner + custom TypeScript x402 agent runtime.
+PayLabs build on a LangGraph Brain planner + custom TypeScript x402 agent runtime.
 
 A user run begins with an **x402 entry payment**. The Brain Planner generates a locked quote and execution plan. It then triggers selected macro-node phases through **x402 macro edges**. Each macro node executes its phase and pays child service nodes via **x402 service**.
 
