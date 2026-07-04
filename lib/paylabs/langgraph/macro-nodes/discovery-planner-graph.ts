@@ -18,7 +18,8 @@ import { StateGraph, START, END } from "@langchain/langgraph";
 import { DiscoveryPlannerState, type DiscoveryPlannerStateType } from "../shared/state";
 import { createServiceNode } from "../services/service-node";
 import type { ServiceName } from "../../agent-services/types";
-import type { BudgetSnapshot, SafeSourceCard } from "../../delegated-runtime/types";
+import type { BudgetSnapshot, DelegatedRouteTier, SafeSourceCard } from "../../delegated-runtime/types";
+import { isDelegatedRouteTier } from "../../delegated-runtime/types";
 import { DISCOVERY_PLANNER_SERVICE_PRESETS } from "../../delegated-runtime/tier-service-bundles";
 
 // ─── Claim Status Normalization ────────────────────────────
@@ -243,8 +244,11 @@ const graph = new StateGraph(DiscoveryPlannerState)
   .addConditionalEdges("process_query", (state: DiscoveryPlannerStateType) => {
     // Deterministic routing: use routeTier, NOT selectedServices
     // selectedServices may be empty or corrupted by concatReducer in some code paths
-    const routeTier = (state.routeTier as string) || "easy";
-    const presets = DISCOVERY_PLANNER_SERVICE_PRESETS[routeTier] || DISCOVERY_PLANNER_SERVICE_PRESETS.easy;
+    const routeTier: DelegatedRouteTier = isDelegatedRouteTier(state.routeTier)
+      ? state.routeTier
+      : "easy";
+
+    const presets = DISCOVERY_PLANNER_SERVICE_PRESETS[routeTier];
     const nextScoutNode: string = presets.includes("signal_scout_basics") ? "signal_scout_basics" : "signal_scout";
 
     // Safe production diagnostic (no secrets)
@@ -337,7 +341,7 @@ export async function runDiscoveryPlannerGraph(
       // Always use local discovery planner presets — never trust caller-selectedServices
       // for internal graph routing. Caller-selectedServices may be empty, incomplete,
       // or corrupted by concatReducer in upstream code paths.
-      selectedServices: DISCOVERY_PLANNER_SERVICE_PRESETS[input.routeTier] || DISCOVERY_PLANNER_SERVICE_PRESETS.easy,
+      selectedServices: DISCOVERY_PLANNER_SERVICE_PRESETS[isDelegatedRouteTier(input.routeTier) ? input.routeTier : "easy"],
       parentWalletId: input.parentWalletId,
       budgetSnapshot: initialBudget,
       // Brain planning pass-through
