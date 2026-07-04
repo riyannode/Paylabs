@@ -29,7 +29,7 @@ import {
 } from "@/lib/paylabs/x402/seller-challenge";
 import { isDelegatedRuntimeEnabled } from "@/lib/paylabs/feature-flags";
 import { TIER_SERVICE_PRESETS } from "@/lib/paylabs/delegated-runtime/quote-engine";
-import { getMacroNodeServicesForTier } from "@/lib/paylabs/delegated-runtime/tier-service-bundles";
+import { getMacroNodeServicesForTier, assertValidDiscoveryScoutBundle } from "@/lib/paylabs/delegated-runtime/tier-service-bundles";
 import { createOrchestratorState, addProgressSummary, addServiceEvaluation } from "@/lib/paylabs/delegated-runtime/state";
 import type { MacroNodePhase, OrchestratorInput } from "@/lib/paylabs/delegated-runtime/types";
 
@@ -97,6 +97,19 @@ export async function POST(
       { ok: false, error: `Macro-node ${nodeName} has no services for tier ${routeTier}. Use a valid tier for this node.` },
       { status: 400 }
     );
+  }
+
+  // Fail-closed: validate scout variant matches tier (discovery_planner only)
+  if (nodeName === "discovery_planner") {
+    try {
+      assertValidDiscoveryScoutBundle(typedRouteTier, tierServices);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return NextResponse.json(
+        { ok: false, error: msg },
+        { status: 400 }
+      );
+    }
   }
 
   if (process.env.PAYLABS_NODE_X402_ENABLED !== "true") {
