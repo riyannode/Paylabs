@@ -16,6 +16,7 @@
 
 import { StateGraph, START, END } from "@langchain/langgraph";
 import { BrainPlannerState, type BrainPlannerStateType } from "../shared/state";
+import { getPayLabsLangGraphCheckpointer } from "../checkpointer";
 import type { MacroNodePhase, DelegatedRouteTier, BrainPlanningOutput } from "../../delegated-runtime/types";
 import type { ServiceName } from "../../agent-services/types";
 import {
@@ -521,7 +522,7 @@ async function buildSummariesNode(state: BrainPlannerStateType) {
 
 // ─── Graph Wiring ───────────────────────────────────────────
 
-const graph = new StateGraph(BrainPlannerState)
+const brainGraphBuilder = new StateGraph(BrainPlannerState)
   .addNode("brain_planning", brainPlanningNode)
   .addNode("validate_plan", validatePlanNode)
   .addNode("build_summaries", buildSummariesNode)
@@ -529,7 +530,12 @@ const graph = new StateGraph(BrainPlannerState)
   .addEdge("brain_planning", "validate_plan")
   .addEdge("validate_plan", "build_summaries")
   .addEdge("build_summaries", END)
-  .compile();
+
+const brainCheckpointer = getPayLabsLangGraphCheckpointer();
+
+const graph = brainCheckpointer
+  ? brainGraphBuilder.compile({ checkpointer: brainCheckpointer })
+  : brainGraphBuilder.compile();
 
 // ─── Public API ─────────────────────────────────────────────
 
@@ -561,7 +567,7 @@ export async function runBrainPlannerGraph(
   input: RunBrainPlannerGraphInput
 ): Promise<RunBrainPlannerGraphOutput> {
   try {
-    const result = await graph.invoke({
+    const graphInput = {
       discoveryRunId: input.discoveryRunId,
       userGoal: input.userGoal,
       routeTier: input.routeTier,
@@ -576,7 +582,18 @@ export async function runBrainPlannerGraph(
       maxSourceAccesses: 10,
       plannedCostUsdc: 0,
       progressSummaries: [],
-    });
+    };
+
+    const result = await graph.invoke(
+      graphInput,
+      brainCheckpointer
+        ? {
+            configurable: {
+              thread_id: `paylabs:brain:${input.discoveryRunId}`,
+            },
+          }
+        : undefined,
+    );
 
     const selectedMacroNodes = result.selectedMacroNodes || [];
     const safeBrainSummary = result.safeBrainSummary || "Brain planning completed";
