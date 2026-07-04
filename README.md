@@ -429,7 +429,7 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 
 ## Known Limitations / Next Patch
 
-- **Advanced scraper link hardening:** PayLabs already supports the main source discovery and paid agent flow, but advanced scraper deep-link coverage still needs one follow-up patch for broader URL normalization, retries, and edge-case source formats,And now chat crawler just support for AI and Crypto with spesific category
+- **Advanced scraper link hardening:** PayLabs already supports the main source discovery and paid agent flow, but advanced scraper deep-link coverage still needs one follow-up patch for broader URL normalization, retries, and edge-case source formats, and now chat crawler just support for AI and Crypto Topics with spesific category
 
 ## Runtime Notes
 
