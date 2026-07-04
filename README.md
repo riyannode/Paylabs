@@ -523,7 +523,7 @@ PAYLABS_AGENT_SERVICE_EXECUTION_MODE_<AGENT_KEY>
 PAYLABS_AGENT_SERVICE_LLM_ENABLED_<AGENT_KEY>
 
 # LangGraph checkpointing
-PAYLABS_LANGGRAPH_CHECKPOINT_ENABLED=false
+PAYLABS_LANGGRAPH_CHECKPOINT_ENABLED=true
 PAYLABS_LANGGRAPH_CHECKPOINT_DATABASE_URL
 ```
 > Production note: `PAYLABS_LLM_REQUIRED=true` should be set in production. This makes the Brain planner and LLM-backed services fail closed when LLM credentials are missing or unavailable, instead of silently falling back.
