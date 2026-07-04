@@ -552,23 +552,30 @@ PAYLABS_LLM_API_KEY_INTENT_PLANNER=your-other-key
 
 ### Execution mode switching
 
+Delegated services default to deterministic mode unless these env vars are set. Brain planner is always LLM-assisted. Non-LLM services stay deterministic even when the global mode is `llm`.
+
 ```bash
-# All services deterministic (default — no LLM calls)
+# Repo fallback / safest local mode: no delegated service LLM calls
 PAYLABS_AGENT_SERVICE_EXECUTION_MODE=deterministic
 PAYLABS_AGENT_SERVICE_LLM_ENABLED=false
 
-# All services LLM-enabled
-PAYLABS_AGENT_SERVICE_EXECUTION_MODE=llm
-PAYLABS_AGENT_SERVICE_LLM_ENABLED=true
+# Production default: run LLM-capable delegated services through the LLM path
+# Non-LLM services remain deterministic. payment_decider remains hard-locked deterministic.
+PAYLABS_AGENT_SERVICE_EXECUTION_MODE_DEFAULT=llm
+PAYLABS_AGENT_SERVICE_LLM_ENABLED_DEFAULT=true
 
-# Per-service override (e.g. only intent_planner uses LLM)
-PAYLABS_AGENT_SERVICE_EXECUTION_MODE_INTENT_PLANNER=llm
-PAYLABS_AGENT_SERVICE_LLM_ENABLED_INTENT_PLANNER=true
+# Per-service override: query_builder runs LLM even if the global/default mode differs
+PAYLABS_AGENT_SERVICE_EXECUTION_MODE_QUERY_BUILDER=llm
+PAYLABS_AGENT_SERVICE_LLM_ENABLED_QUERY_BUILDER=true
 
-# Hybrid mode — deterministic decision + LLM explanation
-PAYLABS_AGENT_SERVICE_EXECUTION_MODE_SIGNAL_SCOUT=hybrid
-PAYLABS_AGENT_SERVICE_LLM_ENABLED_SIGNAL_SCOUT=true
+# Hybrid mode: deterministic source-of-truth + LLM explanation
+# Recommended for value_allocator and trust_verifier.
+PAYLABS_AGENT_SERVICE_EXECUTION_MODE_VALUE_ALLOCATOR=hybrid
+PAYLABS_AGENT_SERVICE_LLM_ENABLED_VALUE_ALLOCATOR=true
+PAYLABS_AGENT_SERVICE_EXECUTION_MODE_TRUST_VERIFIER=hybrid
+PAYLABS_AGENT_SERVICE_LLM_ENABLED_TRUST_VERIFIER=true
 ```
+
 
 ## Development
 
