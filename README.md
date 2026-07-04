@@ -508,7 +508,7 @@ PAYLABS_RSSHUB_BASE_URL
 PAYLABS_RSSHUB_FALLBACK_BASE_URLS
 
 # LLM
-PAYLABS_LLM_REQUIRED:true
+PAYLABS_LLM_REQUIRED=true
 PAYLABS_LLM_PROVIDER_DEFAULT
 PAYLABS_LLM_BASE_URL_DEFAULT
 PAYLABS_LLM_API_KEY_DEFAULT
@@ -522,6 +522,7 @@ PAYLABS_AGENT_SERVICE_LLM_ENABLED
 PAYLABS_AGENT_SERVICE_EXECUTION_MODE_<AGENT_KEY>
 PAYLABS_AGENT_SERVICE_LLM_ENABLED_<AGENT_KEY>
 ```
+> Production note: `PAYLABS_LLM_REQUIRED=true` should be set in production. This makes the Brain planner and LLM-backed services fail closed when LLM credentials are missing or unavailable, instead of silently falling back.
 
 ## LLM Configuration
 
