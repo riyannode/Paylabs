@@ -58,7 +58,7 @@ Implementation is split across:
 
 PayLabs runs on a LangGraph Brain planner + custom TypeScript x402 agent runtime.
 
-A user run begins with an **x402 entry payment**. The Brain Planner generates a locked quote and execution plan. It then triggers selected macro-node phases through **x402 macro edges**. Each macro node executes its LangGraph phase and pays its child service nodes via **x402 service edges**.
+A user run begins with an **x402 entry payment**. The Brain Planner generates a locked quote and execution plan. It then triggers selected macro-node phases through **x402 macro edges**. Each macro node executes its phase and pays child service nodes via **x402 service**.
 
 Circle Gateway batches these payment edges into `submitBatch` transactions on Arc, while PayLabs records complete receipt and proof metadata for transparency and auditability.
 
