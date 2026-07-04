@@ -16,6 +16,10 @@ export type { SourceContext };
 // ─── Route Tiers ──────────────────────────────────────────────
 export type DelegatedRouteTier = "easy" | "normal" | "advanced";
 
+export function isDelegatedRouteTier(value: unknown): value is DelegatedRouteTier {
+  return value === "easy" || value === "normal" || value === "advanced";
+}
+
 // Macro-node phases that the orchestrator can run
 export type MacroNodePhase =
   | "discovery_planner"
