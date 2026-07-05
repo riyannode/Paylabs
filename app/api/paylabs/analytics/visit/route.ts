@@ -8,9 +8,9 @@ const COOKIE_MAX_AGE = 180 * 24 * 60 * 60; // 180 days
 const BOT_PATTERNS =
   /bot|crawler|spider|preview|vercel|uptime|monitor|curl|wget|headless|googlebot|bingbot|slurp/i;
 
-function hashVisitorId(vid: string): string {
+function hashVisitorId(vid: string): string | null {
   const secret = process.env.PAYLABS_ANALYTICS_SECRET;
-  if (!secret) return vid; // fail-safe: hash with vid itself if secret missing
+  if (!secret) return null;
   return createHmac("sha256", secret).update(vid).digest("hex");
 }
 
@@ -40,6 +40,10 @@ function sanitizeReferrer(r: string | null): string | null {
 
 export async function POST(req: NextRequest) {
   try {
+    // Fail-safe: if no secret configured, skip all tracking silently
+    const secret = process.env.PAYLABS_ANALYTICS_SECRET;
+    if (!secret) return NextResponse.json({ ok: true });
+
     // Read or create visitor ID from cookie
     let vid = req.cookies.get(COOKIE_NAME)?.value || null;
     let isNewVisitor = false;
