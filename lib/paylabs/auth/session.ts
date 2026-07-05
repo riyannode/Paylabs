@@ -14,11 +14,17 @@ const SESSION_COOKIE = "paylabs_dcw_session";
 const SESSION_MAX_AGE = 7 * 24 * 60 * 60; // 7 days
 
 function getSecret(): Uint8Array {
-  const secret = process.env.DCW_SESSION_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!secret) throw new Error("DCW_SESSION_SECRET or SUPABASE_SERVICE_ROLE_KEY required");
-  // Warn in production if using SRK fallback (shared secret material)
-  if (!process.env.DCW_SESSION_SECRET && process.env.NODE_ENV === "production") {
-    console.warn("[session] DCW_SESSION_SECRET not set — falling back to SUPABASE_SERVICE_ROLE_KEY. Set a dedicated secret for production.");
+  const secret = process.env.DCW_SESSION_SECRET;
+  if (!secret) {
+    // In production, DCW_SESSION_SECRET is mandatory — do NOT fall back to
+    // SUPABASE_SERVICE_ROLE_KEY (shared secret material with DB admin).
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("DCW_SESSION_SECRET must be set in production");
+    }
+    // Development/test fallback only
+    const fallback = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!fallback) throw new Error("DCW_SESSION_SECRET or SUPABASE_SERVICE_ROLE_KEY required");
+    return new TextEncoder().encode(fallback);
   }
   return new TextEncoder().encode(secret);
 }

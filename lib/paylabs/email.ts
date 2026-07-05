@@ -24,6 +24,7 @@ export async function sendOtpEmail(email: string, code: string): Promise<void> {
     text: `Your PayLabs code: ${code}\n\nValid for 5 minutes. Do not share this code.`,
   });
   if (error) {
-    throw new Error(`Resend error: ${error.message}`);
+    console.error("[email] send failed");
+    throw new Error("Email delivery failed");
   }
 }
