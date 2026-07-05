@@ -269,8 +269,8 @@ function actorKindLabel(
 }
 
 function arrowFlowLabel(row: NormalizedPaymentRow): string {
-  if (row.source === "preflight") return "Preflight";
-  if (row.source === "entry") return "Run Payment";
+  if (row.source === "preflight") return "Route Check";
+  if (row.source === "entry") return "AI Run Payment";
   return "";
 }
 
