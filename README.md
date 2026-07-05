@@ -649,6 +649,9 @@ Paylabs manually decodes the `PAYMENT-REQUIRED` and `PAYMENT-SIGNATURE` headers 
 
 Manual decoding lets us trace every payment hop in the hierarchy (user → platform → brain → node → child) to its on-chain transaction in real time — for full audit trail visibility.
 
+Reference inspiration: [the-canteen-dev/circle-agent](https://github.com/the-canteen-dev/circle-agent) — for x402 settlement tracing, Gateway batch visibility, and Arc Testnet explorer proof patterns.
+
+
 
 ## Reusable Arc/Circle x402 SDKs
 
