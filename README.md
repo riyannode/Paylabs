@@ -10,9 +10,10 @@ Users ask a question, connect a PayLabs payment wallet, run an x402-paid AI sear
 
 **For creators:** Automatic monetization. Register your GitHub repos, blogs, or domains as sources. When PayLabs uses your content in an answer, you get paid in USDC — no manual invoicing, no chasing payments.
 
+---
 
 **Live Stats & Traction:** 
-------
+---
 **PayLabs is live and actively processing x402-paid searches on Arc testnet.  
 Real micropayments flow through the agent runtime, with automatic USDC distribution to verified creators.**
 
@@ -27,13 +28,13 @@ Real micropayments flow through the agent runtime, with automatic USDC distribut
 - **Explorer** : [https://paylabs.vercel.app/explorer](https://paylabs.vercel.app/explorer) 
 
 **Circle Tools Usage:**
-------
+---
 - **Developer Controlled Wallet:** [DCW API routes](https://github.com/riyannode/Paylabs/tree/main/app/api/paylabs/dcw), [DCW signer adapter](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/x402/dcw-signer-adapter.ts), [DCW wallet modal design](https://github.com/riyannode/Paylabs/blob/main/components/paylabs/DcwModal.tsx), [User Chat DCW](https://github.com/riyannode/Paylabs/blob/main/app/paylabs-chat-client.tsx)
 - **User Controlled Wallet:** [UCW API route](https://github.com/riyannode/Paylabs/tree/main/app/api/paylabs/wallet/ucw), [UCW backend wrapper](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/ucw.ts), [UCW frontend hook/UI](https://github.com/riyannode/Paylabs/tree/main/components/paylabs)
 - **X402 Batching Nanopayment:** [x402 batching challenge, settlement, and receipt helpers](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/x402)
 
 **Agentic Sophistication**
------
+---
 PayLabs runs a **LangGraph-orchestrated agent system** with clear separation between planning and execution:
 
 - A **Brain Planner** (LLM) handles high-level decisions: selecting the appropriate tier, search strategy, and which services to activate.
@@ -48,11 +49,36 @@ Implementation is split across:
 - [`lib/paylabs/agent-services`](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/agent-services) — Individual service implementations
 
 **Innovation**
------
+---
 - **PayLabs explores an agent-native economy model where AI search, source discovery, x402 nanopayments, and creator monetization run inside one delegated agent runtime.**
 
 - **The key design insight is separation of authority: the LLM Brain can plan and recommend, but deterministic controllers lock pricing, wallet usage, payment refs, and settlement behavior.**
 
+---
+
+## How to Try PayLabs
+
+### User
+
+1. Connect/Login Google create a PayLabs Wallet/DCW
+2. If you do not have test USDC, copy your wallet address from the wallet modal and use the `Open Circle Faucet` button.
+3. After receiving test USDC, deposit it into Gateway Balance.
+4. Once Gateway Balance is ready, submit a query from the chat page.
+5. Open Explorer to see the x402 payment flow.
+
+PayLabs uses Gateway Balance for automatic x402 payments. Users do not choose settlement mode manually.
+
+### Creator
+
+1. Open Creator Profile.
+2. Connet/Login Google to create Creator Wallet/UCW
+3. Register your source URL.
+4. Complete the ownership verification step.
+5. Once verified, your source can become eligible for creator payouts when used in PayLabs runs.
+
+The Creator Wallet is separate from the PayLabs Wallet. It is used for creator identity, source ownership, and monetization.
+
+---
 
 ## Agent Stack
 
@@ -188,6 +214,8 @@ Note: Settlement has 2 services on Normal (`creator_attribution`, `creator_payou
 
 **Quote Engine** = deterministic pricing. Computes cost from tier + selected services. No LLM-generated prices.
 
+---
+
 ## Pricing / Quote Engine
 
 PayLabs uses a deterministic Quote Engine as the single source of truth for pricing and budget validation. The Brain planner can recommend a route, but it cannot set prices, wallet addresses, payment references, or settlement references.
@@ -289,9 +317,9 @@ if total_user_paid > user_budget:
   fail closed before final execution
 ```
 
-
-
 This means every paid run is priced deterministically before execution. The route can be selected by the Brain planner, but the final price is locked by the Quote Engine and enforced by the payment runtime.
+
+---
 
 ### LLM vs Deterministic per service
 
@@ -324,6 +352,8 @@ Key rules:
 - `payment_decider`: hard-locked to deterministic — no env var can override
 - Every LLM-capable service auto-falls back to deterministic on LLM failure
 - `hybrid` mode = deterministic decision + LLM summary text only
+
+---
 
 ## Creator Monetization
 
@@ -397,6 +427,8 @@ Every payout goes through `claim-before-transfer`:
 
 This prevents double-pay on retry, crash recovery, and concurrent requests.
 
+---
+
 ## Wallets
 
 **UCW (User-Controlled Wallet)** — For creators. Social login, email OTP, and PIN flow for creator onboarding, profile ownership, and source monetization. Circle W3S Web SDK in browser.
@@ -425,6 +457,8 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 | `/creator-profile` | Creator claims — register, verify, monetize sources |
 | `/creator-proof/[claimId]/[nonce]` | Public verification — verified creator badge |
 
+---
+
 > **Accounting note:** Platform x402 Volume represents cumulative gross x402 activity since PayLabs first opened. Treasury / Unallocated represents retained or unallocated ledger entries recorded after the treasury tracking layer was wired on July 2.
 
 ## Known Limitations / Next Patch
@@ -445,6 +479,8 @@ Accepted for now because the amount is minimal.
 PayLabs chat and Brain planning use local 9Router as the LLM routing layer.
 If chat responses, Brain planning, or AI answers stop working, the issue may be related to 9Router access, provider limits, routing, or API key configuration.
 Please contact maintainer so the LLM route can be checked.
+
+---
 
 ## Tech Stack
 
