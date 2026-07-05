@@ -456,7 +456,7 @@ export default async function DashboardPage() {
                     <td style={{ textAlign: "center", padding: "0 4px" }}>
                       <div className="data-mono" style={{ fontSize: 12, color: "var(--muted, #888)" }}>→</div>
                       {arrowFlowLabel(r) && (
-                        <div className="muted" style={{ fontSize: 10 }}>
+                        <div className="muted" style={{ fontSize: 9 }}>
                           {arrowFlowLabel(r)}
                         </div>
                       )}
