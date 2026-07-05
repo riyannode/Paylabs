@@ -431,9 +431,9 @@ This prevents double-pay on retry, crash recovery, and concurrent requests.
 
 ## Wallets
 
-**UCW (User-Controlled Wallet)** — For creators. Social login, email OTP, and PIN flow for creator onboarding, profile ownership, and source monetization. Circle W3S Web SDK in browser.
+**UCW (User-Controlled Wallet)** — For creators. Social login/Google, and PIN flow for creator onboarding, profile ownership, and source monetization. Circle W3S Web SDK in browser.
 
-**DCW (Developer-Controlled Wallet)** — For chat users / PayLabs payment wallet. Google OAuth, email OTP, and passkey auth. Paid x402 runs execute synchronously in-request through the app-controlled payment flow.
+**DCW (Developer-Controlled Wallet)** — For chat users / PayLabs payment wallet. Google OAuth, and passkey auth. Paid x402 runs execute synchronously in-request through the app-controlled payment flow.
 
 ## Auth
 
