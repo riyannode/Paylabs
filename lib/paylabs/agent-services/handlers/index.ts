@@ -2,19 +2,6 @@
  * Agent Service Handlers — Barrel Export
  */
 
-export { intentPlannerHandler } from "./intent-planner";
-export { queryBuilderHandler } from "./query-builder";
-export { signalScoutHandler } from "./signal-scout";
-export { signalScoutBasicsHandler } from "./signal-scout-basics";
-export { intentMatcherHandler } from "./intent-matcher";
-export { sourceVerifierHandler } from "./source-verifier";
-export { valueAllocatorHandler } from "./value-allocator";
-export { trustVerifierHandler } from "./trust-verifier";
-export { paymentDeciderHandler } from "./payment-decider";
-export { creatorAttributionHandler } from "./creator-attribution";
-export { advancedEvidenceEvaluatorHandler } from "./advanced-evidence-evaluator";
-export { creatorPayoutRouterHandler } from "./creator-payout-router";
-
 import { intentPlannerHandler } from "./intent-planner";
 import { queryBuilderHandler } from "./query-builder";
 import { signalScoutHandler } from "./signal-scout";
