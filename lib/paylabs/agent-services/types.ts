@@ -34,7 +34,6 @@ export interface ServiceConfig {
   requiresLlm: boolean;
   priceUsdc: number;
   endpointPath: string;
-  allowedBuyers: string[];
   outputSchemaName: string;
   isActive: boolean;
   /** Env var name for seller wallet address (payTo). Required for x402-enabled services. */
