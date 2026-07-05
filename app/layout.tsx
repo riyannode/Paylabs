@@ -3,9 +3,9 @@ import "./globals.css";
 import ErrorBoundary from "@/components/ErrorBoundary";
 
 export const metadata: Metadata = {
-  title: "PayLabs — AI source-feed learning paths with creator citation tolls",
+  title: "PayLabs — Source-backed AI search",
   description:
-    "Ingests RSSHub/RSS feeds, turns feed items into source-backed learning cards, prepares citation/unlock payments for creators.",
+    "Turns RSSHub/RSS feeds into cited AI search sources, with x402 citation and unlock payments prepared for verified creators.",
 };
 
 export default function RootLayout({
