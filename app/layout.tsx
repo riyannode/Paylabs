@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import VisitTracker from "@/components/paylabs/VisitTracker";
 
 export const metadata: Metadata = {
   title: "PayLabs — Source-backed AI search",
@@ -16,6 +17,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body style={{ margin: 0, minHeight: "100vh" }}>
+        <VisitTracker />
         <main className="container pl-compact-root">
           <ErrorBoundary>
             {children}

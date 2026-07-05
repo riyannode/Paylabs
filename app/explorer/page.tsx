@@ -3,6 +3,7 @@ import { short, usdc } from "@/lib/utils";
 import { hrefFromTx } from "@/lib/paylabs/x402/payment-links";
 import BatchResolverLink from "@/components/paylabs/BatchResolverLink";
 import SubPageMobileNav from "@/components/paylabs/SubPageMobileNav";
+import { getVisitorStats } from "@/lib/paylabs/analytics/visitor-stats";
 
 const PAYMENT_SAFE_FIELDS = [
   "event_id",
@@ -161,9 +162,9 @@ export default async function DashboardPage() {
 
   // ─── User stats (unique wallets) ───
   const [
-    totalUsers,
-    recentUsers7d,
-    recentUsers24h,
+    existingTotalUsers,
+    existingRecentUsers7d,
+    existingRecentUsers24h,
 
   ] = await Promise.all([
     safeQuery<{ user_wallet: string }>(() =>
@@ -187,6 +188,13 @@ export default async function DashboardPage() {
         .limit(10000)
     ).then((rows) => new Set(rows.map((r) => r.user_wallet?.toLowerCase()).filter(Boolean)).size),
   ]);
+
+  // Add real visitor counts on top of existing wallet-based counts
+  const visitorStats = await getVisitorStats();
+
+  const totalUsers = existingTotalUsers + visitorStats.uniqueVisitors;
+  const recentUsers7d = existingRecentUsers7d + visitorStats.visitors7d;
+  const recentUsers24h = existingRecentUsers24h + visitorStats.visitors24h;
 
   return (
     <>
