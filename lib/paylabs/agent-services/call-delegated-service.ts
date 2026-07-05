@@ -37,7 +37,7 @@ import { resolvePaylabsAppUrl } from "../runtime/resolve-app-url";
 import type { ServiceName, ServiceHandlerInput, ServiceHandlerOutput } from "./types";
 
 // ─── Input ───────────────────────────────────────────────────
-export interface CallDelegatedServiceInput {
+interface CallDelegatedServiceInput {
   discoveryRunId: string;
   buyerAgentName: string;
   sellerServiceName: ServiceName;
@@ -51,7 +51,7 @@ export interface CallDelegatedServiceInput {
 }
 
 // ─── Output ──────────────────────────────────────────────────
-export interface CallDelegatedServiceOutput {
+interface CallDelegatedServiceOutput {
   ok: boolean;
   serviceName: ServiceName;
   data: Record<string, unknown> | null;
