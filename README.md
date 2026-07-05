@@ -601,6 +601,15 @@ pnpm typecheck    # tsc --noEmit
 
 ---
 
+## x402 Raw Header Decode
+
+Paylabs manually decodes the `PAYMENT-REQUIRED` and `PAYMENT-SIGNATURE` headers instead of using the SDK's `client.pay()` wrapper.
+
+**Why:** The SDK wrapper doesn't return raw signature/settlement data — just `{data, amount, status}`. Using it directly means we can't get the `txHash`/`settlementId` needed to generate an explorer link for every agent-to-agent payment.
+
+Manual decoding lets us trace every payment hop in the hierarchy (brain → macro → child) to its on-chain transaction in real time — for full audit trail visibility.
+
+
 ## Reusable Arc/Circle x402 SDKs
 
 PayLabs also ships alongside standalone open-source SDKs for builders working with Arc, Circle Gateway, x402 payments, agent wallets, and batch proof visibility.
