@@ -437,6 +437,11 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 
 - **Receipts and explorer visibility:** After each completed run, PayLabs creates a receipt. The explorer view shows the agent services used, x402 payment edges, settlement metadata, and visibility for each service in the run.
 
+- **Chat Not Working?**
+PayLabs chat and Brain planning use local 9Router as the LLM routing layer.
+If chat responses, Brain planning, or AI answers stop working, the issue may be related to 9Router access, provider limits, routing, or API key configuration.
+Please contact me so the LLM route can be checked.
+
 ## Tech Stack
 
 | Layer | Technology |
