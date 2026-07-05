@@ -314,9 +314,13 @@ export async function verifyAndSettlePayment(
       "https://gateway-api-testnet.circle.com",
   });
 
-  // Production path: call settle() directly.
-  // Circle Nanopayments recommends direct settle() for low-latency seller flows.
-  // verify() remains useful for diagnostics/custom preflight checks, but is not required here.
+  // Circle Gateway's settle() endpoint is optimized for low latency and guarantees settlement.
+  // Circle recommends using settle() directly rather than verify() followed by settle()
+  // in production seller flows. verify() remains useful for diagnostics/custom preflight checks.
+  //
+  // IMPORTANT: this is not a "no verification" path.
+  // Handler execution is still gated on successful settlement. If settle() fails,
+  // the seller must return an error/402 and the agent/service handler must not run.
   try {
     const settleResult = await facilitator.settle(paymentPayload, requirements);
     const settleData = settleResult as Record<string, unknown>;
