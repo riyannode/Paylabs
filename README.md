@@ -30,7 +30,7 @@ Real micropayments flow through the agent runtime, with automatic USDC distribut
 ------
 - **Developer Controlled Wallet:** [DCW API routes](https://github.com/riyannode/Paylabs/tree/main/app/api/paylabs/dcw), [DCW signer adapter](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/x402/dcw-signer-adapter.ts), [DCW wallet modal design](https://github.com/riyannode/Paylabs/blob/main/components/paylabs/DcwModal.tsx), [User Chat DCW](https://github.com/riyannode/Paylabs/blob/main/app/paylabs-chat-client.tsx)
 - **User Controlled Wallet:** [UCW API route](https://github.com/riyannode/Paylabs/tree/main/app/api/paylabs/wallet/ucw), [UCW backend wrapper](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/ucw.ts), [UCW frontend hook/UI](https://github.com/riyannode/Paylabs/tree/main/components/paylabs)
-- **X402 Batching Nanopayment:** [x402 batching challenge, settlement, and receipt helpers](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/x402), [Quote Engine](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/delegated-runtime/quote-engine.ts)
+- **X402 Batching Nanopayment:** [x402 batching challenge, settlement, and receipt helpers](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/x402)
 
 **Agentic Sophistication**
 -----
