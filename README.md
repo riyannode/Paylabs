@@ -1,6 +1,6 @@
 # PayLabs
 
-AI search/crawler + creator monetization platform. Every search is budgeted, every source is paid, every creator gets their share.
+AI search/RSShub crawler + creator monetization platform. Every search is budgeted, every source is paid, every creator gets their share.
 
 **For users:** AI-powered source discovery. Ask a question, get answers backed by real sources from across the RSShub, with full transparency on what was searched, which sources were used, and what it cost.
 
@@ -12,7 +12,7 @@ AI search/crawler + creator monetization platform. Every search is budgeted, eve
 
 ### User
 
-1. Connect/Login Google create a PayLabs Wallet/DCW
+1. Connect/Login Google to create PayLabs Wallet/DCW
 2. If you do not have test USDC, copy your wallet address from the wallet modal and use the `Open Circle Faucet` button.
 3. After receiving test USDC, deposit it into Gateway Balance.
 4. Once Gateway Balance is ready, submit a query from the chat page.
