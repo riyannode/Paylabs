@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import PayLabsChatClient from "./paylabs-chat-client";
+import { getVisitorStats } from "@/lib/paylabs/analytics/visitor-stats";
 
 export const dynamic = "force-dynamic";
 
@@ -49,10 +50,17 @@ export default async function Page() {
       ),
     ]);
 
+    const existingUniqueUsers = uniqueWalletCount(userRowsAll);
+    const existingActive24h = uniqueWalletCount(userRows24h);
+    const existingActive7d = uniqueWalletCount(userRows7d);
+
+    // Add real visitor counts on top of existing wallet-based counts
+    const visitorStats = await getVisitorStats();
+
     analytics = {
-      uniqueUsers: uniqueWalletCount(userRowsAll),
-      active24h: uniqueWalletCount(userRows24h),
-      active7d: uniqueWalletCount(userRows7d),
+      uniqueUsers: existingUniqueUsers + visitorStats.uniqueVisitors,
+      active24h: existingActive24h + visitorStats.visitors24h,
+      active7d: existingActive7d + visitorStats.visitors7d,
     };
   } catch {
     // DB timeout — show zeros, don't crash the page
