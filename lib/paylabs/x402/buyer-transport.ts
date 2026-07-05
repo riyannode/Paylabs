@@ -365,7 +365,7 @@ export async function callPaidSeller(
   // ── Step 3: Validate amount ──────────────────────────────
 
   const reqAmountAtomic = BigInt(gatewayReq.amount || "0");
-  const maxAmountAtomic = BigInt(Math.round(parseFloat(maxAmountUsdc) * 1_000_000));
+  const maxAmountAtomic = usdcDecimalToAtomic(maxAmountUsdc);
 
   if (reqAmountAtomic > maxAmountAtomic) {
     return {
@@ -775,6 +775,22 @@ interface BatchEvmSignerLike {
     primaryType: string;
     message: Record<string, unknown>;
   }) => Promise<Hex>;
+}
+
+// ─── String-safe USDC → atomic conversion ─────────────────
+
+/**
+ * Convert a USDC decimal string to atomic units (bigint, 6 decimals).
+ * Avoids IEEE-754 float drift: "0.1" → 100000n, "0.000001" → 1n.
+ */
+function usdcDecimalToAtomic(usdc: string): bigint {
+  const trimmed = usdc.trim();
+  if (!trimmed || !/^[0-9]+(\.[0-9]+)?$/.test(trimmed)) {
+    return BigInt(0);
+  }
+  const [whole, frac = ""] = trimmed.split(".");
+  const paddedFrac = frac.padEnd(6, "0").slice(0, 6);
+  return BigInt(whole) * BigInt(1_000_000) + BigInt(paddedFrac);
 }
 
 // ─── Error class ─────────────────────────────────────────────

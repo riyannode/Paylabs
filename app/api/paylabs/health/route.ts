@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
-import { TIER_SERVICE_PRESETS } from "@/lib/paylabs/delegated-runtime/quote-engine";
 
 export async function GET() {
+  const isProduction = process.env.NODE_ENV === "production";
+
+  if (isProduction) {
+    return NextResponse.json({ ok: true, service: "paylabs" });
+  }
+
+  // Development/test: include diagnostics
+  const { TIER_SERVICE_PRESETS } = await import("@/lib/paylabs/delegated-runtime/quote-engine");
   return NextResponse.json({
     ok: true,
     service: "paylabs",

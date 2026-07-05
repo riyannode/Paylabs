@@ -82,6 +82,7 @@ export async function POST(req: NextRequest) {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[otp/send] Error:", msg);
-    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+    // Never expose provider error details (email, API key, account) to client
+    return NextResponse.json({ ok: false, error: "Failed to send verification code" }, { status: 500 });
   }
 }
