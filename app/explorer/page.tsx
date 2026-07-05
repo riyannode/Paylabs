@@ -8,8 +8,9 @@ import { getVisitorStats } from "@/lib/paylabs/analytics/visitor-stats";
 const PAYMENT_SAFE_FIELDS = [
   "event_id",
   "discovery_run_id",
-  "node_type",
+  "buyer",
   "seller",
+  "node_type",
   "status",
   "amount_usdc",
   "tx_hash",
@@ -122,6 +123,157 @@ async function getTreasuryUnallocatedUsdc(): Promise<number> {
   );
 }
 
+// ─── Preflight / Entry payments from discovery_runs ──────────
+
+async function getRecentPreflightPayments(limit = 50) {
+  const { data } = await supabaseAdmin()
+    .from("paylabs_discovery_runs")
+    .select(
+      "id, created_at, agent_trace, entry_payment_amount_usdc, entry_payment_status, entry_payment_tx_hash, entry_payment_explorer_url, entry_payment_batch_tx_hash, entry_payment_batch_explorer_url"
+    )
+    .not("entry_payment_amount_usdc", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return data || [];
+}
+
+// ─── Normalized row type for unified table ───────────────────
+
+type NormalizedPaymentRow = {
+  id: string;
+  created_at: string;
+  buyer: string;
+  seller: string;
+  amount_usdc: number;
+  status: string;
+  tx_hash: string | null;
+  explorer_url: string | null;
+  batch_tx_hash: string | null;
+  batch_explorer_url: string | null;
+  error: string | null;
+  source: "service" | "preflight" | "entry";
+  discovery_run_id: string;
+  node_type: string | null;
+};
+
+function normalizeServiceRows(rows: any[]): NormalizedPaymentRow[] {
+  return rows.map((r) => ({
+    id: r.event_id,
+    created_at: r.created_at,
+    buyer: r.buyer ?? "—",
+    seller: r.seller ?? "—",
+    amount_usdc: Number(r.amount_usdc) || 0,
+    status: r.status ?? "—",
+    tx_hash: r.tx_hash ?? null,
+    explorer_url: r.explorer_url ?? null,
+    batch_tx_hash: r.batch_tx_hash ?? null,
+    batch_explorer_url: r.batch_explorer_url ?? null,
+    error: r.error ?? null,
+    source: "service" as const,
+    discovery_run_id: r.discovery_run_id,
+    node_type: r.node_type ?? null,
+  }));
+}
+
+function normalizePreflightRows(rows: any[]): NormalizedPaymentRow[] {
+  const result: NormalizedPaymentRow[] = [];
+  for (const r of rows) {
+    const trace = (r.agent_trace as Record<string, unknown>) || {};
+    const preflight = trace.auto_tier_preflight as Record<string, unknown> | undefined;
+
+    // Entry payment row
+    if (r.entry_payment_amount_usdc != null) {
+      result.push({
+        id: `entry-${r.id}`,
+        created_at: r.created_at,
+        buyer: "User",
+        seller: "Platform",
+        amount_usdc: Number(r.entry_payment_amount_usdc) || 0,
+        status: r.entry_payment_status ?? "—",
+        tx_hash: r.entry_payment_tx_hash ?? null,
+        explorer_url: r.entry_payment_explorer_url ?? null,
+        batch_tx_hash: r.entry_payment_batch_tx_hash ?? null,
+        batch_explorer_url: r.entry_payment_batch_explorer_url ?? null,
+        error: null,
+        source: "entry",
+        discovery_run_id: r.id,
+        node_type: null,
+      });
+    }
+
+    // Preflight routing payment row
+    if (preflight?.status === "locked") {
+      const rp = preflight.routing_payment as Record<string, unknown> | undefined;
+      if (rp && Number(rp.amount_usdc) > 0) {
+        result.push({
+          id: `preflight-${r.id}`,
+          created_at: r.created_at,
+          buyer: "User",
+          seller: "Platform",
+          amount_usdc: Number(rp.amount_usdc) || 0,
+          status: (rp.status as string) ?? "—",
+          tx_hash: (rp.tx_hash as string) ?? null,
+          explorer_url: (rp.explorer_url as string) ?? null,
+          batch_tx_hash: (rp.batch_tx_hash as string) ?? null,
+          batch_explorer_url: (rp.batch_explorer_url as string) ?? null,
+          error: null,
+          source: "preflight",
+          discovery_run_id: r.id,
+          node_type: null,
+        });
+      }
+    }
+  }
+  return result;
+}
+
+// ─── Public label mapping ────────────────────────────────────
+
+function labelNode(name: string | null | undefined): string {
+  if (!name) return "—";
+  if (name === "run_budget_controller") return "User";
+  if (name === "user") return "User";
+  if (name === "brain") return "Brain";
+  if (name === "discovery_planner") return "Discovery Planner";
+  if (name === "payment_decision") return "Payment Decision";
+  if (name === "settlement_memory") return "Settlement Memory";
+  if (name === "rsshub_live") return "RSSHub Live";
+  if (name === "serpapi") return "SerpAPI";
+  return name.split("_").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
+}
+
+function actorKindLabel(
+  name: string | null | undefined,
+  row: NormalizedPaymentRow,
+  side: "buyer" | "seller"
+): string {
+  if (!name) return "";
+  const raw = String(name);
+  if (
+    raw === "User" ||
+    raw === "user" ||
+    raw === "run_budget_controller" ||
+    raw === "Platform" ||
+    raw === "brain"
+  ) {
+    return "";
+  }
+  const macroNodes = new Set([
+    "discovery_planner",
+    "payment_decision",
+    "settlement_memory",
+  ]);
+  if (macroNodes.has(raw)) return "Node";
+  if (side === "seller" && row.node_type === "service") return "Child";
+  return "";
+}
+
+function arrowFlowLabel(row: NormalizedPaymentRow): string {
+  if (row.source === "preflight") return "Route Check";
+  if (row.source === "entry") return "AI Run Payment";
+  return "";
+}
+
 function timeAgo(dateStr: string): string {
   const d = new Date(dateStr);
   const now = new Date();
@@ -138,6 +290,7 @@ function timeAgo(dateStr: string): string {
 export default async function DashboardPage() {
   const [
     x402PaymentRows,
+    preflightRows,
     servicePaymentCount,
     receiptCount,
     lastTxRow,
@@ -148,6 +301,8 @@ export default async function DashboardPage() {
   ] = await Promise.all([
     // x402 Service Payments
     getRecentX402Payments(50),
+    // Preflight / Entry payments
+    getRecentPreflightPayments(50),
     // Counts
     safeCount("paylabs_service_payment_events"),
     safeCount("paylabs_receipts"),
@@ -159,6 +314,12 @@ export default async function DashboardPage() {
     getCreatorPaidUsdc(),
     getTreasuryUnallocatedUsdc(),
   ]);
+
+  // ─── Normalize and merge all payment rows ───
+  const allRows: NormalizedPaymentRow[] = [
+    ...normalizeServiceRows(x402PaymentRows),
+    ...normalizePreflightRows(preflightRows),
+  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   // ─── User stats (unique wallets) ───
   const [
@@ -259,7 +420,7 @@ export default async function DashboardPage() {
         <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
           Track x402 paid service calls from PayLabs runs. Batch link explorers are available in Payment Visibility after settlement.
         </p>
-        {x402PaymentRows.length === 0 ? (
+        {allRows.length === 0 ? (
           <div className="muted" style={{ textAlign: "center", padding: 24 }}>
             No x402 service payments yet.
           </div>
@@ -269,9 +430,9 @@ export default async function DashboardPage() {
               <thead>
                 <tr>
                   <th>Time</th>
-                  <th>Run ID</th>
+                  <th>Buyer</th>
+                  <th></th>
                   <th>Seller</th>
-                  <th>Node Type</th>
                   <th>Amount</th>
                   <th>Status</th>
                   <th>Payment Visibility</th>
@@ -279,18 +440,36 @@ export default async function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {x402PaymentRows.map((r: any) => (
-                  <tr key={r.event_id}>
+                {allRows.map((r) => (
+                  <tr key={r.id}>
                     <td className="muted">{timeAgo(r.created_at)}</td>
-                    <td className="data-mono">{short(r.discovery_run_id)}</td>
-                    <td className="data-mono" style={{ fontSize: 11 }}>{r.seller}</td>
                     <td>
-                      <span className={`badge ${
-                        r.node_type === "brain" ? "badge-success" :
-                        r.node_type === "macro_node" ? "badge-warning" : ""
-                      }`} style={{ fontSize: 10 }}>
-                        {r.node_type}
-                      </span>
+                      <div className="data-mono" style={{ fontSize: 12 }}>
+                        {labelNode(r.buyer)}
+                      </div>
+                      {actorKindLabel(r.buyer, r, "buyer") && (
+                        <div className="muted" style={{ fontSize: 10 }}>
+                          ({actorKindLabel(r.buyer, r, "buyer")})
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ textAlign: "center", padding: "0 4px" }}>
+                      <div className="data-mono" style={{ fontSize: 12, color: "var(--muted, #888)" }}>→</div>
+                      {arrowFlowLabel(r) && (
+                        <div className="muted" style={{ fontSize: 9 }}>
+                          ({arrowFlowLabel(r)})
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <div className="data-mono" style={{ fontSize: 12 }}>
+                        {labelNode(r.seller)}
+                      </div>
+                      {actorKindLabel(r.seller, r, "seller") && (
+                        <div className="muted" style={{ fontSize: 10 }}>
+                          ({actorKindLabel(r.seller, r, "seller")})
+                        </div>
+                      )}
                     </td>
                     <td className="data-mono">{usdc(r.amount_usdc)}</td>
                     <td>
