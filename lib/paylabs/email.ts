@@ -24,8 +24,7 @@ export async function sendOtpEmail(email: string, code: string): Promise<void> {
     text: `Your PayLabs code: ${code}\n\nValid for 5 minutes. Do not share this code.`,
   });
   if (error) {
-    // Server log: sanitized provider diagnostic (no account email, no API key)
-    console.error("[email] send failed:", typeof error === "object" ? JSON.stringify(error).slice(0, 300) : String(error).slice(0, 300));
+    console.error("[email] send failed");
     throw new Error("Email delivery failed");
   }
 }
