@@ -12,6 +12,13 @@
 import type { ServiceConfig, ServiceName, ServiceMacroNode } from "./types";
 
 // ─── Service Definitions ─────────────────────────────────────
+/**
+ * Static registry of 12 delegated service agents.
+ * Buyer→seller authorization is enforced by edge-allowlist.ts
+ * via assertAllowedAgentServiceEdge(). This registry defines service
+ * metadata, pricing, endpoint paths, macro-node mapping, and wallet env names.
+ */
+
 const SERVICES: ReadonlyArray<ServiceConfig> = [
   {
     serviceName: "intent_planner",
@@ -20,7 +27,6 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     requiresLlm: true,
     priceUsdc: 0.000001,
     endpointPath: "/api/paylabs/agent-services/intent_planner/run",
-    allowedBuyers: ["discovery_planner"],
     outputSchemaName: "IntentPlannerOutput",
     isActive: true,
     sellerWalletAddressEnv: "PAYLABS_SERVICE_INTENT_PLANNER_SELLER_WALLET_ADDRESS",
@@ -33,7 +39,6 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     requiresLlm: true,
     priceUsdc: 0.000001,
     endpointPath: "/api/paylabs/agent-services/query_builder/run",
-    allowedBuyers: ["discovery_planner"],
     outputSchemaName: "QueryBuilderOutput",
     isActive: true,
     sellerWalletAddressEnv: "PAYLABS_SERVICE_QUERY_BUILDER_SELLER_WALLET_ADDRESS",
@@ -46,7 +51,6 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     requiresLlm: true,
     priceUsdc: 0.000001,
     endpointPath: "/api/paylabs/agent-services/signal_scout/run",
-    allowedBuyers: ["discovery_planner"],
     outputSchemaName: "SignalScoutOutput",
     isActive: true,
     sellerWalletAddressEnv: "PAYLABS_SERVICE_SIGNAL_SCOUT_SELLER_WALLET_ADDRESS",
@@ -59,7 +63,6 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     requiresLlm: false,
     priceUsdc: 0.000001,
     endpointPath: "/api/paylabs/agent-services/signal_scout_basics/run",
-    allowedBuyers: ["discovery_planner"],
     outputSchemaName: "SignalScoutBasicsOutput",
     isActive: true,
     sellerWalletAddressEnv: "PAYLABS_SERVICE_SIGNAL_SCOUT_BASICS_SELLER_WALLET_ADDRESS",
@@ -72,7 +75,6 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     requiresLlm: true,
     priceUsdc: 0.000001,
     endpointPath: "/api/paylabs/agent-services/intent_matcher/run",
-    allowedBuyers: ["payment_decision"],
     outputSchemaName: "IntentMatcherOutput",
     isActive: true,
     sellerWalletAddressEnv: "PAYLABS_SERVICE_INTENT_MATCHER_SELLER_WALLET_ADDRESS",
@@ -85,7 +87,6 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     requiresLlm: true,
     priceUsdc: 0.000001,
     endpointPath: "/api/paylabs/agent-services/source_verifier/run",
-    allowedBuyers: ["payment_decision"],
     outputSchemaName: "SourceVerifierOutput",
     isActive: true,
     sellerWalletAddressEnv: "PAYLABS_SERVICE_SOURCE_VERIFIER_SELLER_WALLET_ADDRESS",
@@ -98,7 +99,6 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     requiresLlm: true,
     priceUsdc: 0.000001,
     endpointPath: "/api/paylabs/agent-services/value_allocator/run",
-    allowedBuyers: ["payment_decision"],
     outputSchemaName: "ValueAllocatorOutput",
     isActive: true,
     sellerWalletAddressEnv: "PAYLABS_SERVICE_VALUE_ALLOCATOR_SELLER_WALLET_ADDRESS",
@@ -111,7 +111,6 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     requiresLlm: true,
     priceUsdc: 0.000001,
     endpointPath: "/api/paylabs/agent-services/trust_verifier/run",
-    allowedBuyers: ["payment_decision"],
     outputSchemaName: "TrustVerifierOutput",
     isActive: true,
     sellerWalletAddressEnv: "PAYLABS_SERVICE_TRUST_VERIFIER_SELLER_WALLET_ADDRESS",
@@ -124,7 +123,6 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     requiresLlm: false,
     priceUsdc: 0.000001,
     endpointPath: "/api/paylabs/agent-services/payment_decider/run",
-    allowedBuyers: ["payment_decision"],
     outputSchemaName: "PaymentDeciderOutput",
     isActive: true,
     sellerWalletAddressEnv: "PAYLABS_SERVICE_PAYMENT_DECIDER_SELLER_WALLET_ADDRESS",
@@ -138,7 +136,6 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     requiresLlm: false,
     priceUsdc: 0.000001,
     endpointPath: "/api/paylabs/agent-services/creator_attribution/run",
-    allowedBuyers: ["settlement_memory"],
     outputSchemaName: "CreatorAttributionOutput",
     isActive: true,
     sellerWalletAddressEnv: "PAYLABS_SERVICE_CREATOR_ATTRIBUTION_SELLER_WALLET_ADDRESS",
@@ -151,7 +148,6 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     requiresLlm: true,
     priceUsdc: 0.000001,
     endpointPath: "/api/paylabs/agent-services/advanced_evidence_evaluator/run",
-    allowedBuyers: ["settlement_memory"],
     outputSchemaName: "AdvancedEvidenceEvaluatorOutput",
     isActive: true,
     sellerWalletAddressEnv: "PAYLABS_SERVICE_ADVANCED_EVIDENCE_EVALUATOR_SELLER_WALLET_ADDRESS",
@@ -164,7 +160,6 @@ const SERVICES: ReadonlyArray<ServiceConfig> = [
     requiresLlm: false,
     priceUsdc: 0.000001,
     endpointPath: "/api/paylabs/agent-services/creator_payout_router/run",
-    allowedBuyers: ["settlement_memory"],
     outputSchemaName: "CreatorPayoutRouterOutput",
     isActive: true,
     sellerWalletAddressEnv: "PAYLABS_SERVICE_CREATOR_PAYOUT_ROUTER_SELLER_WALLET_ADDRESS",
