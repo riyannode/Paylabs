@@ -310,11 +310,11 @@ export async function POST(req: NextRequest) {
       }
 
       case "session-save-wallet": {
-        const sid = req.cookies.get("ucw_sid")?.value;
-        if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
-        const { walletId: wid, walletAddress: wa } = body as { walletId: string; walletAddress: string };
-        await updateSession(sid, { walletId: wid, walletAddress: wa });
-        return NextResponse.json({ ok: true });
+        // Deprecated: use session-finalize-wallet (validates ownership via Circle API)
+        return NextResponse.json(
+          { error: "session-save-wallet is deprecated; use session-finalize-wallet" },
+          { status: 410 },
+        );
       }
 
       case "session-balance": {
