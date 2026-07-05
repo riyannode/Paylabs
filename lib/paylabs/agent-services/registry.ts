@@ -172,13 +172,6 @@ const SERVICE_MAP = new Map<ServiceName, ServiceConfig>(
   SERVICES.map((s) => [s.serviceName, s])
 );
 
-const MACRO_NODE_SERVICES = new Map<ServiceMacroNode, ServiceConfig[]>();
-for (const svc of SERVICES) {
-  const list = MACRO_NODE_SERVICES.get(svc.macroNode) || [];
-  list.push(svc);
-  MACRO_NODE_SERVICES.set(svc.macroNode, list);
-}
-
 // ─── Public API ──────────────────────────────────────────────
 
 /**
@@ -186,22 +179,6 @@ for (const svc of SERVICES) {
  */
 export function getServiceConfig(name: ServiceName): ServiceConfig | undefined {
   return SERVICE_MAP.get(name);
-}
-
-/**
- * Get all registered services.
- */
-export function getAllServices(): ReadonlyArray<ServiceConfig> {
-  return SERVICES;
-}
-
-/**
- * Get services for a specific macro-node phase.
- */
-export function getServicesForMacroNode(
-  phase: ServiceMacroNode
-): ServiceConfig[] {
-  return MACRO_NODE_SERVICES.get(phase) || [];
 }
 
 /**
