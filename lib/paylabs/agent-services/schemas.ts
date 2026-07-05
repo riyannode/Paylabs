@@ -14,7 +14,7 @@ export const IntentPlannerInput = z.object({
   budgetUsdc: z.number().min(0),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
 });
-export type IntentPlannerInput = z.infer<typeof IntentPlannerInput>;
+type IntentPlannerInput = z.infer<typeof IntentPlannerInput>;
 
 export const IntentPlannerOutput = z.object({
   normalized_goal: z.string(),
@@ -23,7 +23,7 @@ export const IntentPlannerOutput = z.object({
   route_tier_hint: z.enum(["easy", "normal", "advanced"]),
   safe_intent_summary: z.string(),
 });
-export type IntentPlannerOutput = z.infer<typeof IntentPlannerOutput>;
+type IntentPlannerOutput = z.infer<typeof IntentPlannerOutput>;
 
 // ─── Query Builder ───────────────────────────────────────────
 export const QueryBuilderInput = z.object({
@@ -34,7 +34,7 @@ export const QueryBuilderInput = z.object({
   brain_discovery_strategy: z.string().optional(),
   brain_normalized_goal: z.string().optional(),
 });
-export type QueryBuilderInput = z.infer<typeof QueryBuilderInput>;
+type QueryBuilderInput = z.infer<typeof QueryBuilderInput>;
 
 export const QueryBuilderOutput = z.object({
   expanded_queries: z.array(z.string()),
@@ -43,7 +43,7 @@ export const QueryBuilderOutput = z.object({
   source_preferences: z.array(z.string()),
   safe_query_summary: z.string(),
 });
-export type QueryBuilderOutput = z.infer<typeof QueryBuilderOutput>;
+type QueryBuilderOutput = z.infer<typeof QueryBuilderOutput>;
 
 // ─── Signal Scout ────────────────────────────────────────────
 export const SignalScoutInput = z.object({
@@ -53,7 +53,7 @@ export const SignalScoutInput = z.object({
   source_preferences: z.array(z.string()).optional(),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
 });
-export type SignalScoutInput = z.infer<typeof SignalScoutInput>;
+type SignalScoutInput = z.infer<typeof SignalScoutInput>;
 
 export const SignalScoutOutput = z.object({
   ranked_candidates: z.array(z.object({
@@ -78,7 +78,7 @@ export const SignalScoutOutput = z.object({
   quick_relevance_notes: z.array(z.string()),
   safe_signal_summary: z.string(),
 });
-export type SignalScoutOutput = z.infer<typeof SignalScoutOutput>;
+type SignalScoutOutput = z.infer<typeof SignalScoutOutput>;
 
 // ─── Intent Matcher ──────────────────────────────────────────
 export const IntentMatcherInput = z.object({
@@ -91,7 +91,7 @@ export const IntentMatcherInput = z.object({
   })),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
 });
-export type IntentMatcherInput = z.infer<typeof IntentMatcherInput>;
+type IntentMatcherInput = z.infer<typeof IntentMatcherInput>;
 
 export const IntentMatcherOutput = z.object({
   relevance_score: z.number(),
@@ -99,7 +99,7 @@ export const IntentMatcherOutput = z.object({
   approved_for_quality_check: z.boolean(),
   safe_reason_summary: z.string(),
 });
-export type IntentMatcherOutput = z.infer<typeof IntentMatcherOutput>;
+type IntentMatcherOutput = z.infer<typeof IntentMatcherOutput>;
 
 // ─── Source Verifier ─────────────────────────────────────────
 export const SourceVerifierInput = z.object({
@@ -108,7 +108,7 @@ export const SourceVerifierInput = z.object({
   source_title: z.string(),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
 });
-export type SourceVerifierInput = z.infer<typeof SourceVerifierInput>;
+type SourceVerifierInput = z.infer<typeof SourceVerifierInput>;
 
 export const SourceVerifierOutput = z.object({
   quality_score: z.number(),
@@ -117,7 +117,7 @@ export const SourceVerifierOutput = z.object({
   confidence: z.number(),
   safe_quality_summary: z.string(),
 });
-export type SourceVerifierOutput = z.infer<typeof SourceVerifierOutput>;
+type SourceVerifierOutput = z.infer<typeof SourceVerifierOutput>;
 
 // ─── Value Allocator ─────────────────────────────────────────
 export const ValueAllocatorInput = z.object({
@@ -127,7 +127,7 @@ export const ValueAllocatorInput = z.object({
   remaining_budget_usdc: z.number().min(0),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
 });
-export type ValueAllocatorInput = z.infer<typeof ValueAllocatorInput>;
+type ValueAllocatorInput = z.infer<typeof ValueAllocatorInput>;
 
 export const ValueAllocatorOutput = z.object({
   roi_score: z.number(),
@@ -136,7 +136,7 @@ export const ValueAllocatorOutput = z.object({
   max_allowed_price: z.number().min(0),
   safe_value_summary: z.string(),
 });
-export type ValueAllocatorOutput = z.infer<typeof ValueAllocatorOutput>;
+type ValueAllocatorOutput = z.infer<typeof ValueAllocatorOutput>;
 
 // ─── Trust Verifier ──────────────────────────────────────────
 export const TrustVerifierInput = z.object({
@@ -146,7 +146,7 @@ export const TrustVerifierInput = z.object({
   claim_status: z.string(),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
 });
-export type TrustVerifierInput = z.infer<typeof TrustVerifierInput>;
+type TrustVerifierInput = z.infer<typeof TrustVerifierInput>;
 
 export const TrustVerifierOutput = z.object({
   risk_score: z.number(),
@@ -156,7 +156,7 @@ export const TrustVerifierOutput = z.object({
   trust_warnings: z.array(z.string()),
   safe_trust_summary: z.string(),
 });
-export type TrustVerifierOutput = z.infer<typeof TrustVerifierOutput>;
+type TrustVerifierOutput = z.infer<typeof TrustVerifierOutput>;
 
 // ─── Payment Decider ─────────────────────────────────────────
 export const PaymentDeciderInput = z.object({
@@ -175,7 +175,7 @@ export const PaymentDeciderInput = z.object({
   spent_usdc: z.number().min(0),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
 });
-export type PaymentDeciderInput = z.infer<typeof PaymentDeciderInput>;
+type PaymentDeciderInput = z.infer<typeof PaymentDeciderInput>;
 
 export const PaymentDeciderOutput = z.object({
   approved_items: z.array(z.object({
@@ -202,7 +202,7 @@ export const PaymentDeciderOutput = z.object({
   })),
   safe_decision_summary: z.string(),
 });
-export type PaymentDeciderOutput = z.infer<typeof PaymentDeciderOutput>;
+type PaymentDeciderOutput = z.infer<typeof PaymentDeciderOutput>;
 
 // ─── Creator Attribution ──────────────────────────────────────
 export const CreatorAttributionInput = z.object({
@@ -222,7 +222,7 @@ export const CreatorAttributionInput = z.object({
   })),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
 });
-export type CreatorAttributionInput = z.infer<typeof CreatorAttributionInput>;
+type CreatorAttributionInput = z.infer<typeof CreatorAttributionInput>;
 
 export const CreatorAttributionOutput = z.object({
   creator_attributions: z.array(z.object({
@@ -271,7 +271,7 @@ export const CreatorAttributionOutput = z.object({
   })),
   safe_summary: z.string(),
 });
-export type CreatorAttributionOutput = z.infer<typeof CreatorAttributionOutput>;
+type CreatorAttributionOutput = z.infer<typeof CreatorAttributionOutput>;
 
 // ─── Advanced Evidence Evaluator ──────────────────────────────
 export const AdvancedEvidenceEvaluatorInput = z.object({
@@ -310,7 +310,7 @@ export const AdvancedEvidenceEvaluatorInput = z.object({
   })),
   routeTier: z.enum(["advanced"]).optional(),
 });
-export type AdvancedEvidenceEvaluatorInput = z.infer<typeof AdvancedEvidenceEvaluatorInput>;
+type AdvancedEvidenceEvaluatorInput = z.infer<typeof AdvancedEvidenceEvaluatorInput>;
 
 export const AdvancedEvidenceEvaluatorOutputSchema = z.object({
   ok: z.boolean(),
@@ -373,7 +373,7 @@ export const CreatorPayoutRouterInput = z.object({
   bot_wallet: z.string().optional(),
   service_wallet: z.string().optional(),
 });
-export type CreatorPayoutRouterInput = z.infer<typeof CreatorPayoutRouterInput>;
+type CreatorPayoutRouterInput = z.infer<typeof CreatorPayoutRouterInput>;
 
 export const CreatorPayoutRouterOutputSchema = z.object({
   creator_payout_results: z.array(z.object({
@@ -422,7 +422,7 @@ export const BatchSourceVerifierInput = z.object({
   })),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
 });
-export type BatchSourceVerifierInput = z.infer<typeof BatchSourceVerifierInput>;
+type BatchSourceVerifierInput = z.infer<typeof BatchSourceVerifierInput>;
 
 export const BatchValueAllocatorInput = z.object({
   candidates: z.array(z.object({
@@ -434,7 +434,7 @@ export const BatchValueAllocatorInput = z.object({
   remaining_budget_usdc: z.number().min(0),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
 });
-export type BatchValueAllocatorInput = z.infer<typeof BatchValueAllocatorInput>;
+type BatchValueAllocatorInput = z.infer<typeof BatchValueAllocatorInput>;
 
 export const BatchTrustVerifierInput = z.object({
   candidates: z.array(z.object({
@@ -445,7 +445,7 @@ export const BatchTrustVerifierInput = z.object({
   })),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
 });
-export type BatchTrustVerifierInput = z.infer<typeof BatchTrustVerifierInput>;
+type BatchTrustVerifierInput = z.infer<typeof BatchTrustVerifierInput>;
 
 // ─── Schema Lookup ───────────────────────────────────────────
 

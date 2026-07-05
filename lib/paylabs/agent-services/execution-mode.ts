@@ -21,7 +21,7 @@ import type { ServiceName } from "./types";
 
 // ─── Service Execution Mode ──────────────────────────────────
 
-export type AgentServiceExecutionMode = "deterministic" | "llm" | "hybrid";
+type AgentServiceExecutionMode = "deterministic" | "llm" | "hybrid";
 
 const VALID_MODES: AgentServiceExecutionMode[] = ["deterministic", "llm", "hybrid"];
 const DEFAULT_MODE: AgentServiceExecutionMode = "deterministic";
@@ -68,7 +68,7 @@ function getServiceEnvKey(serviceName: string): string {
  * LLM-capable services can run in hybrid or llm mode.
  * Non-LLM services always run deterministic.
  */
-export function isServiceLlmCapable(serviceName: string): boolean {
+function isServiceLlmCapable(serviceName: string): boolean {
   return LLM_CAPABLE_SERVICES.has(serviceName);
 }
 
@@ -165,49 +165,3 @@ export function shouldRunServiceAsHybrid(serviceName: string): boolean {
   return mode === "hybrid" && getServiceLlmEnabled(serviceName);
 }
 
-/**
- * Should this service run in LLM mode?
- * True only when:
- *   - service mode is "llm"
- *   - service LLM is enabled
- *   - service is LLM-capable
- */
-export function shouldRunServiceAsLlm(serviceName: string): boolean {
-  if (HARD_LOCKED_DETERMINISTIC.has(serviceName)) return false;
-  if (!isServiceLlmCapable(serviceName)) return false;
-  const mode = getServiceMode(serviceName);
-  return mode === "llm" && getServiceLlmEnabled(serviceName);
-}
-
-// ─── Safe Diagnostics ───────────────────────────────────────
-
-const ALL_SERVICES: ServiceName[] = [
-  "intent_planner",
-  "query_builder",
-  "signal_scout",
-  "intent_matcher",
-  "source_verifier",
-  "value_allocator",
-  "trust_verifier",
-  "payment_decider",
-];
-
-/**
- * Get execution mode summary for all services.
- * Safe for diagnostics — no secrets.
- */
-export function getServiceExecutionModeSummary(): Array<{
-  serviceName: string;
-  mode: AgentServiceExecutionMode;
-  llmEnabled: boolean;
-  llmCapable: boolean;
-  hardLocked: boolean;
-}> {
-  return ALL_SERVICES.map((name) => ({
-    serviceName: name,
-    mode: getServiceMode(name),
-    llmEnabled: getServiceLlmEnabled(name),
-    llmCapable: isServiceLlmCapable(name),
-    hardLocked: HARD_LOCKED_DETERMINISTIC.has(name),
-  }));
-}
