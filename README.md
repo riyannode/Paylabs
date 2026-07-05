@@ -2,13 +2,33 @@
 
 AI search/crawler + creator monetization platform. Every search is budgeted, every source is paid, every creator gets their share.
 
-Users ask a question, connect a PayLabs payment wallet, run an x402-paid AI search, and get an AI answer — where the creators behind the sources used in that answer automatically receive USDC payouts.
-
-## What PayLabs Does
-
 **For users:** AI-powered source discovery. Ask a question, get answers backed by real sources from across the RSShub, with full transparency on what was searched, which sources were used, and what it cost.
 
 **For creators:** Automatic monetization. Register your GitHub repos, blogs, or domains as sources. When PayLabs uses your content in an answer, you get paid in USDC — no manual invoicing, no chasing payments.
+
+---
+
+## How to Try PayLabs
+
+### User
+
+1. Connect/Login Google create a PayLabs Wallet/DCW
+2. If you do not have test USDC, copy your wallet address from the wallet modal and use the `Open Circle Faucet` button.
+3. After receiving test USDC, deposit it into Gateway Balance.
+4. Once Gateway Balance is ready, submit a query from the chat page.
+5. Open Explorer to see the x402 payment flow.
+
+PayLabs uses Gateway Balance for automatic x402 payments. Users do not choose settlement mode manually.
+
+### Creator
+
+1. Open Creator Profile.
+2. Connet/Login Google to create Creator Wallet/UCW
+3. Register your source URL.
+4. Complete the ownership verification step.
+5. Once verified, your source can become eligible for creator payouts when used in PayLabs runs.
+
+The Creator Wallet is separate from the PayLabs Wallet. It is used for creator identity, source ownership, and monetization.
 
 ---
 
@@ -53,30 +73,6 @@ Implementation is split across:
 - **PayLabs explores an agent-native economy model where AI search, source discovery, x402 nanopayments, and creator monetization run inside one delegated agent runtime.**
 
 - **The key design insight is separation of authority: the LLM Brain can plan and recommend, but deterministic controllers lock pricing, wallet usage, payment refs, and settlement behavior.**
-
----
-
-## How to Try PayLabs
-
-### User
-
-1. Connect/Login Google create a PayLabs Wallet/DCW
-2. If you do not have test USDC, copy your wallet address from the wallet modal and use the `Open Circle Faucet` button.
-3. After receiving test USDC, deposit it into Gateway Balance.
-4. Once Gateway Balance is ready, submit a query from the chat page.
-5. Open Explorer to see the x402 payment flow.
-
-PayLabs uses Gateway Balance for automatic x402 payments. Users do not choose settlement mode manually.
-
-### Creator
-
-1. Open Creator Profile.
-2. Connet/Login Google to create Creator Wallet/UCW
-3. Register your source URL.
-4. Complete the ownership verification step.
-5. Once verified, your source can become eligible for creator payouts when used in PayLabs runs.
-
-The Creator Wallet is separate from the PayLabs Wallet. It is used for creator identity, source ownership, and monetization.
 
 ---
 
