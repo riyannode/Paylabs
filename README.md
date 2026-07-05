@@ -440,7 +440,7 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 - **Chat Not Working?**
 PayLabs chat and Brain planning use local 9Router as the LLM routing layer.
 If chat responses, Brain planning, or AI answers stop working, the issue may be related to 9Router access, provider limits, routing, or API key configuration.
-Please contact me so the LLM route can be checked.
+Please contact maintainer so the LLM route can be checked.
 
 ## Tech Stack
 
