@@ -432,7 +432,7 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 - **Advanced scraper link hardening:** PayLabs already supports the main source discovery and paid agent flow, but advanced scraper deep-link coverage still needs one follow-up patch for broader URL normalization, retries, and edge-case source formats, and now chat crawler just support for AI and Crypto Topics with spesific category
 
 - **Route Check:** x402 fee can settle before Brain/LLM availability is known.
-If Brain/LLM fails afterward, the run fails safely as brain_failed and cannot execute, but the 0.000001 USDC Route Check fee is not refunded.
+If Brain/LLM fails afterward, the run fails safely as 504 brain_failed and cannot execute, but the 0.000001 USDC Route Check fee is not refunded.
 Accepted for now because the amount is minimal.
 
 ## Runtime Notes
