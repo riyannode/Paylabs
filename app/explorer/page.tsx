@@ -449,7 +449,7 @@ export default async function DashboardPage() {
                       </div>
                       {actorKindLabel(r.buyer, r, "buyer") && (
                         <div className="muted" style={{ fontSize: 10 }}>
-                          {actorKindLabel(r.buyer, r, "buyer")}
+                          ({actorKindLabel(r.buyer, r, "buyer")})
                         </div>
                       )}
                     </td>
@@ -457,7 +457,7 @@ export default async function DashboardPage() {
                       <div className="data-mono" style={{ fontSize: 12, color: "var(--muted, #888)" }}>→</div>
                       {arrowFlowLabel(r) && (
                         <div className="muted" style={{ fontSize: 9 }}>
-                          {arrowFlowLabel(r)}
+                          ({arrowFlowLabel(r)})
                         </div>
                       )}
                     </td>
@@ -467,7 +467,7 @@ export default async function DashboardPage() {
                       </div>
                       {actorKindLabel(r.seller, r, "seller") && (
                         <div className="muted" style={{ fontSize: 10 }}>
-                          {actorKindLabel(r.seller, r, "seller")}
+                          ({actorKindLabel(r.seller, r, "seller")})
                         </div>
                       )}
                     </td>
