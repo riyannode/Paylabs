@@ -242,6 +242,38 @@ function labelNode(name: string | null | undefined): string {
   return name.split("_").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
 }
 
+function actorKindLabel(
+  name: string | null | undefined,
+  row: NormalizedPaymentRow,
+  side: "buyer" | "seller"
+): string {
+  if (!name) return "";
+  const raw = String(name);
+  if (
+    raw === "User" ||
+    raw === "user" ||
+    raw === "run_budget_controller" ||
+    raw === "Platform" ||
+    raw === "brain"
+  ) {
+    return "";
+  }
+  const macroNodes = new Set([
+    "discovery_planner",
+    "payment_decision",
+    "settlement_memory",
+  ]);
+  if (macroNodes.has(raw)) return "Node";
+  if (side === "seller" && row.node_type === "service") return "Child";
+  return "";
+}
+
+function arrowFlowLabel(row: NormalizedPaymentRow): string {
+  if (row.source === "preflight") return "Preflight";
+  if (row.source === "entry") return "Run Payment";
+  return "";
+}
+
 function timeAgo(dateStr: string): string {
   const d = new Date(dateStr);
   const now = new Date();
@@ -398,7 +430,9 @@ export default async function DashboardPage() {
               <thead>
                 <tr>
                   <th>Time</th>
-                  <th>Buyer → Seller</th>
+                  <th>Buyer</th>
+                  <th></th>
+                  <th>Seller</th>
                   <th>Amount</th>
                   <th>Status</th>
                   <th>Payment Visibility</th>
@@ -411,11 +445,31 @@ export default async function DashboardPage() {
                     <td className="muted">{timeAgo(r.created_at)}</td>
                     <td>
                       <div className="data-mono" style={{ fontSize: 12 }}>
-                        {labelNode(r.buyer)} → {labelNode(r.seller)}
+                        {labelNode(r.buyer)}
                       </div>
-                      <div className="muted" style={{ fontSize: 10 }}>
-                        {r.source === "preflight" ? "Preflight" : r.source === "entry" ? "Entry" : "Service"}
+                      {actorKindLabel(r.buyer, r, "buyer") && (
+                        <div className="muted" style={{ fontSize: 10 }}>
+                          {actorKindLabel(r.buyer, r, "buyer")}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ textAlign: "center", padding: "0 4px" }}>
+                      <div className="data-mono" style={{ fontSize: 12, color: "var(--muted, #888)" }}>→</div>
+                      {arrowFlowLabel(r) && (
+                        <div className="muted" style={{ fontSize: 10 }}>
+                          {arrowFlowLabel(r)}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <div className="data-mono" style={{ fontSize: 12 }}>
+                        {labelNode(r.seller)}
                       </div>
+                      {actorKindLabel(r.seller, r, "seller") && (
+                        <div className="muted" style={{ fontSize: 10 }}>
+                          {actorKindLabel(r.seller, r, "seller")}
+                        </div>
+                      )}
                     </td>
                     <td className="data-mono">{usdc(r.amount_usdc)}</td>
                     <td>
