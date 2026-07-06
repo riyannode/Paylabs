@@ -5,15 +5,19 @@
  * Circle Gateway x402 payment requirements. The buyer uses this
  * challenge to create a signed payment payload via BatchEvmScheme.
  *
- * Also provides verify+settle for the retry request with payment header.
+ * Calls settle() as the sole verification+payment path — no prior
+ * verify() step. settle() validates signatures before committing
+ * funds, which is Circle's preferred approach for latency-sensitive
+ * production deployments (verify() is only useful for diagnostics).
+ * Note: settlement failure blocks handler execution — the service
+ * must not proceed and should return 402 to the buyer.
  *
  * Flow:
  *   1. Buyer calls seller endpoint (no payment)
  *   2. Seller returns 402 + PAYMENT-REQUIRED header (base64 JSON)
  *   3. Buyer signs payment payload, retries with PAYMENT-SIGNATURE header
- *   4. Seller verifies signature via BatchFacilitatorClient
- *   5. Seller settles payment via BatchFacilitatorClient
- *   6. Seller executes agent logic and returns result
+ *   4. Seller settles payment via BatchFacilitatorClient.settle()
+ *   5. Seller executes agent logic and returns result
  */
 
 import { createRequire } from "node:module";
