@@ -656,7 +656,7 @@ PayLabs uses Circle Gateway's `settle()` endpoint directly for standard seller f
 
 Use `verify()` only for diagnostics, debugging, or custom preflight validation.
 
-**Reference:** [Circle Gateway Seller Quickstart](https://developers.circle.com/gateway/nanopayments/quickstarts/seller)
+**Reference:** [Circle Gateway — Accept Payments with Nanopayments (Seller Quickstart)](https://developers.circle.com/gateway/nanopayments/quickstarts/seller)
 
 
 ## Reusable Arc/Circle x402 SDKs
