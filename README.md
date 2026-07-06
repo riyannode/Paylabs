@@ -645,8 +645,17 @@ Paylabs manually decodes the `PAYMENT-REQUIRED` and `PAYMENT-SIGNATURE` headers 
 
 Manual decoding lets us trace every payment hop in the hierarchy (user → platform → brain → node → child) to its on-chain transaction in real time — for full audit trail visibility.
 
-Reference inspiration: [the-canteen-dev/circle-agent](https://github.com/the-canteen-dev/circle-agent) — for x402 settlement tracing, Gateway batch visibility, and Arc Testnet explorer proof patterns.
+**Reference:** [the-canteen-dev/circle-agent](https://github.com/the-canteen-dev/circle-agent) — for x402 settlement tracing, Gateway batch visibility, and Arc Testnet explorer proof patterns.
 
+## x402 Settlement Flow
+
+PayLabs uses Circle Gateway's `settle()` endpoint directly for standard seller flows.
+
+**Why:** `settle()` already validates the payment and guarantees settlement in a single request. Calling `verify()` first only adds an extra network round trip.
+
+Use `verify()` only for diagnostics, debugging, or custom preflight validation.
+
+**Reference:** [Circle Gateway Seller Quickstart](https://developers.circle.com/gateway/nanopayments/quickstarts/seller)
 
 
 ## Reusable Arc/Circle x402 SDKs
