@@ -436,7 +436,6 @@ This prevents double-pay on retry, crash recovery, and concurrent requests.
 | Method | Implementation |
 |--------|---------------|
 | Google OAuth | ID token verified via Google `tokeninfo` endpoint |
-| Email OTP | 6-digit code, SHA-256 hashed, 5min TTL, Resend delivery |
 | WebAuthn Passkey | SimpleWebAuthn, credential stored server-side |
 
 Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
