@@ -697,7 +697,14 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
       topics: result.data.topics,
       locked_phrases: result.data.locked_phrases,
       negative_entities: result.data.negative_entities,
-      entity_terms: det.entity_terms,
+      entity_terms: [...new Set([
+          ...result.data.primary_entities,
+          ...result.data.secondary_entities,
+        ].flatMap((e: { canonical: string; text: string }) =>
+          e.text.toLowerCase() === e.canonical.toLowerCase()
+            ? [e.canonical]
+            : [e.canonical, e.text]
+        ))].slice(0, 10),
       expanded_queries: result.data.expanded_queries,
       negative_filters: result.data.negative_filters,
       source_preferences: result.data.source_preferences,
