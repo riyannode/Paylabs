@@ -484,7 +484,7 @@ Please contact maintainer so the LLM route can be checked.
 |-------|-----------|
 | **Framework** | Next.js 15, React 19, TypeScript |
 | **Database** | Supabase (Postgres, RLS) |
-| **Agent Runtime** | LangChain / LangGraph — directed graph orchestration |
+| **Agent Runtime** | LangGraph & custom typescript— directed graph orchestration |
 | **Wallets** | Circle UCW (creator-facing), Circle DCW (chat user) |
 | **Payments** | x402 protocol, Circle Gateway, x402 batching |
 | **Blockchain** | Arc Testnet (chain ID 5042002), viem |
