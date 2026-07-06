@@ -465,6 +465,8 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 If Brain/LLM fails afterward, the run fails safely as 504 brain_failed and cannot execute, but the 0.000001 USDC Route Check fee is not refunded.
 Accepted for now because the amount is minimal.
 
+- **Wallet:** email OTP backend for UCW and DCW remains due to testing needs
+
 ## Runtime Notes
 
 - **Some paid runs may take longer to complete:** PayLabs runs multiple backend agent services and several x402 payment edges during a single paid search. This can include Brain planning, macro-node execution, child service calls, source discovery, payment settlement metadata, and receipt generation. If the chat looks stuck or the answer does not appear immediately, please wait. The backend may still be processing the agent workflow and should return the final answer when the run finishes.
