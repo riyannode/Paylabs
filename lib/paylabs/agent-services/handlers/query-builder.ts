@@ -225,7 +225,8 @@ function extractLockedPhrases(goal: string): string[] {
 // ─── Entity Classification ─────────────────────────────────
 
 function classifyEntity(term: string): { type: string; canonical: string } {
-  const key = term.toLowerCase();
+  // Strip punctuation but preserve spaces/hyphens for multi-word matching
+  const key = term.replace(/[^\w\s-]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
   const alias = ENTITY_ALIASES[key];
   if (alias) return { type: alias.type, canonical: alias.canonical };
   return { type: "concept", canonical: term };
@@ -238,8 +239,10 @@ function classifyEntity(term: string): { type: string; canonical: string } {
  * "sol" won't match "solana", "us" won't match "business".
  */
 function hasBoundaryMatch(goalLower: string, token: string): boolean {
-  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[\\s,;:!?\\.])${escaped}([\\s,;:!?\\.]|$)`, "i").test(goalLower);
+  // Strip wrapping punctuation so "erc-8004)" matches like "erc-8004"
+  const clean = token.replace(/^[^\w]+|[^\w]+$/g, '');
+  const escaped = clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[\\s,;:!?\\.\\(\\)])${escaped}([\\s,;:!?\\.\\(\\)]|$)`, "i").test(goalLower);
 }
 
 // ─── Negative Entity Generation ────────────────────────────
@@ -694,14 +697,7 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
       topics: result.data.topics,
       locked_phrases: result.data.locked_phrases,
       negative_entities: result.data.negative_entities,
-      entity_terms: [...new Set([
-          ...result.data.primary_entities,
-          ...result.data.secondary_entities,
-        ].flatMap((e: { canonical: string; text: string }) =>
-          e.text.toLowerCase() === e.canonical.toLowerCase()
-            ? [e.canonical]
-            : [e.canonical, e.text]
-        ))].slice(0, 10),
+      entity_terms: det.entity_terms,
       expanded_queries: result.data.expanded_queries,
       negative_filters: result.data.negative_filters,
       source_preferences: result.data.source_preferences,
