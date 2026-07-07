@@ -76,6 +76,28 @@ Implementation is split across:
 
 ---
 
+## x402 Raw Header Decode
+
+PayLabs manually implements the x402 HTTP challenge/response flow instead of relying on the SDK's high-level middleware or client wrapper. The application constructs the `PAYMENT-REQUIRED` challenge, decodes the `PAYMENT-SIGNATURE` payload, and manages the payment lifecycle at the HTTP layer while delegating all payment verification and settlement to Circle's official `BatchFacilitatorClient`.
+
+**Why:** The SDK wrapper doesn't return raw signature/settlement data — just `{data, amount, status}`. Using it directly means we can't get the `txHash`/`settlementId` needed to generate an explorer link for every agent-to-agent payment.
+
+Manual decoding lets us trace every payment hop in the hierarchy (user → platform → brain → node → child) to its on-chain transaction in real time — for full audit trail visibility and track all payment link after settlement in [Explorer](https://paylabs.vercel.app/explorer)
+
+**Reference:** [the-canteen-dev/circle-agent](https://github.com/the-canteen-dev/circle-agent) — for x402 settlement tracing, Gateway batch visibility, and Arc Testnet explorer proof patterns.
+
+## x402 Settlement Flow
+
+PayLabs uses Circle Gateway's `settle()` endpoint directly for standard seller flows.
+
+**Why:** `settle()` already validates the payment and guarantees settlement in a single request. Calling `verify()` first only adds an extra network round trip.
+
+Use `verify()` only for diagnostics, debugging, or custom preflight validation.
+
+**Reference:** [Circle Gateway — Accept Payments with Nanopayments (Seller Quickstart)](https://developers.circle.com/gateway/nanopayments/quickstarts/seller)
+
+---
+
 ## Agent Stack
 
 PayLabs build on a LangGraph Brain planner + custom TypeScript x402 agent runtime.
@@ -637,27 +659,6 @@ pnpm typecheck    # tsc --noEmit
 - Creator payout ledger is idempotent — claim-before-transfer prevents double-pay
 
 ---
-
-## x402 Raw Header Decode
-
-PayLabs manually implements the x402 HTTP challenge/response flow instead of relying on the SDK's high-level middleware or client wrapper. The application constructs the `PAYMENT-REQUIRED` challenge, decodes the `PAYMENT-SIGNATURE` payload, and manages the payment lifecycle at the HTTP layer while delegating all payment verification and settlement to Circle's official `BatchFacilitatorClient`.
-
-**Why:** The SDK wrapper doesn't return raw signature/settlement data — just `{data, amount, status}`. Using it directly means we can't get the `txHash`/`settlementId` needed to generate an explorer link for every agent-to-agent payment.
-
-Manual decoding lets us trace every payment hop in the hierarchy (user → platform → brain → node → child) to its on-chain transaction in real time — for full audit trail visibility and track all payment link after settlement in [Explorer](https://paylabs.vercel.app/explorer)
-
-**Reference:** [the-canteen-dev/circle-agent](https://github.com/the-canteen-dev/circle-agent) — for x402 settlement tracing, Gateway batch visibility, and Arc Testnet explorer proof patterns.
-
-## x402 Settlement Flow
-
-PayLabs uses Circle Gateway's `settle()` endpoint directly for standard seller flows.
-
-**Why:** `settle()` already validates the payment and guarantees settlement in a single request. Calling `verify()` first only adds an extra network round trip.
-
-Use `verify()` only for diagnostics, debugging, or custom preflight validation.
-
-**Reference:** [Circle Gateway — Accept Payments with Nanopayments (Seller Quickstart)](https://developers.circle.com/gateway/nanopayments/quickstarts/seller)
-
 
 ## Reusable Arc/Circle x402 SDKs
 
