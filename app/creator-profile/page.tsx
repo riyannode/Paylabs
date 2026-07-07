@@ -7,7 +7,7 @@ export default function CreatorProfilePage() {
       <SubPageMobileNav />
     <div style={{ display: "grid", gap: 16 }}>
       <div>
-        <a href="/creator-dashboard" style={{ fontSize: 13, color: "var(--muted)", fontWeight: 500 }}>← Creator Dashboard</a>
+        <a href="/" className="pl-back-btn">← Back to Chat</a>
         <h1 className="page-title">Creator Profile</h1>
       </div>
 
