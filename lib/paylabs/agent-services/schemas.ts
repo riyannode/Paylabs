@@ -64,6 +64,21 @@ export const SignalScoutInput = z.object({
   negative_filters: z.array(z.string()).optional(),
   source_preferences: z.array(z.string()).optional(),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
+  // Phase 3A: structured fields from Query Builder (optional for backward compat)
+  locked_phrases: z.array(z.string()).optional(),
+  primary_entities: z.array(z.object({
+    text: z.string(),
+    canonical: z.string(),
+    type: z.string(),
+    required: z.boolean(),
+  })).optional(),
+  secondary_entities: z.array(z.object({
+    text: z.string(),
+    canonical: z.string(),
+    type: z.string(),
+    required: z.boolean(),
+  })).optional(),
+  negative_entities: z.array(z.string()).optional(),
 });
 type SignalScoutInput = z.infer<typeof SignalScoutInput>;
 
