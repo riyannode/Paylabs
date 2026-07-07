@@ -313,6 +313,25 @@ function buildScopedExpandedQueries(
   return [...new Set(queries)].slice(0, 7);
 }
 
+/**
+ * Compute flat entity_terms from structured entities.
+ * Shared by deterministic and LLM paths — single source of truth.
+ * Priority: primary canonical → primary text → secondary canonical → secondary text.
+ */
+function computeEntityTerms(
+  primaryEntities: Array<{ text: string; canonical: string }>,
+  secondaryEntities: Array<{ text: string; canonical: string }>,
+): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  const add = (s: string) => { if (!seen.has(s)) { seen.add(s); result.push(s); } };
+  for (const e of primaryEntities) add(e.canonical);
+  for (const e of primaryEntities) { if (e.text.toLowerCase() !== e.canonical.toLowerCase()) add(e.text); }
+  for (const e of secondaryEntities) add(e.canonical);
+  for (const e of secondaryEntities) { if (e.text.toLowerCase() !== e.canonical.toLowerCase()) add(e.text); }
+  return result.slice(0, 15);
+}
+
 // ─── Canonical Dedup ───────────────────────────────────────
 
 function deduplicateEntities<T extends { canonical: string }>(
@@ -500,24 +519,7 @@ function runDeterministicQueryBuilder(
   }
 
   // ── Step 11: Computed entity_terms (flat string array for compatibility) ──
-  // Priority: primary canonical → primary text → secondary canonical → secondary text
-  // This ensures primary entities are never pushed out by secondary surface forms
-  const entityTermsSet = new Set<string>();
-  for (const e of dedupedPrimary) {
-    entityTermsSet.add(e.canonical);
-  }
-  for (const e of dedupedPrimary) {
-    const textLower = e.text.toLowerCase();
-    if (textLower !== e.canonical.toLowerCase()) entityTermsSet.add(e.text);
-  }
-  for (const e of dedupedSecondary) {
-    entityTermsSet.add(e.canonical);
-  }
-  for (const e of dedupedSecondary) {
-    const textLower = e.text.toLowerCase();
-    if (textLower !== e.canonical.toLowerCase()) entityTermsSet.add(e.text);
-  }
-  const entityTerms = [...entityTermsSet].slice(0, 15);
+  const entityTerms = computeEntityTerms(dedupedPrimary, dedupedSecondary);
 
   return {
     expanded_queries: expandedQueries,
@@ -611,34 +613,72 @@ export const queryBuilderHandler: ServiceHandler = async (
   const { generateStructuredJson } = await import("@/lib/paylabs/ai/llm-structured");
   const { toInternalRouteTier } = await import("./helpers");
 
-  const SYSTEM_PROMPT = `You are PayLabs Query Builder.
-Your task is to create precise source discovery queries from the normalized goal.
-Use only the provided normalized goal, topics, Brain query variants, and route context. Preserve exact names:
-project names
-protocol names
-product names
-company names
-URLs/domains
-version numbers
-technical terms
-dates
-source names (e.g. CoinDesk, TechCrunch)
+  const SYSTEM_PROMPT = `=== ROLE ===
+You are PayLabs Query Builder. Your task is to analyze a normalized goal and produce structured query expansion output for source discovery.
+You do NOT choose final sources. You do NOT invent URLs, titles, prices, wallets, or execute payments.
 
-You may refine or expand the Brain query variants to improve source discovery coverage.
-If Brain query variants are provided, use them as your primary input and refine them — do NOT discard them.
+=== PRESERVE EXACT NAMES ===
+Always preserve these exactly as written (no paraphrasing):
+project names, protocol names, product names, company names,
+URLs/domains, version numbers, technical terms, dates, source names.
 
-Build query variants for source discovery only. Do not choose final sources. Do not invent URLs. Do not invent titles. Do not set prices. Do not choose wallets. Do not execute payments. Do not settle payments.
-Query rules:
-Prefer exact-match queries over broad generic queries.
-Include both entities for comparison tasks.
-Include claim-focused wording for verification tasks.
-Add recency wording only if the user asks for latest/current/recent/today/this week/2025/2026/new.
-Do not return more than 7 expanded_queries.
-Avoid duplicate queries.
-Avoid generic filler queries.
-Expanded queries MUST keep all required entities. Do not drop entities when expanding.
-negative_filters should remove obvious noise only. source_preferences should be short tags such as official, credible, recent, primary_source, technical, documentation.
-safe_summary must be 1 short sentence. It must not mention internal chain-of-thought, payment internals, wallets, x402, Gateway, or settlement.
+=== FIELD RULES ===
+primary_entities:
+- StructuredEntity[] — extracted from the user's goal.
+- Each entity: { text, canonical, type, required }.
+- type is one of: protocol, product, company, chain, token, model, standard, contract, client, concept, or other specific type.
+- required: true if the entity is essential to the goal (appears as a named subject, not a sentence opener).
+- Extract ALL named entities: project names, protocol names, product names, company names, model names, chain names.
+- For comparison tasks, BOTH compared entities MUST appear here.
+
+secondary_entities:
+- StructuredEntity[] — supporting entities not in primary.
+- type/required rules same as primary_entities.
+- Include: topic tags, domain terms, or related concepts that refine scope.
+- required: true if the entity appears as a whole word boundary match in the goal, false if inferred from topics.
+
+locked_phrases:
+- string[] — multi-word phrases from the goal that must NOT be split into individual tokens.
+- Examples: "Circle Gateway", "Claude Code", "ERC-8004", "Model Context Protocol".
+- Include CamelCase tokens (>=4 chars), consecutive capitalized words (2+), and known alias matches.
+
+negative_entities:
+- string[] — terms to EXCLUDE from source discovery to filter noise.
+- Domain-specific: for crypto goals, exclude "price prediction", "trading signal", etc.
+- For narrow queries (<=2 entities), exclude "in the news", "breaking news".
+
+topics:
+- string[] — topic tags from the input. Pass through as-is. Do NOT add topics not in the input.
+
+expanded_queries:
+- string[] — 3-7 search query variants for source discovery.
+- MUST preserve ALL primary_entities in every query. Never drop required entities.
+- Prefer exact-match queries over broad generic queries.
+- Include both entities for comparison tasks.
+- Add recency wording ONLY if the user explicitly asks for latest/current/recent/today/this week/2025/2026/new.
+- No duplicate queries. No generic filler queries.
+
+negative_filters:
+- string[] — generic noise filters. Default: ["advertisement", "sponsored", "paywall"].
+- Remove "paywall" only if the goal mentions free/open access.
+
+source_preferences:
+- string[] — short tags indicating desired source quality.
+- Default: ["credible", "recent"].
+- Add "academic", "peer-reviewed" for research goals.
+- Add "official", "primary_source" for protocol/company documentation goals.
+
+entity_terms:
+- string[] — flat deduped list of all entity text and canonical forms (max 15).
+- Priority: primary canonical → primary text → secondary canonical → secondary text.
+- This is a compatibility field for downstream services.
+
+safe_summary:
+- 1 short sentence describing what was built.
+- MUST NOT mention internal chain-of-thought, payment internals, wallets, x402, Gateway, or settlement.
+- Example: "Built 4 queries for Circle Gateway documentation, 3 entities, 2 filters."
+
+=== FORMAT ===
 Return JSON only. No markdown. No commentary. No extra keys. The first character must be "{"`;
 
   const brainVariantsText = brainVariants.length > 0
@@ -697,14 +737,7 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
       topics: result.data.topics,
       locked_phrases: result.data.locked_phrases,
       negative_entities: result.data.negative_entities,
-      entity_terms: [...new Set([
-          ...result.data.primary_entities,
-          ...result.data.secondary_entities,
-        ].flatMap((e: { canonical: string; text: string }) =>
-          e.text.toLowerCase() === e.canonical.toLowerCase()
-            ? [e.canonical]
-            : [e.canonical, e.text]
-        ))].slice(0, 10),
+      entity_terms: computeEntityTerms(result.data.primary_entities, result.data.secondary_entities),
       expanded_queries: result.data.expanded_queries,
       negative_filters: result.data.negative_filters,
       source_preferences: result.data.source_preferences,
