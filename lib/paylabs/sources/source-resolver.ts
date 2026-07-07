@@ -240,7 +240,13 @@ function isDomainOrSubdomain(input: string, baseDomain: string): boolean {
 
 /* hasTerm now uses shared hasBoundaryTerm from source-term-matching */
 
-function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entityTerms?: string[]): SourceItem[] {
+function filterByRelevance(
+  sources: SourceItem[],
+  normalizedGoal: string,
+  entityTerms?: string[],
+  primaryEntities?: Array<{ text: string; canonical: string; type: string; required: boolean }>,
+  negativeEntities?: string[],
+): SourceItem[] {
   if (sources.length === 0) return sources;
 
   const goalLower = normalizedGoal.toLowerCase();
@@ -255,6 +261,12 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entity
     entityPatterns.push(ownerRepoMatch[1].toLowerCase());
     entityPatterns.push(ownerRepoMatch[2].toLowerCase());
   }
+
+  // Phase 3A: build primary entity canonical lookup for stricter filtering
+  const primaryCanons = new Set((primaryEntities || []).map((e) => e.canonical.toLowerCase()));
+
+  // Phase 3A: build negative entity patterns for noise filtering
+  const negativePatterns = (negativeEntities || []).map((e) => e.toLowerCase()).filter(Boolean);
 
   // Domain-specific intent — use word boundaries to avoid "report" matching "repo"
   const isGitHubIntent = /\bgithub\b/i.test(goalLower) || /\brepo(s|sitory|sitories)?\b/i.test(goalLower) || !!ownerRepoMatch;
@@ -276,6 +288,12 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entity
     // Include reason in combined text so topic_route:ai/openai helps entity matching
     const combined = `${title} ${summary} ${domain} ${routePath} ${url} ${reason}`;
 
+    // Phase 3A: Negative entity filter — reject sources matching noise patterns
+    if (negativePatterns.length > 0) {
+      const isNegative = negativePatterns.some((ne) => combined.includes(ne));
+      if (isNegative) return false;
+    }
+
     // Wikipedia/current-events guard: reject generic catch-all for AI/crypto queries
     if (_queryHasDomainTopic && isGenericCatchAllSource({ domain, routePath, url })) {
       return false;
@@ -295,6 +313,10 @@ function filterByRelevance(sources: SourceItem[], normalizedGoal: string, entity
       const hasEntity = entityPatterns.some((et) => hasBoundaryTerm(combined, et));
       if (!hasEntity) return false;
     }
+
+    // Phase 3A: Primary entity boost — if primary entities defined, prefer sources matching them
+    // This is a soft filter: sources matching primary entities pass, others pass too but rank lower
+    // (ranking happens downstream — this is just the relevance gate)
 
     // GitHub intent: must be from github.com (or subdomain) or have repo-related content
     if (isGitHubIntent) {
@@ -334,7 +356,13 @@ export async function resolveSources(
     // Apply relevance filter: reject sources that don't match the query
     // Pass entity_terms so short meaningful tokens (x402, ai, usdc) are used in matching
     const rawEntityCount = (input.entityTerms || []).length;
-    const sources = filterByRelevance(rawSources, input.normalizedGoal, input.entityTerms);
+    const sources = filterByRelevance(
+      rawSources,
+      input.normalizedGoal,
+      input.entityTerms,
+      input.primaryEntities,
+      input.negativeEntities,
+    );
     const sanitizedEntityCount = sanitizeEntityTerms(input.entityTerms || []).length;
     const sourceConfidence = computeSourceConfidence(sources);
     // Safe diagnostic: entity term counts (no raw secrets)

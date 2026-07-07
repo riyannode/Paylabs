@@ -75,7 +75,9 @@ function scoreItem(
   expandedQueries: string[],
   entityTerms: string[],
   negativeFilters: string[] = [],
-  sourcePreferences: string[] = []
+  sourcePreferences: string[] = [],
+  primaryEntities: string[] = [],
+  negativeEntities: string[] = [],
 ): { score: number; entityHit: boolean } {
   let score = 0;
   let entityHit = false;
@@ -88,18 +90,23 @@ function scoreItem(
   const routePath = String(item.route_path || "").toLowerCase();
   const urlPath = (() => { try { return new URL(sourceUrl).pathname.toLowerCase(); } catch { return ""; } })();
 
-  // 1. Exact entity match (strongest signal) — weighted 2x
+  // Build primary entity lookup for weighting
+  const primarySet = new Set(primaryEntities.map((e) => e.toLowerCase()));
+
+  // 1. Exact entity match (strongest signal) — weighted 2x, primary gets 1.5x bonus
   for (const entity of entityTerms) {
     const lower = entity.toLowerCase();
     if (!lower) continue;
+    const isPrimary = primarySet.has(lower);
+    const weight = isPrimary ? 1.5 : 1.0;
     let matched = false;
-    if (hasEntityTerm(title, lower)) { score += 20; matched = true; }
-    else if (hasEntityTerm(summary, lower)) { score += 8; matched = true; }
-    else if (hasEntityTerm(sourceUrl, lower)) { score += 16; matched = true; }
-    else if (hasEntityTerm(routePath, lower)) { score += 14; matched = true; }
-    else if (hasEntityTerm(urlPath, lower)) { score += 12; matched = true; }
-    else if (hasEntityTerm(authorName, lower)) { score += 6; matched = true; }
-    else if (hasEntityTerm(domain, lower)) { score += 4; matched = true; }
+    if (hasEntityTerm(title, lower)) { score += Math.round(20 * weight); matched = true; }
+    else if (hasEntityTerm(summary, lower)) { score += Math.round(8 * weight); matched = true; }
+    else if (hasEntityTerm(sourceUrl, lower)) { score += Math.round(16 * weight); matched = true; }
+    else if (hasEntityTerm(routePath, lower)) { score += Math.round(14 * weight); matched = true; }
+    else if (hasEntityTerm(urlPath, lower)) { score += Math.round(12 * weight); matched = true; }
+    else if (hasEntityTerm(authorName, lower)) { score += Math.round(6 * weight); matched = true; }
+    else if (hasEntityTerm(domain, lower)) { score += Math.round(4 * weight); matched = true; }
     if (matched) entityHit = true;
   }
 
@@ -127,11 +134,19 @@ function scoreItem(
   // 4. Publisher diversity bonus
   if (publisher && publisher.length > 0) score += 1;
 
-  // 5. Negative filter penalty
+  // 5. Negative filter penalty (generic: advertisement, sponsored, paywall)
   for (const nf of negativeFilters) {
     const nfLower = nf.toLowerCase();
     if (title.includes(nfLower) || summary.includes(nfLower) || publisher.includes(nfLower)) {
       score -= 5;
+    }
+  }
+
+  // 5b. Negative entity penalty (domain-specific: price prediction, trading signal, etc.)
+  for (const ne of negativeEntities) {
+    const neLower = ne.toLowerCase();
+    if (title.includes(neLower) || summary.includes(neLower) || publisher.includes(neLower)) {
+      score -= 8;
     }
   }
 
@@ -296,13 +311,23 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
     negative_filters,
     source_preferences,
     routeTier,
+    primary_entities,
+    secondary_entities,
+    negative_entities,
   } = input.payload as {
     expanded_queries: string[];
     entity_terms: string[];
     negative_filters?: string[];
     source_preferences?: string[];
     routeTier?: DelegatedRouteTier;
+    primary_entities?: Array<{ text: string; canonical: string; type: string; required: boolean }>;
+    secondary_entities?: Array<{ text: string; canonical: string; type: string; required: boolean }>;
+    negative_entities?: string[];
   };
+
+  // Phase 3A: extract primary entity canonicals for scoring weight
+  const primaryEntityCanons = (primary_entities || []).map((e) => e.canonical);
+  const negativeEnts = negative_entities || [];
 
   // ── Step 1: RSSHub live search (always live-only, never DB fallback) ──
   const liveEnabled = process.env.PAYLABS_RSSHUB_LIVE_ENABLED !== "false";
@@ -394,7 +419,9 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
           expanded_queries || [],
           entity_terms || [],
           negative_filters || [],
-          source_preferences || []
+          source_preferences || [],
+          primaryEntityCanons,
+          negativeEnts,
         );
         return { ...item, local_score, entityHit };
       })

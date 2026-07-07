@@ -75,7 +75,9 @@ function scoreItemDeterministic(
   expandedQueries: string[],
   entityTerms: string[],
   negativeFilters: string[] = [],
-  sourcePreferences: string[] = []
+  sourcePreferences: string[] = [],
+  primaryEntities: string[] = [],
+  negativeEntities: string[] = [],
 ): number {
   let score = 0;
   const title = String(item.title || "").toLowerCase();
@@ -84,14 +86,19 @@ function scoreItemDeterministic(
   const authorName = String(item.author_name || "").toLowerCase();
   const domain = String(item.domain || "").toLowerCase();
 
-  // 1. Exact entity match (strongest signal)
+  // Build primary entity lookup for weighting
+  const primarySet = new Set(primaryEntities.map((e) => e.toLowerCase()));
+
+  // 1. Exact entity match (strongest signal) — primary gets 1.5x bonus
   for (const entity of entityTerms) {
     const lower = entity.toLowerCase();
     if (!lower) continue;
-    if (hasEntityTermScout(title, lower)) score += 10;
-    else if (hasEntityTermScout(summary, lower)) score += 4;
-    else if (hasEntityTermScout(authorName, lower)) score += 3;
-    else if (hasEntityTermScout(domain, lower)) score += 2;
+    const isPrimary = primarySet.has(lower);
+    const weight = isPrimary ? 1.5 : 1.0;
+    if (hasEntityTermScout(title, lower)) score += Math.round(10 * weight);
+    else if (hasEntityTermScout(summary, lower)) score += Math.round(4 * weight);
+    else if (hasEntityTermScout(authorName, lower)) score += Math.round(3 * weight);
+    else if (hasEntityTermScout(domain, lower)) score += Math.round(2 * weight);
   }
 
   // 2. Keyword overlap with queries
@@ -118,11 +125,19 @@ function scoreItemDeterministic(
   // 4. Publisher diversity bonus
   if (publisher && publisher.length > 0) score += 1;
 
-  // 5. Negative filter penalty
+  // 5. Negative filter penalty (generic: advertisement, sponsored, paywall)
   for (const nf of negativeFilters) {
     const nfLower = nf.toLowerCase();
     if (title.includes(nfLower) || summary.includes(nfLower) || publisher.includes(nfLower)) {
       score -= 5;
+    }
+  }
+
+  // 5b. Negative entity penalty (domain-specific: price prediction, trading signal, etc.)
+  for (const ne of negativeEntities) {
+    const neLower = ne.toLowerCase();
+    if (title.includes(neLower) || summary.includes(neLower) || publisher.includes(neLower)) {
+      score -= 8;
     }
   }
 
@@ -143,7 +158,9 @@ function runDeterministicSignalScout(
   entityTerms: string[],
   limit = 10,
   negativeFilters: string[] = [],
-  sourcePreferences: string[] = []
+  sourcePreferences: string[] = [],
+  primaryEntities: string[] = [],
+  negativeEntities: string[] = [],
 ): Array<{
   feed_item_id: string;
   title: string;
@@ -165,7 +182,7 @@ function runDeterministicSignalScout(
   // Score each item
   const scored = allActive.map((item) => ({
     item,
-    score: scoreItemDeterministic(item, expandedQueries, entityTerms, negativeFilters, sourcePreferences),
+    score: scoreItemDeterministic(item, expandedQueries, entityTerms, negativeFilters, sourcePreferences, primaryEntities, negativeEntities),
   }));
 
   // Sort by score descending, then by recency
@@ -277,13 +294,20 @@ async function runLiveSearch(
 export const signalScoutHandler: ServiceHandler = async (
   input: ServiceHandlerInput
 ): Promise<ServiceHandlerOutput> => {
-  const { expanded_queries, entity_terms, negative_filters, source_preferences, routeTier } = input.payload as {
+  const { expanded_queries, entity_terms, negative_filters, source_preferences, routeTier, primary_entities, secondary_entities, negative_entities } = input.payload as {
     expanded_queries: string[];
     entity_terms: string[];
     negative_filters?: string[];
     source_preferences?: string[];
     routeTier?: DelegatedRouteTier;
+    primary_entities?: Array<{ text: string; canonical: string; type: string; required: boolean }>;
+    secondary_entities?: Array<{ text: string; canonical: string; type: string; required: boolean }>;
+    negative_entities?: string[];
   };
+
+  // Phase 3A: extract primary entity canonicals for scoring weight
+  const primaryEntityCanons = (primary_entities || []).map((e) => e.canonical);
+  const negativeEnts = negative_entities || [];
 
   // ── Step 1: Try live RSSHub search + topic routes in parallel ──
   const liveEnabled = process.env.PAYLABS_RSSHUB_LIVE_ENABLED !== "false";
@@ -508,7 +532,9 @@ export const signalScoutHandler: ServiceHandler = async (
       entity_terms || [],
       10,
       negative_filters || [],
-      source_preferences || []
+      source_preferences || [],
+      primaryEntityCanons,
+      negativeEnts,
     );
     return {
       ok: true,
@@ -537,7 +563,9 @@ export const signalScoutHandler: ServiceHandler = async (
     entity_terms || [],
     20,
     negative_filters || [],
-    source_preferences || []
+    source_preferences || [],
+    primaryEntityCanons,
+    negativeEnts,
   );
 
   // Build safe metadata from deterministic candidates only
@@ -595,7 +623,9 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
       entity_terms || [],
       10,
       negative_filters || [],
-      source_preferences || []
+      source_preferences || [],
+      primaryEntityCanons,
+      negativeEnts,
     );
     return {
       ok: true,
