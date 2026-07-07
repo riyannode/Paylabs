@@ -300,9 +300,9 @@ export default async function DashboardPage() {
     treasuryUnallocatedUsdc,
   ] = await Promise.all([
     // x402 Service Payments
-    getRecentX402Payments(50),
+    getRecentX402Payments(25),
     // Preflight / Entry payments
-    getRecentPreflightPayments(50),
+    getRecentPreflightPayments(25),
     // Counts
     safeCount("paylabs_service_payment_events"),
     safeCount("paylabs_receipts"),
@@ -319,7 +319,8 @@ export default async function DashboardPage() {
   const allRows: NormalizedPaymentRow[] = [
     ...normalizeServiceRows(x402PaymentRows),
     ...normalizePreflightRows(preflightRows),
-  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  .slice(0, 25);
 
   // ─── User stats (unique wallets) ───
   const [
