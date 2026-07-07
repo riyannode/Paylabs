@@ -40,7 +40,7 @@ Real micropayments flow through the agent runtime, with automatic USDC distribut
 | Metric | Count |
 |---|---:|
 | Receipts generated across Easy / Normal / Advanced routes | **500+** |
-| x402 service payment service processed | **3,000+** |
+| x402 service payment processed | **3,000+** |
 | Users / testers onboarded | **50+** |
 
 - **Live Production:** [https://paylabs.vercel.app/](https://paylabs.vercel.app/)
@@ -73,6 +73,44 @@ Implementation is split across:
 - **PayLabs explores an agent-native economy model where AI search, source discovery, x402 nanopayments, and creator monetization run inside one delegated agent runtime.**
 
 - **The key design insight is separation of authority: the LLM Brain can plan and recommend, but deterministic controllers lock pricing, wallet usage, payment refs, and settlement behavior.**
+
+---
+
+## x402 Raw Header Decode
+
+PayLabs manually implements the x402 HTTP challenge/response flow instead of relying on the SDK's high-level middleware or client wrapper. The application constructs the `PAYMENT-REQUIRED` challenge, decodes the `PAYMENT-SIGNATURE` payload, and manages the payment lifecycle at the HTTP layer while delegating all payment verification and settlement to Circle's official `BatchFacilitatorClient`.
+
+**Why:** The SDK wrapper doesn't return raw signature/settlement data — just `{data, amount, status}`. Using it directly means we can't get the `txHash`/`settlementId` needed to generate an explorer link for every agent-to-agent payment.
+
+Manual decoding lets us trace every payment hop in the hierarchy (user → platform → brain → node → child) to its on-chain transaction in real time — for full audit trail visibility and track all payment link after settlement in [Explorer](https://paylabs.vercel.app/explorer)
+
+**Reference:** [the-canteen-dev/circle-agent](https://github.com/the-canteen-dev/circle-agent) — for x402 settlement tracing, Gateway batch visibility, and Arc Testnet explorer proof patterns.
+
+## x402 Settlement Flow
+
+PayLabs uses Circle Gateway's `settle()` endpoint directly for standard seller flows.
+
+**Why:** `settle()` already validates the payment and guarantees settlement in a single request. Calling `verify()` first only adds an extra network round trip.
+
+Use `verify()` only for diagnostics, debugging, or custom preflight validation.
+
+**Reference:** [Circle Gateway — Accept Payments with Nanopayments (Seller Quickstart)](https://developers.circle.com/gateway/nanopayments/quickstarts/seller)
+
+---
+
+## Reusable Arc/Circle x402 SDKs
+
+PayLabs also ships alongside standalone open-source SDKs for builders working with Arc, Circle Gateway, x402 payments, agent wallets, and batch proof visibility.
+
+These SDKs are reusable companion packages. They are not required to run the PayLabs web app, and each package can be used independently.
+
+| SDK | Purpose | Install |
+|-----|---------|---------|
+| [`x402-batch-codec`](https://github.com/riyannode/x402-batch-codec) | TypeScript codec for decoding Circle Gateway x402 `submitBatch` transactions on Arc, verifying buyer/seller batch presence, and encoding safe batch proof objects. Codec-only: no signing, no wallet execution, no raw payment headers. | `npm install github:riyannode/x402-batch-codec` |
+| [`x402-header-agent`](https://github.com/riyannode/x402-header-agent) | TypeScript + native Python SDK for Circle Gateway x402 header payments. Includes buyer/seller helpers, LangChain/CrewAI/custom agent adapters, batch payment helpers, Circle DCW signing, and a dual-role agent wrapper for services that need to receive x402 payments as a seller and spend x402 payments as a buyer. No raw buyer private keys. | `npm install github:riyannode/x402-header-agent` |
+| [`deepagent-x402-kit`](https://github.com/riyannode/deepagent-x402-kit) | Python LangChain / Deep Agents kit for ERC-8004 agent identity on Arc plus optional policy-gated Circle x402 tools. One Circle DCW wallet maps to one ERC-8004 agent identity. | `pip install "git+https://github.com/riyannode/deepagent-x402-kit.git"` |
+
+These packages are currently installed directly from GitHub and are not published to npm/PyPI yet. For reproducible installs, pin a commit SHA.
 
 ---
 
@@ -636,42 +674,6 @@ pnpm typecheck    # tsc --noEmit
 - Raw chain-of-thought never exposed
 - Creator payout ledger is idempotent — claim-before-transfer prevents double-pay
 
----
-
-## x402 Raw Header Decode
-
-Paylabs manually decodes the `PAYMENT-REQUIRED` and `PAYMENT-SIGNATURE` headers instead of using the SDK's `client.pay()` wrapper.
-
-**Why:** The SDK wrapper doesn't return raw signature/settlement data — just `{data, amount, status}`. Using it directly means we can't get the `txHash`/`settlementId` needed to generate an explorer link for every agent-to-agent payment.
-
-Manual decoding lets us trace every payment hop in the hierarchy (user → platform → brain → node → child) to its on-chain transaction in real time — for full audit trail visibility and track all payment link after settlement in [Explorer](https://paylabs.vercel.app/explorer)
-
-**Reference:** [the-canteen-dev/circle-agent](https://github.com/the-canteen-dev/circle-agent) — for x402 settlement tracing, Gateway batch visibility, and Arc Testnet explorer proof patterns.
-
-## x402 Settlement Flow
-
-PayLabs uses Circle Gateway's `settle()` endpoint directly for standard seller flows.
-
-**Why:** `settle()` already validates the payment and guarantees settlement in a single request. Calling `verify()` first only adds an extra network round trip.
-
-Use `verify()` only for diagnostics, debugging, or custom preflight validation.
-
-**Reference:** [Circle Gateway — Accept Payments with Nanopayments (Seller Quickstart)](https://developers.circle.com/gateway/nanopayments/quickstarts/seller)
-
-
-## Reusable Arc/Circle x402 SDKs
-
-PayLabs also ships alongside standalone open-source SDKs for builders working with Arc, Circle Gateway, x402 payments, agent wallets, and batch proof visibility.
-
-These SDKs are reusable companion packages. They are not required to run the PayLabs web app, and each package can be used independently.
-
-| SDK | Purpose | Install |
-|-----|---------|---------|
-| [`x402-batch-codec`](https://github.com/riyannode/x402-batch-codec) | TypeScript codec for decoding Circle Gateway x402 `submitBatch` transactions on Arc, verifying buyer/seller batch presence, and encoding safe batch proof objects. Codec-only: no signing, no wallet execution, no raw payment headers. | `npm install github:riyannode/x402-batch-codec` |
-| [`x402-header-agent`](https://github.com/riyannode/x402-header-agent) | TypeScript + native Python SDK for Circle Gateway x402 header payments. Includes buyer/seller helpers, LangChain/CrewAI/custom agent adapters, batch payment helpers, Circle DCW signing, and a dual-role agent wrapper for services that need to receive x402 payments as a seller and spend x402 payments as a buyer. No raw buyer private keys. | `npm install github:riyannode/x402-header-agent` |
-| [`deepagent-x402-kit`](https://github.com/riyannode/deepagent-x402-kit) | Python LangChain / Deep Agents kit for ERC-8004 agent identity on Arc plus optional policy-gated Circle x402 tools. One Circle DCW wallet maps to one ERC-8004 agent identity. | `pip install "git+https://github.com/riyannode/deepagent-x402-kit.git"` |
-
-These packages are currently installed directly from GitHub and are not published to npm/PyPI yet. For reproducible installs, pin a commit SHA.
 
 ## License
 
