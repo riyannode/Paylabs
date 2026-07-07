@@ -49,3 +49,6 @@ scripts/
 # Temp scripts (CodeQL sensitive data)
 .tmp_*
 paylabs.json
+
+# Local test files
+__tests__/
