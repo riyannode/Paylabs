@@ -36,7 +36,7 @@ export default function CreatorPage() {
       <SubPageMobileNav />
     <div style={{ display: "grid", gap: 16 }}>
       <div>
-        <a href="/" style={{ fontSize: 13, color: "var(--muted)", fontWeight: 500 }}>← Chat</a>
+        <a href="/" className="pl-back-btn">← Back to Chat</a>
         <h1 className="page-title">Creator Dashboard</h1>
       </div>
 
