@@ -640,7 +640,7 @@ pnpm typecheck    # tsc --noEmit
 
 ## x402 Raw Header Decode
 
-Paylabs manually decodes the `PAYMENT-REQUIRED` and `PAYMENT-SIGNATURE` headers instead of using the SDK's `client.pay()` wrapper.
+PayLabs manually implements the x402 HTTP challenge/response flow instead of relying on the SDK's high-level middleware or client wrapper. The application constructs the `PAYMENT-REQUIRED` challenge, decodes the `PAYMENT-SIGNATURE` payload, and manages the payment lifecycle at the HTTP layer while delegating all payment verification and settlement to Circle's official `BatchFacilitatorClient`.
 
 **Why:** The SDK wrapper doesn't return raw signature/settlement data — just `{data, amount, status}`. Using it directly means we can't get the `txHash`/`settlementId` needed to generate an explorer link for every agent-to-agent payment.
 
