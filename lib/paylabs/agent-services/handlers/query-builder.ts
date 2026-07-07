@@ -161,6 +161,20 @@ function extractLockedPhrases(goal: string): string[] {
       }
     }
   }
+  // 0b. Single-word alias detection (e.g. "circle", "x402", "solana", "bitcoin")
+  //     Extends alias matching to single-word tokens from ENTITY_ALIASES.
+  //     Works regardless of capitalization — "circle", "Circle", "CIRCLE" all match.
+  for (let i = 0; i < words.length; i++) {
+    if (matchedRegions.has(i)) continue;
+    const aliasKey = cleanToken(words[i]);
+    if (ENTITY_ALIASES[aliasKey]) {
+      const phrase = words[i];
+      if (!phrases.some((p) => p.toLowerCase() === phrase.toLowerCase())) {
+        phrases.push(phrase);
+      }
+      matchedRegions.add(i);
+    }
+  }
   // 1. CamelCase / PascalCase tokens FIRST (so they don't get extended by consecutive capitalized detection)
   for (let i = 0; i < words.length; i++) {
     if (matchedRegions.has(i)) continue;
