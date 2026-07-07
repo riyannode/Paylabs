@@ -36,9 +36,21 @@ export const QueryBuilderInput = z.object({
 });
 type QueryBuilderInput = z.infer<typeof QueryBuilderInput>;
 
+const StructuredEntityOutput = z.object({
+  text: z.string(),
+  canonical: z.string(),
+  type: z.string(),
+  required: z.boolean(),
+});
+
 export const QueryBuilderOutput = z.object({
-  expanded_queries: z.array(z.string()),
+  primary_entities: z.array(StructuredEntityOutput),
+  secondary_entities: z.array(StructuredEntityOutput),
+  topics: z.array(z.string()),
+  locked_phrases: z.array(z.string()),
+  negative_entities: z.array(z.string()),
   entity_terms: z.array(z.string()),
+  expanded_queries: z.array(z.string()),
   negative_filters: z.array(z.string()),
   source_preferences: z.array(z.string()),
   safe_query_summary: z.string(),
