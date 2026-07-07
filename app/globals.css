@@ -150,6 +150,9 @@ a:hover { text-decoration: none; }
   padding: 8px 6px;
   vertical-align: top;
 }
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
 
 /* ── Typography helpers ── */
 .muted { color: var(--muted); }
