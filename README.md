@@ -40,7 +40,7 @@ Real micropayments flow through the agent runtime, with automatic USDC distribut
 | Metric | Count |
 |---|---:|
 | Receipts generated across Easy / Normal / Advanced routes | **500+** |
-| x402 service payment service processed | **3,000+** |
+| x402 service payment processed | **3,000+** |
 | Users / testers onboarded | **50+** |
 
 - **Live Production:** [https://paylabs.vercel.app/](https://paylabs.vercel.app/)
