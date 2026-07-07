@@ -485,7 +485,7 @@ a:hover { text-decoration: none; }
 
 .pl-main {
   min-width: 0;
-  padding: var(--pl-space-md) var(--pl-space-lg) 32px;
+  padding: var(--pl-space-lg) var(--pl-space-lg) var(--pl-space-lg);
 }
 
 .pl-topbar {
