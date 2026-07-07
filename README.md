@@ -644,7 +644,7 @@ Paylabs manually decodes the `PAYMENT-REQUIRED` and `PAYMENT-SIGNATURE` headers 
 
 **Why:** The SDK wrapper doesn't return raw signature/settlement data — just `{data, amount, status}`. Using it directly means we can't get the `txHash`/`settlementId` needed to generate an explorer link for every agent-to-agent payment.
 
-Manual decoding lets us trace every payment hop in the hierarchy (user → platform → brain → node → child) to its on-chain transaction in real time — for full audit trail visibility.
+Manual decoding lets us trace every payment hop in the hierarchy (user → platform → brain → node → child) to its on-chain transaction in real time — for full audit trail visibility and track all payment link after settlement in [Explorer](https://paylabs.vercel.app/explorer)
 
 **Reference:** [the-canteen-dev/circle-agent](https://github.com/the-canteen-dev/circle-agent) — for x402 settlement tracing, Gateway batch visibility, and Arc Testnet explorer proof patterns.
 
