@@ -68,6 +68,13 @@ export interface SourceResolverInput {
   entityTerms?: string[];
   /** Max sources to return (default 10) */
   maxSources?: number;
+  // Phase 3A: structured fields from Query Builder (optional for backward compat)
+  /** Primary entities — weighted higher in relevance filtering */
+  primaryEntities?: Array<{ text: string; canonical: string; type: string; required: boolean }>;
+  /** Secondary entities — used as context, lower weight */
+  secondaryEntities?: Array<{ text: string; canonical: string; type: string; required: boolean }>;
+  /** Negative entities — noise to filter out (e.g. "price prediction", "trading signal") */
+  negativeEntities?: string[];
 }
 
 // ─── Source Resolver Output ────────────────────────────────

@@ -387,6 +387,11 @@ export async function executeLockedMacroNodePipeline(
           (dData.entityTerms as string[]) ||
           (dData.entity_terms as string[]) ||
           [];
+        // Phase 3A: extract structured fields from QB output
+        let primaryEntities: Array<{ text: string; canonical: string; type: string; required: boolean }> = [];
+        let secondaryEntities: Array<{ text: string; canonical: string; type: string; required: boolean }> = [];
+        let negativeEntities: string[] = [];
+
         if (entityTerms.length === 0) {
           const childEvals = dData.serviceEvaluations as Array<{
             serviceName: string;
@@ -405,10 +410,31 @@ export async function executeLockedMacroNodePipeline(
           }
         }
 
+        // Extract structured fields from QB output (always, even if entityTerms was found directly)
+        {
+          const childEvals = dData.serviceEvaluations as Array<{
+            serviceName: string;
+            output?: Record<string, unknown>;
+          }> | undefined;
+          if (childEvals) {
+            const qbEval = childEvals.find(
+              (e) => e.serviceName === "query_builder" && e.output,
+            );
+            if (qbEval?.output) {
+              primaryEntities = (qbEval.output.primary_entities as typeof primaryEntities) || [];
+              secondaryEntities = (qbEval.output.secondary_entities as typeof secondaryEntities) || [];
+              negativeEntities = (qbEval.output.negative_entities as string[]) || [];
+            }
+          }
+        }
+
         const resolverResult = await resolveSources({
           rankedCandidates,
           normalizedGoal,
           entityTerms,
+          primaryEntities,
+          secondaryEntities,
+          negativeEntities,
         });
         if (resolverResult.ok) {
           sourceContext = resolverResult.sourceContext;
