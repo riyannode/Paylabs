@@ -1,6 +1,6 @@
 # PayLabs
 
-AI search/RSShub crawler + creator monetization platform. Every search is budgeted, every source is paid, every creator gets their share.
+AI search/RSShub discovery + creator monetization platform. Every search is budgeted, every source is paid, every creator gets their share.
 
 **For users:** AI-powered source discovery. Ask a question, get answers backed by real sources from across the RSShub, with full transparency on what was searched, which sources were used, and what it cost.
 
@@ -644,7 +644,7 @@ Paylabs manually decodes the `PAYMENT-REQUIRED` and `PAYMENT-SIGNATURE` headers 
 
 **Why:** The SDK wrapper doesn't return raw signature/settlement data — just `{data, amount, status}`. Using it directly means we can't get the `txHash`/`settlementId` needed to generate an explorer link for every agent-to-agent payment.
 
-Manual decoding lets us trace every payment hop in the hierarchy (user → platform → brain → node → child) to its on-chain transaction in real time — for full audit trail visibility.
+Manual decoding lets us trace every payment hop in the hierarchy (user → platform → brain → node → child) to its on-chain transaction in real time — for full audit trail visibility and track all payment link after settlement in [Explorer](https://paylabs.vercel.app/explorer)
 
 **Reference:** [the-canteen-dev/circle-agent](https://github.com/the-canteen-dev/circle-agent) — for x402 settlement tracing, Gateway batch visibility, and Arc Testnet explorer proof patterns.
 
