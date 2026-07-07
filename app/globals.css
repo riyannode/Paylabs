@@ -30,7 +30,7 @@
 
 * { box-sizing: border-box; }
 
-html { background: var(--background); }
+html { background: var(--background); overflow-x: hidden; }
 
 body {
   margin: 0;
@@ -192,8 +192,12 @@ a:hover { text-decoration: none; }
   display: grid;
   grid-template-columns: 280px 1fr;
   background: #fff;
-  margin: -16px -16px -32px;
-  /* Override .container padding on the home page */
+  /* Break out of .container's max-width + padding so sidebar hits viewport edge */
+  width: 100vw;
+  margin-left: calc(-50vw + 50%);
+  margin-right: calc(-50vw + 50%);
+  margin-top: -16px;
+  margin-bottom: -32px;
 }
 
 /* ── Sidebar ── */
@@ -1775,6 +1779,7 @@ a:hover { text-decoration: none; }
 @media (max-width: 960px) {
   .pl-app {
     grid-template-columns: 1fr;
+    width: auto;
     margin: -16px -16px -32px;
   }
 
