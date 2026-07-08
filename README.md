@@ -498,7 +498,7 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 
 - **Citation & Retrieval Hardening:** Improving citation grounding and retrieval quality through better source coverage, semantic ranking, query expansion, URL normalization, source reliability, retry handling, and broader RSSHub coverage beyond AI and crypto. citation currently focuses on AI and crypto topic categories.
 
-- **Current limitation:** In some cases, the generated LLM answer is factually correct, but the displayed source links may not directly support the final response because answer generation and source discovery currently followed by independent pipelines.
+- **Current limitation:** In some cases, the generated LLM answer is factually correct, but the displayed source links may not directly support the final response because answer generation and source discovery currently follow independent pipelines. but The Brain routing and the complete x402 pipeline for each agent are stable and working as expected.
 
 - **Route Check:** x402 fee can settle before Brain/LLM availability is known.
 If Brain/LLM fails afterward, the run fails safely as 504 brain_failed and cannot execute, but the 0.000001 USDC Route Check fee is not refunded.
