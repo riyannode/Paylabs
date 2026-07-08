@@ -44,7 +44,7 @@ function monetizationBadge(status: string): { label: string; color: string; bg: 
   if (status === "indexed_monetized") return { label: "Active", color: "#047857", bg: "#ecfdf5", border: "#a7f3d0" };
   if (status === "verified_awaiting_ingestion") return { label: "Verified, awaiting sync", color: "#0369a1", bg: "#f0f9ff", border: "#bae6fd" };
   if (status === "pending_verification") return { label: "Pending verification", color: "#92400e", bg: "#fffbeb", border: "#fde68a" };
-  return { label: "Inactive", color: "#6b7280", bg: "#f3f4f6", border: "#d1d5db" };
+  return { label: "Inactive", color: "#6B6577", bg: "#F8F7F5", border: "#D4D0CC" };
 }
 
 function statusBadge(status: string): { label: string; color: string; bg: string; border: string } {
@@ -125,7 +125,7 @@ export default function CreatorSourcesRoster() {
           type="button"
           onClick={load}
           style={{
-            fontSize: 12, fontWeight: 600, color: "#2563eb",
+            fontSize: 12, fontWeight: 600, color: "#8B5CF6",
             background: "none", border: "1px solid var(--border)",
             borderRadius: 8, padding: "4px 12px", cursor: "pointer",
           }}
@@ -194,7 +194,7 @@ export default function CreatorSourcesRoster() {
             {src.monetization_status === "pending_verification" && (
               <a
                 href={`/creator-profile?claimId=${src.id}`}
-                style={{ fontSize: 12, fontWeight: 600, color: "#2563eb", textDecoration: "none" }}
+                style={{ fontSize: 12, fontWeight: 600, color: "#8B5CF6", textDecoration: "none" }}
               >
                 Verify ownership →
               </a>

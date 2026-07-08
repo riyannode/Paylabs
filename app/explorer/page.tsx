@@ -418,7 +418,7 @@ export default async function DashboardPage() {
       {/* ─── x402 Service Payments Table ───────────────────── */}
       <section className="card">
         <h2 className="section-title">x402 Service Payments</h2>
-        <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #6366f1)", background: "var(--accent-bg, rgba(99,102,241,0.06))" }}>
+        <p className="muted" style={{ fontSize: 13, marginBottom: 16, padding: "8px 12px", borderLeft: "3px solid var(--accent, #8B5CF6)", background: "var(--accent-bg, rgba(139,92,246,0.06))" }}>
           Track x402 paid service calls from PayLabs runs. Batch link explorers are available in Payment Visibility after settlement.
         </p>
         {allRows.length === 0 ? (

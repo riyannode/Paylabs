@@ -112,7 +112,7 @@ export default function CreatorWalletPanel() {
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span className="pl-creator-wallet-dot" />
             <span style={{ fontSize: 14, fontWeight: 600 }}>Connected</span>
-            <span style={{ fontSize: 13, color: "#475569", fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ fontSize: 13, color: "#6B6577", fontVariantNumeric: "tabular-nums" }}>
               {walletInfo.address.slice(0, 6)}…{walletInfo.address.slice(-4)}
             </span>
           </div>

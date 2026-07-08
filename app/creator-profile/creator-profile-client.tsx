@@ -100,7 +100,7 @@ function proofStatusStyle(status?: ProofStatus | null): React.CSSProperties {
   if (status === "verified") return { ...base, color: "#047857", background: "#ecfdf5", borderColor: "#a7f3d0" };
   if (status === "failed") return { ...base, color: "#b91c1c", background: "#fef2f2", borderColor: "#fecaca" };
   if (status === "pending") return { ...base, color: "#92400e", background: "#fffbeb", borderColor: "#fde68a" };
-  if (status === "manual_required") return { ...base, color: "#6b7280", background: "#f3f4f6", borderColor: "#d1d5db" };
+  if (status === "manual_required") return { ...base, color: "#6B6577", background: "#F8F7F5", borderColor: "#D4D0CC" };
   return { ...base, color: "var(--muted)", background: "var(--surface)" };
 }
 
@@ -313,7 +313,7 @@ export default function CreatorProfileClient() {
               {currentClaim.proof_method === "github_repo_file" && currentClaim.source_url && (
                 <div style={{ background: "var(--surface)", borderRadius: 10, padding: "12px 16px", fontSize: 13, fontFamily: "monospace", lineHeight: 1.6 }}>
                   <div style={{ fontWeight: 600, marginBottom: 8 }}>Create this file at:</div>
-                  <div style={{ color: "#2563eb", marginBottom: 12 }}>
+                  <div style={{ color: "#8B5CF6", marginBottom: 12 }}>
                     https://raw.githubusercontent.com/{new URL(currentClaim.source_url).pathname.split("/").slice(1, 3).join("/")}/main/paylabs.json
                   </div>
                   <div style={{ fontWeight: 600, marginBottom: 8 }}>Contents:</div>
@@ -324,7 +324,7 @@ export default function CreatorProfileClient() {
               {currentClaim.proof_method === "well_known_json" && currentClaim.source_domain && (
                 <div style={{ background: "var(--surface)", borderRadius: 10, padding: "12px 16px", fontSize: 13, fontFamily: "monospace", lineHeight: 1.6 }}>
                   <div style={{ fontWeight: 600, marginBottom: 8 }}>Host this file at:</div>
-                  <div style={{ color: "#2563eb", marginBottom: 12 }}>
+                  <div style={{ color: "#8B5CF6", marginBottom: 12 }}>
                     https://{currentClaim.source_domain}/.well-known/paylabs-verify.json
                   </div>
                   <div style={{ fontWeight: 600, marginBottom: 8 }}>Contents:</div>
@@ -335,7 +335,7 @@ export default function CreatorProfileClient() {
               {currentClaim.proof_method === "hosted_link_backlink" && (
                 <div style={{ background: "var(--surface)", borderRadius: 10, padding: "12px 16px", fontSize: 13, lineHeight: 1.6 }}>
                   <div style={{ fontWeight: 600, marginBottom: 8 }}>Option A: Add verification link to your public profile, bio, or page:</div>
-                  <div style={{ background: "var(--bg, #0a0a0a)", borderRadius: 8, padding: "10px 12px", fontFamily: "monospace", fontSize: 12, wordBreak: "break-all", color: "#2563eb", marginBottom: 12 }}>
+                  <div style={{ background: "var(--bg, #0a0a0a)", borderRadius: 8, padding: "10px 12px", fontFamily: "monospace", fontSize: 12, wordBreak: "break-all", color: "#8B5CF6", marginBottom: 12 }}>
                     {proofUrl || `Loading verification URL...`}
                   </div>
                   <div style={{ fontWeight: 600, marginBottom: 8 }}>Option B: Add this exact text to your profile bio or README:</div>

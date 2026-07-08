@@ -118,7 +118,7 @@ export default function BatchResolverLink({
           target="_blank"
           rel="noopener noreferrer"
           style={{
-            color: "var(--accent, #6366f1)",
+            color: "var(--accent, #8B5CF6)",
             textDecoration: "none",
             whiteSpace: "nowrap",
           }}

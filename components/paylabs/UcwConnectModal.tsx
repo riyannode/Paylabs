@@ -108,17 +108,17 @@ export default function UcwConnectModal({
             <div className="pl-login-stack-v3">
               {finalizingCreatorWallet && walletState === "connecting" ? (
                 <div style={{ textAlign: "center", padding: "24px 0" }}>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.02em" }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#09090E", letterSpacing: "-0.02em" }}>
                     Finalizing Creator Wallet...
                   </div>
-                  <div style={{ fontSize: 13, color: "#64748b", marginTop: 8, lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 13, color: "#6B6577", marginTop: 8, lineHeight: 1.5 }}>
                     This can take a few seconds on mobile. Please keep this page open.
                   </div>
                   <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
                     <div className="pl-spinner" style={{
                       width: 24, height: 24,
                       border: "3px solid #e2e8f0",
-                      borderTopColor: "#6366f1",
+                      borderTopColor: "#8B5CF6",
                       borderRadius: "50%",
                       animation: "pl-spin 0.8s linear infinite",
                     }} />
@@ -127,10 +127,10 @@ export default function UcwConnectModal({
               ) : (
                 <>
                   <div style={{ marginBottom: 4 }}>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.02em" }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: "#09090E", letterSpacing: "-0.02em" }}>
                       Connect Creator Wallet
                     </div>
-                    <div style={{ fontSize: 13, color: "#64748b", marginTop: 4, lineHeight: 1.5 }}>
+                    <div style={{ fontSize: 13, color: "#6B6577", marginTop: 4, lineHeight: 1.5 }}>
                       Use Circle User-Controlled Wallet to manage creator identity and monetization.
                     </div>
                   </div>

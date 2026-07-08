@@ -678,10 +678,10 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
           <div className="pl-dcw-step">
             <div className="pl-login-stack-v3">
               <div style={{ marginBottom: 4 }}>
-                <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.02em" }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#09090E", letterSpacing: "-0.02em" }}>
                   PayLabs Wallet
                 </div>
-                <div style={{ fontSize: 13, color: "#64748b", marginTop: 4, lineHeight: 1.5 }}>
+                <div style={{ fontSize: 13, color: "#6B6577", marginTop: 4, lineHeight: 1.5 }}>
                   Used for automatic x402 payments.
                 </div>
               </div>

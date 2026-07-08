@@ -159,7 +159,7 @@ export default async function CreatorProofPage({ params }: PageProps) {
           style={{
             fontSize: 13,
             fontWeight: 600,
-            color: "#2563eb",
+            color: "#8B5CF6",
             textDecoration: "none",
           }}
         >
