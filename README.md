@@ -496,7 +496,9 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 
 ## Known Limitations / Next Patch
 
-- **Advanced scraper link hardening:** Core source discovery is already working for Easy and Normal runs. Advanced runs still need follow-up hardening for Query Builder fallback, source-context reliability, URL normalization, retries, and edge-case source formats. The chat crawler currently focuses on AI and crypto topic categories.
+- **Citation & Retrieval Hardening:** Improving citation grounding and retrieval quality through better source coverage, semantic ranking, query expansion, URL normalization, source reliability, retry handling, and broader RSSHub coverage beyond AI and crypto. citation currently focuses on AI and crypto topic categories.
+
+- **Current limitation:** In some cases, the generated LLM answer is factually correct, but the displayed source links may not directly support the final response because answer generation and source discovery currently followed by independent pipelines.
 
 - **Route Check:** x402 fee can settle before Brain/LLM availability is known.
 If Brain/LLM fails afterward, the run fails safely as 504 brain_failed and cannot execute, but the 0.000001 USDC Route Check fee is not refunded.
