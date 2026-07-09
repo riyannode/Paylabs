@@ -155,7 +155,7 @@ export default async function CreatorProofPage({ params }: PageProps) {
         </p>
 
         <a
-          href="/"
+          href="/chat"
           style={{
             fontSize: 13,
             fontWeight: 600,
