@@ -175,20 +175,39 @@
 
         /* ─── Stats Bar ─── */
         .hero-stats {
-            display: flex; align-items: center; gap: 12px;
-            margin-top: 14px;
-            animation: fadeInUp 0.7s ease-out 0.52s both;
+            position: absolute;
+            top: 120px; left: 32px;
+            display: flex; flex-direction: column; gap: 6px;
+            padding: 16px 20px;
+            background: var(--surface-glass);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            box-shadow: var(--shadow-md);
+            animation: fadeInDown 0.7s ease-out 0.52s both;
+            z-index: 20;
         }
         .stat-item {
-            display: flex; align-items: baseline; gap: 5px;
+            display: flex; align-items: baseline; gap: 6px;
         }
         .stat-value {
-            font-size: 16px; font-weight: 700; color: var(--text-primary);
+            font-size: 15px; font-weight: 700; color: var(--text-primary);
             letter-spacing: -0.02em;
+            min-width: 24px;
         }
         .stat-label {
             font-size: 11px; font-weight: 500; color: var(--text-secondary);
-            letter-spacing: 0.02em;
+            letter-spacing: 0.01em;
+        }
+        @media (max-width: 768px) {
+            .hero-stats {
+                position: relative;
+                top: auto; left: auto;
+                flex-direction: row; gap: 16px;
+                margin-top: 20px;
+                align-self: center;
+            }
         }
 
         /* ─── Preview / Demo Card ─── */
@@ -440,12 +459,10 @@
                     <span class="stat-value" id="stat-users">—</span>
                     <span class="stat-label">Users</span>
                 </div>
-                <span class="trust-dot"></span>
                 <div class="stat-item">
                     <span class="stat-value" id="stat-24h">—</span>
                     <span class="stat-label">Active 24h</span>
                 </div>
-                <span class="trust-dot"></span>
                 <div class="stat-item">
                     <span class="stat-value" id="stat-7d">—</span>
                     <span class="stat-label">Active 7d</span>
