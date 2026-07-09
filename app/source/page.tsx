@@ -96,7 +96,7 @@ export default async function SourcesPage() {
       <SubPageMobileNav />
     <div style={{ display: "grid", gap: 24 }}>
       <div>
-        <a href="/" className="pl-back-btn">← Back to Chat</a>
+        <a href="/chat" className="pl-back-btn">← Back to Chat</a>
         <h1 className="page-title">Sources</h1>
         <p className="muted" style={{ marginTop: 8 }}>
           RSSHub feed items — source-backed content catalog.

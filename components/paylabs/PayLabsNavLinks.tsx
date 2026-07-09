@@ -4,7 +4,6 @@ import { usePathname } from "next/navigation";
 
 /** Shared navigation items for PayLabs sidebar + mobile drawer. */
 export const NAV_ITEMS = [
-  { label: "Chat", href: "/" },
   { label: "Receipts", href: "/receipts" },
   { label: "Explorer", href: "/explorer" },
   { label: "Sources", href: "/source" },
@@ -31,10 +30,7 @@ export default function PayLabsNavLinks({
   return (
     <nav className={navClassName}>
       {NAV_ITEMS.map((item) => {
-        const isActive =
-          item.href === "/"
-            ? pathname === "/"
-            : pathname.startsWith(item.href);
+        const isActive = pathname.startsWith(item.href);
         const cls = [
           linkClassName,
           isActive ? "active" : undefined,
