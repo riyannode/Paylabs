@@ -363,7 +363,7 @@ export default async function DashboardPage() {
       <SubPageMobileNav />
     <div style={{ display: "grid", gap: 24 }}>
       <div>
-        <a href="/" className="pl-back-btn">← Back to Chat</a>
+        <a href="/chat" className="pl-back-btn">← Back to Chat</a>
         <h1 className="page-title">Explorer</h1>
         <p className="muted" style={{ marginTop: 8 }}>
           Transaction activity
