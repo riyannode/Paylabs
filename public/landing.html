@@ -177,8 +177,8 @@
         .hero-stats {
             position: absolute;
             top: 120px; left: 32px;
-            display: flex; flex-direction: column; gap: 6px;
-            padding: 16px 20px;
+            display: flex; flex-direction: row; align-items: center; gap: 20px;
+            padding: 14px 22px;
             background: var(--surface-glass);
             border: 1px solid var(--border);
             border-radius: 14px;
@@ -192,19 +192,20 @@
             display: flex; align-items: baseline; gap: 6px;
         }
         .stat-value {
-            font-size: 15px; font-weight: 700; color: var(--text-primary);
-            letter-spacing: -0.02em;
-            min-width: 24px;
+            font-size: 20px; font-weight: 800; color: var(--text-primary);
+            letter-spacing: -0.03em;
         }
         .stat-label {
-            font-size: 11px; font-weight: 500; color: var(--text-secondary);
+            font-size: 13px; font-weight: 500; color: var(--text-secondary);
             letter-spacing: 0.01em;
+        }
+        .stat-sep {
+            width: 1px; height: 18px; background: var(--border);
         }
         @media (max-width: 768px) {
             .hero-stats {
                 position: relative;
                 top: auto; left: auto;
-                flex-direction: row; gap: 16px;
                 margin-top: 20px;
                 align-self: center;
             }
@@ -459,10 +460,12 @@
                     <span class="stat-value" id="stat-users">—</span>
                     <span class="stat-label">Users</span>
                 </div>
+                <div class="stat-sep"></div>
                 <div class="stat-item">
                     <span class="stat-value" id="stat-24h">—</span>
                     <span class="stat-label">Active 24h</span>
                 </div>
+                <div class="stat-sep"></div>
                 <div class="stat-item">
                     <span class="stat-value" id="stat-7d">—</span>
                     <span class="stat-label">Active 7d</span>
