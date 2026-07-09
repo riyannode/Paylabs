@@ -26,9 +26,9 @@ const securityHeaders = [
     value: [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://apis.google.com",
-      "style-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "img-src 'self' data: https: blob:",
-      "font-src 'self' data:",
+      "font-src 'self' data: https://fonts.gstatic.com",
       "connect-src 'self' https://*.supabase.co https://*.circle.com https://api.circle.com https://gateway-api-testnet.circle.com https://gateway-api.circle.com https://oauth2.googleapis.com https://accounts.google.com https://token-plan-sgp.xiaomimimo.com https://rsshub.rssforever.com wss://*.supabase.co",
       "frame-src 'self' https://accounts.google.com https://pw-auth.circle.com",
       "base-uri 'self'",
@@ -58,6 +58,14 @@ const nextConfig: NextConfig = {
         headers: securityHeaders,
       },
     ];
+  },
+
+  async rewrites() {
+    return {
+      beforeFiles: [
+        { source: "/", destination: "/landing.html" },
+      ],
+    };
   },
 };
 
