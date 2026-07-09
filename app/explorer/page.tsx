@@ -3,6 +3,7 @@ import { short, usdc } from "@/lib/utils";
 import { hrefFromTx } from "@/lib/paylabs/x402/payment-links";
 import BatchResolverLink from "@/components/paylabs/BatchResolverLink";
 import SubPageMobileNav from "@/components/paylabs/SubPageMobileNav";
+import PaymentTable from "@/components/paylabs/PaymentTable";
 import { getVisitorStats } from "@/lib/paylabs/analytics/visitor-stats";
 
 const PAYMENT_SAFE_FIELDS = [
@@ -319,8 +320,7 @@ export default async function DashboardPage() {
   const allRows: NormalizedPaymentRow[] = [
     ...normalizeServiceRows(x402PaymentRows),
     ...normalizePreflightRows(preflightRows),
-  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-  .slice(0, 25);
+  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   // ─── User stats (unique wallets) ───
   const [
@@ -426,78 +426,7 @@ export default async function DashboardPage() {
             No x402 service payments yet.
           </div>
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Buyer</th>
-                  <th></th>
-                  <th>Seller</th>
-                  <th>Amount</th>
-                  <th>Status</th>
-                  <th>Payment Visibility</th>
-                  <th>Error</th>
-                </tr>
-              </thead>
-              <tbody>
-                {allRows.map((r) => (
-                  <tr key={r.id}>
-                    <td className="muted">{timeAgo(r.created_at)}</td>
-                    <td>
-                      <div className="data-mono" style={{ fontSize: 12 }}>
-                        {labelNode(r.buyer)}
-                      </div>
-                      {actorKindLabel(r.buyer, r, "buyer") && (
-                        <div className="muted" style={{ fontSize: 10 }}>
-                          ({actorKindLabel(r.buyer, r, "buyer")})
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ textAlign: "center", padding: "0 4px" }}>
-                      <div className="data-mono" style={{ fontSize: 12, color: "var(--muted, #888)" }}>→</div>
-                      {arrowFlowLabel(r) && (
-                        <div className="muted" style={{ fontSize: 9 }}>
-                          ({arrowFlowLabel(r)})
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <div className="data-mono" style={{ fontSize: 12 }}>
-                        {labelNode(r.seller)}
-                      </div>
-                      {actorKindLabel(r.seller, r, "seller") && (
-                        <div className="muted" style={{ fontSize: 10 }}>
-                          ({actorKindLabel(r.seller, r, "seller")})
-                        </div>
-                      )}
-                    </td>
-                    <td className="data-mono">{usdc(r.amount_usdc)}</td>
-                    <td>
-                      <span className={`badge ${
-                        r.status === "paid" ? "badge-success" :
-                        r.status === "failed" ? "badge-danger" : "badge-warning"
-                      }`}>
-                        {r.status}
-                      </span>
-                    </td>
-                    <td>
-                      <BatchResolverLink
-                        runId={r.discovery_run_id}
-                        initialBatchExplorerUrl={r.batch_explorer_url}
-                        initialBatchTxHash={r.batch_tx_hash}
-                        directExplorerUrl={r.explorer_url}
-                        directTxHash={r.tx_hash}
-                      />
-                    </td>
-                    <td className="muted" style={{ fontSize: 10, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {r.error || "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <PaymentTable rows={allRows} />
         )}
       </section>
 
