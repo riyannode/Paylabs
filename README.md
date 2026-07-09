@@ -67,6 +67,7 @@ Implementation is split across:
 - [`lib/paylabs/langgraph`](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/langgraph) — Brain and macro-node orchestration
 - [`lib/paylabs/delegated-runtime`](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/delegated-runtime) — Quote engine and runtime coordination
 - [`lib/paylabs/agent-services`](https://github.com/riyannode/Paylabs/tree/main/lib/paylabs/agent-services) — Individual service implementations
+- [`api/paylabs`](https://github.com/riyannode/Paylabs/tree/main/app/api/paylabs) — API
 
 **Innovation**
 ---
