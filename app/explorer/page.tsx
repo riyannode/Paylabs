@@ -320,7 +320,7 @@ export default async function DashboardPage() {
     ...normalizeServiceRows(x402PaymentRows),
     ...normalizePreflightRows(preflightRows),
   ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-  .slice(0, 25);
+  .slice(0, 35);
 
   // ─── User stats (unique wallets) ───
   const [
