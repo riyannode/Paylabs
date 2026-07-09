@@ -402,7 +402,7 @@ export default function ReceiptsClient({ initialRunId }: Props) {
     <div className="pl-receipts-page">
       <header className="pl-receipts-header">
         <div>
-          <a href="/" className="pl-back-btn">← Back to Chat</a>
+          <a href="/chat" className="pl-back-btn">← Back to Chat</a>
           <h1 className="page-title">Receipts</h1>
           <p className="muted">Your PayLabs payment receipts and history</p>
         </div>

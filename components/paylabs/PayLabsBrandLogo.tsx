@@ -11,7 +11,7 @@ export default function PayLabsBrandLogo({
 }: PayLabsBrandLogoProps) {
   return (
     <a
-      href="/"
+      href="/chat"
       className={[
         "pl-brand-logo",
         compact ? "pl-brand-logo-compact" : "",
