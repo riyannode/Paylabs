@@ -11,7 +11,7 @@
  * Deposit is on-chain only (approve + deposit on Gateway Wallet contract).
  */
 
-// ─── Types ─────────────────────────────────────────────────────
+import { usdcDecimalToAtomic } from "./usdc";
 
 export interface GatewayBalanceResult {
   /** Whether the check succeeded (Gateway reachable + balance returned) */
@@ -104,7 +104,7 @@ export async function checkGatewayBalance(
       return {
         ok: true,
         balanceUsdc: balanceEntry.balance || "0",
-        balanceAtomic: toAtomic(balanceEntry.balance || "0"),
+        balanceAtomic: usdcDecimalToAtomic(balanceEntry.balance || "0").toString(),
         pendingBatchUsdc: balanceEntry.pendingBatch || "0",
       };
     } catch (e: unknown) {
@@ -140,10 +140,10 @@ export async function verifySufficientBalance(
     return { ok: false, error: balance.error };
   }
 
-  const available = parseFloat(balance.balanceUsdc || "0");
-  const required = parseFloat(requiredAmountUsdc);
+  const availableAtomic = BigInt(balance.balanceAtomic || "0");
+  const requiredAtomic = usdcDecimalToAtomic(requiredAmountUsdc);
 
-  if (available < required) {
+  if (availableAtomic < requiredAtomic) {
     return {
       ok: false,
       balanceUsdc: balance.balanceUsdc,
@@ -155,13 +155,3 @@ export async function verifySufficientBalance(
 }
 
 // ─── Helpers ───────────────────────────────────────────────────
-
-/**
- * Convert human-readable USDC to atomic (6 decimals).
- * e.g. "1.500000" → "1500000"
- */
-function toAtomic(humanUsdc: string): string {
-  const num = parseFloat(humanUsdc);
-  if (isNaN(num)) return "0";
-  return Math.round(num * 1_000_000).toString();
-}
