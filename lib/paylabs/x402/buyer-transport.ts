@@ -24,6 +24,7 @@
 import { createRequire } from "node:module";
 import { getAddress, type Address, type Hex } from "viem";
 import { X402_VERSION } from "./seller-challenge";
+import { usdcDecimalToAtomic } from "./usdc";
 
 // CJS interop — @circle-fin/x402-batching has CJS entry
 const _require = createRequire(import.meta.url);
@@ -775,28 +776,6 @@ interface BatchEvmSignerLike {
     primaryType: string;
     message: Record<string, unknown>;
   }) => Promise<Hex>;
-}
-
-// ─── String-safe USDC → atomic conversion ─────────────────
-
-/**
- * Convert a USDC decimal string to atomic units (bigint, 6 decimals).
- * Avoids IEEE-754 float drift: "0.1" → 100000n, "0.000001" → 1n.
- */
-function usdcDecimalToAtomic(usdc: string): bigint {
-  const trimmed = usdc.trim();
-  if (!trimmed || !/^[0-9]+(\.[0-9]+)?$/.test(trimmed)) {
-    return BigInt(0);
-  }
-  const [whole, frac = ""] = trimmed.split(".");
-  // Pad or truncate to 7 digits (6 + 1 for rounding)
-  const extended = frac.padEnd(7, "0");
-  const digits = extended.slice(0, 7);
-  const d6 = BigInt(digits.slice(0, 6));
-  const d7 = BigInt(digits[6] ?? "0");
-  // Round: if 7th digit >= 5, round up 6th
-  const rounded = d6 + (d7 >= BigInt(5) ? BigInt(1) : BigInt(0));
-  return BigInt(whole) * BigInt(1_000_000) + rounded;
 }
 
 // ─── Error class ─────────────────────────────────────────────
