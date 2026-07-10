@@ -85,7 +85,7 @@ PayLabs manually implements the x402 HTTP challenge/response flow instead of rel
 
 Manual decoding lets us trace every payment hop in the hierarchy (user → platform → brain → node → child) to its on-chain transaction in real time — for full audit trail visibility and track all payment link after settlement in [Explorer](https://paylabs.vercel.app/explorer), 
 
-**Code:** [Decode](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/x402/decode-batch.ts), [Link payment](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/x402/payment-links.ts), [Seller](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/x402/seller-challenge.ts), [Resolver](https://github.com/riyannode/Paylabs/blob/main/app/api/paylabs/x402/batch-tx/%5BsettlementId%5D/route.ts)
+**Implementation:** [Decode](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/x402/decode-batch.ts), [Link payment](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/x402/payment-links.ts), [Seller](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/x402/seller-challenge.ts), [Resolver](https://github.com/riyannode/Paylabs/tree/main/app/api/paylabs/x402)
 
 **Reference:** [the-canteen-dev/circle-agent](https://github.com/the-canteen-dev/circle-agent) — for x402 settlement tracing, Gateway batch visibility, and Arc Testnet explorer proof patterns.
 
