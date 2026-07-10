@@ -1,6 +1,6 @@
 # PayLabs
 
-AI search/RSShub discovery + creator monetization platform. Every search is budgeted, every source is paid, every creator gets their share.
+AI search/RSShub discovery + creator monetization platform. Every search is budgeted, every source is paid, every verified creator gets their share.
 
 **For users:** AI-powered source discovery. Ask a question, get answers backed by real sources from across the RSShub, with full transparency on what was searched, which sources were used, and what it cost.
 
@@ -83,7 +83,9 @@ PayLabs manually implements the x402 HTTP challenge/response flow instead of rel
 
 **Why:** The SDK wrapper doesn't return raw signature/settlement data — just `{data, amount, status}`. Using it directly means we can't get the `txHash`/`settlementId` needed to generate an explorer link for every agent-to-agent payment.
 
-Manual decoding lets us trace every payment hop in the hierarchy (user → platform → brain → node → child) to its on-chain transaction in real time — for full audit trail visibility and track all payment link after settlement in [Explorer](https://paylabs.vercel.app/explorer)
+Manual decoding lets us trace every payment hop in the hierarchy (user → platform → brain → node → child) to its on-chain transaction in real time — for full audit trail visibility and track all payment link after settlement in [Explorer](https://paylabs.vercel.app/explorer), 
+
+**Implementation:** [Decode](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/x402/decode-batch.ts), [Link payment](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/x402/payment-links.ts), [Seller](https://github.com/riyannode/Paylabs/blob/main/lib/paylabs/x402/seller-challenge.ts), [Resolver](https://github.com/riyannode/Paylabs/tree/main/app/api/paylabs/x402)
 
 **Reference:** [the-canteen-dev/circle-agent](https://github.com/the-canteen-dev/circle-agent) — for x402 settlement tracing, Gateway batch visibility, and Arc Testnet explorer proof patterns.
 
@@ -107,7 +109,8 @@ These SDKs are reusable companion packages. They are not required to run the Pay
 
 | SDK | Purpose | Install |
 |-----|---------|---------|
-| [`x402-batch-codec`](https://github.com/riyannode/x402-batch-codec) | TypeScript codec for decoding Circle Gateway x402 `submitBatch` transactions on Arc, verifying buyer/seller batch presence, and encoding safe batch proof objects. Codec-only: no signing, no wallet execution, no raw payment headers. | `npm install github:riyannode/x402-batch-codec` |
+| [`x402-batch-codec`](https://github.com/riyannode/x402-batch-codec)  | TypeScript codec for decoding Circle Gateway x402 `submitBatch` transactions on Arc, verifying buyer/seller batch presence, and generating explorer payment proof objects. Codec-only: no signing, no wallet execution, no raw payment headers. | `npm install github:riyannode/x402-batch-codec` |
+| [`x402-batch-codec-py`](https://github.com/riyannode/x402-batch-codec-py) | Phyton codec for decoding Circle Gateway x402 `submitBatch` transactions on Arc, verifying buyer/seller batch presence, and generating explorer payment proof objects. Codec-only: no signing, no wallet execution, no raw payment headers. | `pip install git+https://github.com/riyannode/x402-batch-codec-py.git` |
 | [`x402-header-agent`](https://github.com/riyannode/x402-header-agent) | TypeScript + native Python SDK for Circle Gateway x402 header payments. Includes buyer/seller helpers, LangChain/CrewAI/custom agent adapters, batch payment helpers, Circle DCW signing, and a dual-role agent wrapper for services that need to receive x402 payments as a seller and spend x402 payments as a buyer. No raw buyer private keys. | `npm install github:riyannode/x402-header-agent` |
 | [`deepagent-x402-kit`](https://github.com/riyannode/deepagent-x402-kit) | Python LangChain / Deep Agents kit for ERC-8004 agent identity on Arc plus optional policy-gated Circle x402 tools. One Circle DCW wallet maps to one ERC-8004 agent identity. | `pip install "git+https://github.com/riyannode/deepagent-x402-kit.git"` |
 
@@ -235,7 +238,14 @@ graph TD
     linkStyle 24 stroke:transparent,stroke-width:0px,color:transparent;
 ```
 
-Note: Settlement has 2 services on Normal (`creator_attribution`, `creator_payout_router`) and 3 services on Advanced, where `advanced_evidence_evaluator` is added for deeper source comparison.
+
+`x402 Macro Edge`
+= Paid orchestration transition between macro node phases.
+
+`x402 Service Edge`
+= Paid invocation of individual agent services.
+
+**Note:** Settlement has 2 services on Normal (`creator_attribution`, `creator_payout_router`) and 3 services on Advanced, where `advanced_evidence_evaluator` is added for deeper source comparison.
 
 **12 agent services** across 3 macro-node phases:
 
