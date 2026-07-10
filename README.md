@@ -237,7 +237,14 @@ graph TD
     linkStyle 24 stroke:transparent,stroke-width:0px,color:transparent;
 ```
 
-Note: Settlement has 2 services on Normal (`creator_attribution`, `creator_payout_router`) and 3 services on Advanced, where `advanced_evidence_evaluator` is added for deeper source comparison.
+
+`x402 Macro Edge`
+= Paid orchestration transition between macro node phases.
+
+`x402 Service Edge`
+= Paid invocation of individual agent services.
+
+**Note:** Settlement has 2 services on Normal (`creator_attribution`, `creator_payout_router`) and 3 services on Advanced, where `advanced_evidence_evaluator` is added for deeper source comparison.
 
 **12 agent services** across 3 macro-node phases:
 
