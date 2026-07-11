@@ -14,7 +14,7 @@ AI search/RSShub discovery + creator monetization platform. Every search is budg
 
 1. Connect/Login Google to create PayLabs Wallet/DCW
 2. If you do not have test USDC, copy your wallet address from the wallet modal and use the `Open Circle Faucet` button.
-3. After receiving test USDC, deposit it into Gateway Balance.
+3. After receiving test USDC, deposit it into Gateway Balance in wallet modal.
 4. Once Gateway Balance is ready, submit a query from the chat page.
 5. Open Explorer to see the x402 payment flow.
 
