@@ -93,7 +93,7 @@ Manual decoding lets us trace every payment hop in the hierarchy (user → platf
 
 PayLabs uses Circle Gateway's `settle()` endpoint directly for standard seller flows.
 
-**Why:** `settle()` already validates the payment and guarantees settlement in a single request. Calling `verify()` first only adds an extra network round trip.
+**Why:** `settle()` already validates the payment and guarantees settlement in a single request. Calling `verify()` first only adds an extra network round trip and is not recommended, due to its inherent race condition.
 
 Use `verify()` for diagnostics, debugging, or custom preflight validation.
 
