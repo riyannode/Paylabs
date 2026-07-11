@@ -202,9 +202,9 @@ function detectClaimScope(url: string, hostname: string): { scope: ClaimScope; s
 
 function resolveProofMethod(platform: SourcePlatform): "well_known_json" | "github_repo_file" | "hosted_link_backlink" | "manual_review" {
   if (platform === "github") return "github_repo_file";
-  // Social platforms and platforms that can't host .well-known files
   if (["twitter", "youtube", "medium", "substack"].includes(platform)) return "hosted_link_backlink";
-  return "well_known_json";
+  if (["github_pages", "vercel", "netlify"].includes(platform)) return "well_known_json";
+  return "hosted_link_backlink"; // default for "domain" and anything unrecognized
 }
 
 /**
