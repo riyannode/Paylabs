@@ -280,8 +280,6 @@ curl -i -X POST https://paylabs.vercel.app/api/paylabs/discovery-runs/route-pref
   }'
 ```
 
----
-
 ### 2. Brain
 
 ```bash
@@ -294,8 +292,6 @@ curl -i -X POST https://paylabs.vercel.app/api/paylabs/brain/run \
   }'
 ```
 
----
-
 ### 3. Macro Node
 
 ```bash
@@ -307,8 +303,6 @@ curl -i -X POST https://paylabs.vercel.app/api/paylabs/macro-nodes/discovery_pla
     "discoveryRunId": "test-123"
   }'
 ```
-
----
 
 ### 4. Agent Service
 
@@ -324,6 +318,7 @@ curl -i -X POST https://paylabs.vercel.app/api/paylabs/agent-services/intent_pla
     }
   }'
 ```
+
 ### 5. Decode Payment Challenge
 
 Every endpoint above returns `402` + a JWT in the `payment-required` header. Decode it to see the payment details:
