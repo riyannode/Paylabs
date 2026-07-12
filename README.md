@@ -1,5 +1,13 @@
 # PayLabs
 
+## Built for Canteen × Circle Lepton Agents Hackathon
+
+PayLabs is autonomous AI agents to agent system that discover sources,
+pay for information via x402 nanopayments on Arc,
+and distribute USDC micropayments to verified creators.
+
+---
+
 AI search/RSShub discovery + creator monetization platform. Every search is budgeted, every source is paid, every verified creator gets their share.
 
 **For users:** AI-powered source discovery. Ask a question, get answers backed by real sources from across the RSShub, with full transparency on what was searched, which sources were used, and what it cost.
