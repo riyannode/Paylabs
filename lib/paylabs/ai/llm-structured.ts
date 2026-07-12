@@ -364,6 +364,74 @@ export async function generateStructuredJson<T>(
           break;
         }
 
+        // ── No-JSON repair: ask model to reformat raw output as JSON ──
+        if (attempt === 0) {
+          try {
+            // Extract raw text content for repair prompt (safe — no secrets)
+            const rawMsg = result as unknown as Record<string, unknown>;
+            const rawContent = rawMsg?.content;
+            let rawText = "";
+            if (typeof rawContent === "string" && rawContent.trim()) {
+              rawText = rawContent.trim().slice(0, 2000); // cap for safety
+            } else if (Array.isArray(rawContent)) {
+              for (const part of rawContent) {
+                if (typeof part === "string" && part.trim()) {
+                  rawText = part.trim().slice(0, 2000);
+                  break;
+                }
+                if (typeof part === "object" && part !== null) {
+                  const tp = part as Record<string, unknown>;
+                  if (typeof tp.text === "string" && tp.text.trim()) {
+                    rawText = tp.text.trim().slice(0, 2000);
+                    break;
+                  }
+                }
+              }
+            }
+
+            if (rawText.length > 0) {
+              const expectedKeys = getExpectedKeys(schema);
+              const repairSystemPrompt = "The previous response was not valid JSON. Rewrite it as JSON only, matching the required schema. Do not include markdown, comments, explanation, or code fences. Return ONLY the JSON object."
+                + (expectedKeys.length > 0 ? `\nRequired top-level keys: ${expectedKeys.join(", ")}` : "");
+              const repairUserPrompt = `The model returned this text, which is not valid JSON:\n\n${rawText}\n\nRewrite it as a single valid JSON object matching the schema. Do not add fields outside the schema. Return ONLY the JSON, no other text.`;
+              const repairMessages: BaseMessage[] = [
+                new SystemMessage(repairSystemPrompt),
+                new HumanMessage(repairUserPrompt),
+              ];
+
+              const repairResult = await (model as ChatOpenAI).invoke(repairMessages);
+              const repairJsonStr = extractJsonFromResponse(repairResult);
+
+              if (repairJsonStr) {
+                const repairParsed = schema.safeParse(JSON.parse(repairJsonStr));
+                if (repairParsed.success) {
+                  console.log("[llm-structured] no-JSON repair succeeded", {
+                    agent_name: agentName,
+                    provider: modelConfig.provider,
+                    model: modelName,
+                    attempt: attempt + 1,
+                  });
+                  const meta = buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, attempt + 1, "llm_structured_no_json_repair");
+                  return { ok: true, data: repairParsed.data as T, meta };
+                }
+                console.log("[llm-structured] no-JSON repair also failed Zod", {
+                  agent_name: agentName,
+                  repair_issue_paths: repairParsed.error.issues.map(i => i.path.join(".")),
+                });
+              } else {
+                console.log("[llm-structured] no-JSON repair: still no JSON extractable", {
+                  agent_name: agentName,
+                });
+              }
+            }
+          } catch (repairErr: unknown) {
+            console.log("[llm-structured] no-JSON repair attempt error:", {
+              agent_name: agentName,
+              error: repairErr instanceof Error ? repairErr.message.slice(0, 100) : String(repairErr).slice(0, 100),
+            });
+          }
+        }
+
         lastError = "No JSON extractable from LLM response";
         if (attempt < maxAttempts - 1) continue;
         break;
@@ -497,11 +565,12 @@ export async function generateStructuredJson<T>(
   const metaWithDiag = { ...meta, ...lastDiag, error_code: code, error_safe: lastError.slice(0, 220) };
 
   if (required) {
-    if (agentName !== "brain_planner") {
-      // Throw for non-brain LLM-required agents (preserve existing behavior)
+    // brain_planner: throw on failure (fail-closed for paid path)
+    if (agentName === "brain_planner") {
       throw new Error(`PAYLABS_LLM_REQUIRED=true but ${agentName} failed after ${maxAttempts} attempts: ${lastError}`);
     }
-    // brain_planner: return ok:false with meta so caller gets diagnostics
+    // Non-brain agents (query_builder, signal_scout, etc.): return ok:false
+    // so caller can run recovery/fallback logic instead of crashing
     return { ok: false, code, error: `Failed after ${maxAttempts} attempts: ${lastError}`, meta: metaWithDiag };
   }
 

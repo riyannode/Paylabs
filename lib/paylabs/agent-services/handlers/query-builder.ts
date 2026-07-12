@@ -708,7 +708,7 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
   });
 
   if (!result.ok) {
-    // Fallback: use Brain's LLM-generated variants as primary, deterministic second
+    // ── Last resort: deterministic fallback after all LLM recovery exhausted ──
     const fallbackMerged = [...brainVariants, ...det.expanded_queries];
     const seen = new Set<string>();
     const deduped: string[] = [];
@@ -719,7 +719,20 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
         deduped.push(q.trim());
       }
     }
+    // Always include the original goal as minimum fallback query
+    if (normalized_goal && !deduped.some(q => q.toLowerCase().trim() === normalized_goal.toLowerCase().trim())) {
+      deduped.unshift(normalized_goal);
+    }
     const fallbackQueries = deduped.slice(0, 7);
+
+    // Log degraded state (always-on for query_builder — critical discovery path)
+    console.log("[query-builder] LLM failed, using deterministic fallback", {
+      agent: "query_builder",
+      fallback_queries_count: fallbackQueries.length,
+      brain_variants_count: brainVariants.length,
+      llm_error_code: result.code,
+      llm_error_safe: (result.error || "").slice(0, 120),
+    });
 
     return {
       ok: true,
@@ -735,6 +748,8 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
         negative_filters: det.negative_filters,
         source_preferences: det.source_preferences,
         safe_query_summary: `Built ${fallbackQueries.length} queries (LLM failed, ${brainVariants.length > 0 ? "Brain variants + " : ""}deterministic fallback).`,
+        degraded: true,
+        fallback_reason: "LLM structured output failed; deterministic fallback used",
       },
       safeSummary: `Built ${fallbackQueries.length} queries (LLM failed, ${brainVariants.length > 0 ? "Brain variants + " : ""}deterministic fallback).`,
       settled: false,
