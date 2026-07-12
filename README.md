@@ -267,6 +267,74 @@ graph TD
 
 **Quote Engine** = deterministic pricing. Computes cost from tier + selected services. No LLM-generated prices.
 
+## API Examples
+
+### 1. Route Preflight
+
+```bash
+curl -i -X POST https://paylabs.vercel.app/api/paylabs/discovery-runs/route-preflight \
+  -H "Content-Type: application/json" \
+  -d '{
+    "goal": "test query",
+    "user_wallet": "0xEvmAddress"
+  }'
+```
+
+---
+
+### 2. Brain
+
+```bash
+curl -i -X POST https://paylabs.vercel.app/api/paylabs/brain/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userGoal": "test query",
+    "routeTier": "normal",
+    "discoveryRunId": "test-123"
+  }'
+```
+
+---
+
+### 3. Macro Node
+
+```bash
+curl -i -X POST https://paylabs.vercel.app/api/paylabs/macro-nodes/discovery_planner/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userGoal": "test query",
+    "routeTier": "normal",
+    "discoveryRunId": "test-123"
+  }'
+```
+
+---
+
+### 4. Agent Service
+
+```bash
+curl -i -X POST https://paylabs.vercel.app/api/paylabs/agent-services/intent_planner/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "buyerAgentName": "discovery_planner",
+    "discoveryRunId": "test-123",
+    "payload": {
+      "goal": "test query",
+      "budgetUsdc": 0.01
+    }
+  }'
+```
+### 5. Decode Payment Challenge
+
+Every endpoint above returns `402` + a JWT in the `payment-required` header. Decode it to see the payment details:
+```bash
+curl -s -D /tmp/h.txt -X POST https://paylabs.vercel.app/api/paylabs/brain/run \
+  -H "Content-Type: application/json" \
+  -d '{"userGoal":"test","routeTier":"normal","discoveryRunId":"test"}' > /dev/null && \
+sed -n 's/.*payment-required: //p;/x-payment-required/{ s/.*: //; p; }' /tmp/h.txt | tr -d '\r' | head -1 | cut -d. -f2 | base64 -d 2>/dev/null | jq .
+```
+
+
 ---
 
 ## Pricing / Quote Engine
