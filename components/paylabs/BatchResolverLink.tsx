@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { hrefFromTx } from "@/lib/paylabs/x402/payment-links";
 
 type BatchResolverLinkProps = {
@@ -101,6 +101,18 @@ export default function BatchResolverLink({
   const directHref = hrefFromTx(directExplorerUrl, directTxHash);
   const batchHref = hrefFromTx(batchUrl, batchHash);
   const label = statusLabel(resolverStatus, !!batchHref);
+
+  // Auto-trigger resolve on mount if not yet resolved, with random jitter
+  // (0-3s) so many pending rows on the same page don't all fire at once.
+  useEffect(() => {
+    if (batchHref) return;
+    const delay = Math.random() * 3000;
+    const timer = setTimeout(() => {
+      void handleResolverClick();
+    }, delay);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div
