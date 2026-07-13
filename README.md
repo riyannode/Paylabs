@@ -319,7 +319,7 @@ curl -i -X POST https://paylabs.vercel.app/api/paylabs/agent-services/intent_pla
 
 ### 5. Decode x402 Payment Challenge
 
-Every paid endpoint initially returns `HTTP 402 Payment Required` together with a `PAYMENT-REQUIRED` header containing a base64-encoded x402 payment challenge.:
+Every paid endpoint initially returns `HTTP 402 Payment Required` together with a `PAYMENT-REQUIRED` header containing a base64-encoded x402 payment challenge :
 ```bash
 curl -s -D /tmp/h.txt \
   -X POST https://paylabs.vercel.app/api/paylabs/brain/run \
