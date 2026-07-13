@@ -6,7 +6,7 @@ PayLabs is an autonomous multi agent system where a Budget Controller allocates 
 
 ---
 
-AI search/RSShub discovery + creator monetization platform. Every search is budgeted, every source is paid, every verified creator gets their share.
+AI search/RSSHub discovery + creator monetization platform. Every search is budgeted, every source is paid, every verified creator gets their share.
 
 **For users:** AI-powered source discovery. Ask a question, get answers backed by real sources from across the RSShub, with full transparency on what was searched, which sources were used, and what it cost.
 
@@ -29,7 +29,7 @@ PayLabs uses Gateway Balance for automatic x402 payments. Users do not choose se
 ### Creator
 
 1. Open Creator Profile.
-2. Connet/Login Google to create Creator Wallet/UCW
+2. Connect/Login Google to create Creator Wallet/UCW
 3. Register your source URL.
 4. Complete the ownership verification step.
 5. Once verified, your source can become eligible for creator payouts when used in PayLabs runs.
@@ -116,7 +116,7 @@ These SDKs are reusable companion packages. They are not required to run the Pay
 | SDK | Purpose | Install |
 |-----|---------|---------|
 | [`x402-batch-codec`](https://github.com/riyannode/x402-batch-codec)  | TypeScript codec for decoding Circle Gateway x402 `submitBatch` transactions on Arc, verifying buyer/seller batch presence, and generating explorer payment proof objects. Codec-only: no signing, no wallet execution, no raw payment headers. | `npm install github:riyannode/x402-batch-codec` |
-| [`x402-batch-codec-py`](https://github.com/riyannode/x402-batch-codec-py) | Phyton codec for decoding Circle Gateway x402 `submitBatch` transactions on Arc, verifying buyer/seller batch presence, and generating explorer payment proof objects. Codec-only: no signing, no wallet execution, no raw payment headers. | `pip install git+https://github.com/riyannode/x402-batch-codec-py.git` |
+| [`x402-batch-codec-py`](https://github.com/riyannode/x402-batch-codec-py) | Python codec for decoding Circle Gateway x402 `submitBatch` transactions on Arc, verifying buyer/seller batch presence, and generating explorer payment proof objects. Codec-only: no signing, no wallet execution, no raw payment headers. | `pip install git+https://github.com/riyannode/x402-batch-codec-py.git` |
 | [`x402-header-agent`](https://github.com/riyannode/x402-header-agent) | TypeScript + native Python SDK for Circle Gateway x402 header payments. Includes buyer/seller helpers, LangChain/CrewAI/custom agent adapters, batch payment helpers, Circle DCW signing, and a dual-role agent wrapper for services that need to receive x402 payments as a seller and spend x402 payments as a buyer. No raw buyer private keys. | `npm install github:riyannode/x402-header-agent` |
 | [`deepagent-x402-kit`](https://github.com/riyannode/deepagent-x402-kit) | Python LangChain / Deep Agents kit for ERC-8004 agent identity on Arc plus optional policy-gated Circle x402 tools. One Circle DCW wallet maps to one ERC-8004 agent identity. | `pip install "git+https://github.com/riyannode/deepagent-x402-kit.git"` |
 
@@ -126,7 +126,7 @@ These packages are currently installed directly from GitHub and are not publishe
 
 ## Agent Stack
 
-PayLabs build on a LangGraph Brain planner + custom TypeScript x402 agent runtime.
+PayLabs built on a LangGraph Brain planner + custom TypeScript x402 agent runtime.
 
 A user run begins with an **x402 entry payment**. The Brain Planner generates a locked quote and execution plan. It then triggers selected macro-node phases through **x402 macro edges**. Each macro node executes its phase and pays child service nodes via **x402 service**.
 
