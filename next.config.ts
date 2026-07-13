@@ -29,7 +29,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "img-src 'self' data: https: blob:",
       "font-src 'self' data: https://fonts.gstatic.com",
-      "connect-src 'self' https://*.supabase.co https://*.circle.com https://api.circle.com https://gateway-api-testnet.circle.com https://gateway-api.circle.com https://oauth2.googleapis.com https://accounts.google.com https://token-plan-sgp.xiaomimimo.com https://rsshub.rssforever.com wss://*.supabase.co",
+      "connect-src 'self' https://*.supabase.co https://*.circle.com https://api.circle.com https://gateway-api-testnet.circle.com https://gateway-api.circle.com https://oauth2.googleapis.com https://accounts.google.com https://rsshub.rssforever.com wss://*.supabase.co",
       "frame-src 'self' https://accounts.google.com https://pw-auth.circle.com",
       "base-uri 'self'",
       "form-action 'self'",
