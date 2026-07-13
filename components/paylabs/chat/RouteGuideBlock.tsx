@@ -23,26 +23,26 @@ export function RouteGuideBlock({ onUsePrompt }: RouteGuideBlockProps) {
           <div className="pl-guide-row">
             <div className="pl-guide-info">
               <b>Quick answer</b>
-              <span>Best for: Explain, define, summarize</span>
-              <span className="pl-guide-example">Explain Arc x402 simply using source-backed info.</span>
+              <span>Best for: Fast explanations and simple questions</span>
+              <span className="pl-guide-example">Explain a concept or summarize a topic using trusted sources.</span>
             </div>
-            <button className="pl-guide-use" onClick={() => onUsePrompt("Explain Arc x402 simply using source-backed info.")}>Use</button>
+            <button className="pl-guide-use" onClick={() => onUsePrompt("Explain a concept or summarize a topic using trusted sources.")}>Use</button>
           </div>
           <div className="pl-guide-row">
             <div className="pl-guide-info">
               <b>Standard research</b>
-              <span>Best for: Compare, verify, fact-check</span>
-              <span className="pl-guide-example">Compare Arc x402 and Circle Gateway and verify the main claims.</span>
+              <span>Best for: Verification and comparison</span>
+              <span className="pl-guide-example">Compare options, verify claims, and answer with multiple supporting sources.</span>
             </div>
-            <button className="pl-guide-use" onClick={() => onUsePrompt("Compare Arc x402 and Circle Gateway and verify the main claims.")}>Use</button>
+            <button className="pl-guide-use" onClick={() => onUsePrompt("Compare options, verify claims, and answer with multiple supporting sources.")}>Use</button>
           </div>
           <div className="pl-guide-row">
             <div className="pl-guide-info">
               <b>Deep research</b>
-              <span>Best for: Multi-source, current, attribution</span>
-              <span className="pl-guide-example">What are the latest developments in open source AI agent frameworks, compare the strongest projects, verify with multiple current sources, and show which sources influenced the answer?</span>
+              <span>Best for: Comprehensive analysis</span>
+              <span className="pl-guide-example">Conduct in-depth multi-source research with detailed comparisons, citations, and recent developments.</span>
             </div>
-            <button className="pl-guide-use" onClick={() => onUsePrompt("What are the latest developments in open source AI agent frameworks, compare the strongest projects, verify with multiple current sources, and show which sources influenced the answer?")}>Use</button>
+            <button className="pl-guide-use" onClick={() => onUsePrompt("Conduct in-depth multi-source research with detailed comparisons, citations, and recent developments.")}>Use</button>
           </div>
         </div>
       )}
