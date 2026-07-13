@@ -2,9 +2,7 @@
 
 ## Built for Canteen × Circle Lepton Agents Hackathon
 
-PayLabs is autonomous AI agents to agent system that discover sources,
-pay for information via x402 nanopayments on Arc,
-and distribute USDC micropayments to verified creators.
+PayLabs is an autonomous multi agent system where a Budget Controller allocates budgets, orchestrates specialized AI agents, executes x402 nanopayments on Arc, and automatically settles USDC micropayments to verified creators.
 
 ---
 
