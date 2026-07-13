@@ -173,7 +173,7 @@ graph TD
 
     D1["intent_planner"]
     D2["query_builder"]
-    D3["signal_scout"]
+    D3["signal_scout_basic / signal_scout"]
 
     P1["intent_matcher"]
     P2["source_verifier"]
@@ -184,19 +184,19 @@ graph TD
     S1["creator_attribution"]
     S2["advanced_evidence_evaluator"]
     S3["creator_payout_router"]
+    S1["creator_attribution"]
+    Creator["Creator Wallet/ Treasury"]
 
     EasyOutput["Easy Output<br/>Discovery children only<br/>No creator payout<br/>User summary"]
     NormalOutput["Normal Output<br/>Discovery + payment + settlement children<br/>Creator payout<br/>User summary"]
     AdvancedOutput["Advanced Output<br/>Normal output + evidence evaluation<br/>Creator payout<br/>User summary"]
 
-    Creator["Creator Wallet"]
-
     User -->|"x402 Payment"| EntryGate
     EntryGate -->|"route-preflight"| Brain
 
-    Brain -->|"x402 Macro Edge"| Discovery
-    Brain -->|"x402 Macro Edge"| Payment
-    Brain -->|"x402 Macro Edge"| Settlement
+    Brain -->|"x402 Macro Edge "| Discovery
+    Brain -->|"x402 Macro Edge "| Payment
+    Brain -->|"x402 Macro Edge "| Settlement
 
     Discovery --> DiscoveryEdges
     DiscoveryEdges --> D1
@@ -209,24 +209,24 @@ graph TD
     PaymentEdges --> P3
     PaymentEdges --> P4
     PaymentEdges --> P5
-
+    PaymentEdges --> D3 
+    
     Settlement --> SettlementEdges
     SettlementEdges --> S1
     SettlementEdges --> S2
     SettlementEdges --> S3
 
-    S3 -->|"USDC Payout"| Creator
+    S3 -->|"USDC payout"| Creator
 
     CircleGateway -.->|"Batch x402 txs"| EntryGate
     CircleGateway -.->|"Batch x402 txs"| Brain
     CircleGateway -.-> Discovery
     CircleGateway -.-> Payment
-    CircleGateway -.-> Settlement
 
-    D3 -->|"Easy tier"| EasyOutput
-    P5 -->|"Normal tier"| NormalOutput
+    D3 -->|"Easy tier"| EasyOutput 
+    P5 -->|"Normal tier"| NormalOutput 
     S3 -->|"Normal payout"| NormalOutput
-    S2 -->|"Advanced tier"| AdvancedOutput
+    S2 -->|"Advanced tier"| AdvancedOutput 
     S3 -->|"Advanced payout"| AdvancedOutput
 
     classDef node fill:#17191a,stroke:#6f6f6f,color:#d8d8d8,stroke-width:1px;
