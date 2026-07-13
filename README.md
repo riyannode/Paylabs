@@ -317,14 +317,21 @@ curl -i -X POST https://paylabs.vercel.app/api/paylabs/agent-services/intent_pla
   }'
 ```
 
-### 5. Decode Payment Challenge
+### 5. Decode x402 Payment Challenge
 
-Every endpoint above returns `402` + a JWT in the `payment-required` header. Decode it to see the payment details:
+Every paid endpoint initially returns `HTTP 402 Payment Required` together with a `PAYMENT-REQUIRED` header containing a base64-encoded x402 payment challenge.:
 ```bash
-curl -s -D /tmp/h.txt -X POST https://paylabs.vercel.app/api/paylabs/brain/run \
+curl -s -D /tmp/h.txt \
+  -X POST https://paylabs.vercel.app/api/paylabs/brain/run \
   -H "Content-Type: application/json" \
-  -d '{"userGoal":"test","routeTier":"normal","discoveryRunId":"test"}' > /dev/null && \
-sed -n 's/.*payment-required: //p;/x-payment-required/{ s/.*: //; p; }' /tmp/h.txt | tr -d '\r' | head -1 | cut -d. -f2 | base64 -d 2>/dev/null | jq .
+  -d '{"userGoal":"test","routeTier":"normal","discoveryRunId":"test"}' \
+  > /dev/null
+
+sed -n 's/.*payment-required: //p;/PAYMENT-REQUIRED/{ s/.*: //; p; }' /tmp/h.txt \
+| tr -d '\r' \
+| head -1 \
+| base64 -d \
+| jq .
 ```
 
 
