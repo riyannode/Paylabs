@@ -14,7 +14,7 @@ AI search/RSSHub discovery + creator monetization platform. Every search is budg
 
 ---
 
-## How to Try PayLabs
+## How to Try
 
 ### User
 
