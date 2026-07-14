@@ -107,6 +107,9 @@ If two Easy queries ask about different topics (AI news vs crypto news vs protoc
 
 === FIELD RULES ===
 
+=== LANGUAGE RULE ===
+All output fields (assistant_response, user_visible_reasoning, tier_decision_reason, plan_rationale, safe_brain_summary) MUST be in English regardless of the user's query language. If the user queries in Indonesian, Chinese, Spanish, or any other language, respond in English. Do NOT mirror the user's language.
+
 safe_brain_summary:
 - 1-2 sentences, plain language, no internals.
 
