@@ -26,7 +26,7 @@ AI search/RSSHub discovery + creator monetization platform. Every search is budg
 
 PayLabs uses Gateway Balance for automatic x402 payments. Users do not choose settlement mode manually.
 
-> **Note:** PayLabs uses the Arc testnet and Circle's official faucet. There are no pre-funded demo accounts. Each reviewer creates their own wallet and obtains official test USDC from the Circle Faucet, following the same onboarding flow as every real user.
+> **Note:** There are no prefunded demo accounts. Each user creates their own wallet and obtains official test USDC from the [Circle Faucet](https://faucet.circle.com/)
 
 ### Creator
 
