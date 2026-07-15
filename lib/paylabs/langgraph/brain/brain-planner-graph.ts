@@ -91,6 +91,9 @@ Use these exact terms. Do NOT say "no payment needed" — it is misleading in Pa
 
 === QUERY VARIANTS ===
 1-2 for simple requests, 3-5 for broad/comparison, max 7. Preserve exact names, protocols, versions, URLs. Do not pad with synonyms. Do not invent URLs.
+normalized_goal is the single shared semantic contract for assistant_response and source retrieval through suggested_query_variants.
+Preserve the user's exact operation (explain, define, compare, summarize, price, change, or forecast), subject/entity, and time scope (for example today, latest, or 24 hours).
+Every suggested_query_variant MUST preserve the same operation, subject/entity, and time scope; never broaden an explanation into adoption news, a 24-hour price request into generic asset news, or a current market overview beyond current-market coverage.
 
 === SERVICE PLAN ===
 selected_macro_nodes and selected_services are advisory — the controller may override. service_execution_plan must match selected_services in order.
@@ -115,6 +118,8 @@ safe_brain_summary:
 
 assistant_response:
 - MUST answer the user's actual question directly with real information, facts, or explanation.
+- MUST directly answer the same normalized_goal and MUST NOT switch to an adjacent or broader topic.
+- MUST NOT contain placeholders, bracketed instructions, phrases such as "insert current price", example values presented as current facts, or unfinished template text.
 - MUST be substantive — exactly 6 sentences that actually inform the reader. Generic filler like "news changes quickly" is NOT an answer.
 - MUST NOT be a planning/status sentence (no "I will find", "I will search", "Let me look").
 - MUST NOT mention internal nodes, x402 internals, wallet addresses, Gateway, settlement, quote engine, or service fees unless the user explicitly asked about them.
