@@ -314,7 +314,6 @@ export async function POST(req: NextRequest) {
             discovery_run_id: run.id,
             final_answer: run.final_answer || sourceSnapshot.final_answer || agentTrace.final_answer || null,
             brain_planning: agentTrace.brain_planning || null,
-            brain_synthesis: agentTrace.brain_synthesis || null,
             _brain_diag: agentTrace._brain_diag || null,
             effective_route_tier: run.effective_route_tier || run.route_tier,
             route_tier: run.effective_route_tier || run.route_tier,
