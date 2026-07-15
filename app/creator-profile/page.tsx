@@ -8,7 +8,9 @@ export default function CreatorProfilePage() {
     <div style={{ display: "grid", gap: 16 }}>
       <div>
         <a href="/chat" className="pl-back-btn">← Back to Chat</a>
-        <h1 className="page-title">Creator Profile</h1>
+        <div className="pl-subpage-heading">
+          <h1 className="page-title">Creator Profile</h1>
+        </div>
       </div>
 
       <CreatorProfileClient />

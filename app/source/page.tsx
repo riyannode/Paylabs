@@ -97,10 +97,12 @@ export default async function SourcesPage() {
     <div style={{ display: "grid", gap: 24 }}>
       <div>
         <a href="/chat" className="pl-back-btn">← Back to Chat</a>
-        <h1 className="page-title">Sources</h1>
-        <p className="muted" style={{ marginTop: 8 }}>
-          RSSHub feed items — source-backed content catalog.
-        </p>
+        <div className="pl-subpage-heading">
+          <h1 className="page-title">Sources</h1>
+          <p className="muted" style={{ marginTop: 8 }}>
+            RSSHub feed items — source-backed content catalog.
+          </p>
+        </div>
       </div>
 
       {items.length === 0 ? (

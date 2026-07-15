@@ -364,10 +364,12 @@ export default async function DashboardPage() {
     <div style={{ display: "grid", gap: 24 }}>
       <div>
         <a href="/chat" className="pl-back-btn">← Back to Chat</a>
-        <h1 className="page-title">Explorer</h1>
-        <p className="muted" style={{ marginTop: 8 }}>
-          Transaction activity
-        </p>
+        <div className="pl-subpage-heading">
+          <h1 className="page-title">Explorer</h1>
+          <p className="muted" style={{ marginTop: 8 }}>
+            Transaction activity
+          </p>
+        </div>
       </div>
 
       {/* ─── KPI Cards ──────────────────────────────────────── */}

@@ -403,8 +403,10 @@ export default function ReceiptsClient({ initialRunId }: Props) {
       <header className="pl-receipts-header">
         <div>
           <a href="/chat" className="pl-back-btn">← Back to Chat</a>
-          <h1 className="page-title">Receipts</h1>
-          <p className="muted">Your PayLabs payment receipts and history</p>
+          <div className="pl-subpage-heading">
+            <h1 className="page-title">Receipts</h1>
+            <p className="muted">Your PayLabs payment receipts and history</p>
+          </div>
         </div>
         <select className="input pl-receipts-filter" value={filter} onChange={(event) => setFilter(event.target.value as StatusFilter)}>
           <option value="all">All Status</option>
