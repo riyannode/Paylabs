@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import LandingWebGLBackground from "@/components/paylabs/LandingWebGLBackground";
 import VisitTracker from "@/components/paylabs/VisitTracker";
 
 export const metadata: Metadata = {
@@ -17,8 +18,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body style={{ margin: 0, minHeight: "100vh" }}>
+        <LandingWebGLBackground />
         <VisitTracker />
-        <main className="container pl-compact-root">
+        <main
+          className="container pl-compact-root"
+          style={{ position: "relative", zIndex: 10 }}
+        >
           <ErrorBoundary>
             {children}
           </ErrorBoundary>
