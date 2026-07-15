@@ -22,12 +22,12 @@ export { isTavilyEnabled } from "./tavily-client";
 
 // ─── Types ──────────────────────────────────────────────────
 
-export interface TavilyLiveCandidate {
+export interface WebLiveCandidate {
   feed_item_id: string;
   title: string;
   publisher: string;
-  source_kind: "tavily_live";
-  provider: "tavily";
+  source_kind: "tavily_live" | "jina_live";
+  provider: "tavily" | "jina";
   source_url: string;
   domain: string | null;
   summary: string;
@@ -41,8 +41,11 @@ export interface TavilyLiveCandidate {
   reason: string;
 }
 
+/** Backward-compatible name retained for existing callers. */
+export type TavilyLiveCandidate = WebLiveCandidate;
+
 export interface TavilyLiveResult {
-  candidates: TavilyLiveCandidate[];
+  candidates: WebLiveCandidate[];
   result_count: number;
   latency_ms: number;
   error_class: string | null;
@@ -264,6 +267,303 @@ function passesTavilyQualityGuard(result: {
   return { pass: true, reason: null };
 }
 
+/** Canonical URL used only for cross-provider deduplication. */
+export function canonicalizeWebUrl(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (!url.hostname || url.username || url.password) return null;
+    url.hash = "";
+    url.hostname = url.hostname.toLowerCase();
+
+    for (const key of [...url.searchParams.keys()]) {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey.startsWith("utm_") || lowerKey === "gclid" || lowerKey === "fbclid") {
+        url.searchParams.delete(key);
+      }
+    }
+    url.searchParams.sort();
+
+    if (url.pathname !== "/") {
+      url.pathname = url.pathname.replace(/\/+$/, "");
+    }
+
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+const WEB_MIN_RELEVANCE_SCORE = 0.35;
+
+/** Apply the same deterministic entity/query/topic scoring to every provider. */
+export function applySharedWebRelevanceScore(
+  candidate: WebLiveCandidate,
+  safeQuery: string,
+  topicCategory: string,
+  entityTerms: string[] = [],
+): WebLiveCandidate {
+  const safeTerms = [...new Set(
+    safeQuery
+      .toLowerCase()
+      .split(/\s+/)
+      .map((term) => term.trim())
+      .filter((term) => term.length > 2),
+  )];
+  const title = candidate.title.toLowerCase();
+  const summary = candidate.summary.toLowerCase();
+  const metadata = [candidate.domain || "", candidate.source_url].join(" ").toLowerCase();
+  const matchedSafeTerms = safeTerms.filter((term) =>
+    title.includes(term) || summary.includes(term) || metadata.includes(term)
+  );
+  const normalizedEntities = [...new Set(
+    entityTerms.map((term) => term.trim().toLowerCase()).filter(Boolean),
+  )];
+  const titleEntityMatches = normalizedEntities.filter((term) => title.includes(term));
+  const summaryEntityMatches = normalizedEntities.filter((term) => summary.includes(term));
+  const metadataEntityMatches = normalizedEntities.filter((term) => metadata.includes(term));
+  const topicSignal = passesAdvancedRelevanceGuard(
+    {
+      title: candidate.title,
+      summary: candidate.summary,
+      domain: candidate.domain,
+      url: candidate.source_url,
+    },
+    topicCategory,
+  ).pass;
+  const queryAdjustment = matchedSafeTerms.length > 0
+    ? Math.min(0.10, matchedSafeTerms.length * 0.02)
+    : -0.10;
+  const entityAdjustment = normalizedEntities.length === 0
+    ? 0
+    : titleEntityMatches.length > 0
+      ? 0.30
+      : summaryEntityMatches.length > 0
+        ? 0.18
+        : metadataEntityMatches.length > 0
+          ? 0.10
+          : -0.30;
+  const topicAdjustment = topicSignal ? 0.03 : -0.08;
+  const relevanceReason = titleEntityMatches.length > 0
+    ? "entity_title"
+    : summaryEntityMatches.length > 0
+      ? "entity_summary"
+      : metadataEntityMatches.length > 0
+        ? "entity_metadata"
+        : normalizedEntities.length > 0
+          ? "topic_only_penalty"
+          : "query_match";
+
+  const hasEntityMatch = titleEntityMatches.length > 0 || summaryEntityMatches.length > 0 || metadataEntityMatches.length > 0;
+  let finalScore = candidate.relevance_score + queryAdjustment + entityAdjustment + topicAdjustment;
+  if (normalizedEntities.length > 0 && !hasEntityMatch) {
+    finalScore = Math.min(finalScore, WEB_MIN_RELEVANCE_SCORE - 0.01);
+  }
+
+  return {
+    ...candidate,
+    relevance_score: Math.max(0, Math.min(1, finalScore)),
+    reason: `${candidate.reason};relevance:${relevanceReason}`,
+  };
+}
+
+function compareWebCandidates(a: WebLiveCandidate, b: WebLiveCandidate): number {
+  if (a.relevance_score !== b.relevance_score) return a.relevance_score - b.relevance_score;
+  if (!!a.title.trim() !== !!b.title.trim()) return a.title.trim() ? 1 : -1;
+  if (!!a.summary.trim() !== !!b.summary.trim()) return a.summary.trim() ? 1 : -1;
+  if (a.provider !== b.provider) return a.provider === "tavily" ? 1 : -1;
+  const aTime = a.published_at ? Date.parse(a.published_at) : 0;
+  const bTime = b.published_at ? Date.parse(b.published_at) : 0;
+  if (aTime !== bTime) return aTime - bTime;
+  return b.source_url.localeCompare(a.source_url);
+}
+
+/** Score all providers, apply the final threshold, dedupe, then rank once. */
+export function mergeRankWebCandidates(
+  tavilyCandidates: WebLiveCandidate[],
+  jinaCandidates: WebLiveCandidate[],
+  safeQuery: string,
+  topicCategory: string,
+  entityTerms: string[] = [],
+): WebLiveCandidate[] {
+  const bestByCanonicalUrl = new Map<string, WebLiveCandidate>();
+  const scoredCandidates = [...tavilyCandidates, ...jinaCandidates]
+    .map((candidate) => applySharedWebRelevanceScore(candidate, safeQuery, topicCategory, entityTerms))
+    .filter((candidate) => candidate.relevance_score >= WEB_MIN_RELEVANCE_SCORE);
+
+  for (const candidate of scoredCandidates) {
+    const canonicalUrl = canonicalizeWebUrl(candidate.source_url);
+    if (!canonicalUrl) continue;
+    const existing = bestByCanonicalUrl.get(canonicalUrl);
+    if (!existing || compareWebCandidates(candidate, existing) > 0) {
+      bestByCanonicalUrl.set(canonicalUrl, candidate);
+    }
+  }
+
+  return [...bestByCanonicalUrl.values()]
+    .sort((a, b) => {
+      if (b.relevance_score !== a.relevance_score) {
+        return b.relevance_score - a.relevance_score;
+      }
+      return a.source_url.localeCompare(b.source_url);
+    })
+    .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
+}
+
+// ─── Jina Reader: Additional Web Source ─────────────────────
+
+/**
+ * Fetch additional web sources via Jina Reader (r.jina.ai).
+ * Jina converts any URL to clean markdown — we use it to fetch
+ * search results as additional candidates alongside Tavily.
+ *
+ * Returns TavilyLiveCandidate[] for seamless merge with Tavily results.
+ */
+const DEFAULT_JINA_TIMEOUT_MS = 10_000;
+const DEFAULT_JINA_MAX_BODY_BYTES = 256 * 1024;
+
+function isGoogleInternalOrRedirect(url: URL): boolean {
+  const host = url.hostname.toLowerCase();
+  const labels = host.split(".");
+  const googleLabel = labels.findIndex((label) => label === "google");
+  if (googleLabel >= 0 && labels.length - googleLabel >= 2) return true;
+  return host === "gstatic.com" || host.endsWith(".gstatic.com") ||
+    host === "googleusercontent.com" || host.endsWith(".googleusercontent.com") ||
+    host === "googleapis.com" || host.endsWith(".googleapis.com");
+}
+
+async function readBoundedResponseText(response: Response, maxBytes: number): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel("jina_body_too_large");
+        throw new Error("jina_body_too_large");
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export async function fetchJinaSources(input: {
+  safeQuery: string;
+  topicCategory: string;
+  entityTerms?: string[];
+}, deps: {
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+  maxBodyBytes?: number;
+} = {}): Promise<WebLiveCandidate[]> {
+  const controller = new AbortController();
+  const timeoutMs = Math.max(1, Math.min(deps.timeoutMs ?? DEFAULT_JINA_TIMEOUT_MS, 15_000));
+  const maxBodyBytes = Math.max(1, deps.maxBodyBytes ?? DEFAULT_JINA_MAX_BODY_BYTES);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    // Reuse the sanitized query; never reconstruct from raw user input.
+    const query = input.safeQuery.trim();
+    if (!query) return [];
+
+    // Use Jina Reader to fetch Google search results as markdown
+    const jinaUrl = `https://r.jina.ai/https://www.google.com/search?q=${encodeURIComponent(query)}&num=5`;
+
+    const response = await (deps.fetchImpl ?? fetch)(jinaUrl, {
+      headers: {
+        "Accept": "text/markdown",
+        "X-No-Cache": "true",
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) return [];
+
+    const markdown = await readBoundedResponseText(response, maxBodyBytes);
+    if (!markdown || markdown.length < 50) return [];
+
+    // Parse markdown links: [Title](url) pattern
+    const linkRegex = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
+    const candidates: WebLiveCandidate[] = [];
+    const seenUrls = new Set<string>();
+    let match: RegExpExecArray | null;
+
+    while ((match = linkRegex.exec(markdown)) !== null && candidates.length < 5) {
+      const title = match[1].trim();
+      const rawUrl = match[2].trim();
+
+      // Skip Google internal links, duplicates, very short titles
+      if (!title || title.length < 5) continue;
+      // Check hostname properly — substring match on URL is unsafe (CodeQL)
+      let parsedUrl: URL;
+      try { parsedUrl = new URL(rawUrl); } catch { continue; }
+      if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") continue;
+      if (!parsedUrl.hostname || parsedUrl.username || parsedUrl.password) continue;
+      if (isGoogleInternalOrRedirect(parsedUrl)) continue;
+      const url = canonicalizeWebUrl(parsedUrl.toString());
+      if (!url || seenUrls.has(url)) continue;
+      seenUrls.add(url);
+      const linkDomain = parsedUrl.hostname.toLowerCase();
+
+      // Reject low-quality domains
+      if (REJECTED_DOMAIN_PATTERNS.some((re) => re.test(linkDomain!))) continue;
+      if (REJECTED_TITLE_PATTERNS.some((re) => re.test(title))) continue;
+
+      const feedItemId = `jina_live:${createHash("sha256").update(url).digest("hex").slice(0, 16)}`;
+
+      candidates.push({
+        feed_item_id: feedItemId,
+        title,
+        publisher: linkDomain || "web",
+        source_kind: "jina_live",
+        provider: "jina",
+        source_url: url,
+        domain: linkDomain,
+        summary: "",
+        author: "",
+        published_at: null,
+        route_path: null,
+        rsshub_feed_url: null,
+        docs_url: null,
+        rank: candidates.length + 1,
+        relevance_score: 0.4,
+        reason: `jina_live:${input.topicCategory}`,
+      });
+    }
+
+    // Safe log
+    console.log(JSON.stringify({
+      log: "[web_search] jina_sources_complete",
+      topic: input.topicCategory,
+      query_length: query.length,
+      candidates_found: candidates.length,
+      domains: candidates.map((c) => c.domain).filter(Boolean).slice(0, 5),
+    }));
+
+    return candidates;
+  } catch (err: unknown) {
+    // Jina failure must not fail the run
+    const errorClass = err instanceof Error && err.name === "AbortError"
+      ? "timeout"
+      : err instanceof Error && err.message === "jina_body_too_large"
+        ? "body_too_large"
+        : "fetch_failed";
+    console.warn("[web_search] Jina Reader failed", {
+      error_class: errorClass,
+    });
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // ─── Public API ─────────────────────────────────────────────
 
 /**
@@ -280,7 +580,10 @@ export async function fetchTavilyLiveSources(input: {
   callerTag?: string;
   /** Pass route tier to enable Advanced-specific behavior */
   routeTier?: string;
-}): Promise<TavilyLiveResult> {
+}, deps: {
+  tavilySearchImpl?: typeof tavilySearch;
+  jinaSearchImpl?: typeof fetchJinaSources;
+} = {}): Promise<TavilyLiveResult> {
   const emptyResult: TavilyLiveResult = {
     candidates: [],
     result_count: 0,
@@ -288,7 +591,7 @@ export async function fetchTavilyLiveSources(input: {
     error_class: null,
   };
 
-  if (!isTavilyEnabled()) {
+  if (!deps.tavilySearchImpl && !deps.jinaSearchImpl && !isTavilyEnabled()) {
     return { ...emptyResult, error_class: "tavily_disabled" };
   }
 
@@ -307,9 +610,19 @@ export async function fetchTavilyLiveSources(input: {
 
   // Pass freshness to Tavily API when Advanced + freshness intent detected
   const tavilyFreshness = isAdvanced && freshnessDetected ? "week" : undefined;
-  const tavilyResponse = await tavilySearch(safeQuery, tavilyFreshness);
 
-  if (!tavilyResponse.ok || tavilyResponse.result_count === 0) {
+  // Run Tavily + Jina in parallel for maximum source diversity
+  const [tavilyResponse, jinaCandidates] = await Promise.all([
+    (deps.tavilySearchImpl ?? tavilySearch)(safeQuery, tavilyFreshness),
+    (deps.jinaSearchImpl ?? fetchJinaSources)({
+      safeQuery,
+      topicCategory: input.topicCategory,
+      entityTerms: input.entityTerms,
+    }),
+  ]);
+
+  // If BOTH Tavily and Jina return 0 results, return empty
+  if ((!tavilyResponse.ok || tavilyResponse.result_count === 0) && jinaCandidates.length === 0) {
     return {
       ...emptyResult,
       latency_ms: tavilyResponse.latency_ms,
@@ -318,7 +631,7 @@ export async function fetchTavilyLiveSources(input: {
   }
 
   // Normalize results into inline candidate shape
-  const candidates: TavilyLiveCandidate[] = [];
+  const candidates: WebLiveCandidate[] = [];
   const seenUrls = new Set<string>();
   const rejectionReasonCounts: Record<string, number> = {};
   let advancedRelevanceRejectionCount = 0;
@@ -369,13 +682,18 @@ export async function fetchTavilyLiveSources(input: {
       rsshub_feed_url: null,
       docs_url: null,
       rank: candidates.length + 1,
-      relevance_score: typeof r.score === "number" ? r.score : 0.5,
+      relevance_score: Math.max(0, Math.min(1, typeof r.score === "number" ? r.score : 0.5)),
       reason: `tavily_live:${input.topicCategory}/${input.topicSubcategory || "general"}`,
     });
   }
 
-  // Assign final ranks
-  candidates.forEach((c, i) => { c.rank = i + 1; });
+  const rankedCandidates = mergeRankWebCandidates(
+    candidates,
+    jinaCandidates,
+    safeQuery,
+    input.topicCategory,
+    input.entityTerms,
+  );
 
   // Safe diagnostic log — includes rejection reasons, freshness, relevance
   const safeLog: Record<string, unknown> = {
@@ -387,8 +705,13 @@ export async function fetchTavilyLiveSources(input: {
     route_tier: input.routeTier || "unknown",
     tavily_raw_result_count: tavilyResponse.result_count,
     tavily_accepted_count: candidates.length,
+    jina_accepted_count: jinaCandidates.length,
+    accepted_provider_counts: rankedCandidates.reduce<Record<string, number>>((counts, candidate) => {
+      counts[candidate.provider] = (counts[candidate.provider] || 0) + 1;
+      return counts;
+    }, {}),
     latency_ms: tavilyResponse.latency_ms,
-    domains: candidates.map((c) => c.domain).filter(Boolean).slice(0, 5),
+    domains: rankedCandidates.map((c) => c.domain).filter(Boolean).slice(0, 5),
   };
   // Add rejection breakdown when raw results > 0 but accepted = 0
   if (tavilyResponse.result_count > 0 && candidates.length === 0) {
@@ -401,9 +724,9 @@ export async function fetchTavilyLiveSources(input: {
   console.log(JSON.stringify(safeLog));
 
   return {
-    candidates,
-    result_count: candidates.length,
+    candidates: rankedCandidates,
+    result_count: rankedCandidates.length,
     latency_ms: tavilyResponse.latency_ms,
-    error_class: candidates.length === 0 ? "all_results_filtered" : null,
+    error_class: rankedCandidates.length === 0 ? "all_results_filtered" : null,
   };
 }

@@ -139,6 +139,66 @@ export function reconstructLockedPlan(preflight: {
   };
 }
 
+// ─── Web fallback control ────────────────────────────────────
+
+export function shouldTriggerWebSourceFallback(
+  sourceCount: number,
+  sourceConfidence: number,
+  retrievalMode?: string,
+): boolean {
+  if (
+    retrievalMode === "db_fallback" ||
+    retrievalMode === "rsshub_empty_tavily_live" ||
+    retrievalMode === "tavily_live"
+  ) return false;
+  return sourceCount === 0 || (sourceCount <= 2 && sourceConfidence < 0.5);
+}
+
+function sourceMatchPriority(reason?: string): number {
+  if (reason?.includes("primary_exact_title")) return 4;
+  if (reason?.includes("primary_exact_summary") || reason?.includes("primary_alias_title")) return 3;
+  if (reason?.includes("primary_alias_summary") || reason?.includes("entity_title")) return 2;
+  if (reason?.includes("entity_summary")) return 1;
+  return 0;
+}
+
+function mergeResolvedSources(
+  existing: import("../sources/types").SourceItem[],
+  incoming: import("../sources/types").SourceItem[],
+): import("../sources/types").SourceItem[] {
+  const bestByUrl = new Map<string, import("../sources/types").SourceItem>();
+  for (const source of [...existing, ...incoming]) {
+    let key = source.url;
+    try {
+      const parsed = new URL(source.url);
+      parsed.hash = "";
+      for (const param of [...parsed.searchParams.keys()]) {
+        const lower = param.toLowerCase();
+        if (lower.startsWith("utm_") || lower === "gclid" || lower === "fbclid") parsed.searchParams.delete(param);
+      }
+      parsed.searchParams.sort();
+      if (parsed.pathname !== "/") parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+      key = parsed.toString();
+    } catch { /* resolver already rejected malformed live URLs */ }
+    const current = bestByUrl.get(key);
+    if (!current || sourceMatchPriority(source.reason) > sourceMatchPriority(current.reason) ||
+      (sourceMatchPriority(source.reason) === sourceMatchPriority(current.reason) && source.relevance_score > current.relevance_score)) {
+      bestByUrl.set(key, source);
+    }
+  }
+  return [...bestByUrl.values()]
+    .sort((a, b) => sourceMatchPriority(b.reason) - sourceMatchPriority(a.reason) ||
+      b.relevance_score - a.relevance_score || a.url.localeCompare(b.url))
+    .slice(0, 10)
+    .map((source, index) => ({ ...source, rank: index + 1 }));
+}
+
+function averageSourceConfidence(sources: import("../sources/types").SourceItem[]): number {
+  if (sources.length === 0) return 0;
+  const average = sources.reduce((sum, source) => sum + Math.max(0, Math.min(1, source.relevance_score)), 0) / sources.length;
+  return Math.round(average * 100) / 100;
+}
+
 // ─── Main Function ───────────────────────────────────────────
 
 /**
@@ -443,8 +503,14 @@ export async function executeLockedMacroNodePipeline(
               serviceRetrievalMode as import("../sources/types").SourceContext["retrieval_mode"];
           }
 
-          // Tavily fallback: if resolver returned 0 sources for AI/Crypto topic
-          if (sourceContext.source_count === 0 && sourceContext.retrieval_mode !== "db_fallback") {
+          // Tavily fallback: if resolver returned few/low-quality sources for AI/Crypto topic
+          // Trigger when: 0 sources, OR ≤2 sources with low confidence (<0.5)
+          const _tavilyFallbackTriggered = shouldTriggerWebSourceFallback(
+            sourceContext.source_count,
+            sourceContext.source_confidence ?? 0,
+            sourceContext.retrieval_mode,
+          );
+          if (_tavilyFallbackTriggered) {
             const _tavilyDebugEnabled = process.env.PAYLABS_TAVILY_DEBUG === "true";
             const _sourceCountBefore = sourceContext.source_count;
             const _retrievalModeBefore = sourceContext.retrieval_mode;
@@ -486,32 +552,38 @@ export async function executeLockedMacroNodePipeline(
                   }));
 
                   if (tavilyResult.candidates.length > 0) {
-                    const tavilySources = tavilyResult.candidates.map((c) => ({
-                      feed_item_id: c.feed_item_id,
-                      title: c.title,
-                      url: c.source_url,
-                      domain: c.domain,
-                      summary: c.summary,
-                      author: c.author,
-                      published_at: c.published_at,
-                      route_path: c.route_path,
-                      trust_status: "unverified" as const,
-                      claim_status: "unclaimed" as const,
-                      rank: c.rank,
-                      relevance_score: c.relevance_score,
-                      source_kind: "tavily_live" as const,
-                      provider: "tavily" as const,
-                      reason: c.reason,
-                    }));
-
-                    sourceContext = {
-                      sources_used: tavilySources,
-                      source_selection_summary: `RSSHub returned 0 ${primaryTopic.category} sources. Tavily web search found ${tavilySources.length} link(s).`,
-                      source_confidence: 0.50,
-                      source_count: tavilySources.length,
-                      retrieval_mode: "rsshub_empty_tavily_live",
-                      source_strategy: "tavily_links_only_after_rsshub_empty",
-                    };
+                    const webResolverResult = await resolveSources({
+                      rankedCandidates: tavilyResult.candidates,
+                      normalizedGoal,
+                      entityTerms,
+                      primaryEntities,
+                      secondaryEntities,
+                      negativeEntities,
+                    });
+                    if (webResolverResult.ok && webResolverResult.sourceContext.source_count > 0) {
+                      const mergedSources = mergeResolvedSources(
+                        sourceContext.sources_used,
+                        webResolverResult.sourceContext.sources_used,
+                      );
+                      const providerCounts = mergedSources.reduce<Record<string, number>>((counts, source) => {
+                        const provider = source.provider || "unknown";
+                        counts[provider] = (counts[provider] || 0) + 1;
+                        return counts;
+                      }, {});
+                      sourceContext = {
+                        sources_used: mergedSources,
+                        source_selection_summary: `${mergedSources.length} relevant source(s) after RSSHub and web fallback ranking.`,
+                        source_confidence: averageSourceConfidence(mergedSources),
+                        source_count: mergedSources.length,
+                        retrieval_mode: "rsshub_empty_tavily_live",
+                        source_strategy: "web_links_after_low_confidence_rsshub",
+                      };
+                      console.log(JSON.stringify({
+                        log: "[locked_orchestration] web_fallback_accepted",
+                        source_count_after: mergedSources.length,
+                        provider_counts: providerCounts,
+                      }));
+                    }
                   }
                 }
               }
@@ -561,6 +633,21 @@ export async function executeLockedMacroNodePipeline(
           }
         }
       }
+      let primaryEntities: Array<{ text: string; canonical: string; type: string; required: boolean }> = [];
+      let secondaryEntities: Array<{ text: string; canonical: string; type: string; required: boolean }> = [];
+      let negativeEntities: string[] = [];
+      const sourceChildEvals = dData.serviceEvaluations as Array<{
+        serviceName: string;
+        output?: Record<string, unknown>;
+      }> | undefined;
+      const sourceQbEval = sourceChildEvals?.find(
+        (evaluation) => evaluation.serviceName === "query_builder" && evaluation.output,
+      );
+      if (sourceQbEval?.output) {
+        primaryEntities = (sourceQbEval.output.primary_entities as typeof primaryEntities) || [];
+        secondaryEntities = (sourceQbEval.output.secondary_entities as typeof secondaryEntities) || [];
+        negativeEntities = (sourceQbEval.output.negative_entities as string[]) || [];
+      }
 
       sourceContext = {
         sources_used: [],
@@ -578,7 +665,7 @@ export async function executeLockedMacroNodePipeline(
         const topics = detectTopics(normalizedGoal, entityTerms);
         const hasAiOrCrypto = topics.some((t) => t.category === "ai" || t.category === "crypto");
 
-        if (hasAiOrCrypto) {
+        if (hasAiOrCrypto && shouldTriggerWebSourceFallback(0, 0, serviceRetrievalMode)) {
           const { isTavilyEnabled, fetchTavilyLiveSources } = await import(
             "../web-search/tavily-live-search"
           );
@@ -611,32 +698,26 @@ export async function executeLockedMacroNodePipeline(
             }));
 
             if (tavilyResult.candidates.length > 0) {
-              const tavilySources = tavilyResult.candidates.map((c) => ({
-                feed_item_id: c.feed_item_id,
-                title: c.title,
-                url: c.source_url,
-                domain: c.domain,
-                summary: c.summary,
-                author: c.author,
-                published_at: c.published_at,
-                route_path: c.route_path,
-                trust_status: "unverified" as const,
-                claim_status: "unclaimed" as const,
-                rank: c.rank,
-                relevance_score: c.relevance_score,
-                source_kind: "tavily_live" as const,
-                provider: "tavily" as const,
-                reason: c.reason,
-              }));
-
-              sourceContext = {
-                sources_used: tavilySources,
-                source_selection_summary: `RSSHub returned 0 ${primaryTopic.category} sources. Tavily web search found ${tavilySources.length} link(s).`,
-                source_confidence: 0.50,
-                source_count: tavilySources.length,
-                retrieval_mode: "rsshub_empty_tavily_live",
-                source_strategy: "tavily_links_only_after_rsshub_empty",
-              };
+              const { resolveSources } = await import("../sources/source-resolver");
+              const webResolverResult = await resolveSources({
+                rankedCandidates: tavilyResult.candidates,
+                normalizedGoal,
+                entityTerms,
+                primaryEntities,
+                secondaryEntities,
+                negativeEntities,
+              });
+              if (webResolverResult.ok && webResolverResult.sourceContext.source_count > 0) {
+                const webSources = webResolverResult.sourceContext.sources_used;
+                sourceContext = {
+                  sources_used: webSources,
+                  source_selection_summary: `${webSources.length} relevant web source(s) found after RSSHub returned no matches.`,
+                  source_confidence: webResolverResult.sourceContext.source_confidence,
+                  source_count: webSources.length,
+                  retrieval_mode: "rsshub_empty_tavily_live",
+                  source_strategy: "web_links_after_rsshub_empty",
+                };
+              }
             }
           }
         }

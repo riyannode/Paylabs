@@ -18,8 +18,6 @@ import type {
 import { sanitizeEntityTerms, hasBoundaryTerm } from "./source-term-matching";
 import { detectTopics } from "@/lib/paylabs/rsshub/topic-routes";
 import {
-  passesAiSourceGuard,
-  passesCryptoSourceGuard,
   isGenericCatchAllSource,
 } from "@/lib/paylabs/rsshub/topic-source-guards";
 
@@ -68,7 +66,9 @@ async function enrichRankedCandidates(
 ): Promise<SourceItem[]> {
   if (rankedCandidates.length === 0) return [];
 
-  const topCandidates = rankedCandidates.slice(0, maxSources);
+  // Relevance must run before the final maxSources cut; otherwise upstream topic
+  // ordering can discard a lower-ranked exact entity match before resolver scoring.
+  const topCandidates = rankedCandidates.slice(0, Math.max(maxSources, 100));
 
   // Split: inline live candidates vs DB candidates
   const liveCandidates: typeof topCandidates = [];
@@ -76,7 +76,7 @@ async function enrichRankedCandidates(
 
   for (const c of topCandidates) {
     const ext = c as Record<string, unknown>;
-    if (ext.source_kind === "rsshub_live" || ext.source_kind === "tavily_live") {
+    if (ext.source_kind === "rsshub_live" || ext.source_kind === "tavily_live" || ext.source_kind === "jina_live") {
       liveCandidates.push(c);
     } else {
       dbCandidateIds.push(c.feed_item_id);
@@ -240,104 +240,177 @@ function isDomainOrSubdomain(input: string, baseDomain: string): boolean {
 
 /* hasTerm now uses shared hasBoundaryTerm from source-term-matching */
 
-function filterByRelevance(
+const FINAL_RELEVANCE_THRESHOLD = 0.35;
+const QUERY_STOPWORDS = new Set([
+  "what", "when", "where", "which", "who", "how", "this", "that", "with",
+  "from", "into", "about", "between", "after", "before", "the", "and", "for",
+  "repository", "releases", "latest", "recent", "updates", "update", "news",
+]);
+
+export interface SourceRelevanceEvaluation {
+  accepted: boolean;
+  score: number;
+  reason: "accepted" | "negative_entity" | "generic_catch_all" | "wrong_repository" | "github_intent_mismatch" | "keyword_mismatch" | "below_threshold";
+  matchPriority: number;
+  matchReason: "primary_exact_title" | "primary_exact_summary" | "primary_alias_title" | "primary_alias_summary" | "entity_title" | "entity_summary" | "topic_only_penalty" | "keyword_match";
+}
+
+export function evaluateSourceRelevance(
+  source: SourceItem,
+  normalizedGoal: string,
+  entityTerms: string[] = [],
+  primaryEntities: Array<{ text: string; canonical: string; type: string; required: boolean }> = [],
+  negativeEntities: string[] = [],
+): SourceRelevanceEvaluation {
+  const goalLower = normalizedGoal.toLowerCase();
+  const title = (source.title || "").toLowerCase();
+  const summary = (source.summary || "").toLowerCase();
+  const domain = (source.domain || "").toLowerCase();
+  const routePath = (source.route_path || "").toLowerCase();
+  const url = (source.url || "").toLowerCase();
+  const reason = (source.reason || "").toLowerCase();
+  const combined = `${title} ${summary} ${domain} ${routePath} ${url} ${reason}`;
+  const detectedTopics = detectTopics(normalizedGoal, entityTerms);
+  const queryHasDomainTopic = detectedTopics.some((topic) => topic.category === "ai" || topic.category === "crypto");
+
+  const negativePatterns = sanitizeEntityTerms(negativeEntities).map((term) => term.toLowerCase());
+  if (negativePatterns.some((term) => hasBoundaryTerm(combined, term))) {
+    return { accepted: false, score: 0, reason: "negative_entity", matchPriority: 0, matchReason: "topic_only_penalty" };
+  }
+  if (queryHasDomainTopic && isGenericCatchAllSource({ domain, routePath, url })) {
+    return { accepted: false, score: 0, reason: "generic_catch_all", matchPriority: 0, matchReason: "topic_only_penalty" };
+  }
+
+  const ownerRepoMatch = goalLower.match(/(\w[\w-]*)\s*\/\s*(\w[\w-]*)/);
+  const isGitHubIntent = /\bgithub\b/i.test(goalLower) || /\brepo(s|sitory|sitories)?\b/i.test(goalLower) || !!ownerRepoMatch;
+  let intendedRepositoryMatch = false;
+  if (ownerRepoMatch) {
+    const ownerMatches = hasBoundaryTerm(combined, ownerRepoMatch[1]);
+    const repoMatches = hasBoundaryTerm(combined, ownerRepoMatch[2]);
+    if (!ownerMatches || !repoMatches) {
+      return { accepted: false, score: 0, reason: "wrong_repository", matchPriority: 0, matchReason: "topic_only_penalty" };
+    }
+    intendedRepositoryMatch = true;
+  } else if (isGitHubIntent) {
+    const isGitHubDomain = isDomainOrSubdomain(domain, "github.com");
+    const hasRepoContent = /\b(commit|pull request|repository|release|merge|issue|branch|fork)\b/i.test(combined);
+    if (!isGitHubDomain && !hasRepoContent) {
+      return { accepted: false, score: 0, reason: "github_intent_mismatch", matchPriority: 0, matchReason: "topic_only_penalty" };
+    }
+  }
+
+  const sanitizedEntities = sanitizeEntityTerms(entityTerms).map((term) => term.toLowerCase());
+  const primaryDefinitions = primaryEntities.length > 0
+    ? primaryEntities.map((entity) => ({
+        canonical: entity.canonical.trim().toLowerCase(),
+        alias: entity.text.trim().toLowerCase(),
+      })).filter((entity) => entity.canonical || entity.alias)
+    : sanitizedEntities.slice(0, 1).map((canonical) => ({ canonical, alias: canonical }));
+  const primaryTerms = new Set(primaryDefinitions.flatMap((entity) => [entity.canonical, entity.alias]).filter(Boolean));
+  const secondaryTerms = sanitizedEntities.filter((term) => !primaryTerms.has(term));
+
+  let score = Math.max(0, Math.min(1, Number(source.relevance_score) || 0));
+  let matchPriority = 0;
+  let matchReason: SourceRelevanceEvaluation["matchReason"] = "keyword_match";
+  let missingPrimaryEntity = false;
+
+  if (intendedRepositoryMatch) {
+    score += 0.50;
+    matchPriority = 4;
+    matchReason = "entity_title";
+  }
+
+  const exactTitle = primaryDefinitions.some((entity) => entity.canonical && hasBoundaryTerm(title, entity.canonical));
+  const exactSummary = primaryDefinitions.some((entity) => entity.canonical && hasBoundaryTerm(summary, entity.canonical));
+  const aliasTitle = primaryDefinitions.some((entity) => entity.alias && entity.alias !== entity.canonical && hasBoundaryTerm(title, entity.alias));
+  const aliasSummary = primaryDefinitions.some((entity) => entity.alias && entity.alias !== entity.canonical && hasBoundaryTerm(summary, entity.alias));
+
+  if (exactTitle) {
+    score += 0.35;
+    matchPriority = 4;
+    matchReason = "primary_exact_title";
+  } else if (exactSummary) {
+    score += 0.22;
+    matchPriority = 3;
+    matchReason = "primary_exact_summary";
+  } else if (aliasTitle) {
+    score += 0.24;
+    matchPriority = 3;
+    matchReason = "primary_alias_title";
+  } else if (aliasSummary) {
+    score += 0.14;
+    matchPriority = 2;
+    matchReason = "primary_alias_summary";
+  } else if (primaryDefinitions.length > 0 && !intendedRepositoryMatch) {
+    score -= 0.65;
+    missingPrimaryEntity = true;
+    matchReason = "topic_only_penalty";
+  }
+
+  const entityTitleMatch = secondaryTerms.some((term) => hasBoundaryTerm(title, term));
+  const entitySummaryMatch = secondaryTerms.some((term) => hasBoundaryTerm(summary, term));
+  if (entityTitleMatch) {
+    score += 0.14;
+    matchPriority = Math.max(matchPriority, 2);
+    if (matchReason === "keyword_match") matchReason = "entity_title";
+  } else if (entitySummaryMatch) {
+    score += 0.07;
+    matchPriority = Math.max(matchPriority, 1);
+    if (matchReason === "keyword_match") matchReason = "entity_summary";
+  }
+
+  const queryTerms = [...new Set(goalLower.split(/[^a-z0-9]+/).filter((term) => term.length > 2 && !QUERY_STOPWORDS.has(term)))];
+  const titleKeywordMatches = queryTerms.filter((term) => hasBoundaryTerm(title, term)).length;
+  const summaryKeywordMatches = queryTerms.filter((term) => hasBoundaryTerm(summary, term)).length;
+  score += Math.min(0.12, titleKeywordMatches * 0.04);
+  score += Math.min(0.06, summaryKeywordMatches * 0.02);
+  if (missingPrimaryEntity) score = Math.min(score, FINAL_RELEVANCE_THRESHOLD - 0.01);
+  score = Math.max(0, Math.min(1, score));
+
+  if (primaryDefinitions.length === 0 && !isGitHubIntent && queryTerms.length > 0 && titleKeywordMatches + summaryKeywordMatches === 0) {
+    return { accepted: false, score, reason: "keyword_mismatch", matchPriority, matchReason };
+  }
+  if (score < FINAL_RELEVANCE_THRESHOLD) {
+    return { accepted: false, score, reason: "below_threshold", matchPriority, matchReason };
+  }
+  return { accepted: true, score, reason: "accepted", matchPriority, matchReason };
+}
+
+export function filterByRelevance(
   sources: SourceItem[],
   normalizedGoal: string,
   entityTerms?: string[],
   primaryEntities?: Array<{ text: string; canonical: string; type: string; required: boolean }>,
   negativeEntities?: string[],
 ): SourceItem[] {
-  if (sources.length === 0) return sources;
+  const evaluated = sources.map((source) => ({
+    source: { ...source },
+    evaluation: evaluateSourceRelevance(
+      source,
+      normalizedGoal,
+      entityTerms || [],
+      primaryEntities || [],
+      negativeEntities || [],
+    ),
+  })).filter((entry) => entry.evaluation.accepted);
 
-  const goalLower = normalizedGoal.toLowerCase();
-  const terms = goalLower.split(/\s+/).filter((w) => w.length > 2);
-
-  // Extract entity patterns (owner/repo, product names)
-  const ownerRepoMatch = goalLower.match(/(\w[\w-]*)\s*\/\s*(\w[\w-]*)/);
-  // Sanitize entity terms: remove constraints, stopwords, non-entities (Fix #1 — P1)
-  const sanitizedEntityPatterns = sanitizeEntityTerms(entityTerms || []);
-  const entityPatterns: string[] = sanitizedEntityPatterns.map((e) => e.toLowerCase());
-  if (ownerRepoMatch) {
-    entityPatterns.push(ownerRepoMatch[1].toLowerCase());
-    entityPatterns.push(ownerRepoMatch[2].toLowerCase());
+  for (const entry of evaluated) {
+    entry.source.relevance_score = entry.evaluation.score;
+    entry.source.reason = `${entry.source.reason ? `${entry.source.reason};` : ""}relevance:${entry.evaluation.matchReason}`;
   }
 
-  // Phase 3A: build primary entity canonical lookup for stricter filtering
-  const primaryCanons = new Set((primaryEntities || []).map((e) => e.canonical.toLowerCase()));
-
-  // Phase 3A: build negative entity patterns for noise filtering
-  const negativePatterns = (negativeEntities || []).map((e) => e.toLowerCase()).filter(Boolean);
-
-  // Domain-specific intent — use word boundaries to avoid "report" matching "repo"
-  const isGitHubIntent = /\bgithub\b/i.test(goalLower) || /\brepo(s|sitory|sitories)?\b/i.test(goalLower) || !!ownerRepoMatch;
-  const isNewsIntent = goalLower.includes("news") || goalLower.includes("latest") || goalLower.includes("update");
-
-  // Resolver-level guard: detect AI/crypto topic queries
-  const _detectedTopics = detectTopics(normalizedGoal, entityTerms || []);
-  const _queryHasAiTopic = _detectedTopics.some((t) => t.category === "ai");
-  const _queryHasCryptoTopic = _detectedTopics.some((t) => t.category === "crypto");
-  const _queryHasDomainTopic = _queryHasAiTopic || _queryHasCryptoTopic;
-
-  const filtered = sources.filter((src) => {
-    const title = (src.title || "").toLowerCase();
-    const summary = (src.summary || "").toLowerCase();
-    const domain = (src.domain || "").toLowerCase();
-    const routePath = (src.route_path || "").toLowerCase();
-    const url = (src.url || "").toLowerCase();
-    const reason = (src.reason || "").toLowerCase();
-    // Include reason in combined text so topic_route:ai/openai helps entity matching
-    const combined = `${title} ${summary} ${domain} ${routePath} ${url} ${reason}`;
-
-    // Phase 3A: Negative entity filter — reject sources matching noise patterns
-    if (negativePatterns.length > 0) {
-      const isNegative = negativePatterns.some((ne) => combined.includes(ne));
-      if (isNegative) return false;
+  evaluated.sort((a, b) => {
+    if (b.evaluation.matchPriority !== a.evaluation.matchPriority) {
+      return b.evaluation.matchPriority - a.evaluation.matchPriority;
     }
-
-    // Wikipedia/current-events guard: reject generic catch-all for AI/crypto queries
-    if (_queryHasDomainTopic && isGenericCatchAllSource({ domain, routePath, url })) {
-      return false;
+    if (b.source.relevance_score !== a.source.relevance_score) {
+      return b.source.relevance_score - a.source.relevance_score;
     }
-
-    // Resolver-level AI domain guard: reject wrong-domain sources for AI queries
-    if (_queryHasAiTopic && !passesAiSourceGuard({ domain, routePath, title, summary })) {
-      return false;
-    }
-    // Resolver-level crypto domain guard: reject wrong-domain sources for crypto queries
-    if (_queryHasCryptoTopic && !passesCryptoSourceGuard({ domain, routePath, title, summary })) {
-      return false;
-    }
-
-    // Entity terms: at least ONE must appear (includes short meaningful tokens like x402, ai)
-    if (entityPatterns.length > 0) {
-      const hasEntity = entityPatterns.some((et) => hasBoundaryTerm(combined, et));
-      if (!hasEntity) return false;
-    }
-
-    // Phase 3A: Primary entity boost — if primary entities defined, prefer sources matching them
-    // This is a soft filter: sources matching primary entities pass, others pass too but rank lower
-    // (ranking happens downstream — this is just the relevance gate)
-
-    // GitHub intent: must be from github.com (or subdomain) or have repo-related content
-    if (isGitHubIntent) {
-      const isGitHubDomain = isDomainOrSubdomain(domain, "github.com");
-      const hasRepoContent = combined.includes("commit") || combined.includes("pull request") ||
-        combined.includes("repository") || combined.includes("release") || combined.includes("merge") ||
-        combined.includes("issue") || combined.includes("branch") || combined.includes("fork");
-      if (!isGitHubDomain && !hasRepoContent) return false;
-    }
-
-    // General keyword match: at least ONE query term must appear
-    // Skip this gate if entity patterns already matched (avoid double-filtering)
-    if (terms.length > 0 && !isGitHubIntent && entityPatterns.length === 0) {
-      const hasKeyword = terms.some((t) => combined.includes(t));
-      if (!hasKeyword) return false;
-    }
-
-    return true;
+    if (a.source.rank !== b.source.rank) return a.source.rank - b.source.rank;
+    return a.source.url.localeCompare(b.source.url);
   });
 
-  return filtered;
+  return evaluated.map((entry, index) => ({ ...entry.source, rank: index + 1 }));
 }
 
 // ─── Public API ───────────────────────────────────────────
@@ -362,7 +435,7 @@ export async function resolveSources(
       input.entityTerms,
       input.primaryEntities,
       input.negativeEntities,
-    );
+    ).slice(0, maxSources);
     const sanitizedEntityCount = sanitizeEntityTerms(input.entityTerms || []).length;
     const sourceConfidence = computeSourceConfidence(sources);
     // Safe diagnostic: entity term counts (no raw secrets)

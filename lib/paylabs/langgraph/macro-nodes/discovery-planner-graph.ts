@@ -380,7 +380,7 @@ export async function runDiscoveryPlannerGraph(
     // Collect live source URLs for batch claim resolution
     const liveSourceUrls: string[] = [];
     for (const candidate of rankedCandidates.slice(0, maxSourceCards)) {
-      if (candidate.source_kind === "rsshub_live" || candidate.source_kind === "tavily_live") {
+      if (candidate.source_kind === "rsshub_live" || candidate.source_kind === "tavily_live" || candidate.source_kind === "jina_live") {
         if (candidate.source_url) liveSourceUrls.push(candidate.source_url);
       }
     }
@@ -401,7 +401,7 @@ export async function runDiscoveryPlannerGraph(
 
     for (const candidate of rankedCandidates.slice(0, maxSourceCards)) {
       // Live candidate: has source_url directly
-      if (candidate.source_kind === "rsshub_live" || candidate.source_kind === "tavily_live") {
+      if (candidate.source_kind === "rsshub_live" || candidate.source_kind === "tavily_live" || candidate.source_kind === "jina_live") {
         const resolvedClaim = candidate.source_url ? liveClaimsMap.get(candidate.source_url) : null;
         sourceCards.push({
           feed_item_id: candidate.feed_item_id,
