@@ -33,20 +33,9 @@ import {
 } from "@/lib/paylabs/delegated-runtime/locked-orchestration";
 import type { X402CallResult } from "@/lib/paylabs/delegated-runtime/locked-orchestration";
 import { resolvePaylabsAppUrl, resolvePublicAppUrl } from "@/lib/paylabs/runtime/resolve-app-url";
-import {
-  POST_RETRIEVAL_TIMEOUT_MS,
-  runPostRetrievalBrainSynthesis,
-} from "@/lib/paylabs/ai/llm";
 import { randomUUID } from "node:crypto";
 
 // ─── Local helpers (same as inline/route.ts) ─────────────────
-
-const SYNTHESIS_FINALIZATION_SAFETY_MARGIN_MS = 15_000;
-
-function getBuyerRetryTimeoutMs(): number {
-  const rawBuyerTimeout = Number(process.env.PAYLABS_X402_BUYER_RETRY_TIMEOUT_MS) || 250_000;
-  return Math.max(30_000, Math.min(270_000, rawBuyerTimeout));
-}
 
 function resolveAppUrl(): string {
   const { baseUrl } = resolvePaylabsAppUrl();
@@ -248,10 +237,6 @@ function buildLockedOutput(
 // ─── Main Handler ────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  // Starts on seller request entry; the safety margin accounts for the buyer's
-  // slightly earlier timeout start plus final persistence/network overhead.
-  const requestStartedAt = Date.now();
-
   // ── Gate: feature flag ────────────────────────────────────
   if (!isAutoTierPreflightEnabled()) {
     return NextResponse.json(
@@ -705,76 +690,7 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    // ── Build final source output + post-retrieval Brain answer ──
-    const { buildExitOutput } = await import("@/lib/paylabs/delegated-runtime/exit-output");
-    const exitOutput = buildExitOutput(result);
-
-    // final_answer remains the existing deterministic Source summary note.
-    let finalAnswer: string | null = null;
-    try {
-      const { buildSourceGroundedFinalAnswer } = await import("@/lib/paylabs/sources/source-final-answer");
-      const sourcesUsed = exitOutput.sources_used || [];
-      finalAnswer = buildSourceGroundedFinalAnswer({
-        goal: resolvedGoal,
-        sourcesUsed,
-        sourceConfidence: exitOutput.source_confidence || 0,
-        retrievalMode: exitOutput.source_retrieval_mode || (sourcesUsed.length > 0
-          ? (sourcesUsed.some((s: { source_kind?: string }) => s.source_kind === "rsshub_live") ? "rsshub_live" : "db_fallback")
-          : "none"),
-      });
-    } catch (e: unknown) {
-      console.error("[execute_locked] final_answer build failed", {
-        error: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
-      });
-    }
-
-    const synthesisInput = {
-      resolvedGoal,
-      normalizedGoal: typeof safeBrainPlanning?.normalized_goal === "string"
-        ? safeBrainPlanning.normalized_goal
-        : resolvedGoal,
-      draftResponse: typeof safeBrainPlanning?.assistant_response === "string"
-        ? safeBrainPlanning.assistant_response
-        : "",
-      routeTier: lockedTier,
-      sources: result.sourceContext?.sources_used ?? [],
-    };
-    const elapsedMs = Date.now() - requestStartedAt;
-    const remainingMs = getBuyerRetryTimeoutMs() - elapsedMs;
-    const skipSynthesis = remainingMs
-      <= POST_RETRIEVAL_TIMEOUT_MS + SYNTHESIS_FINALIZATION_SAFETY_MARGIN_MS;
-    if (skipSynthesis) {
-      console.warn("[execute_locked] skipping final synthesis to preserve paid recovery window", {
-        elapsed_ms: elapsedMs,
-        remaining_ms: remainingMs,
-        synthesis_budget_ms: POST_RETRIEVAL_TIMEOUT_MS,
-        safety_margin_ms: SYNTHESIS_FINALIZATION_SAFETY_MARGIN_MS,
-      });
-    }
-    const synthesis = skipSynthesis
-      ? await runPostRetrievalBrainSynthesis(
-          synthesisInput,
-          async () => ({
-            ok: false,
-            code: "INSUFFICIENT_SYNTHESIS_TIME_BUDGET",
-          }),
-        )
-      : await runPostRetrievalBrainSynthesis(synthesisInput);
-
-    const brainSynthesis = {
-      source_ids_used: synthesis.source_ids_used,
-      evidence_status: synthesis.evidence_status,
-      error_code: synthesis.error_code,
-    };
-
-    const finalBrainPlanning = safeBrainPlanning
-      ? {
-          ...safeBrainPlanning,
-          assistant_response: synthesis.answer,
-        }
-      : safeBrainPlanning;
-
-    // ── Store completed orchestration atomically ────────────
+    // ── Store orchestration result ──────────────────────────
     const completedAt = new Date().toISOString();
     const newStatus = result.status === "completed"
       ? result.paymentGraph.some((e) => e.status === "paid") ? "paid_path_available" : "discovery_only"
@@ -792,20 +708,11 @@ export async function POST(req: NextRequest) {
       .single();
     const existingTrace = (traceBeforeFinal?.agent_trace as Record<string, unknown>) || {};
 
-    const persistedSourceContext = result.sourceContext ?? {
-      sources_used: exitOutput.sources_used ?? [],
-      source_selection_summary: exitOutput.source_selection_summary ?? "No sources selected.",
-      source_confidence: exitOutput.source_confidence ?? 0,
-      source_count: exitOutput.source_count ?? 0,
-      retrieval_mode: exitOutput.source_retrieval_mode ?? "rsshub_live_empty",
-    };
-
-    const { error: finalPersistError } = await supabaseAdmin()
+    await supabaseAdmin()
       .from("paylabs_discovery_runs")
       .update({
         status: newStatus,
         completed_at: completedAt,
-        final_answer: finalAnswer,
         error_summary: result.error ? result.error.slice(0, 500) : null,
         agent_trace: {
           ...existingTrace,
@@ -836,8 +743,7 @@ export async function POST(req: NextRequest) {
                 safe_error: brainLlmDiag.safe_error ?? null,
               }
             : null,
-          brain_planning: finalBrainPlanning,
-          brain_synthesis: brainSynthesis,
+          brain_planning: safeBrainPlanning,
           payment_graph: result.paymentGraph.map((e) => ({
             edge_id: e.edgeId,
             buyer: e.buyer,
@@ -874,14 +780,102 @@ export async function POST(req: NextRequest) {
           },
           settled: fullySettled,
           mode: fullySettled ? "x402" : "x402_failed",
-          source_context: persistedSourceContext,
-          final_answer: finalAnswer,
-          exit_output: exitOutput,
         },
       })
       .eq("id", discoveryRunId);
-    if (finalPersistError) {
-      throw new Error(`final_persist_failed: ${finalPersistError.message}`);
+
+    // ── Build exit output ───────────────────────────────────
+    const { buildExitOutput } = await import("@/lib/paylabs/delegated-runtime/exit-output");
+    const exitOutput = buildExitOutput(result);
+
+    // Source context
+    if (result.sourceContext) {
+      exitOutput.sources_used = result.sourceContext.sources_used;
+      exitOutput.source_selection_summary = result.sourceContext.source_selection_summary;
+      exitOutput.source_confidence = result.sourceContext.source_confidence;
+      exitOutput.source_count = result.sourceContext.source_count;
+      exitOutput.source_retrieval_mode = result.sourceContext.retrieval_mode;
+    }
+
+    // Final answer
+    let finalAnswer: string | null = null;
+    try {
+      const { buildSourceGroundedFinalAnswer } = await import("@/lib/paylabs/sources/source-final-answer");
+      const sourcesUsed = exitOutput.sources_used || [];
+      finalAnswer = buildSourceGroundedFinalAnswer({
+        goal: resolvedGoal,
+        sourcesUsed,
+        sourceConfidence: exitOutput.source_confidence || 0,
+        retrievalMode: exitOutput.source_retrieval_mode || (sourcesUsed.length > 0
+          ? (sourcesUsed.some((s: { source_kind?: string }) => s.source_kind === "rsshub_live") ? "rsshub_live" : "db_fallback")
+          : "none"),
+      });
+    } catch (e: unknown) {
+      console.error("[execute_locked] final_answer build failed", {
+        error: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
+      });
+    }
+
+    // Store source context + final_answer
+    if (exitOutput.source_retrieval_mode || (exitOutput.sources_used && exitOutput.sources_used.length > 0)) {
+      try {
+        const { data: existingRun } = await supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .select("agent_trace")
+          .eq("id", discoveryRunId)
+          .single();
+        const trace = (existingRun?.agent_trace as Record<string, unknown>) || {};
+
+        await supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .update({
+            agent_trace: {
+              ...trace,
+              source_context: {
+                source_count: exitOutput.source_count || 0,
+                source_confidence: exitOutput.source_confidence || 0,
+                retrieval_mode: exitOutput.source_retrieval_mode || "rsshub_live_empty",
+                sources_used: (exitOutput.sources_used || []).slice(0, 20).map((s) => ({
+                  title: s.title,
+                  url: s.url,
+                  domain: s.domain,
+                  rank: s.rank,
+                  source_kind: s.source_kind,
+                  provider: s.provider,
+                })),
+              },
+              final_answer: finalAnswer,
+              exit_output: exitOutput,
+            },
+          })
+          .eq("id", discoveryRunId);
+      } catch (e: unknown) {
+        console.error("[execute_locked] source snapshot store failed", {
+          error: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
+        });
+      }
+    }
+
+    // Persist exit_output unconditionally — recovery path reads agentTrace.exit_output
+    if (!exitOutput.source_retrieval_mode && !(exitOutput.sources_used && exitOutput.sources_used.length > 0)) {
+      try {
+        const { data: traceRow } = await supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .select("agent_trace")
+          .eq("id", discoveryRunId)
+          .single();
+        const mergedTrace = (traceRow?.agent_trace as Record<string, unknown>) || {};
+        await supabaseAdmin()
+          .from("paylabs_discovery_runs")
+          .update({
+            agent_trace: { ...mergedTrace, exit_output: exitOutput },
+          })
+          .eq("id", discoveryRunId);
+      } catch (e: unknown) {
+        console.error("[execute_locked] exit_output persist failed", {
+          error: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
+        });
+      }
     }
 
     // ── Write visibility ────────────────────────────────────
@@ -952,8 +946,7 @@ export async function POST(req: NextRequest) {
       worker_used: false,
       x402_enabled: true,
       phases_completed: result.phasesCompleted,
-      brain_planning: finalBrainPlanning,
-      brain_synthesis: brainSynthesis,
+      brain_planning: safeBrainPlanning,
       payment_plan: result.paymentPlan ?? null,
       payment_graph: result.paymentGraph.map((e) => ({
         edge_id: e.edgeId,
