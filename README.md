@@ -276,7 +276,7 @@ curl -i -X POST https://paylabs.vercel.app/api/paylabs/discovery-runs/route-pref
   -H "Content-Type: application/json" \
   -d '{
     "goal": "test query",
-    "user_wallet": "0xEvmAddress"
+    "user_wallet": "0xYourEvmAddress"
   }'
 ```
 
