@@ -111,6 +111,8 @@ PayLabs uses Circle Gateway's `settle()` endpoint directly for standard seller f
 
 PayLabs also ships alongside standalone open-source SDKs for builders working with Arc, Circle Gateway, x402 payments, agent wallets, and batch proof visibility.
 
+All of 4 sdk below is in here [`X402 SDK`](https://github.com/riyannode/arc-x402sdk)
+
 These SDKs are reusable companion packages. They are not required to run the PayLabs web app, and each package can be used independently.
 
 | SDK | Purpose | Install |
