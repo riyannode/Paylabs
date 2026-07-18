@@ -159,8 +159,8 @@ function getClaimUrl(claim: VerifiedCreatorClaim): string | null {
 
 function getClaimDisplayName(claim: VerifiedCreatorClaim): string {
   return (
-    claim.creator_name?.trim() ??
-    claim.source_domain?.trim() ??
+    claim.creator_name?.trim() ||
+    claim.source_domain?.trim() ||
     platformLabel(claim.source_platform)
   );
 }
@@ -238,7 +238,7 @@ export default async function SourcesPage() {
         )
         .eq("claim_status", "verified")
         .order("verified_at", { ascending: false })
-        .limit(30)
+        .limit(100)
     ),
 
     safeQuery<FeedItem>(() =>
@@ -265,7 +265,9 @@ export default async function SourcesPage() {
     ),
   ]);
 
-  const deduplicatedClaims = deduplicateVerifiedClaims(verifiedClaims);
+  const deduplicatedClaims = deduplicateVerifiedClaims(
+    verifiedClaims,
+  ).slice(0, 30);
 
   return (
     <>
