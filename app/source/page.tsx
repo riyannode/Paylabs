@@ -171,6 +171,107 @@ function getInitial(value: string): string {
   return trimmed.length > 0 ? trimmed[0].toUpperCase() : "C";
 }
 
+const creatorAvatarPalettes = [
+  {
+    background: "linear-gradient(135deg, #2563eb, #60a5fa)",
+    foreground: "#ffffff",
+  },
+  {
+    background: "linear-gradient(135deg, #7c3aed, #c084fc)",
+    foreground: "#ffffff",
+  },
+  {
+    background: "linear-gradient(135deg, #059669, #34d399)",
+    foreground: "#ffffff",
+  },
+  {
+    background: "linear-gradient(135deg, #ea580c, #fb923c)",
+    foreground: "#ffffff",
+  },
+  {
+    background: "linear-gradient(135deg, #db2777, #f472b6)",
+    foreground: "#ffffff",
+  },
+  {
+    background: "linear-gradient(135deg, #0891b2, #22d3ee)",
+    foreground: "#ffffff",
+  },
+  {
+    background: "linear-gradient(135deg, #ca8a04, #facc15)",
+    foreground: "#422006",
+  },
+  {
+    background: "linear-gradient(135deg, #4f46e5, #818cf8)",
+    foreground: "#ffffff",
+  },
+];
+
+function hashString(value: string): number {
+  let hash = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+
+  return hash;
+}
+
+function getCreatorAvatarPalette(value: string) {
+  const index = hashString(value.toLowerCase()) % creatorAvatarPalettes.length;
+
+  return creatorAvatarPalettes[index];
+}
+
+function getPlatformBadgeStyle(
+  platform: string | null,
+): React.CSSProperties {
+  if (platform === "github") {
+    return {
+      background: "#f3f4f6",
+      color: "#111827",
+      borderColor: "#d1d5db",
+    };
+  }
+
+  if (platform === "twitter") {
+    return {
+      background: "#eff6ff",
+      color: "#1d4ed8",
+      borderColor: "#bfdbfe",
+    };
+  }
+
+  if (platform === "youtube") {
+    return {
+      background: "#fef2f2",
+      color: "#dc2626",
+      borderColor: "#fecaca",
+    };
+  }
+
+  if (platform === "medium") {
+    return {
+      background: "#f0fdf4",
+      color: "#166534",
+      borderColor: "#bbf7d0",
+    };
+  }
+
+  if (platform === "substack") {
+    return {
+      background: "#fff7ed",
+      color: "#c2410c",
+      borderColor: "#fed7aa",
+    };
+  }
+
+  return {
+    background: "#f8fafc",
+    color: "#475569",
+    borderColor: "#e2e8f0",
+  };
+}
+
 function deduplicateVerifiedClaims(
   claims: VerifiedCreatorClaim[],
 ): VerifiedCreatorClaim[] {
@@ -356,6 +457,12 @@ export default async function SourcesPage() {
                 const displayName = getClaimDisplayName(claim);
                 const claimUrl = getClaimUrl(claim);
 
+                const avatarPalette = getCreatorAvatarPalette(
+                  claim.claim_scope_key ||
+                    claim.source_domain ||
+                    displayName,
+                );
+
                 return (
                   <article
                     key={claim.id}
@@ -380,16 +487,19 @@ export default async function SourcesPage() {
                       <div
                         aria-hidden="true"
                         style={{
-                          width: 40,
-                          height: 40,
-                          borderRadius: 10,
+                          width: 44,
+                          height: 44,
+                          borderRadius: 12,
                           flex: "0 0 auto",
                           display: "grid",
                           placeItems: "center",
-                          background: "var(--fg)",
-                          color: "var(--surface)",
-                          fontSize: 17,
-                          fontWeight: 800,
+                          background: avatarPalette.background,
+                          color: avatarPalette.foreground,
+                          fontSize: 18,
+                          fontWeight: 850,
+                          boxShadow:
+                            "0 6px 18px rgba(15, 23, 42, 0.12)",
+                          border: "1px solid rgba(255,255,255,0.35)",
                         }}
                       >
                         {getInitial(displayName)}
@@ -441,7 +551,10 @@ export default async function SourcesPage() {
                         gap: 6,
                       }}
                     >
-                      <span className="badge">
+                      <span
+                        className="badge"
+                        style={getPlatformBadgeStyle(claim.source_platform)}
+                      >
                         {platformLabel(claim.source_platform)}
                       </span>
 
