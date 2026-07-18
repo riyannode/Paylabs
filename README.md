@@ -770,3 +770,67 @@ pnpm typecheck    # tsc --noEmit
 
 MIT
 
+
+## PayLabs Web Chat and Public x402 Agent API
+
+PayLabs now supports two entry points:
+
+- **Web Chat**: `/paylabs` continues to use the authenticated Google session and the logged-in user's Circle Developer Controlled Wallet through `/api/paylabs/dcw/run-paid`.
+- **Agent API**: external buyer agents call `POST /api/x402/v1/research` with their own x402-compatible wallet and `PAYMENT-SIGNATURE`. PayLabs acts as the seller for the public entry payment and never requires a Google session for this route.
+
+### Public x402 flow
+
+1. Send the research body without a payment header.
+2. PayLabs performs locked route preflight, returns `402 Payment Required`, and includes a `PAYMENT-REQUIRED` x402 challenge header for the exact locked entry amount.
+3. Sign the challenge with the buyer wallet and retry the same request body with `PAYMENT-SIGNATURE`.
+4. PayLabs settles through Circle Gateway, binds the payment to the locked request, executes the existing route-preflight → execute-locked orchestration, and returns the same safe user-facing answer and source set shown in chat.
+
+Initial request:
+
+```bash
+curl -i https://paylabs.vercel.app/api/x402/v1/research \
+  -H 'Content-Type: application/json' \
+  -d '{"goal":"Find the latest creator payout trends","route_tier":"auto","max_budget_usdc":"0.01","client_request_id":"agent-run-001"}'
+```
+
+Paid retry:
+
+```bash
+curl https://paylabs.vercel.app/api/x402/v1/research?runId=<run-id-from-402> \
+  -H 'Content-Type: application/json' \
+  -H 'PAYMENT-SIGNATURE: <base64-x402-payment>' \
+  -d '{"goal":"Find the latest creator payout trends","route_tier":"auto","max_budget_usdc":"0.01","client_request_id":"agent-run-001"}'
+```
+
+Successful responses contain `result.answer`, safe user-visible reasoning, final source links with titles/summaries/timestamps when available, route explanation, receipt links, PayLabs explorer links, entry payment explorer links, settlement IDs, and Gateway batch proof metadata. Batch proof is asynchronous: `payment.batch.status` can be `pending`, `resolved`, or `unavailable`; a pending batch proof does not fail a successfully settled run.
+
+Read endpoints require the returned read capability as `?read_token=` or `Authorization: Bearer`:
+
+- `GET /api/x402/v1/runs/{runId}`
+- `GET /api/x402/v1/runs/{runId}/receipt`
+- `GET /api/x402/v1/runs/{runId}/payments`
+
+Discovery metadata is available at `GET /.well-known/x402`, and the OpenAPI 3.1 document is available at `GET /api/x402/v1/openapi.json`.
+
+### TypeScript buyer-agent sketch
+
+```ts
+const body = { goal: "Research stablecoin payment agents", route_tier: "auto", max_budget_usdc: "0.01", client_request_id: crypto.randomUUID() };
+const first = await fetch("https://paylabs.vercel.app/api/x402/v1/research", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+const challenge = first.headers.get("PAYMENT-REQUIRED");
+// Sign `challenge` with an x402-compatible wallet, then retry the exact same body.
+const paid = await fetch(first.url, { method: "POST", headers: { "content-type": "application/json", "PAYMENT-SIGNATURE": signedPayment }, body: JSON.stringify(body) });
+```
+
+### Python buyer-agent sketch
+
+```py
+import requests
+body = {"goal": "Research stablecoin payment agents", "route_tier": "auto", "max_budget_usdc": "0.01", "client_request_id": "agent-run-001"}
+first = requests.post("https://paylabs.vercel.app/api/x402/v1/research", json=body)
+challenge = first.headers["PAYMENT-REQUIRED"]
+# Sign challenge with an x402-compatible wallet and retry the exact same body.
+paid = requests.post(first.url, json=body, headers={"PAYMENT-SIGNATURE": signed_payment})
+```
+
+Security notes: callers must not send wallet addresses in the JSON body. The buyer wallet is taken only from the verified payment payload. The API stores hashes for signatures and read tokens, rejects mutated bodies after challenge, uses `client_request_id` for idempotency, and never returns raw signatures, internal wallet IDs, hidden prompts, provider diagnostics, or private agent traces.
