@@ -338,7 +338,10 @@ export default async function SourcesPage() {
           "id, creator_name, source_url, canonical_url, source_domain, source_platform, claim_scope, claim_scope_key, verified_at"
         )
         .eq("claim_status", "verified")
-        .order("verified_at", { ascending: false })
+        .order("verified_at", {
+          ascending: false,
+          nullsFirst: false,
+        })
         .limit(100)
     ),
 
@@ -848,6 +851,7 @@ export default async function SourcesPage() {
                     <th>Buyer</th>
                     <th>Recipient</th>
                     <th>Type</th>
+                    <th>Payment</th>
                     <th>Amount</th>
                     <th>Status</th>
                   </tr>
@@ -896,6 +900,12 @@ export default async function SourcesPage() {
                       </td>
 
                       <td>{payment.payment_kind ?? "—"}</td>
+
+                      <td className="data-mono">
+                        {payment.payment_id
+                          ? short(payment.payment_id)
+                          : "—"}
+                      </td>
 
                       <td className="data-mono">
                         {usdc(payment.amount_usdc)}
