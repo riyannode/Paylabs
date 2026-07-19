@@ -410,6 +410,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [recentChats, setRecentChats] = useState<RecentChatItem[]>([]);
   const chatThreadRef = useRef<HTMLDivElement | null>(null);
+  const [activeOfficeRunId, setActiveOfficeRunId] = useState<string | null>(null);
 
   const latestAssistantResult = useMemo(() => {
     const message = [...messages].reverse().find((item) => item.role === "assistant");
@@ -417,14 +418,14 @@ export default function PayLabsChatClient({ analytics }: Props) {
   }, [messages]);
 
   const officeRun = useMemo(() => ({
-    runId: latestAssistantResult?.runId ?? null,
+    runId: activeOfficeRunId ?? latestAssistantResult?.runId ?? null,
     tier: latestAssistantResult?.effectiveTier ?? latestAssistantResult?.tier ?? null,
     plannedCostUsdc: latestAssistantResult?.plannedCostUsdc ?? null,
     paidEdges: latestAssistantResult?.paidEdges ?? 0,
     totalEdges: latestAssistantResult?.totalEdges ?? 0,
     receiptReady: latestAssistantResult?.receiptReady ?? false,
     status: latestAssistantResult?.status ?? null,
-  }), [latestAssistantResult]);
+  }), [activeOfficeRunId, latestAssistantResult]);
 
   // Wallet state — DCW only
   const [dcwOpen, setDcwOpen] = useState(false);
@@ -657,78 +658,107 @@ export default function PayLabsChatClient({ analytics }: Props) {
       // ── DCW: bypass inline entirely, go straight to server-side run-paid ──
       if (walletInfo.walletType === "circle_developer_controlled") {
         setWalletState("approving");
-         setSigningPhase("Starting DCW payment…");
-         // ── Synchronous: POST waits for full x402 flow, returns final result ──
-         try {
-           const dcwResp = await fetch("/api/paylabs/dcw/run-paid", {
-             method: "POST",
-             credentials: "include",
-             headers: { "Content-Type": "application/json" },
-             body: JSON.stringify({
-               goal: body.goal || prompt,
-               routeTier: body.route_tier || "auto",
-               budgetUsdc: Number(budget),
-             }),
-           });
-           const dcwData = await dcwResp.json();
-           // Check both top-level transport ok AND nested seller result ok
-           const sellerData = dcwData.data && typeof dcwData.data === "object"
-             ? (dcwData.data as Record<string, unknown>)
-             : null;
-           const sellerOk = sellerData ? (sellerData.ok !== false) : true;
-           if (!dcwResp.ok || !dcwData.ok || !sellerOk) {
-             const errMsg = (sellerData?.error as string) || dcwData.error || `DCW payment failed (HTTP ${dcwResp.status})`;
-             setSigningPhase(null);
-             finishAssistant({ status: "error", error: errMsg });
-             setError(errMsg);
-             setWalletState("failed");
-             setStatus("error");
-             return;
-           }
-           // ── Success — parse result ──
-           setSigningPhase(null);
-           const dcwResultData =
-             dcwData.data && typeof dcwData.data === "object"
-               ? (dcwData.data as Record<string, unknown>)
-               : {};
-           const safeResult = toSafeRunResult({
-             ...dcwResultData,
-             entry_payment: dcwData.entry_payment ?? dcwResultData.entry_payment,
-             paymentMetadata: dcwData.paymentMetadata ?? dcwResultData.paymentMetadata,
-             entry_payment_explorer_url:
-               dcwData.entry_payment?.explorer_url ??
-               dcwData.paymentMetadata?.explorerUrl ??
-               dcwResultData.entry_payment_explorer_url ??
-               null,
-             entry_payment_batch_explorer_url:
-               dcwData.entry_payment?.batch_explorer_url ??
-               dcwData.paymentMetadata?.batchExplorerUrl ??
-               dcwResultData.entry_payment_batch_explorer_url ??
-               null,
-           });
-           setWalletState("paid");
-           finishAssistant({ status: "done", result: safeResult });
-           setResult(safeResult);
-           setStatus("done");
+        setSigningPhase("Preparing live office…");
+        setActiveOfficeRunId(null);
 
-           // Recent Chats: second upsert — update with runId from result
-           upsertRecentChat({
-             id: userMsg.id,
-             content: userMsg.content,
-             createdAt: userMsg.createdAt,
-             runId: safeResult.runId,
-           });
-           return;
-         } catch (e: unknown) {
-           const errMsg = e instanceof Error ? e.message : "DCW payment request failed.";
-           setSigningPhase(null);
-           finishAssistant({ status: "error", error: errMsg });
-           setError(errMsg);
-           setWalletState("failed");
-           setStatus("error");
-           return;
-         }
-       }
+        try {
+          const startResp = await fetch("/api/paylabs/dcw/run-paid/start", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              goal: body.goal || prompt,
+              routeTier: body.route_tier || "auto",
+              budgetUsdc: Number(budget),
+            }),
+          });
+          const startData = await startResp.json();
+          if (!startResp.ok || !startData.ok || !startData.runId) {
+            const startErr = startData.error || `Failed to reserve discovery run (HTTP ${startResp.status})`;
+            setSigningPhase(null);
+            finishAssistant({ status: "error", error: startErr });
+            setError(startErr);
+            setWalletState("failed");
+            setStatus("error");
+            return;
+          }
+
+          setActiveOfficeRunId(startData.runId);
+          setSigningPhase("Starting DCW payment…");
+
+          // ── Synchronous: POST waits for full x402 flow, returns final result ──
+          const dcwResp = await fetch("/api/paylabs/dcw/run-paid", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              goal: body.goal || prompt,
+              routeTier: body.route_tier || "auto",
+              budgetUsdc: Number(budget),
+              discovery_run_id: startData.runId,
+              run_id: startData.runId,
+            }),
+          });
+          const dcwData = await dcwResp.json();
+          // Check both top-level transport ok AND nested seller result ok
+          const sellerData = dcwData.data && typeof dcwData.data === "object"
+            ? (dcwData.data as Record<string, unknown>)
+            : null;
+          const sellerOk = sellerData ? (sellerData.ok !== false) : true;
+          if (!dcwResp.ok || !dcwData.ok || !sellerOk) {
+            const errMsg = (sellerData?.error as string) || dcwData.error || `DCW payment failed (HTTP ${dcwResp.status})`;
+            setSigningPhase(null);
+            finishAssistant({ status: "error", error: errMsg });
+            setError(errMsg);
+            setWalletState("failed");
+            setStatus("error");
+            return;
+          }
+
+          // ── Success — parse result ──
+          setSigningPhase(null);
+          const dcwResultData =
+            dcwData.data && typeof dcwData.data === "object"
+              ? (dcwData.data as Record<string, unknown>)
+              : {};
+          const safeResult = toSafeRunResult({
+            ...dcwResultData,
+            entry_payment: dcwData.entry_payment ?? dcwResultData.entry_payment,
+            paymentMetadata: dcwData.paymentMetadata ?? dcwResultData.paymentMetadata,
+            entry_payment_explorer_url:
+              dcwData.entry_payment?.explorer_url ??
+              dcwData.paymentMetadata?.explorerUrl ??
+              dcwResultData.entry_payment_explorer_url ??
+              null,
+            entry_payment_batch_explorer_url:
+              dcwData.entry_payment?.batch_explorer_url ??
+              dcwData.paymentMetadata?.batchExplorerUrl ??
+              dcwResultData.entry_payment_batch_explorer_url ??
+              null,
+          });
+          setWalletState("paid");
+          finishAssistant({ status: "done", result: safeResult });
+          setResult(safeResult);
+          setStatus("done");
+
+          // Recent Chats: second upsert — update with runId from result
+          upsertRecentChat({
+            id: userMsg.id,
+            content: userMsg.content,
+            createdAt: userMsg.createdAt,
+            runId: safeResult.runId,
+          });
+          return;
+        } catch (e: unknown) {
+          const errMsg = e instanceof Error ? e.message : "DCW payment request failed.";
+          setSigningPhase(null);
+          finishAssistant({ status: "error", error: errMsg });
+          setError(errMsg);
+          setWalletState("failed");
+          setStatus("error");
+          return;
+        }
+      }
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message : "Network error.";
       finishAssistant({ status: "error", error: errMsg });
@@ -743,6 +773,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
     setError(null);
     setStatus("idle");
     setMessages([]);
+    setActiveOfficeRunId(null);
     // Clear persisted chat history for current wallet
     if (walletAddressRef.current) {
       clearChatStorage(walletAddressRef.current);
@@ -758,6 +789,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
     }
     setMessages([]);
     setRecentChats([]);
+    setActiveOfficeRunId(null);
     // Destroy DCW session if exists
     fetch("/api/paylabs/auth/session", { method: "DELETE", credentials: "include" }).catch(() => {});
     // Clear all wallet state
