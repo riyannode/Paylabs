@@ -17,7 +17,7 @@ import type { ServiceName } from "../../agent-services/types";
 import type { ServiceEvaluation, PaymentEdge } from "../../delegated-runtime/types";
 import { isX402EnabledForService } from "../../feature-flags";
 import { randomUUID } from "node:crypto";
-import { phaseFromMacroNode, statusFromServiceName, isOfficeServiceName } from "../../office/event-mapper";
+import { phaseFromMacroNode, isOfficeServiceName } from "../../office/event-mapper";
 import { safeEmitOfficeEvent } from "../../office/server";
 
 // ─── Types ──────────────────────────────────────────────────
@@ -168,17 +168,10 @@ export function createServiceNode(
       };
     }
 
-    if (isOfficeServiceName(serviceName)) {
-      await safeEmitOfficeEvent({
-        runId: discoveryRunId,
-        type: "agent.started",
-        phase: phaseFromMacroNode(macroNode),
-        status: statusFromServiceName(serviceName),
-        agentId: serviceName,
-        title: `${serviceName} started`,
-        message: `Working in ${macroNode}`,
-      });
-    }
+    // NOTE: agent.started and x402.settled events are now emitted by the
+    // seller endpoint (agent-services/[serviceName]/run/route.ts) to ensure
+    // correct visual ordering: x402.requested → Gateway, x402.settled → Gateway,
+    // agent.started → desk. The service-node only emits the final completion event.
 
     const result = await callDelegatedService({
       discoveryRunId,
@@ -190,23 +183,8 @@ export function createServiceNode(
       paymentSchemeOverride: options?.paymentSchemeOverride,
     });
 
-    if (isOfficeServiceName(serviceName) && result.settled) {
-      await safeEmitOfficeEvent({
-        runId: discoveryRunId,
-        type: "x402.settled",
-        phase: phaseFromMacroNode(macroNode),
-        status: "paying",
-        agentId: serviceName,
-        title: `x402 settled for ${serviceName}`,
-        message: `${result.safeCallMeta.costUsdc} USDC`,
-        payment: {
-          amountUsdc: String(result.safeCallMeta.costUsdc),
-          status: "settled",
-          txHash: (result.paymentMeta?.txHash as string | null | undefined) ?? null,
-          explorerUrl: (result.paymentMeta?.explorerUrl as string | null | undefined) ?? null,
-        },
-      });
-    }
+    // NOTE: x402.settled is now emitted by the seller endpoint (route.ts)
+    // before the handler executes — see comment above.
 
     const evaluation: ServiceEvaluation = {
       serviceName,

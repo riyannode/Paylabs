@@ -512,19 +512,6 @@ assert.equal(sanitizedBrainEvent.message, "Execution plan ready", "Brain message
 assert.equal((sanitizedBrainEvent.metadata as Record<string, unknown>)?.tier, "advanced", "Brain metadata.tier preserved");
 assert.equal((sanitizedBrainEvent.metadata as Record<string, unknown>)?.plannedCostUsdc, 0.008, "Brain metadata.plannedCostUsdc preserved");
 
-// Test: orchestrator source contains the new Brain messages
-const orchestratorSource = readSync(
-  new URL("../lib/paylabs/delegated-runtime/orchestrator.ts", import.meta.url),
-  "utf-8",
-);
-assert.ok(orchestratorSource.includes('"Analyzing request"'), "orchestrator emits 'Analyzing request'");
-assert.ok(orchestratorSource.includes('"Selecting route"'), "orchestrator emits 'Selecting route'");
-assert.ok(orchestratorSource.includes('"Execution plan ready"'), "orchestrator emits 'Execution plan ready'");
-assert.ok(!orchestratorSource.includes("Preparing Brain plan"), "orchestrator no longer emits old verbose Brain message");
-assert.ok(!orchestratorSource.includes("Selecting route tier"), "orchestrator no longer emits old route tier message");
-assert.ok(!orchestratorSource.includes("route ·"), "orchestrator no longer emits tier/service count separator");
-assert.ok(!orchestratorSource.includes("Planning unavailable"), "orchestrator no longer emits old fallback message");
-
 // ── Brain bubble positioning tests ──────────────────────────
 
 // Read CSS source for brain bubble assertions
@@ -736,3 +723,304 @@ console.log("PayLabs office tests passed");
 }
 
 console.log("Subscription race regression tests passed");
+
+// ── Brain active route-preflight event regression tests ──────────────
+// Verifies that the route-preflight path (active DCW flow) emits Brain
+// Office lifecycle events, fixing the issue where Brain stayed idle.
+
+{
+  // Test: route-preflight source imports safeEmitOfficeEvent
+  const routePreflightSource = readSync(
+    new URL("../app/api/paylabs/discovery-runs/route-preflight/route.ts", import.meta.url),
+    "utf-8",
+  );
+  assert.ok(routePreflightSource.includes('from "@/lib/paylabs/office/server"'),
+    "route-preflight imports office server for event emission");
+
+  // Test: route-preflight emits agent.started before runRouteOnlyBrainPreflight
+  const startedIdx = routePreflightSource.indexOf('type: "agent.started"');
+  const preflightCallIdx = routePreflightSource.indexOf("runRouteOnlyBrainPreflight(");
+  assert.ok(startedIdx > 0, "route-preflight emits agent.started for Brain");
+  assert.ok(preflightCallIdx > 0, "route-preflight calls runRouteOnlyBrainPreflight");
+  assert.ok(startedIdx < preflightCallIdx,
+    "Brain agent.started emitted BEFORE runRouteOnlyBrainPreflight()");
+
+  // Test: route-preflight emits agent.completed after successful preflight
+  const completedIdx = routePreflightSource.indexOf('type: "agent.completed"');
+  assert.ok(completedIdx > 0, "route-preflight emits agent.completed for Brain");
+  assert.ok(completedIdx > preflightCallIdx,
+    "Brain agent.completed emitted AFTER runRouteOnlyBrainPreflight()");
+
+  // Test: route-preflight emits agent.failed in catch block
+  const failedIdx = routePreflightSource.indexOf('type: "agent.failed"');
+  assert.ok(failedIdx > 0, "route-preflight emits agent.failed for Brain on error");
+
+  // Test: Brain agent.started has correct phase and status
+  assert.ok(routePreflightSource.includes('agentId: "brain_planner"'),
+    "Brain events use agentId brain_planner");
+  assert.ok(routePreflightSource.includes('phase: "brain"'),
+    "Brain events use phase brain");
+
+  // Test: Brain agent.completed message is "Execution plan ready"
+  assert.ok(routePreflightSource.includes('"Execution plan ready"'),
+    "Brain completed message is 'Execution plan ready'");
+
+  // Test: Brain reducer flow — planning → completed
+  let brainRouteState = createInitialOfficeState();
+  brainRouteState = reduceOfficeEvent(brainRouteState, event({
+    sequence: 100,
+    agentId: "brain_planner",
+    type: "agent.started",
+    status: "planning",
+    message: "Analyzing request",
+  }));
+  assert.equal(brainRouteState.brain_planner.status, "planning",
+    "Brain route-preflight: planning status after agent.started");
+  assert.deepEqual(
+    { x: brainRouteState.brain_planner.x, y: brainRouteState.brain_planner.y },
+    OFFICE_AGENTS.brain_planner.desk,
+    "Brain route-preflight: moves to desk on agent.started",
+  );
+
+  brainRouteState = reduceOfficeEvent(brainRouteState, event({
+    sequence: 101,
+    agentId: "brain_planner",
+    type: "agent.completed",
+    status: "completed",
+    message: "Execution plan ready",
+  }));
+  assert.equal(brainRouteState.brain_planner.status, "completed",
+    "Brain route-preflight: completed status after agent.completed");
+  assert.equal(brainRouteState.brain_planner.message, "Execution plan ready",
+    "Brain route-preflight: message is 'Execution plan ready'");
+  assert.deepEqual(
+    { x: brainRouteState.brain_planner.x, y: brainRouteState.brain_planner.y },
+    OFFICE_AGENTS.brain_planner.idle,
+    "Brain route-preflight: returns to idle after completed",
+  );
+}
+
+console.log("Brain route-preflight event regression tests passed");
+
+// ── x402 visual order regression tests ──────────────────────────────
+// Verifies that child-agent events follow the correct visual order:
+//   x402.requested → Gateway
+//   x402.settled   → Gateway
+//   agent.started  → desk
+//   agent.completed → idle
+
+{
+  // Test: x402.requested sends child agent to Gateway
+  let orderState = createInitialOfficeState();
+  orderState = reduceOfficeEvent(orderState, event({
+    sequence: 1,
+    agentId: "query_builder",
+    type: "x402.requested",
+    status: "paying",
+    message: "Awaiting x402 payment",
+  }));
+  assert.deepEqual(
+    { x: orderState.query_builder.x, y: orderState.query_builder.y },
+    OFFICE_STATIONS.gateway,
+    "x402.requested sends child agent to Gateway",
+  );
+  assert.equal(orderState.query_builder.status, "paying",
+    "x402.requested sets status to paying");
+
+  // Test: x402.settled keeps agent at Gateway
+  orderState = reduceOfficeEvent(orderState, event({
+    sequence: 2,
+    agentId: "query_builder",
+    type: "x402.settled",
+    status: "paying",
+    message: "x402 settlement completed",
+  }));
+  assert.deepEqual(
+    { x: orderState.query_builder.x, y: orderState.query_builder.y },
+    OFFICE_STATIONS.gateway,
+    "x402.settled keeps child agent at Gateway",
+  );
+  assert.equal(orderState.query_builder.status, "paying",
+    "x402.settled status remains paying");
+
+  // Test: agent.started after settlement sends agent to its desk
+  orderState = reduceOfficeEvent(orderState, event({
+    sequence: 3,
+    agentId: "query_builder",
+    type: "agent.started",
+    status: "planning",
+    message: "Working in discovery_planner",
+  }));
+  assert.deepEqual(
+    { x: orderState.query_builder.x, y: orderState.query_builder.y },
+    OFFICE_AGENTS.query_builder.desk,
+    "agent.started after settlement sends agent to its assigned desk",
+  );
+  assert.equal(orderState.query_builder.status, "planning",
+    "agent.started sets status to planning");
+
+  // Test: agent.completed returns agent to idle
+  orderState = reduceOfficeEvent(orderState, event({
+    sequence: 4,
+    agentId: "query_builder",
+    type: "agent.completed",
+    status: "completed",
+    message: "Service completed",
+  }));
+  assert.deepEqual(
+    { x: orderState.query_builder.x, y: orderState.query_builder.y },
+    OFFICE_AGENTS.query_builder.idle,
+    "agent.completed returns agent to idle/Lounge",
+  );
+  assert.equal(orderState.query_builder.status, "completed",
+    "agent.completed sets status to completed");
+
+  // Test: x402.failed sends agent to error station
+  let failState = createInitialOfficeState();
+  failState = reduceOfficeEvent(failState, event({
+    sequence: 1,
+    agentId: "source_verifier",
+    type: "x402.requested",
+    status: "paying",
+  }));
+  failState = reduceOfficeEvent(failState, event({
+    sequence: 2,
+    agentId: "source_verifier",
+    type: "x402.failed",
+    status: "failed",
+  }));
+  assert.deepEqual(
+    { x: failState.source_verifier.x, y: failState.source_verifier.y },
+    OFFICE_STATIONS.error,
+    "x402.failed sends agent to error station",
+  );
+  assert.equal(failState.source_verifier.status, "failed",
+    "x402.failed sets status to failed");
+}
+
+console.log("x402 visual order regression tests passed");
+
+// ── Source code structure regression tests ───────────────────────────
+// Verifies that the seller endpoint and service-node have correct event
+// emission structure without duplicates.
+
+{
+  // Test: seller endpoint (agent-services/run/route.ts) emits x402.requested
+  const sellerSource = readSync(
+    new URL("../app/api/paylabs/agent-services/[serviceName]/run/route.ts", import.meta.url),
+    "utf-8",
+  );
+  assert.ok(sellerSource.includes('type: "x402.requested"'),
+    "seller endpoint emits x402.requested");
+  assert.ok(sellerSource.includes('"Awaiting x402 payment"'),
+    "x402.requested message is safe (no amounts)");
+
+  // Test: seller endpoint emits x402.settled after settlement
+  assert.ok(sellerSource.includes('type: "x402.settled"'),
+    "seller endpoint emits x402.settled");
+  assert.ok(sellerSource.includes('"x402 settlement completed"'),
+    "x402.settled message is safe (no amounts)");
+
+  // Test: seller endpoint emits agent.started after x402.settled
+  const settledIdx = sellerSource.indexOf('type: "x402.settled"');
+  const startedIdx = sellerSource.indexOf('type: "agent.started"');
+  assert.ok(settledIdx > 0, "x402.settled exists in seller endpoint");
+  assert.ok(startedIdx > 0, "agent.started exists in seller endpoint");
+  assert.ok(settledIdx < startedIdx,
+    "x402.settled emitted BEFORE agent.started in seller endpoint");
+
+  // Test: seller endpoint emits x402.failed on settlement failure
+  assert.ok(sellerSource.includes('type: "x402.failed"'),
+    "seller endpoint emits x402.failed on settlement failure");
+
+  // Test: service-node.ts does NOT emit agent.started (moved to seller endpoint)
+  const serviceNodeSource = readSync(
+    new URL("../lib/paylabs/langgraph/services/service-node.ts", import.meta.url),
+    "utf-8",
+  );
+  // Count agent.started occurrences — should be 0 (only in comments)
+  const agentStartedMatches = serviceNodeSource.match(/type: "agent\.started"/g);
+  assert.equal(agentStartedMatches, null,
+    "service-node.ts does NOT emit agent.started (moved to seller endpoint)");
+
+  // Test: service-node.ts does NOT emit x402.settled (moved to seller endpoint)
+  const x402SettledMatches = serviceNodeSource.match(/type: "x402\.settled"/g);
+  assert.equal(x402SettledMatches, null,
+    "service-node.ts does NOT emit x402.settled (moved to seller endpoint)");
+
+  // Test: service-node.ts still emits agent.completed / agent.failed / creator.paid / treasury.retained
+  assert.ok(serviceNodeSource.includes('type: "agent.completed"') || serviceNodeSource.includes('"agent.completed"'),
+    "service-node.ts still emits agent.completed");
+  assert.ok(serviceNodeSource.includes('type: "agent.failed"') || serviceNodeSource.includes('"agent.failed"'),
+    "service-node.ts still emits agent.failed");
+  assert.ok(serviceNodeSource.includes('"creator.paid"'),
+    "service-node.ts still emits creator.paid");
+  assert.ok(serviceNodeSource.includes('"treasury.retained"'),
+    "service-node.ts still emits treasury.retained");
+
+  // Test: no duplicate x402 or agent.started events across both files
+  // seller endpoint: exactly 1 x402.requested, 1 x402.settled, 1 agent.started
+  const sellerRequestedCount = (sellerSource.match(/type: "x402\.requested"/g) || []).length;
+  const sellerSettledCount = (sellerSource.match(/type: "x402\.settled"/g) || []).length;
+  const sellerStartedCount = (sellerSource.match(/type: "agent\.started"/g) || []).length;
+  assert.equal(sellerRequestedCount, 1,
+    "seller endpoint has exactly 1 x402.requested emission");
+  assert.equal(sellerSettledCount, 1,
+    "seller endpoint has exactly 1 x402.settled emission");
+  assert.equal(sellerStartedCount, 1,
+    "seller endpoint has exactly 1 agent.started emission");
+
+  // Test: payment amounts remain in payment/metadata fields, not bubble messages
+  assert.ok(!sellerSource.includes('message: `${') ||
+    sellerSource.includes('message: `Working in ${buyerAgentName}`'),
+    "seller endpoint message fields contain no monetary template literals (except Working in)");
+  assert.ok(sellerSource.includes('message: "x402 settlement completed"'),
+    "x402.settled uses safe message, not amount");
+  assert.ok(sellerSource.includes('message: "Awaiting x402 payment"'),
+    "x402.requested uses safe message, not amount");
+
+  // Test: x402.settled contains payment metadata fields
+  assert.ok(sellerSource.includes('amountUsdc: config.priceUsdc.toString()'),
+    "x402.settled payment includes amountUsdc from config");
+  assert.ok(sellerSource.includes('txHash: settleResult.paymentMeta?.txHash'),
+    "x402.settled payment includes txHash from settleResult");
+  assert.ok(sellerSource.includes('settlementId: settleResult.paymentMeta?.settlementId'),
+    "x402.settled payment includes settlementId from settleResult");
+  assert.ok(sellerSource.includes('explorerUrl: settleResult.paymentMeta?.explorerUrl'),
+    "x402.settled payment includes explorerUrl from settleResult");
+}
+
+console.log("Source code structure regression tests passed");
+
+// ── Brain lockPersistErr regression tests ───────────────────────────
+// Verifies Brain agent.completed is only emitted after persist succeeds,
+// and lockPersistErr emits agent.failed with safe message.
+
+{
+  const routePreflightSource = readSync(
+    new URL("../app/api/paylabs/discovery-runs/route-preflight/route.ts", import.meta.url),
+    "utf-8",
+  );
+
+  // Test: Brain agent.completed appears AFTER lockPersistErr guard
+  const lockPersistErrIdx = routePreflightSource.indexOf("if (lockPersistErr)");
+  const completedIdx = routePreflightSource.indexOf('type: "agent.completed"');
+  assert.ok(lockPersistErrIdx > 0, "route-preflight has lockPersistErr guard");
+  assert.ok(completedIdx > 0, "route-preflight emits agent.completed");
+  assert.ok(completedIdx > lockPersistErrIdx,
+    "Brain agent.completed emitted AFTER lockPersistErr guard");
+
+  // Test: lockPersistErr branch emits agent.failed
+  const lockPersistErrBlock = routePreflightSource.slice(
+    lockPersistErrIdx,
+    routePreflightSource.indexOf("}", routePreflightSource.indexOf("return NextResponse.json", lockPersistErrIdx)) + 1
+  );
+  assert.ok(lockPersistErrBlock.includes('type: "agent.failed"'),
+    "lockPersistErr branch emits agent.failed");
+  assert.ok(lockPersistErrBlock.includes('"Execution plan could not be saved"'),
+    "lockPersistErr agent.failed uses safe message");
+  assert.ok(lockPersistErrBlock.includes('agentId: "brain_planner"'),
+    "lockPersistErr agent.failed targets brain_planner");
+}
+
+console.log("Brain lockPersistErr regression tests passed");

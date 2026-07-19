@@ -34,6 +34,8 @@ import {
   encodeChallengeHeader,
   verifyAndSettlePayment,
 } from "@/lib/paylabs/x402/seller-challenge";
+import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
+import { phaseFromMacroNode, statusFromServiceName } from "@/lib/paylabs/office/event-mapper";
 
 export async function POST(
   req: NextRequest,
@@ -202,7 +204,17 @@ async function executeX402SellerPath(
     req.headers.get("X-Payment");
 
   if (!paymentHeader) {
-    // ── No payment: return 402 challenge ──
+    // ── No payment: emit x402.requested then return 402 challenge ──
+    await safeEmitOfficeEvent({
+      runId: discoveryRunId,
+      type: "x402.requested",
+      agentId: serviceNameTyped,
+      phase: phaseFromMacroNode(buyerAgentName),
+      status: "paying",
+      title: `${serviceNameTyped} payment requested`,
+      message: "Awaiting x402 payment",
+    });
+
     const amountAtomic = computeAmountAtomic(config.priceUsdc);
     const challenge = buildX402Challenge(sellerAddress, amountAtomic, req.url);
     const encoded = encodeChallengeHeader(challenge);
@@ -228,6 +240,17 @@ async function executeX402SellerPath(
   const settleResult = await verifyAndSettlePayment(paymentHeader, requirements);
 
   if (!settleResult.ok || !settleResult.settled) {
+    // Emit x402.failed — moves agent to error station in Virtual Office
+    await safeEmitOfficeEvent({
+      runId: discoveryRunId,
+      type: "x402.failed",
+      agentId: serviceNameTyped,
+      phase: phaseFromMacroNode(buyerAgentName),
+      status: "failed",
+      title: `${serviceNameTyped} payment failed`,
+      message: "x402 settlement failed",
+    });
+
     return NextResponse.json(
       {
         ok: false,
@@ -238,7 +261,37 @@ async function executeX402SellerPath(
     );
   }
 
-  // ── Payment settled: execute handler ──
+  // ── Payment settled: emit x402.settled + agent.started, then execute handler ──
+
+  // Emit x402.settled — keeps agent at Gateway in Virtual Office
+  await safeEmitOfficeEvent({
+    runId: discoveryRunId,
+    type: "x402.settled",
+    agentId: serviceNameTyped,
+    phase: phaseFromMacroNode(buyerAgentName),
+    status: "paying",
+    title: `${serviceNameTyped} x402 settled`,
+    message: "x402 settlement completed",
+    payment: {
+      amountUsdc: config.priceUsdc.toString(),
+      status: "settled",
+      txHash: settleResult.paymentMeta?.txHash ?? null,
+      settlementId: settleResult.paymentMeta?.settlementId ?? null,
+      explorerUrl: settleResult.paymentMeta?.explorerUrl ?? null,
+    },
+  });
+
+  // Emit agent.started — moves agent from Gateway to its assigned desk
+  await safeEmitOfficeEvent({
+    runId: discoveryRunId,
+    type: "agent.started",
+    agentId: serviceNameTyped,
+    phase: phaseFromMacroNode(buyerAgentName),
+    status: statusFromServiceName(serviceNameTyped),
+    title: `${serviceNameTyped} started`,
+    message: `Working in ${buyerAgentName}`,
+  });
+
   const handler = SERVICE_HANDLERS[serviceNameTyped];
   if (!handler) {
     return NextResponse.json(
