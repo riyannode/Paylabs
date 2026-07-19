@@ -68,10 +68,12 @@ export function PayLabsOfficeCanvas({
 
       <section className="po-bottom-zone po-gateway-zone">
         <strong>CIRCLE GATEWAY</strong>
-        <div className="po-gateway-machine">
+        <a href="/explorer" className="po-gateway-machine po-clickable">
           <span>x402</span>
-        </div>
-        <div className="po-receipt-printer">RECEIPT</div>
+        </a>
+        <a href="/receipts" className="po-receipt-printer po-clickable">
+          RECEIPT
+        </a>
       </section>
 
       <section className="po-bottom-zone po-treasury-zone">

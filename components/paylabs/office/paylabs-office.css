@@ -155,6 +155,7 @@
     inset -4px 0 #7c2d12;
 }
 .po-gateway-machine, .po-treasury-safe, .po-arc-screen, .po-receipt-printer { position: absolute; display: grid; place-items: center; border: 5px solid #334155; background: #0f172a; color: #9cf7ff; text-shadow: none; }
+.po-clickable { text-decoration: none; cursor: pointer; }
 .po-gateway-machine { left: 70px; top: 36px; width: 76px; height: 54px; box-shadow: 0 0 15px rgba(34, 211, 238, 0.7); }
 .po-receipt-printer { right: 22px; top: 44px; width: 58px; height: 40px; color: #f8fafc; }
 .po-treasury-safe { left: 48px; top: 36px; width: 80px; height: 54px; color: #86efac; box-shadow: 0 0 15px rgba(34, 197, 94, 0.55); font-size: 8px; line-height: 1.15; text-align: center; }
