@@ -108,39 +108,40 @@
   position: absolute;
   left: 20px;
   bottom: 8px;
-  width: 28px;
-  height: 58px;
+  width: 36px;
+  height: 62px;
   background: transparent;
 }
 
 .po-plant::before {
   content: "";
   position: absolute;
-  left: 12px;
-  bottom: 14px;
-  width: 5px;
-  height: 31px;
+  left: 15px;
+  bottom: 15px;
+  width: 6px;
+  height: 35px;
   background: #166534;
   box-shadow:
-    -8px -4px 0 2px #15803d,
-    7px -10px 0 3px #22c55e,
-    -5px -19px 0 4px #16a34a,
-    5px -28px 0 3px #15803d,
-    -3px -37px 0 4px #22c55e;
+    -9px -2px 0 4px #15803d,
+    8px -4px 0 4px #16a34a,
+    -12px -14px 0 5px #22c55e,
+    9px -16px 0 5px #15803d,
+    -6px -28px 0 5px #16a34a,
+    5px -34px 0 4px #22c55e;
 }
 
 .po-plant::after {
   content: "";
   position: absolute;
-  left: 5px;
+  left: 6px;
   bottom: 0;
-  width: 19px;
-  height: 15px;
+  width: 24px;
+  height: 16px;
   background: #9a3412;
   border-top: 4px solid #7c2d12;
   box-shadow:
-    inset 3px 0 #c2410c,
-    inset -3px 0 #7c2d12;
+    inset 4px 0 #c2410c,
+    inset -4px 0 #7c2d12;
 }
 .po-gateway-machine, .po-treasury-safe, .po-arc-screen, .po-receipt-printer { position: absolute; display: grid; place-items: center; border: 5px solid #334155; background: #0f172a; color: #9cf7ff; text-shadow: none; }
 .po-gateway-machine { left: 70px; top: 36px; width: 76px; height: 54px; box-shadow: 0 0 15px rgba(34, 211, 238, 0.7); }
