@@ -45,7 +45,7 @@ export function PayLabsOfficeDashboard({
         <dl>
           <div><dt>Settled edges</dt><dd>{settledEvents.length}</dd></div>
           <div><dt>Paid graph</dt><dd>{run.paidEdges}/{run.totalEdges}</dd></div>
-          <div><dt>Total visible</dt><dd>{settledUsdc.toFixed(6)} USDC</dd></div>
+          <div><dt>Office event total</dt><dd>{settledUsdc.toFixed(6)} USDC</dd></div>
           <div><dt>Receipt</dt><dd>{run.receiptReady ? "ready" : "pending"}</dd></div>
         </dl>
         <div className="po-payment-list">
