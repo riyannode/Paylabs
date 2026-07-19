@@ -35,12 +35,13 @@
   border-bottom: 1px solid #dbe3f0;
   letter-spacing: 0.07em;
   font-size: 11px;
+  overflow: hidden;
 }
 .po-header > div { display: flex; align-items: center; gap: 14px; }
 .po-header span { color: #64748b; }
 .po-header strong { color: #1d4ed8; }
-.po-header-metrics { gap: 10px !important; }
-.po-header-metrics span { padding: 4px 6px; color: #334155; background: #f8fafc; border: 1px solid #dbe3f0; border-radius: 5px; }
+.po-header-metrics { min-width: 0; max-width: 46%; gap: 10px !important; overflow: hidden; justify-content: flex-end; }
+.po-header-metrics span { max-width: 64px; overflow: hidden; white-space: nowrap; text-overflow: clip; padding: 4px 6px; color: #334155; background: #f8fafc; border: 1px solid #dbe3f0; border-radius: 5px; }
 
 .po-stage-viewport {
   position: relative;
@@ -132,7 +133,7 @@
 .po-agent.is-failed .po-body { background: #dc2626; }
 .po-agent.is-completed { filter: brightness(1.12); }
 .po-dashboard { min-width: 0; padding: 10px; background: #ffffff; color: #334155; overflow: hidden; min-height: 100%; font-size: 11px; line-height: 1.45; }
-.po-dashboard-title { display: flex; flex-direction: column; align-items: center; padding: 9px 4px 12px; color: #0f172a; border-bottom: 1px solid #dbe3f0; letter-spacing: 0.08em; font-size: 13px; line-height: 1.35; }
+.po-dashboard-title { display: flex; flex-direction: column; align-items: center; padding: 9px 4px 12px; color: #0f172a; border-bottom: none; letter-spacing: 0.08em; font-size: 13px; line-height: 1.35; }
 .po-dashboard-title small { margin-top: 3px; color: #475569; font-size: 10px; line-height: 1.3; }
 .po-panel { margin-top: 9px; padding: 8px; background: #f8fafc; border: 1px solid #dbe3f0; border-radius: 7px; }
 .po-panel h3 { margin: 0 0 8px; font-size: 11px; color: #0f172a; letter-spacing: 0.06em; line-height: 1.35; }
