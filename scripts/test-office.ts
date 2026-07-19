@@ -1251,18 +1251,34 @@ console.log("Desk dwell tests passed");
   assert.ok(!panelSource.includes("visitTimerRef") || panelSource.includes("visitTimersRef"),
     "panel replaced single visitTimerRef with Map");
 
-  // Test: dwell durations
+  // Test: travel and visibility constants
+  assert.ok(panelSource.includes("OFFICE_AGENT_TRAVEL_MS = 680"), "panel defines OFFICE_AGENT_TRAVEL_MS as 680");
+  assert.ok(panelSource.includes("OFFICE_DESK_VISIBLE_MS = 1200"), "panel defines OFFICE_DESK_VISIBLE_MS as 1200");
+  assert.ok(panelSource.includes("OFFICE_DESK_RETURN_DELAY_MS"), "panel defines OFFICE_DESK_RETURN_DELAY_MS");
+
+  // Test: OFFICE_DESK_RETURN_DELAY_MS is the sum of travel + visible
+  assert.ok(
+    panelSource.includes("OFFICE_AGENT_TRAVEL_MS + OFFICE_DESK_VISIBLE_MS") ||
+    panelSource.includes("OFFICE_DESK_VISIBLE_MS + OFFICE_AGENT_TRAVEL_MS"),
+    "OFFICE_DESK_RETURN_DELAY_MS is travel + visible",
+  );
+
+  // Test: creator payout dwell preserved at 1500ms
   assert.ok(panelSource.includes("OFFICE_VISIT_DWELL_MS = 1500"), "panel preserves 1500ms creator dwell");
-  assert.ok(panelSource.includes("OFFICE_DESK_DWELL_MS = 1200"), "panel has 1200ms desk dwell");
 
   // Test: getDwellMs selects correct duration
-  assert.ok(panelSource.includes("creator_payout_router"), "getDwellMs checks creator_payout_router");
+  assert.ok(panelSource.includes('agentId === "creator_payout_router"'), "getDwellMs checks creator_payout_router");
+  assert.ok(panelSource.includes("OFFICE_DESK_RETURN_DELAY_MS"), "getDwellMs uses OFFICE_DESK_RETURN_DELAY_MS for ordinary agents");
 
   // Test: timers are cleared on run change
   assert.ok(panelSource.includes("visitTimersRef.current.clear()"), "timers cleared on run change");
 
   // Test: reduceReturnToIdle is called in timer callback
   assert.ok(panelSource.includes("reduceReturnToIdle"), "timer callback calls reduceReturnToIdle");
+
+  // Test: no dynamic timing fields (deskStartedAtMs, returnDelayMs) in panel
+  assert.ok(!panelSource.includes("deskStartedAtMs"), "panel has no dynamic deskStartedAtMs reference");
+  assert.ok(!panelSource.includes("returnDelayMs"), "panel has no dynamic returnDelayMs reference");
 }
 
 console.log("Panel source assertions passed");
