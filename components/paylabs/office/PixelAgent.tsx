@@ -19,7 +19,7 @@ export function PixelAgent({ agent }: { agent: OfficeAgentViewState }) {
   return (
     <button
       type="button"
-      className={`po-agent-wrap is-${agent.status}`}
+      className={`po-agent-wrap is-${agent.status}${agent.id === "brain_planner" ? " is-brain" : ""}`}
       style={style}
       aria-label={`${definition.label}: ${agent.status}`}
     >
