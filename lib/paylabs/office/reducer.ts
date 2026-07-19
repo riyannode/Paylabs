@@ -20,6 +20,10 @@ export function createInitialOfficeState(): OfficeState {
 }
 
 function destinationFor(event: PayLabsOfficeEvent, agentId: OfficeAgentId): { x: number; y: number } {
+  if (agentId === "brain_planner") {
+    return OFFICE_AGENTS.brain_planner.desk;
+  }
+
   if (event.type === "x402.requested" || event.type === "x402.settled") {
     return OFFICE_STATIONS.gateway;
   }
