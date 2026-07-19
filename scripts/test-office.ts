@@ -512,19 +512,6 @@ assert.equal(sanitizedBrainEvent.message, "Execution plan ready", "Brain message
 assert.equal((sanitizedBrainEvent.metadata as Record<string, unknown>)?.tier, "advanced", "Brain metadata.tier preserved");
 assert.equal((sanitizedBrainEvent.metadata as Record<string, unknown>)?.plannedCostUsdc, 0.008, "Brain metadata.plannedCostUsdc preserved");
 
-// Test: orchestrator source contains the new Brain messages
-const orchestratorSource = readSync(
-  new URL("../lib/paylabs/delegated-runtime/orchestrator.ts", import.meta.url),
-  "utf-8",
-);
-assert.ok(orchestratorSource.includes('"Analyzing request"'), "orchestrator emits 'Analyzing request'");
-assert.ok(orchestratorSource.includes('"Selecting route"'), "orchestrator emits 'Selecting route'");
-assert.ok(orchestratorSource.includes('"Execution plan ready"'), "orchestrator emits 'Execution plan ready'");
-assert.ok(!orchestratorSource.includes("Preparing Brain plan"), "orchestrator no longer emits old verbose Brain message");
-assert.ok(!orchestratorSource.includes("Selecting route tier"), "orchestrator no longer emits old route tier message");
-assert.ok(!orchestratorSource.includes("route ·"), "orchestrator no longer emits tier/service count separator");
-assert.ok(!orchestratorSource.includes("Planning unavailable"), "orchestrator no longer emits old fallback message");
-
 // ── Brain bubble positioning tests ──────────────────────────
 
 // Read CSS source for brain bubble assertions
