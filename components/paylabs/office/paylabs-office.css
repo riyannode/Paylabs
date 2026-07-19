@@ -48,7 +48,7 @@
   flex: 1;
   min-height: 520px;
   overflow: hidden;
-  background: #eef2f7;
+  background: #ffffff;
 }
 
 .po-stage {
@@ -116,7 +116,7 @@
 .po-agent.is-working { animation: po-work 0.42s steps(2, end) infinite; }
 .po-head { position: absolute; left: 7px; top: 5px; width: 15px; height: 13px; background: #f1c39d; box-shadow: inset -3px 0 #d99b72; }
 .po-hair { position: absolute; left: 5px; top: 2px; width: 19px; height: 8px; background: #2a2525; z-index: 2; box-shadow: 3px 3px #2a2525; }
-.po-eye { position: absolute; top: 5px; width: 2px; height: 2px; background: #1f2937; }
+.po-eye { position: absolute; top: 6px; width: 3px; height: 3px; background: #111827; z-index: 3; }
 .po-eye-left { left: 3px; }
 .po-eye-right { right: 3px; }
 .po-body { position: absolute; left: 5px; top: 18px; width: 19px; height: 16px; background: var(--agent-color); box-shadow: inset -4px 0 rgba(0, 0, 0, 0.2); }
