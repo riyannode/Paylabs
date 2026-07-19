@@ -11,10 +11,12 @@ import { PayLabsOfficeDashboard } from "./PayLabsOfficeDashboard";
 import { mergeOfficeEvents } from "@/lib/paylabs/office/selectors";
 
 const OFFICE_VISIT_DWELL_MS = 1500;
-const OFFICE_DESK_DWELL_MS = 1200;
+const OFFICE_AGENT_TRAVEL_MS = 680;
+const OFFICE_DESK_VISIBLE_MS = 1200;
+const OFFICE_DESK_RETURN_DELAY_MS = OFFICE_AGENT_TRAVEL_MS + OFFICE_DESK_VISIBLE_MS;
 
 function getDwellMs(agentId: OfficeAgentId): number {
-  return agentId === "creator_payout_router" ? OFFICE_VISIT_DWELL_MS : OFFICE_DESK_DWELL_MS;
+  return agentId === "creator_payout_router" ? OFFICE_VISIT_DWELL_MS : OFFICE_DESK_RETURN_DELAY_MS;
 }
 
 function createBrowserClient() {
