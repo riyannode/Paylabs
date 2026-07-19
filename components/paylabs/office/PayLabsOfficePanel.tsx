@@ -105,6 +105,25 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
     }
 
     let cancelled = false;
+    let historyFetched = false;
+    let realtimeEventsDuringSubscribe: PayLabsOfficeEvent[] = [];
+
+    async function fetchHistory() {
+      const { data, error } = await supabase!
+        .from("paylabs_office_events")
+        .select("*")
+        .eq("run_id", run.runId)
+        .order("sequence", { ascending: true })
+        .limit(500);
+      if (cancelled || error || !data) return;
+      const mapped = data.map((row) => mapRow(row as Record<string, unknown>));
+      setOfficeState((previous) => {
+        let s = previous;
+        for (const evt of mapped) s = reduceOfficeEvent(s, evt);
+        return s;
+      });
+      setEvents((previous) => mergeOfficeEvents(previous, mapped));
+    }
 
     const channel = supabase
       .channel(`paylabs-office:${run.runId}`)
@@ -112,26 +131,34 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "paylabs_office_events", filter: `run_id=eq.${run.runId}` },
         ({ new: row }) => {
-          const event = mapRow(row);
-          setOfficeState((previous) => reduceOfficeEvent(previous, event));
-          setEvents((previous) => mergeOfficeEvents(previous, [event]));
+          const evt = mapRow(row);
+          if (!historyFetched) {
+            // History hasn't been fetched yet — buffer Realtime events
+            // so they aren't lost if they arrive before the fetch completes
+            realtimeEventsDuringSubscribe.push(evt);
+            return;
+          }
+          setOfficeState((previous) => reduceOfficeEvent(previous, evt));
+          setEvents((previous) => mergeOfficeEvents(previous, [evt]));
         },
       )
-      .subscribe();
-
-    void supabase
-      .from("paylabs_office_events")
-      .select("*")
-      .eq("run_id", run.runId)
-      .order("sequence", { ascending: true })
-      .limit(500)
-      .then(({ data, error }) => {
-        if (cancelled || error || !data) return;
-        const mapped = data.map((row) => mapRow(row as Record<string, unknown>));
-        for (const event of mapped) {
-          setOfficeState((previous) => reduceOfficeEvent(previous, event));
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED" && !cancelled) {
+          historyFetched = true;
+          // Fetch complete ordered history AFTER subscription is live
+          await fetchHistory();
+          // Flush any Realtime events that arrived during the subscribe window
+          if (realtimeEventsDuringSubscribe.length > 0) {
+            const buffered = [...realtimeEventsDuringSubscribe];
+            realtimeEventsDuringSubscribe = [];
+            setOfficeState((previous) => {
+              let s = previous;
+              for (const evt of buffered) s = reduceOfficeEvent(s, evt);
+              return s;
+            });
+            setEvents((previous) => mergeOfficeEvents(previous, buffered));
+          }
         }
-        setEvents((previous) => mergeOfficeEvents(previous, mapped));
       });
 
     return () => {

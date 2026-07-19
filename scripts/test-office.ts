@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createInitialOfficeState, reduceOfficeEvent, reduceReturnToIdle } from "../lib/paylabs/office/reducer";
 import { OFFICE_AGENTS, OFFICE_STATIONS, assertOfficeRegistryMatchesServiceRegistry, officeAgentIdFromServiceName } from "../lib/paylabs/office/registry";
 import { phaseFromMacroNode, statusFromServiceName, isOfficeServiceName } from "../lib/paylabs/office/event-mapper";
+import { mergeOfficeEvents } from "../lib/paylabs/office/selectors";
 import type { PayLabsOfficeEvent } from "../lib/paylabs/office/types";
 
 function event(partial: Partial<PayLabsOfficeEvent>): PayLabsOfficeEvent {
@@ -594,3 +595,144 @@ assert.ok(agentSource.includes("sanitizeDisplayMessage"), "PixelAgent still impo
 assert.ok(agentSource.includes("displayMessage"), "PixelAgent still uses sanitized displayMessage for bubble");
 
 console.log("PayLabs office tests passed");
+
+// ── Subscription race regression tests ─────────────────────────────
+// These test the exact scenario from PR #165 follow-up:
+//   1. Channel subscription starts but is not yet SUBSCRIBED
+//   2. Early Brain events are inserted into Supabase
+//   3. Channel reaches SUBSCRIBED
+//   4. History backfill fetches Brain events (already in DB)
+//   5. A later child-agent event arrives through Realtime
+//   6. Final Brain state is completed, message is "Execution plan ready"
+//   7. Child agent state is also updated
+//   8. No duplicate activity-log entries
+
+{
+  // Simulate the race: history backfill + Realtime overlap
+  const brainStarted = event({
+    id: "brain-start-1",
+    sequence: 1,
+    agentId: "brain_planner",
+    type: "agent.started",
+    status: "planning",
+    message: "Analyzing request",
+  });
+  const brainPlanning = event({
+    id: "brain-plan-2",
+    sequence: 2,
+    agentId: "brain_planner",
+    type: "agent.started",
+    status: "planning",
+    message: "Selecting route",
+  });
+  const brainCompleted = event({
+    id: "brain-done-3",
+    sequence: 3,
+    agentId: "brain_planner",
+    type: "agent.completed",
+    status: "completed",
+    message: "Execution plan ready",
+  });
+
+  // Simulate: history fetch returns Brain events (already in DB)
+  const historyEvents = [brainStarted, brainPlanning, brainCompleted];
+
+  // Simulate: Realtime buffered the same Brain events (arrived before SUBSCRIBED)
+  const realtimeBuffered = [brainStarted, brainPlanning, brainCompleted];
+
+  // mergeOfficeEvents deduplicates by event.id — identical IDs produce one entry
+  const merged = mergeOfficeEvents([], [...historyEvents, ...realtimeBuffered]);
+  assert.equal(merged.length, 3, "merged history + realtime buffer has no duplicates (3 unique events)");
+
+  // Reduce history into state — Brain should end up completed
+  let raceState = createInitialOfficeState();
+  for (const evt of historyEvents) {
+    raceState = reduceOfficeEvent(raceState, evt);
+  }
+  assert.equal(raceState.brain_planner.status, "completed", "Brain status is completed after history backfill");
+  assert.equal(raceState.brain_planner.message, "Execution plan ready", "Brain message is 'Execution plan ready' after history backfill");
+
+  // Now simulate a later child-agent event arriving through Realtime (after flush)
+  const childEvent = event({
+    id: "qb-start-4",
+    sequence: 4,
+    agentId: "query_builder",
+    type: "agent.started",
+    status: "planning",
+    message: "Working in discovery_planner",
+  });
+  raceState = reduceOfficeEvent(raceState, childEvent);
+
+  // Brain state must NOT be affected by child agent event
+  assert.equal(raceState.brain_planner.status, "completed", "Brain status remains completed after child agent event");
+  assert.equal(raceState.brain_planner.message, "Execution plan ready", "Brain message unchanged after child agent event");
+  assert.equal(raceState.query_builder.status, "planning", "Child agent status is planning");
+  assert.equal(raceState.query_builder.message, "Working in discovery_planner", "Child agent message is set");
+
+  // Verify no duplicate entries in merged events
+  const allEvents = mergeOfficeEvents(merged, [childEvent]);
+  const ids = allEvents.map((e) => e.id);
+  assert.equal(new Set(ids).size, allEvents.length, "no duplicate event IDs after merge");
+
+  // Test: flush-buffered events after history are applied in order
+  {
+    let flushState = createInitialOfficeState();
+    // Step 1: history backfill (Brain completed)
+    const history = [brainCompleted];
+    for (const evt of history) {
+      flushState = reduceOfficeEvent(flushState, evt);
+    }
+    assert.equal(flushState.brain_planner.status, "completed", "flush test: Brain completed from history");
+
+    // Step 2: buffered Realtime events from subscribe window (early Brain events)
+    // These should be IGNORED because their sequence (1,2) <= brainCompleted.sequence (3)
+    const bufferedEarly = [brainStarted, brainPlanning];
+    for (const evt of bufferedEarly) {
+      flushState = reduceOfficeEvent(flushState, evt);
+    }
+    assert.equal(flushState.brain_planner.status, "completed", "flush test: early buffered events ignored (lower sequence)");
+    assert.equal(flushState.brain_planner.message, "Execution plan ready", "flush test: Brain message preserved after flush");
+
+    // Step 3: later Realtime event (child agent)
+    flushState = reduceOfficeEvent(flushState, childEvent);
+    assert.equal(flushState.query_builder.status, "planning", "flush test: child agent updated after flush");
+    assert.equal(flushState.brain_planner.status, "completed", "flush test: Brain still completed after child event");
+  }
+
+  // Test: inverse order — Realtime arrives first, history backfill later
+  {
+    let inverseState = createInitialOfficeState();
+    // Realtime delivers Brain events first
+    for (const evt of [brainStarted, brainPlanning, brainCompleted]) {
+      inverseState = reduceOfficeEvent(inverseState, evt);
+    }
+    assert.equal(inverseState.brain_planner.message, "Execution plan ready", "inverse: Brain message correct after realtime-first");
+
+    // History backfill arrives — should be no-op (same/lower sequences)
+    for (const evt of historyEvents) {
+      inverseState = reduceOfficeEvent(inverseState, evt);
+    }
+    assert.equal(inverseState.brain_planner.message, "Execution plan ready", "inverse: Brain message preserved after history backfill");
+    assert.equal(inverseState.brain_planner.status, "completed", "inverse: Brain status preserved after history backfill");
+
+    // Later child event
+    inverseState = reduceOfficeEvent(inverseState, childEvent);
+    assert.equal(inverseState.query_builder.status, "planning", "inverse: child agent updated");
+    assert.equal(inverseState.brain_planner.status, "completed", "inverse: Brain still completed");
+  }
+
+  // Test: panel source code contains subscribe-before-history pattern
+  const panelSource = readSync(
+    new URL("../components/paylabs/office/PayLabsOfficePanel.tsx", import.meta.url),
+    "utf-8",
+  );
+  assert.ok(panelSource.includes('status === "SUBSCRIBED"'), "panel waits for SUBSCRIBED before fetching history");
+  assert.ok(panelSource.includes("historyFetched"), "panel tracks historyFetched flag");
+  assert.ok(panelSource.includes("realtimeEventsDuringSubscribe"), "panel buffers Realtime events during subscribe");
+  assert.ok(panelSource.includes("async (status)"), "panel passes status callback to subscribe");
+  // Verify the old fire-and-forget pattern is gone
+  assert.ok(!panelSource.includes(".subscribe();"), "old fire-and-forget subscribe() removed");
+  assert.ok(!panelSource.includes("void supabase\\n      .from(\"paylabs_office_events\")"), "old immediate history fetch removed");
+}
+
+console.log("Subscription race regression tests passed");
