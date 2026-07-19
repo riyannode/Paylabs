@@ -41,12 +41,27 @@ export function parseUsdc(value: unknown, fallback: string): string | null {
   if (!/^\d+(\.\d{1,6})?$/.test(raw)) return null;
   const [whole, frac = ""] = raw.split(".");
   const normalized = `${whole}.${frac.padEnd(6, "0")}`;
-  const atomic = BigInt(whole) * 1_000_000n + BigInt(frac.padEnd(6, "0"));
-  if (atomic <= 0n) return null;
+  const atomic = BigInt(whole) * BigInt("1000000") + BigInt(frac.padEnd(6, "0"));
+  if (atomic <= BigInt("0")) return null;
   return normalized;
 }
 
 export function usdcToAtomic(usdc: string): bigint {
   const [whole, frac = ""] = usdc.split(".");
-  return BigInt(whole) * 1_000_000n + BigInt(frac.padEnd(6, "0").slice(0, 6));
+  return BigInt(whole) * BigInt("1000000") + BigInt(frac.padEnd(6, "0").slice(0, 6));
+}
+
+export function atomicToUsdc(atomic: bigint | string): string {
+  const value = typeof atomic === "bigint" ? atomic : BigInt(atomic);
+  const sign = value < BigInt("0") ? "-" : "";
+  const abs = value < BigInt("0") ? -value : value;
+  const whole = abs / BigInt("1000000");
+  const frac = (abs % BigInt("1000000")).toString().padStart(6, "0");
+  return `${sign}${whole}.${frac}`;
+}
+
+export function addUsdc(a: unknown, b: unknown): string {
+  const left = parseUsdc(a, "0.000000");
+  const right = parseUsdc(b, "0.000000");
+  return atomicToUsdc(usdcToAtomic(left || "0.000000") + usdcToAtomic(right || "0.000000"));
 }

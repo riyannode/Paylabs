@@ -1,6 +1,7 @@
 import { resolvePublicAppUrl } from "@/lib/paylabs/runtime/resolve-app-url";
 import type { PublicResearchResult, PublicResponseMode, PublicSource } from "./types";
-import { sha256Hex } from "./security";
+import { addUsdc, sha256Hex } from "./security";
+import { publicStatusFromRunStatus } from "./lifecycle";
 
 function asRecord(v: unknown): Record<string, unknown> { return v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}; }
 function asString(v: unknown): string | null { return typeof v === "string" && v.trim() ? v.trim() : null; }
@@ -8,7 +9,9 @@ function asString(v: unknown): string | null { return typeof v === "string" && v
 export function normalizePublicResult(run: Record<string, unknown>, mode: PublicResponseMode): PublicResearchResult {
   const trace = asRecord(run.agent_trace);
   const sourceSnapshot = asRecord(run.source_snapshot);
-  const sourceContext = asRecord(sourceSnapshot.source_context) || asRecord(trace.source_context);
+  const snapshotSourceContext = asRecord(sourceSnapshot.source_context);
+  const traceSourceContext = asRecord(trace.source_context);
+  const sourceContext = Object.keys(snapshotSourceContext).length > 0 ? snapshotSourceContext : traceSourceContext;
   const exitOutput = asRecord(trace.exit_output);
   const brain = asRecord(trace.brain_planning);
   const preflight = asRecord(trace.auto_tier_preflight);
@@ -64,11 +67,11 @@ export function buildPublicRunResponse(run: Record<string, unknown>, readToken: 
   const publicCtx = asRecord(trace.public_x402);
   const response: Record<string, unknown> = {
     ok: true,
-    status: run.status === "failed" ? "failed" : "completed",
+    status: publicStatusFromRunStatus(run.status),
     run_id: run.id,
     result,
     route: { requested_tier: requestedTier, effective_tier: effectiveTier, explanation: result.reasoning.route_reason },
-    cost: { currency: "USDC", network: "arc-testnet", entry_payment_usdc: entry.amount_usdc, total_user_cost_usdc: String(Number(pf.routing_fee_usdc || 0) + Number(entry.amount_usdc || 0)).padEnd(8, "0") },
+    cost: { currency: "USDC", network: "arc-testnet", entry_payment_usdc: entry.amount_usdc, total_user_cost_usdc: addUsdc(pf.routing_fee_usdc, entry.amount_usdc) },
     payment: {
       status: run.entry_payment_status || "paid",
       payer: asString(run.user_wallet) || asString(publicCtx.buyer_wallet),
@@ -76,11 +79,11 @@ export function buildPublicRunResponse(run: Record<string, unknown>, readToken: 
       settlement_id: entry.settlement_id,
       tx_hash: entry.tx_hash,
       explorer_url: entry.explorer_url,
-      gateway_accepted: true,
+      gateway_accepted: typeof finalPayment.gateway_accepted === "boolean" ? finalPayment.gateway_accepted : run.entry_payment_status === "paid",
       batch: { status: batchStatus(entry), tx_hash: entry.batch_tx_hash, explorer_url: entry.batch_explorer_url, resolver_url: entry.batch_resolver_url },
     },
     links: { paylabs_explorer_url: `${baseUrl}/paylabs/explorer/${run.id}`, entry_payment_explorer_url: entry.explorer_url, gateway_batch_url: entry.batch_explorer_url || entry.batch_resolver_url },
-    receipt: { ready: run.receipt_ready ?? true, url: `${baseUrl}/receipts/${run.id}`, api_url: `${baseUrl}/api/x402/v1/runs/${run.id}/receipt${readToken ? `?read_token=${encodeURIComponent(readToken)}` : ""}` },
+    receipt: { ready: run.receipt_ready ?? true, url: `${baseUrl}/receipts/${run.id}`, api_url: `${baseUrl}/api/x402/v1/runs/${run.id}/receipt`, authorization: readToken ? "Bearer" : null },
     ...(readToken ? { read_token: readToken } : {}),
   };
   if (mode === "full") {

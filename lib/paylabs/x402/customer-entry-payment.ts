@@ -91,6 +91,17 @@ export interface CustomerEntryPaymentData {
 const ENTRY_SELLER_ENV = "PAYLABS_ENTRY_PAYMENT_SELLER_WALLET_ADDRESS";
 const BRAIN_SELLER_ENV = "PAYLABS_BRAIN_SELLER_WALLET_ADDRESS";
 
+
+function usdcToAtomicString(value: number | string): string {
+  const raw = typeof value === "number" ? value.toFixed(6) : value.trim();
+  if (!/^\d+(\.\d{1,6})?$/.test(raw)) {
+    throw new Error("invalid_usdc_amount");
+  }
+  const [whole, frac = ""] = raw.split(".");
+  const atomic = `${whole}${frac.padEnd(6, "0")}`.replace(/^0+(?=\d)/, "");
+  return atomic || "0";
+}
+
 // ─── Build Customer Entry Challenge ───────────────────────────
 
 /**
@@ -101,12 +112,12 @@ const BRAIN_SELLER_ENV = "PAYLABS_BRAIN_SELLER_WALLET_ADDRESS";
  * @param resourceUrl - Optional resource URL for the challenge
  */
 export function buildCustomerEntryChallenge(
-  plannedCostUsdc: number,
+  plannedCostUsdc: number | string,
   resourceUrl?: string
 ): { challenge: ReturnType<typeof buildX402Challenge>; headerValue: string } {
   const sellerAddress = resolveEntrySellerAddress();
   // Convert USDC to atomic units (6 decimals)
-  const amountAtomic = Math.round(plannedCostUsdc * 1_000_000).toString();
+  const amountAtomic = usdcToAtomicString(plannedCostUsdc);
 
   const challenge = buildX402Challenge(sellerAddress, amountAtomic, resourceUrl);
   const headerValue = encodeChallengeHeader(challenge);
@@ -125,10 +136,10 @@ export function buildCustomerEntryChallenge(
  */
 export async function verifyAndSettleCustomerEntry(
   paymentSignatureBase64: string,
-  plannedCostUsdc: number
+  plannedCostUsdc: number | string
 ): Promise<CustomerEntryPaymentResult> {
   const sellerAddress = resolveEntrySellerAddress();
-  const amountAtomic = Math.round(plannedCostUsdc * 1_000_000).toString();
+  const amountAtomic = usdcToAtomicString(plannedCostUsdc);
 
   const requirements = buildPaymentRequirements(sellerAddress, amountAtomic);
 
