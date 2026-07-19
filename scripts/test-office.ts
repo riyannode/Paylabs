@@ -426,4 +426,102 @@ const serverSource = readSync(
 assert.ok(serverSource.includes('from "./sanitizer"'), "server.ts imports from sanitizer");
 assert.ok(serverSource.includes("sanitizeOfficeEvent"), "server.ts uses sanitizeOfficeEvent at emission boundary");
 
+// ── Brain bubble operational status tests ──────────────────────
+
+// Test: all Brain bubble messages are preserved by sanitizer (no monetary content)
+const brainMessages = [
+  "Analyzing request",
+  "Selecting route",
+  "Execution plan ready",
+];
+for (const msg of brainMessages) {
+  const sanitized = sanitizeOfficeMessage(msg, "agent.completed");
+  assert.equal(sanitized, msg, `Brain message preserved by sanitizer: "${msg}"`);
+  expectOfficeMessageToBeNonMonetary(sanitized);
+}
+
+// Test: Brain messages contain no USDC, no reasoning, no monetary fields
+for (const msg of brainMessages) {
+  assert.ok(!msg.includes("USDC"), `Brain message has no USDC: "${msg}"`);
+  assert.ok(!msg.includes("route tier"), `Brain message has no route tier detail: "${msg}"`);
+  assert.ok(!msg.includes("·"), `Brain message has no separator/count: "${msg}"`);
+  assert.ok(!/\d+\s*service/.test(msg), `Brain message has no service count: "${msg}"`);
+  assert.ok(!/\d+\s*candidate/.test(msg), `Brain message has no candidate count: "${msg}"`);
+  assert.ok(!/budget|cost|spend|fee|balance|price|planned/i.test(msg), `Brain message has no monetary field names: "${msg}"`);
+  assert.ok(!/considering|suggesting|reasoning|because|therefore|alternatives/i.test(msg), `Brain message has no chain-of-thought: "${msg}"`);
+}
+
+// Test: Brain messages reach the bubble through the reducer flow
+let brainState = createInitialOfficeState();
+
+// Step 1: run.started → "Analyzing request"
+brainState = reduceOfficeEvent(brainState, event({
+  sequence: 40,
+  agentId: "brain_planner",
+  type: "run.started",
+  status: "planning",
+  message: "Analyzing request",
+}));
+assert.equal(brainState.brain_planner.message, "Analyzing request", "Brain bubble shows 'Analyzing request' after run.started");
+assert.equal(brainState.brain_planner.status, "planning", "Brain status is planning after run.started");
+
+// Step 2: agent.started → "Selecting route" (overwrites previous)
+brainState = reduceOfficeEvent(brainState, event({
+  sequence: 41,
+  agentId: "brain_planner",
+  type: "agent.started",
+  status: "planning",
+  message: "Selecting route",
+}));
+assert.equal(brainState.brain_planner.message, "Selecting route", "Brain bubble updates to 'Selecting route'");
+assert.equal(brainState.brain_planner.status, "planning", "Brain status remains planning");
+
+// Step 3: agent.completed → "Execution plan ready" (final)
+brainState = reduceOfficeEvent(brainState, event({
+  sequence: 42,
+  agentId: "brain_planner",
+  type: "agent.completed",
+  status: "completed",
+  message: "Execution plan ready",
+}));
+assert.equal(brainState.brain_planner.message, "Execution plan ready", "Brain bubble shows 'Execution plan ready' after plan lock");
+assert.equal(brainState.brain_planner.status, "completed", "Brain status is completed");
+
+// Step 4: child agent event does NOT clear Brain bubble
+brainState = reduceOfficeEvent(brainState, event({
+  sequence: 43,
+  agentId: "query_builder",
+  type: "agent.started",
+  status: "planning",
+  message: "Working in discovery_planner",
+}));
+assert.equal(brainState.brain_planner.message, "Execution plan ready", "Brain bubble unchanged after child agent event");
+
+// Test: Brain messages don't alter payment or metadata fields
+const brainEvent = event({
+  sequence: 50,
+  agentId: "brain_planner",
+  type: "agent.completed",
+  status: "completed",
+  message: "Execution plan ready",
+  metadata: { tier: "advanced", plannedCostUsdc: 0.008 },
+});
+const sanitizedBrainEvent = (await import("../lib/paylabs/office/sanitizer")).sanitizeOfficeEvent(brainEvent);
+assert.equal(sanitizedBrainEvent.message, "Execution plan ready", "Brain message preserved after sanitization");
+assert.equal((sanitizedBrainEvent.metadata as Record<string, unknown>)?.tier, "advanced", "Brain metadata.tier preserved");
+assert.equal((sanitizedBrainEvent.metadata as Record<string, unknown>)?.plannedCostUsdc, 0.008, "Brain metadata.plannedCostUsdc preserved");
+
+// Test: orchestrator source contains the new Brain messages
+const orchestratorSource = readSync(
+  new URL("../lib/paylabs/delegated-runtime/orchestrator.ts", import.meta.url),
+  "utf-8",
+);
+assert.ok(orchestratorSource.includes('"Analyzing request"'), "orchestrator emits 'Analyzing request'");
+assert.ok(orchestratorSource.includes('"Selecting route"'), "orchestrator emits 'Selecting route'");
+assert.ok(orchestratorSource.includes('"Execution plan ready"'), "orchestrator emits 'Execution plan ready'");
+assert.ok(!orchestratorSource.includes("Preparing Brain plan"), "orchestrator no longer emits old verbose Brain message");
+assert.ok(!orchestratorSource.includes("Selecting route tier"), "orchestrator no longer emits old route tier message");
+assert.ok(!orchestratorSource.includes("route ·"), "orchestrator no longer emits tier/service count separator");
+assert.ok(!orchestratorSource.includes("Planning unavailable"), "orchestrator no longer emits old fallback message");
+
 console.log("PayLabs office tests passed");

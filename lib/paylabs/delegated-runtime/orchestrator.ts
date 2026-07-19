@@ -124,7 +124,7 @@ export async function executeDelegatedDiscoveryRun(
     status: "planning",
     agentId: "brain_planner",
     title: "PayLabs run started",
-    message: "Preparing Brain plan and route execution",
+    message: "Analyzing request",
   });
   await safeEmitOfficeEvent({
     runId: input.discoveryRunId,
@@ -133,7 +133,7 @@ export async function executeDelegatedDiscoveryRun(
     status: "planning",
     agentId: "brain_planner",
     title: "Brain started planning",
-    message: "Selecting route tier, phases, and services",
+    message: "Selecting route",
   });
   // ── Brain Planning (LangGraph) ──
   const brainResult = await runBrainPlanning(input);
@@ -194,7 +194,7 @@ export async function executeDelegatedDiscoveryRun(
       status: "completed",
       agentId: "brain_planner",
       title: "Execution plan locked",
-      message: `${resolvedTier} route · ${executionPlan.selectedServices.length} services`,
+      message: "Execution plan ready",
       metadata: {
         tier: resolvedTier,
         plannedCostUsdc: executionPlan.plannedCostUsdc,
@@ -223,7 +223,7 @@ export async function executeDelegatedDiscoveryRun(
       status: "completed",
       agentId: "brain_planner",
       title: "Brain fallback applied",
-      message: "Planning unavailable; continuing with tier defaults",
+      message: "Execution plan ready",
     });
   }
 
