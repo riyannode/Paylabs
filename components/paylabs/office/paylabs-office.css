@@ -109,7 +109,7 @@
   left: 20px;
   bottom: 2px;
   width: 36px;
-  height: 62px;
+  height: 42px;
   background: transparent;
 }
 
@@ -117,17 +117,17 @@
   content: "";
   position: absolute;
   left: 15px;
-  bottom: 15px;
+  bottom: 12px;
   width: 6px;
-  height: 35px;
+  height: 20px;
   background: #166534;
   box-shadow:
-    -9px -2px 0 4px #15803d,
-    8px -4px 0 4px #16a34a,
-    -12px -14px 0 5px #22c55e,
-    9px -16px 0 5px #15803d,
-    -6px -28px 0 5px #16a34a,
-    5px -34px 0 4px #22c55e;
+    -9px -2px 0 3px #15803d,
+    8px -4px 0 3px #16a34a,
+    -10px -10px 0 4px #22c55e,
+    8px -12px 0 4px #15803d,
+    -4px -18px 0 4px #16a34a,
+    4px -20px 0 3px #22c55e;
 }
 
 .po-plant::after {
@@ -136,7 +136,7 @@
   left: 6px;
   bottom: 0;
   width: 24px;
-  height: 16px;
+  height: 14px;
   background: #9a3412;
   border-top: 4px solid #7c2d12;
   box-shadow:
