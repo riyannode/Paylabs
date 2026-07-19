@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import type { OfficeAgentViewState } from "@/lib/paylabs/office/types";
 import { PixelAgent } from "./PixelAgent";
 import { PixelDesk } from "./PixelDesk";
@@ -7,12 +8,14 @@ import { PixelDesk } from "./PixelDesk";
 export function PayLabsOfficeCanvas({
   agents,
   paused,
+  stageStyle,
 }: {
   agents: OfficeAgentViewState[];
   paused: boolean;
+  stageStyle: CSSProperties;
 }) {
   return (
-    <div className={`po-stage ${paused ? "is-paused" : ""}`}>
+    <div className={`po-stage ${paused ? "is-paused" : ""}`} style={stageStyle}>
       <section className="po-room po-room-control">
         <strong>CONTROL</strong>
         <div className="po-clock">◷</div>

@@ -842,7 +842,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
         onUseRecentChat={handleUseRecentChat}
       />
 
-      <main className="pl-main">
+      <main className="pl-main paylabs-chat-main">
         <div className="pl-topbar">
           <div />
 
@@ -864,7 +864,7 @@ export default function PayLabsChatClient({ analytics }: Props) {
           </div>
         )}
 
-        <section className="pl-hero">
+        <section className="pl-hero paylabs-chat-hero">
           <h1>AI search that <span style={{ color: "var(--info)" }}>pays creators</span>.</h1>
           <p>PayLabs finds answers with AI and pays verified creators when their sources are used.</p>
 
@@ -915,7 +915,9 @@ export default function PayLabsChatClient({ analytics }: Props) {
           </div>
 
           <RouteGuideBlock onUsePrompt={setPrompt} />
+        </section>
 
+        <section className="paylabs-office-section">
           <PayLabsOfficePanel run={officeRun} />
         </section>
       </main>

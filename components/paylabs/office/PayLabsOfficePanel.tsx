@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { OFFICE_DESIGN_HEIGHT, OFFICE_DESIGN_WIDTH } from "@/lib/paylabs/office/constants";
 import { createInitialOfficeState, reduceOfficeEvent } from "@/lib/paylabs/office/reducer";
 import type { OfficeState } from "@/lib/paylabs/office/reducer";
 import type { OfficeRunSummary, PayLabsOfficeEvent } from "@/lib/paylabs/office/types";
@@ -37,12 +38,29 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
   const [officeState, setOfficeState] = useState<OfficeState>(() => createInitialOfficeState());
   const [events, setEvents] = useState<PayLabsOfficeEvent[]>([]);
   const [paused, setPaused] = useState(false);
+  const [viewportSize, setViewportSize] = useState({ width: OFFICE_DESIGN_WIDTH, height: OFFICE_DESIGN_HEIGHT });
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const supabase = useMemo(createBrowserClient, []);
 
   useEffect(() => {
     const onVisibility = () => setPaused(document.hidden);
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      setViewportSize({ width: rect.width, height: rect.height });
+    };
+
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -89,6 +107,22 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
     };
   }, [run.runId, supabase]);
 
+  const scale = Math.min(
+    viewportSize.width / OFFICE_DESIGN_WIDTH,
+    viewportSize.height / OFFICE_DESIGN_HEIGHT,
+  );
+  const scaledWidth = OFFICE_DESIGN_WIDTH * scale;
+  const scaledHeight = OFFICE_DESIGN_HEIGHT * scale;
+  const offsetX = Math.max(0, (viewportSize.width - scaledWidth) / 2);
+  const offsetY = Math.max(0, (viewportSize.height - scaledHeight) / 2);
+  const stageStyle = {
+    width: OFFICE_DESIGN_WIDTH,
+    height: OFFICE_DESIGN_HEIGHT,
+    left: offsetX,
+    top: offsetY,
+    transform: `scale(${scale})`,
+  };
+
   const agents = Object.values(officeState);
 
   return (
@@ -106,7 +140,9 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
           </div>
         </header>
 
-        <PayLabsOfficeCanvas agents={agents} paused={paused} />
+        <div className="po-stage-viewport" ref={viewportRef}>
+          <PayLabsOfficeCanvas agents={agents} paused={paused} stageStyle={stageStyle} />
+        </div>
       </div>
 
       <PayLabsOfficeDashboard agents={agents} events={events} run={run} />
