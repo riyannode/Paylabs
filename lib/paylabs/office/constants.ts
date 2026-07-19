@@ -1,0 +1,8 @@
+export const OFFICE_INTERNAL_WIDTH = 900;
+export const OFFICE_INTERNAL_HEIGHT = 430;
+export const OFFICE_TARGET_FPS = 24;
+export const OFFICE_MIN_FPS = 20;
+export const OFFICE_MAX_FPS = 30;
+export const OFFICE_MAX_ACTIVITY_ITEMS = 40;
+export const OFFICE_MAX_VISIBLE_ACTIVITY_ITEMS = 9;
+export const OFFICE_MOVEMENT_DURATION_MS = Math.round(1000 / OFFICE_TARGET_FPS) * 16;
