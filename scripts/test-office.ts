@@ -265,7 +265,6 @@ assert.ok(!dashboardSource.includes("amountUsdc"), "dashboard does not reference
 assert.ok(!dashboardSource.includes("Planned"), "dashboard does not render Planned cost row");
 assert.ok(!dashboardSource.includes("Office event total"), "dashboard does not render total USDC row");
 assert.ok(!dashboardSource.includes("safeExplorerUrl"), "dashboard does not import payment-links helper");
-assert.ok(!dashboardSource.includes("po-payment-list"), "dashboard does not render payment list rows");
 
 // Test: agent directory still shows name + status
 assert.ok(dashboardSource.includes("shortLabel"), "dashboard still renders agent shortLabel");

@@ -17,6 +17,7 @@ export function PayLabsOfficeDashboard({
   const completed = agents.filter((agent) => agent.status === "completed").length;
   const failed = agents.filter((agent) => agent.status === "failed").length;
   const settledEvents = events.filter((event) => event.type === "x402.settled");
+  const settledAgentIds = [...new Set(settledEvents.map((e) => e.agentId).filter(Boolean))];
 
   return (
     <aside className="po-dashboard">
@@ -41,6 +42,18 @@ export function PayLabsOfficeDashboard({
           <div><dt>Paid graph</dt><dd>{run.paidEdges}/{run.totalEdges}</dd></div>
           <div><dt>Receipt</dt><dd>{run.receiptReady ? "ready" : "pending"}</dd></div>
         </dl>
+        {settledAgentIds.length > 0 && (
+          <div className="po-payment-list">
+            {settledAgentIds.map((agentId) => (
+              <div key={agentId} className="po-payment-row">
+                <div>
+                  <strong>{agentId}</strong>
+                </div>
+                <span>settled</span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="po-panel">
