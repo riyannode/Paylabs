@@ -5,12 +5,17 @@ import { createClient } from "@supabase/supabase-js";
 import { OFFICE_DESIGN_HEIGHT, OFFICE_DESIGN_WIDTH } from "@/lib/paylabs/office/constants";
 import { createInitialOfficeState, reduceOfficeEvent, reduceReturnToIdle } from "@/lib/paylabs/office/reducer";
 import type { OfficeState } from "@/lib/paylabs/office/reducer";
-import type { OfficeRunSummary, PayLabsOfficeEvent } from "@/lib/paylabs/office/types";
+import type { OfficeAgentId, OfficeRunSummary, PayLabsOfficeEvent } from "@/lib/paylabs/office/types";
 import { PayLabsOfficeCanvas } from "./PayLabsOfficeCanvas";
 import { PayLabsOfficeDashboard } from "./PayLabsOfficeDashboard";
 import { mergeOfficeEvents } from "@/lib/paylabs/office/selectors";
 
 const OFFICE_VISIT_DWELL_MS = 1500;
+const OFFICE_DESK_DWELL_MS = 1200;
+
+function getDwellMs(agentId: OfficeAgentId): number {
+  return agentId === "creator_payout_router" ? OFFICE_VISIT_DWELL_MS : OFFICE_DESK_DWELL_MS;
+}
 
 function createBrowserClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -43,7 +48,7 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
   const [viewportSize, setViewportSize] = useState({ width: OFFICE_DESIGN_WIDTH, height: OFFICE_DESIGN_HEIGHT });
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const supabase = useMemo(createBrowserClient, []);
-  const visitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visitTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useEffect(() => {
     const onVisibility = () => setPaused(document.hidden);
@@ -51,35 +56,39 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
-  const visitReturn = officeState.creator_payout_router.visitingReturn;
-  const visitReturnSig = visitReturn ? `${visitReturn.x}:${visitReturn.y}` : "";
+  // Build a signature of all agents with visitingReturn for the effect dependency
+  const visitingAgentsSig = Object.values(officeState)
+    .filter((a) => a.visitingReturn)
+    .map((a) => `${a.id}:${a.visitingReturn!.x}:${a.visitingReturn!.y}`)
+    .join("|");
 
   useEffect(() => {
-    if (visitReturnSig) {
-      visitTimerRef.current = setTimeout(() => {
-        setOfficeState((prev) => reduceReturnToIdle(prev, "creator_payout_router"));
-        visitTimerRef.current = null;
-      }, OFFICE_VISIT_DWELL_MS);
-    } else if (visitTimerRef.current) {
-      clearTimeout(visitTimerRef.current);
-      visitTimerRef.current = null;
+    const timers = visitTimersRef.current;
+    const currentVisiting = new Set<string>();
+
+    // Start timers for agents with visitingReturn that don't have one yet
+    for (const agent of Object.values(officeState)) {
+      if (agent.visitingReturn) {
+        currentVisiting.add(agent.id);
+        if (!timers.has(agent.id)) {
+          const dwellMs = getDwellMs(agent.id);
+          const timer = setTimeout(() => {
+            setOfficeState((prev) => reduceReturnToIdle(prev, agent.id));
+            timers.delete(agent.id);
+          }, dwellMs);
+          timers.set(agent.id, timer);
+        }
+      }
     }
-    return () => {
-      if (visitTimerRef.current) {
-        clearTimeout(visitTimerRef.current);
-        visitTimerRef.current = null;
-      }
-    };
-  }, [visitReturnSig]);
 
-  useEffect(() => {
-    return () => {
-      if (visitTimerRef.current) {
-        clearTimeout(visitTimerRef.current);
-        visitTimerRef.current = null;
+    // Clear timers for agents that no longer have visitingReturn
+    for (const [agentId, timer] of timers.entries()) {
+      if (!currentVisiting.has(agentId)) {
+        clearTimeout(timer);
+        timers.delete(agentId);
       }
-    };
-  }, [run.runId]);
+    }
+  }, [visitingAgentsSig]);
 
   useEffect(() => {
     const el = viewportRef.current;
@@ -97,6 +106,10 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
   }, []);
 
   useEffect(() => {
+    // Clear all dwell timers on run change
+    for (const timer of visitTimersRef.current.values()) clearTimeout(timer);
+    visitTimersRef.current.clear();
+
     setOfficeState(createInitialOfficeState());
     setEvents([]);
 
@@ -164,6 +177,9 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
     return () => {
       cancelled = true;
       void supabase.removeChannel(channel);
+      // Clear all dwell timers on unmount
+      for (const timer of visitTimersRef.current.values()) clearTimeout(timer);
+      visitTimersRef.current.clear();
     };
   }, [run.runId, supabase]);
 
