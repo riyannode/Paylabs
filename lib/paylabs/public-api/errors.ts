@@ -16,6 +16,7 @@ const STATUS_BY_CODE: Record<PublicApiErrorCode, number> = {
   RUN_NOT_FOUND: 404,
   READ_TOKEN_INVALID: 403,
   GATEWAY_TEMPORARILY_UNAVAILABLE: 503,
+  IDEMPOTENCY_KEY_CONFLICT: 409,
 };
 
 export function publicError(code: PublicApiErrorCode, message: string, opts?: { status?: number; retryable?: boolean; runId?: string | null; headers?: HeadersInit; state?: "failed" | "payment_required" }) {

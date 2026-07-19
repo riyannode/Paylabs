@@ -33,7 +33,17 @@ import {
 } from "@/lib/paylabs/delegated-runtime/locked-orchestration";
 import type { X402CallResult } from "@/lib/paylabs/delegated-runtime/locked-orchestration";
 import { resolvePaylabsAppUrl, resolvePublicAppUrl } from "@/lib/paylabs/runtime/resolve-app-url";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
+
+
+function isTrustedInternalExecute(req: NextRequest): boolean {
+  const expected = process.env.PAYLABS_INTERNAL_EXECUTE_TOKEN;
+  const supplied = req.headers.get("x-paylabs-internal-execute-token");
+  if (!expected || !supplied) return false;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(supplied);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 // ─── Local helpers (same as inline/route.ts) ─────────────────
 
@@ -255,6 +265,7 @@ export async function POST(req: NextRequest) {
     const customerPaymentSignature =
       req.headers.get("payment-signature") ||
       req.headers.get("x-payment");
+    const trustedInternalExecute = isTrustedInternalExecute(req);
 
     const retryRunId =
       req.nextUrl.searchParams.get("runId") ||
@@ -428,7 +439,7 @@ export async function POST(req: NextRequest) {
     } = await import("@/lib/paylabs/x402/customer-entry-payment");
 
     // ── No payment signature → return 402 challenge ─────────
-    if (!customerPaymentSignature) {
+    if (!customerPaymentSignature && !trustedInternalExecute) {
       const { baseUrl: publicBase } = resolvePublicAppUrl();
       const retryUrl = `${publicBase}/api/paylabs/discovery-runs/execute-locked?runId=${discoveryRunId}`;
 
@@ -480,10 +491,33 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Verify + settle final entry payment ─────────────────
-    const entryResult = await verifyAndSettleCustomerEntry(
-      customerPaymentSignature,
-      finalEntryPaymentUsdc,
-    );
+    const trustedExecutionPayment = (agentTrace.auto_tier_execution as Record<string, unknown> | undefined)?.final_payment as Record<string, unknown> | undefined;
+    const entryResult: import("@/lib/paylabs/x402/customer-entry-payment").CustomerEntryPaymentResult = trustedInternalExecute
+      ? {
+          ok: true,
+          settled: true,
+          gatewayAccepted: trustedExecutionPayment?.gateway_accepted === true,
+          paymentMeta: {
+            amountAtomic: Math.round(finalEntryPaymentUsdc * 1_000_000).toString(),
+            payTo: process.env.PAYLABS_ENTRY_PAYMENT_SELLER_WALLET_ADDRESS || process.env.PAYLABS_BRAIN_SELLER_WALLET_ADDRESS || "",
+            network: "eip155:5042002",
+            x402Version: 2,
+            txHash: (trustedExecutionPayment?.tx_hash as string | null | undefined) ?? null,
+            explorerUrl: (trustedExecutionPayment?.explorer_url as string | null | undefined) ?? null,
+            settlementId: (trustedExecutionPayment?.settlement_id as string | null | undefined) ?? null,
+            settlementUrl: (trustedExecutionPayment?.settlement_url as string | null | undefined) ?? null,
+            batchTxHash: (trustedExecutionPayment?.batch_tx_hash as string | null | undefined) ?? null,
+            batchExplorerUrl: (trustedExecutionPayment?.batch_explorer_url as string | null | undefined) ?? null,
+            batchResolverUrl: (trustedExecutionPayment?.batch_resolver_url as string | null | undefined) ?? null,
+            gatewayAccepted: trustedExecutionPayment?.gateway_accepted === true,
+            transferStatus: null,
+          },
+          payer: resolvedWallet,
+        }
+      : await verifyAndSettleCustomerEntry(
+          customerPaymentSignature || "",
+          finalEntryPaymentUsdc,
+        );
 
     // Fail closed if payment invalid
     if (!entryResult.ok || !entryResult.settled) {

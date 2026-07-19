@@ -15,7 +15,8 @@ export type PublicApiErrorCode =
   | "RUN_FAILED"
   | "RUN_NOT_FOUND"
   | "READ_TOKEN_INVALID"
-  | "GATEWAY_TEMPORARILY_UNAVAILABLE";
+  | "GATEWAY_TEMPORARILY_UNAVAILABLE"
+  | "IDEMPOTENCY_KEY_CONFLICT";
 
 export interface PublicResearchRequest {
   goal: string;

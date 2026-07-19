@@ -70,3 +70,24 @@ export async function claimExecution(runId: string): Promise<Record<string, unkn
 
   return data as Record<string, unknown> | null;
 }
+
+
+export async function claimRoutingPaymentProcessing(runId: string, signatureHash: string): Promise<Record<string, unknown> | null> {
+  const { data, error } = await supabaseAdmin()
+    .from("paylabs_discovery_runs")
+    .update({
+      status: "payment_processing",
+      routing_payment_signature_hash: signatureHash,
+    })
+    .eq("id", runId)
+    .eq("status", "created")
+    .is("routing_payment_signature_hash", null)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`routing_payment_claim_failed: ${error.message}`);
+  }
+
+  return data as Record<string, unknown> | null;
+}

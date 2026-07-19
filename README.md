@@ -781,9 +781,10 @@ PayLabs now supports two entry points:
 ### Public x402 flow
 
 1. Send the research body without a payment header.
-2. PayLabs performs locked route preflight, atomically owns the `client_request_id` challenge context, returns `402 Payment Required`, and includes a `PAYMENT-REQUIRED` x402 challenge header for the exact locked entry amount plus a one-time random `read_token`.
-3. Sign the challenge with the buyer wallet and retry the same request body with `PAYMENT-SIGNATURE`.
-4. PayLabs settles through Circle Gateway, binds the payment to the locked request, executes the existing route-preflight → execute-locked orchestration, and returns the same safe user-facing answer and source set shown in chat.
+2. PayLabs atomically owns the `client_request_id` challenge context and first returns a fixed routing-fee `402 Payment Required` challenge plus a one-time random `read_token`.
+3. Sign the routing challenge with the buyer wallet and retry the exact same body with `PAYMENT-SIGNATURE`; only after that settlement does PayLabs run paid Brain preflight and lock the final quote.
+4. PayLabs returns a second `402 Payment Required` challenge for the exact locked final execution amount.
+5. Sign the final challenge and retry the same request body; PayLabs settles the final entry payment, then executes locked orchestration through trusted server-to-server execution so there is no second internal entry charge or payer-wallet mismatch.
 
 Initial request:
 
@@ -793,17 +794,17 @@ curl -i https://paylabs.vercel.app/api/x402/v1/research \
   -d '{"goal":"Find the latest creator payout trends","route_tier":"auto","max_budget_usdc":"0.01","client_request_id":"agent-run-001"}'
 ```
 
-Paid retry:
+Routing paid retry:
 
 ```bash
-curl https://paylabs.vercel.app/api/x402/v1/research?runId=<run-id-from-402> \
+curl https://paylabs.vercel.app/api/x402/v1/research?runId=<run-id-from-routing-402> \
   -H 'Content-Type: application/json' \
-  -H 'PAYMENT-SIGNATURE: <base64-x402-payment>' \
+  -H 'PAYMENT-SIGNATURE: <base64-routing-x402-payment>' \
   -H 'X-PAYLABS-READ-TOKEN: <read-token-from-402>' \
   -d '{"goal":"Find the latest creator payout trends","route_tier":"auto","max_budget_usdc":"0.01","client_request_id":"agent-run-001"}'
 ```
 
-Successful responses contain `result.answer`, safe user-visible reasoning, final source links with titles/summaries/timestamps when available, route explanation, receipt links, PayLabs explorer links, entry payment explorer links, settlement IDs, and Gateway batch proof metadata. Batch proof is asynchronous: `payment.batch.status` can be `pending`, `resolved`, or `unavailable`; a pending batch proof does not fail a successfully settled run.
+After the routing retry returns the final execution challenge, send a second paid retry with `PAYMENT-SIGNATURE: <base64-final-x402-payment>`. Successful responses contain `result.answer`, safe user-visible reasoning, final source links with titles/summaries/timestamps when available, route explanation, receipt links, PayLabs explorer links, entry payment explorer links, settlement IDs, and Gateway batch proof metadata. Batch proof is asynchronous: `payment.batch.status` can be `pending`, `resolved`, or `unavailable`; a pending batch proof does not fail a successfully settled run.
 
 Read endpoints primarily require the returned read capability as `Authorization: Bearer <read-token>`. `?read_token=` remains available only as a compatibility fallback:
 
@@ -836,4 +837,4 @@ read_token = first.json()["read_token"]
 paid = requests.post(first.url, json=body, headers={"PAYMENT-SIGNATURE": signed_payment, "X-PAYLABS-READ-TOKEN": read_token})
 ```
 
-Security notes: callers must not send wallet addresses in the JSON body. The buyer wallet is taken only from the verified payment payload. The API stores hashes for signatures and read tokens, atomically claims payment/signature processing before settlement, rejects mutated bodies after challenge, uses `client_request_id` for idempotency, and never returns raw signatures, internal wallet IDs, hidden prompts, provider diagnostics, or private agent traces.
+Security notes: callers must not send wallet addresses in the JSON body. The buyer wallet is taken only from the verified payment payload. The API stores hashes for signatures and read tokens, rejects `client_request_id` conflicts before settlement, atomically claims routing/final payment processing before each settlement, rejects mutated bodies after challenge, uses `client_request_id` for idempotency, and never returns raw signatures, internal wallet IDs, hidden prompts, provider diagnostics, or private agent traces.
