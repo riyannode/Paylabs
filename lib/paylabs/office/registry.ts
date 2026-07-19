@@ -57,7 +57,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "discovery_planner",
     department: "discovery",
     desk: { x: 80, y: 150 },
-    idle: { x: 120, y: 365 },
+    idle: { x: 100, y: 345 },
     color: "#3b82f6",
   },
   query_builder: {
@@ -67,7 +67,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "discovery_planner",
     department: "discovery",
     desk: { x: 170, y: 150 },
-    idle: { x: 155, y: 365 },
+    idle: { x: 135, y: 345 },
     color: "#2563eb",
   },
   signal_scout_basics: {
@@ -77,7 +77,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "discovery_planner",
     department: "discovery",
     desk: { x: 80, y: 240 },
-    idle: { x: 190, y: 365 },
+    idle: { x: 170, y: 345 },
     color: "#0ea5e9",
   },
   signal_scout: {
@@ -87,7 +87,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "discovery_planner",
     department: "discovery",
     desk: { x: 170, y: 240 },
-    idle: { x: 225, y: 365 },
+    idle: { x: 205, y: 345 },
     color: "#06b6d4",
   },
   intent_matcher: {
@@ -97,7 +97,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "payment_decision",
     department: "payment",
     desk: { x: 340, y: 150 },
-    idle: { x: 260, y: 365 },
+    idle: { x: 240, y: 345 },
     color: "#f59e0b",
   },
   source_verifier: {
@@ -107,7 +107,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "payment_decision",
     department: "payment",
     desk: { x: 430, y: 150 },
-    idle: { x: 295, y: 365 },
+    idle: { x: 275, y: 345 },
     color: "#f97316",
   },
   value_allocator: {
@@ -117,7 +117,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "payment_decision",
     department: "payment",
     desk: { x: 520, y: 150 },
-    idle: { x: 330, y: 365 },
+    idle: { x: 310, y: 345 },
     color: "#fb923c",
   },
   trust_verifier: {
@@ -127,7 +127,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "payment_decision",
     department: "payment",
     desk: { x: 385, y: 240 },
-    idle: { x: 120, y: 385 },
+    idle: { x: 100, y: 365 },
     color: "#ea580c",
   },
   payment_decider: {
@@ -137,7 +137,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "payment_decision",
     department: "payment",
     desk: { x: 490, y: 240 },
-    idle: { x: 155, y: 385 },
+    idle: { x: 135, y: 365 },
     color: "#dc2626",
   },
   creator_attribution: {
@@ -147,7 +147,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "settlement_memory",
     department: "settlement",
     desk: { x: 690, y: 150 },
-    idle: { x: 190, y: 385 },
+    idle: { x: 170, y: 365 },
     color: "#22c55e",
   },
   advanced_evidence_evaluator: {
@@ -157,7 +157,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "settlement_memory",
     department: "settlement",
     desk: { x: 790, y: 150 },
-    idle: { x: 225, y: 385 },
+    idle: { x: 205, y: 365 },
     color: "#16a34a",
   },
   creator_payout_router: {
@@ -167,7 +167,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "settlement_memory",
     department: "settlement",
     desk: { x: 740, y: 240 },
-    idle: { x: 260, y: 385 },
+    idle: { x: 240, y: 365 },
     color: "#15803d",
   },
 };

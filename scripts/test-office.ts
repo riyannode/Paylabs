@@ -33,10 +33,19 @@ const uniqueChildIdleCoordinates = new Set(
     .map((agent) => `${agent.idle.x},${agent.idle.y}`),
 );
 assert.equal(uniqueChildIdleCoordinates.size, childAgentIdleSpots.length, "child agents have unique Lounge idle positions");
+const LOUNGE_VISIBLE_BOUNDS = {
+  left: 0,
+  right: 390,
+  top: 318,
+  bottom: 430,
+};
+const AGENT_SPRITE = { width: 36, height: 61 };
 for (const agent of Object.values(OFFICE_AGENTS)) {
   if (agent.id === "brain_planner") continue;
-  assert.equal(agent.idle.x >= 0 && agent.idle.x <= 354, true, `${agent.id} idle x stays inside Lounge`);
-  assert.equal(agent.idle.y >= 318 && agent.idle.y <= 385, true, `${agent.id} idle y stays inside Lounge`);
+  assert.equal(agent.idle.x >= LOUNGE_VISIBLE_BOUNDS.left, true, `${agent.id} idle x stays inside Lounge left edge`);
+  assert.equal(agent.idle.x + AGENT_SPRITE.width <= LOUNGE_VISIBLE_BOUNDS.right, true, `${agent.id} idle x keeps full sprite inside Lounge right edge`);
+  assert.equal(agent.idle.y >= LOUNGE_VISIBLE_BOUNDS.top, true, `${agent.id} idle y stays inside Lounge top edge`);
+  assert.equal(agent.idle.y + AGENT_SPRITE.height <= LOUNGE_VISIBLE_BOUNDS.bottom, true, `${agent.id} idle y keeps full 61px sprite visible above Lounge bottom edge`);
 }
 
 let state = createInitialOfficeState();
