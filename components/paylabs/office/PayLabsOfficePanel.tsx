@@ -161,19 +161,21 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
   return (
     <section className="po-shell">
       <div className="po-office-column">
-        <header className="po-header">
-          <div>
-            <strong>PAYLABS VIRTUAL OFFICE</strong>
-            <span>{run.runId ? `RUN ${run.runId.slice(0, 12)}` : "IDLE"}</span>
-          </div>
-          <div className="po-header-metrics">
-            <span>24 FPS</span>
-            <span>{run.tier ?? "AUTO"}</span>
-          </div>
-        </header>
+        <div className="po-office-visual-block">
+          <header className="po-header">
+            <div>
+              <strong>PAYLABS VIRTUAL OFFICE</strong>
+              <span>{run.runId ? `RUN ${run.runId.slice(0, 12)}` : "IDLE"}</span>
+            </div>
+            <div className="po-header-metrics">
+              <span>24 FPS</span>
+              <span>{run.tier ?? "AUTO"}</span>
+            </div>
+          </header>
 
-        <div className="po-stage-viewport" ref={viewportRef}>
-          <PayLabsOfficeCanvas agents={agents} paused={paused} stageStyle={stageStyle} />
+          <div className="po-stage-viewport" ref={viewportRef}>
+            <PayLabsOfficeCanvas agents={agents} paused={paused} stageStyle={stageStyle} />
+          </div>
         </div>
       </div>
 
