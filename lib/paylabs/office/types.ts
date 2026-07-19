@@ -70,6 +70,7 @@ export interface OfficeAgentViewState {
   y: number;
   facing: "left" | "right";
   lastEventSequence: number;
+  visitingReturn?: { x: number; y: number };
 }
 
 export interface OfficeRunSummary {

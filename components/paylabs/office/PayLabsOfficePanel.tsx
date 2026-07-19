@@ -3,12 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { OFFICE_DESIGN_HEIGHT, OFFICE_DESIGN_WIDTH } from "@/lib/paylabs/office/constants";
-import { createInitialOfficeState, reduceOfficeEvent } from "@/lib/paylabs/office/reducer";
+import { createInitialOfficeState, reduceOfficeEvent, reduceReturnToIdle } from "@/lib/paylabs/office/reducer";
 import type { OfficeState } from "@/lib/paylabs/office/reducer";
 import type { OfficeRunSummary, PayLabsOfficeEvent } from "@/lib/paylabs/office/types";
 import { PayLabsOfficeCanvas } from "./PayLabsOfficeCanvas";
 import { PayLabsOfficeDashboard } from "./PayLabsOfficeDashboard";
 import { mergeOfficeEvents } from "@/lib/paylabs/office/selectors";
+
+const OFFICE_VISIT_DWELL_MS = 1500;
 
 function createBrowserClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -41,12 +43,43 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
   const [viewportSize, setViewportSize] = useState({ width: OFFICE_DESIGN_WIDTH, height: OFFICE_DESIGN_HEIGHT });
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const supabase = useMemo(createBrowserClient, []);
+  const visitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const onVisibility = () => setPaused(document.hidden);
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
+
+  const visitReturn = officeState.creator_payout_router.visitingReturn;
+  const visitReturnSig = visitReturn ? `${visitReturn.x}:${visitReturn.y}` : "";
+
+  useEffect(() => {
+    if (visitReturnSig) {
+      visitTimerRef.current = setTimeout(() => {
+        setOfficeState((prev) => reduceReturnToIdle(prev, "creator_payout_router"));
+        visitTimerRef.current = null;
+      }, OFFICE_VISIT_DWELL_MS);
+    } else if (visitTimerRef.current) {
+      clearTimeout(visitTimerRef.current);
+      visitTimerRef.current = null;
+    }
+    return () => {
+      if (visitTimerRef.current) {
+        clearTimeout(visitTimerRef.current);
+        visitTimerRef.current = null;
+      }
+    };
+  }, [visitReturnSig]);
+
+  useEffect(() => {
+    return () => {
+      if (visitTimerRef.current) {
+        clearTimeout(visitTimerRef.current);
+        visitTimerRef.current = null;
+      }
+    };
+  }, [run.runId]);
 
   useEffect(() => {
     const el = viewportRef.current;

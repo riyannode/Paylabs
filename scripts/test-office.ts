@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createInitialOfficeState, reduceOfficeEvent } from "../lib/paylabs/office/reducer";
+import { createInitialOfficeState, reduceOfficeEvent, reduceReturnToIdle } from "../lib/paylabs/office/reducer";
 import { OFFICE_AGENTS, OFFICE_STATIONS, assertOfficeRegistryMatchesServiceRegistry, officeAgentIdFromServiceName } from "../lib/paylabs/office/registry";
 import { phaseFromMacroNode, statusFromServiceName, isOfficeServiceName } from "../lib/paylabs/office/event-mapper";
 import type { PayLabsOfficeEvent } from "../lib/paylabs/office/types";
@@ -26,28 +26,55 @@ assert.equal(officeAgentIdFromServiceName("signal_scout_basics"), "signal_scout_
 assert.equal(isOfficeServiceName("signal_scout_basics"), true);
 assert.equal(isOfficeServiceName("signal_scout_basic"), false);
 
-const childAgentIdleSpots = Object.values(OFFICE_AGENTS).filter((agent) => agent.id !== "brain_planner").map((agent) => `${agent.id}:${agent.idle.x},${agent.idle.y}`);
-const uniqueChildIdleCoordinates = new Set(
-  Object.values(OFFICE_AGENTS)
-    .filter((agent) => agent.id !== "brain_planner")
-    .map((agent) => `${agent.idle.x},${agent.idle.y}`),
-);
-assert.equal(uniqueChildIdleCoordinates.size, childAgentIdleSpots.length, "child agents have unique Lounge idle positions");
-const LOUNGE_VISIBLE_BOUNDS = {
-  left: 0,
-  right: 390,
-  top: 318,
-  bottom: 430,
-};
+// ── Test 7: all desk coordinates are unique ────────────────────────
+const allDeskCoords = Object.values(OFFICE_AGENTS).map((a) => `${a.desk.x},${a.desk.y}`);
+assert.equal(new Set(allDeskCoords).size, allDeskCoords.length, "all desk coordinates are unique");
+
+// ── Test 8: all idle coordinates are unique ────────────────────────
+const childAgents = Object.values(OFFICE_AGENTS).filter((a) => a.id !== "brain_planner");
+const childIdleCoords = childAgents.map((a) => `${a.idle.x},${a.idle.y}`);
+assert.equal(new Set(childIdleCoords).size, childIdleCoords.length, "child agents have unique Lounge idle positions");
+
+// ── Test 9: all coordinates inside correct zones ───────────────────
+const CANVAS = { width: 900, height: 430 };
 const AGENT_SPRITE = { width: 36, height: 61 };
+const LOUNGE_BOUNDS = { left: 0, right: 390, top: 318, bottom: 430 };
+
+const DISCOVERY_BOUNDS = { left: 0, right: 280, top: 64, bottom: 318 };
+const PAYMENT_BOUNDS = { left: 280, right: 610, top: 0, bottom: 318 };
+const SETTLEMENT_BOUNDS = { left: 610, right: 900, top: 0, bottom: 318 };
+const CONTROL_BOUNDS = { left: 0, right: 280, top: 0, bottom: 318 };
+
+const ZONE_MAP: Record<string, { left: number; right: number; top: number; bottom: number }> = {
+  executive: CONTROL_BOUNDS,
+  discovery: DISCOVERY_BOUNDS,
+  payment: PAYMENT_BOUNDS,
+  settlement: SETTLEMENT_BOUNDS,
+};
+
 for (const agent of Object.values(OFFICE_AGENTS)) {
-  if (agent.id === "brain_planner") continue;
-  assert.equal(agent.idle.x >= LOUNGE_VISIBLE_BOUNDS.left, true, `${agent.id} idle x stays inside Lounge left edge`);
-  assert.equal(agent.idle.x + AGENT_SPRITE.width <= LOUNGE_VISIBLE_BOUNDS.right, true, `${agent.id} idle x keeps full sprite inside Lounge right edge`);
-  assert.equal(agent.idle.y >= LOUNGE_VISIBLE_BOUNDS.top, true, `${agent.id} idle y stays inside Lounge top edge`);
-  assert.equal(agent.idle.y + AGENT_SPRITE.height <= LOUNGE_VISIBLE_BOUNDS.bottom, true, `${agent.id} idle y keeps full 61px sprite visible above Lounge bottom edge`);
+  const zone = ZONE_MAP[agent.department];
+  assert.ok(agent.desk.x >= zone.left && agent.desk.x + AGENT_SPRITE.width <= zone.right,
+    `${agent.id} desk x inside ${agent.department} zone`);
+  assert.ok(agent.desk.y >= zone.top && agent.desk.y + AGENT_SPRITE.height <= zone.bottom,
+    `${agent.id} desk y inside ${agent.department} zone`);
 }
 
+for (const agent of childAgents) {
+  assert.equal(agent.idle.x >= LOUNGE_BOUNDS.left, true, `${agent.id} idle x inside Lounge left`);
+  assert.equal(agent.idle.x + AGENT_SPRITE.width <= LOUNGE_BOUNDS.right, true, `${agent.id} idle x inside Lounge right`);
+  assert.equal(agent.idle.y >= LOUNGE_BOUNDS.top, true, `${agent.id} idle y inside Lounge top`);
+  assert.equal(agent.idle.y + AGENT_SPRITE.height <= LOUNGE_BOUNDS.bottom, true, `${agent.id} idle y inside Lounge bottom`);
+}
+
+for (const [name, pos] of Object.entries(OFFICE_STATIONS)) {
+  assert.ok(pos.x >= 0 && pos.x + AGENT_SPRITE.width <= CANVAS.width,
+    `station ${name} x inside canvas`);
+  assert.ok(pos.y >= 0 && pos.y + AGENT_SPRITE.height <= CANVAS.height,
+    `station ${name} y inside canvas`);
+}
+
+// ── initial state ──────────────────────────────────────────────────
 let state = createInitialOfficeState();
 for (const agent of Object.values(OFFICE_AGENTS)) {
   assert.deepEqual(
@@ -56,6 +83,8 @@ for (const agent of Object.values(OFFICE_AGENTS)) {
     `${agent.id} initial state starts at idle position`,
   );
 }
+
+// ── basic agent desk movement ──────────────────────────────────────
 state = reduceOfficeEvent(state, event({ sequence: 1, agentId: "query_builder", status: "planning" }));
 assert.deepEqual(
   { x: state.query_builder.x, y: state.query_builder.y },
@@ -63,6 +92,7 @@ assert.deepEqual(
   "agent goes to desk on start",
 );
 
+// ── x402 settlement moves to gateway ──────────────────────────────
 state = reduceOfficeEvent(state, event({ sequence: 2, agentId: "payment_decider", type: "x402.settled", status: "paying" }));
 assert.deepEqual(
   { x: state.payment_decider.x, y: state.payment_decider.y },
@@ -70,61 +100,112 @@ assert.deepEqual(
   "x402.settled sends agent to Gateway",
 );
 
-state = reduceOfficeEvent(state, event({ sequence: 3, agentId: "creator_payout_router", type: "creator.paid", status: "completed" }));
+// ── Test 1: creator.paid moves router to Creator Payout ───────────
+state = reduceOfficeEvent(state, event({ sequence: 3, agentId: "creator_payout_router", type: "creator.paid", status: "settling" }));
 assert.deepEqual(
   { x: state.creator_payout_router.x, y: state.creator_payout_router.y },
   OFFICE_STATIONS.creatorPayout,
   "creator.paid sends payout router to Creator Payout station",
 );
-state = reduceOfficeEvent(state, event({ sequence: 4, agentId: "creator_payout_router", type: "treasury.retained", status: "completed" }));
+assert.ok(state.creator_payout_router.visitingReturn, "creator.paid sets visitingReturn");
+assert.deepEqual(
+  state.creator_payout_router.visitingReturn,
+  OFFICE_AGENTS.creator_payout_router.idle,
+  "visitingReturn targets the router's configured idle position",
+);
+
+// ── Test 2: treasury.retained moves router to Treasury Reserve ─────
+state = reduceOfficeEvent(state, event({ sequence: 4, agentId: "creator_payout_router", type: "treasury.retained", status: "settling" }));
 assert.deepEqual(
   { x: state.creator_payout_router.x, y: state.creator_payout_router.y },
   OFFICE_STATIONS.treasuryReserve,
   "treasury.retained sends payout router to Treasury Reserve station",
 );
+assert.ok(state.creator_payout_router.visitingReturn, "treasury.retained sets visitingReturn");
 
-state = reduceOfficeEvent(state, event({ sequence: 4, agentId: "source_verifier", type: "agent.failed", status: "failed" }));
+// ── Test 3: reduceReturnToIdle returns router to configured idle ───
+state = reduceReturnToIdle(state, "creator_payout_router");
+assert.deepEqual(
+  { x: state.creator_payout_router.x, y: state.creator_payout_router.y },
+  OFFICE_AGENTS.creator_payout_router.idle,
+  "after dwell, router returns to its configured Lounge idle position",
+);
+assert.equal(state.creator_payout_router.visitingReturn, undefined, "visitingReturn cleared after return");
+assert.equal(state.creator_payout_router.status, "completed", "status set to completed after return");
+
+// ── Test 4: newer event cancels pending Lounge return ──────────────
+state = reduceOfficeEvent(state, event({ sequence: 10, agentId: "creator_payout_router", type: "creator.paid", status: "settling" }));
+assert.ok(state.creator_payout_router.visitingReturn, "visitingReturn set after creator.paid");
+// Now fire a newer event that is NOT a visit event
+state = reduceOfficeEvent(state, event({ sequence: 11, agentId: "creator_payout_router", type: "agent.started", status: "planning" }));
+assert.equal(state.creator_payout_router.visitingReturn, undefined, "newer event clears visitingReturn");
+assert.deepEqual(
+  { x: state.creator_payout_router.x, y: state.creator_payout_router.y },
+  OFFICE_AGENTS.creator_payout_router.desk,
+  "newer event moves router to desk",
+);
+// reduceReturnToIdle should be a no-op now
+const beforeReturn = { ...state.creator_payout_router };
+state = reduceReturnToIdle(state, "creator_payout_router");
+assert.deepEqual(state.creator_payout_router, beforeReturn, "reduceReturnToIdle is no-op when visitingReturn is cleared");
+
+// ── Test 5: agent.failed overrides to error station ────────────────
+state = reduceOfficeEvent(state, event({ sequence: 12, agentId: "creator_payout_router", type: "creator.paid", status: "settling" }));
+assert.ok(state.creator_payout_router.visitingReturn, "visitingReturn set before failure");
+state = reduceOfficeEvent(state, event({ sequence: 13, agentId: "creator_payout_router", type: "agent.failed", status: "failed" }));
+assert.deepEqual(
+  { x: state.creator_payout_router.x, y: state.creator_payout_router.y },
+  OFFICE_STATIONS.error,
+  "agent.failed sends router to error station",
+);
+assert.equal(state.creator_payout_router.visitingReturn, undefined, "agent.failed clears visitingReturn");
+assert.equal(state.creator_payout_router.status, "failed", "status set to failed");
+
+// ── error station for other agents ─────────────────────────────────
+state = reduceOfficeEvent(state, event({ sequence: 14, agentId: "source_verifier", type: "agent.failed", status: "failed" }));
 assert.deepEqual(
   { x: state.source_verifier.x, y: state.source_verifier.y },
   OFFICE_STATIONS.error,
   "failed agent goes to error zone",
 );
 
-state = reduceOfficeEvent(state, event({ sequence: 5, agentId: "query_builder", type: "agent.completed", status: "completed" }));
+// ── Test 6: ordinary agents return to idle after completion ────────
+state = reduceOfficeEvent(state, event({ sequence: 15, agentId: "query_builder", type: "agent.completed", status: "completed" }));
 assert.deepEqual(
   { x: state.query_builder.x, y: state.query_builder.y },
   OFFICE_AGENTS.query_builder.idle,
   "completed agent returns idle",
 );
 
-state = reduceOfficeEvent(state, event({ sequence: 6, agentId: "intent_matcher", type: "agent.completed" }));
+state = reduceOfficeEvent(state, event({ sequence: 16, agentId: "intent_matcher", type: "agent.completed" }));
 assert.deepEqual(
   { x: state.intent_matcher.x, y: state.intent_matcher.y },
   OFFICE_AGENTS.intent_matcher.idle,
   "agent.completed without status returns child agent to its assigned Lounge idle spot",
 );
 
-state = reduceOfficeEvent(state, event({ sequence: 7, agentId: "brain_planner", type: "agent.started", status: "planning" }));
+// ── brain planner always stays at desk ─────────────────────────────
+state = reduceOfficeEvent(state, event({ sequence: 20, agentId: "brain_planner", type: "agent.started", status: "planning" }));
 assert.equal(state.brain_planner.status, "planning", "brain starts planning");
 assert.deepEqual(
   { x: state.brain_planner.x, y: state.brain_planner.y },
   OFFICE_AGENTS.brain_planner.desk,
   "brain starts and stays at marked Control spot",
 );
-state = reduceOfficeEvent(state, event({ sequence: 8, agentId: "brain_planner", type: "x402.settled", status: "paying" }));
+state = reduceOfficeEvent(state, event({ sequence: 21, agentId: "brain_planner", type: "x402.settled", status: "paying" }));
 assert.deepEqual(
   { x: state.brain_planner.x, y: state.brain_planner.y },
   OFFICE_AGENTS.brain_planner.desk,
   "brain ignores gateway movement and stays at marked Control spot",
 );
-state = reduceOfficeEvent(state, event({ sequence: 9, agentId: "brain_planner", type: "agent.completed", status: "completed" }));
+state = reduceOfficeEvent(state, event({ sequence: 22, agentId: "brain_planner", type: "agent.completed", status: "completed" }));
 assert.equal(state.brain_planner.status, "completed", "brain completed event closes planning state");
 assert.deepEqual(
   { x: state.brain_planner.x, y: state.brain_planner.y },
   OFFICE_AGENTS.brain_planner.desk,
   "brain completed state stays at marked Control spot",
 );
-state = reduceOfficeEvent(state, event({ sequence: 10, agentId: "brain_planner", type: "agent.failed", status: "failed" }));
+state = reduceOfficeEvent(state, event({ sequence: 23, agentId: "brain_planner", type: "agent.failed", status: "failed" }));
 assert.equal(state.brain_planner.status, "failed", "brain failed event closes planning state");
 assert.deepEqual(
   { x: state.brain_planner.x, y: state.brain_planner.y },
@@ -132,12 +213,14 @@ assert.deepEqual(
   "brain failed state stays at marked Control spot",
 );
 
-const beforeDuplicate = state.query_builder;
+// ── duplicate / out-of-order sequence ignored ──────────────────────
+const beforeDuplicate = { ...state.query_builder };
 state = reduceOfficeEvent(state, event({ sequence: 4, agentId: "query_builder", type: "agent.started", status: "searching" }));
 assert.deepEqual(state.query_builder, beforeDuplicate, "out-of-order sequence ignored");
 state = reduceOfficeEvent(state, event({ sequence: 5, agentId: "query_builder", type: "agent.started", status: "searching" }));
 assert.deepEqual(state.query_builder, beforeDuplicate, "duplicate sequence ignored");
 
+// ── event-mapper helpers ───────────────────────────────────────────
 assert.equal(statusFromServiceName("signal_scout_basics"), "searching");
 assert.equal(statusFromServiceName("intent_matcher"), "verifying");
 assert.equal(statusFromServiceName("source_verifier"), "verifying");
