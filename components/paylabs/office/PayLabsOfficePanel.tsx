@@ -136,7 +136,6 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
           <div className="po-header-metrics">
             <span>24 FPS</span>
             <span>{run.tier ?? "AUTO"}</span>
-            <span>{run.plannedCostUsdc == null ? "0 USDC" : `${run.plannedCostUsdc.toFixed(6)} USDC`}</span>
           </div>
         </header>
 

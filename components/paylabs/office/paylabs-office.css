@@ -19,7 +19,7 @@
 
 .po-office-column {
   min-width: 0;
-  border-right: 1px solid #dbe3f0;
+  border-right: none;
   display: flex;
   flex-direction: column;
 }
