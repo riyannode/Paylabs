@@ -2,7 +2,6 @@
 
 import type { OfficeAgentViewState, OfficeRunSummary, PayLabsOfficeEvent } from "@/lib/paylabs/office/types";
 import { OFFICE_AGENTS } from "@/lib/paylabs/office/registry";
-import { safeExplorerUrl } from "@/lib/paylabs/x402/payment-links";
 
 export function PayLabsOfficeDashboard({
   agents,
@@ -18,10 +17,6 @@ export function PayLabsOfficeDashboard({
   const completed = agents.filter((agent) => agent.status === "completed").length;
   const failed = agents.filter((agent) => agent.status === "failed").length;
   const settledEvents = events.filter((event) => event.type === "x402.settled");
-  const settledUsdc = settledEvents.reduce((sum, event) => {
-    const amount = Number(event.payment?.amountUsdc ?? 0);
-    return Number.isFinite(amount) ? sum + amount : sum;
-  }, 0);
 
   return (
     <aside className="po-dashboard">
@@ -36,7 +31,6 @@ export function PayLabsOfficeDashboard({
           <div><dt>Run</dt><dd>{run.runId ? run.runId.slice(0, 10) : "Idle"}</dd></div>
           <div><dt>Tier</dt><dd>{run.tier ?? "—"}</dd></div>
           <div><dt>Status</dt><dd>{run.status ?? "idle"}</dd></div>
-          <div><dt>Planned</dt><dd>{run.plannedCostUsdc == null ? "—" : `${run.plannedCostUsdc.toFixed(6)} USDC`}</dd></div>
         </dl>
       </section>
 
@@ -45,23 +39,8 @@ export function PayLabsOfficeDashboard({
         <dl>
           <div><dt>Settled edges</dt><dd>{settledEvents.length}</dd></div>
           <div><dt>Paid graph</dt><dd>{run.paidEdges}/{run.totalEdges}</dd></div>
-          <div><dt>Office event total</dt><dd>{settledUsdc.toFixed(6)} USDC</dd></div>
           <div><dt>Receipt</dt><dd>{run.receiptReady ? "ready" : "pending"}</dd></div>
         </dl>
-        <div className="po-payment-list">
-          {settledEvents.slice(-4).reverse().map((event) => {
-            const href = safeExplorerUrl(event.payment?.explorerUrl ?? null);
-            return (
-              <div key={event.id} className="po-payment-row">
-                <div>
-                  <strong>{event.agentId ?? "service"}</strong>
-                  <span>{event.payment?.amountUsdc ?? "0"} USDC</span>
-                </div>
-                {href ? <a href={href} target="_blank" rel="noreferrer">View</a> : <span>Settled</span>}
-              </div>
-            );
-          })}
-        </div>
       </section>
 
       <section className="po-panel">

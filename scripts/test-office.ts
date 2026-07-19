@@ -229,4 +229,73 @@ assert.equal(statusFromServiceName("creator_payout_router"), "settling");
 assert.equal(phaseFromMacroNode("payment_decision"), "payment_decision");
 assert.equal(phaseFromMacroNode("unknown"), "brain");
 
+// ── UI presentation tests ─────────────────────────────────────────
+
+// Test: agent settlement rows render agent name and status
+const settlementState = createInitialOfficeState();
+const settledAgents = ["creator_payout_router", "creator_attribution", "payment_decider", "trust_verifier"] as const;
+let s = settlementState;
+for (const agentId of settledAgents) {
+  s = reduceOfficeEvent(s, event({ sequence: 100 + settledAgents.indexOf(agentId), agentId, type: "agent.completed", status: "completed" }));
+}
+for (const agentId of settledAgents) {
+  assert.equal(s[agentId].status, "completed", `${agentId} settlement row shows completed status`);
+}
+
+// Test: events still carry payment.amountUsdc for Receipt (data layer preserved)
+const paymentEvent = event({
+  sequence: 200,
+  agentId: "payment_decider",
+  type: "x402.settled",
+  status: "settling",
+  payment: { amountUsdc: "0.000001", status: "settled", txHash: "0xabc" },
+});
+assert.equal(paymentEvent.payment?.amountUsdc, "0.000001", "payment.amountUsdc preserved in event data for Receipt");
+assert.equal(paymentEvent.payment?.status, "settled", "payment.status preserved in event data");
+
+// Test: dashboard source no longer contains USDC/monetary rendering
+import { readFileSync } from "node:fs";
+const dashboardSource = readFileSync(
+  new URL("../components/paylabs/office/PayLabsOfficeDashboard.tsx", import.meta.url),
+  "utf-8",
+);
+assert.ok(!dashboardSource.includes("USDC"), "dashboard does not render USDC text");
+assert.ok(!dashboardSource.includes("toFixed(6)"), "dashboard does not call toFixed(6) for amount formatting");
+assert.ok(!dashboardSource.includes("amountUsdc"), "dashboard does not reference amountUsdc");
+assert.ok(!dashboardSource.includes("Planned"), "dashboard does not render Planned cost row");
+assert.ok(!dashboardSource.includes("Office event total"), "dashboard does not render total USDC row");
+assert.ok(!dashboardSource.includes("safeExplorerUrl"), "dashboard does not import payment-links helper");
+assert.ok(!dashboardSource.includes("po-payment-list"), "dashboard does not render payment list rows");
+
+// Test: agent directory still shows name + status
+assert.ok(dashboardSource.includes("shortLabel"), "dashboard still renders agent shortLabel");
+assert.ok(dashboardSource.includes("agent.status"), "dashboard still renders agent status");
+assert.ok(dashboardSource.includes("po-agent-directory"), "dashboard still renders agent directory");
+assert.ok(dashboardSource.includes("po-status-dot"), "dashboard still renders status dots");
+
+// Test: aggregate counters still present
+assert.ok(dashboardSource.includes("Settled edges"), "dashboard retains Settled edges counter");
+assert.ok(dashboardSource.includes("Paid graph"), "dashboard retains Paid graph counter");
+assert.ok(dashboardSource.includes("Receipt"), "dashboard retains Receipt status");
+
+// Test: PixelAgent bubble shows message, not price
+const agentSource = readFileSync(
+  new URL("../components/paylabs/office/PixelAgent.tsx", import.meta.url),
+  "utf-8",
+);
+assert.ok(!agentSource.includes("USDC"), "PixelAgent does not render USDC");
+assert.ok(!agentSource.includes("amountUsdc"), "PixelAgent does not reference amountUsdc");
+assert.ok(agentSource.includes("agent.message"), "PixelAgent still renders agent message");
+
+// Test: AgentDetailPopover shows label + status only
+const popoverSource = readFileSync(
+  new URL("../components/paylabs/office/AgentDetailPopover.tsx", import.meta.url),
+  "utf-8",
+);
+assert.ok(!popoverSource.includes("USDC"), "AgentDetailPopover does not render USDC");
+assert.ok(!popoverSource.includes("amountUsdc"), "AgentDetailPopover does not reference amountUsdc");
+assert.ok(!popoverSource.includes("price"), "AgentDetailPopover does not render price");
+assert.ok(popoverSource.includes("definition.label"), "AgentDetailPopover shows agent label");
+assert.ok(popoverSource.includes("agent.status"), "AgentDetailPopover shows agent status");
+
 console.log("PayLabs office tests passed");
