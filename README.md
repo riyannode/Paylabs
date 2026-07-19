@@ -269,6 +269,8 @@ graph TD
 
 ## API Examples
 
+> **Note:** PayLabs does not expose a public x402 endpoint for direct external testing. To test the x402 payment flow, please sign in to the PayLabs platform and run a query through the application.
+
 ### 1. Route Preflight
 
 ```bash
