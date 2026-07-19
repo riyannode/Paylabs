@@ -1,6 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
+import Link from "next/link";
 import type { OfficeAgentViewState } from "@/lib/paylabs/office/types";
 import { PixelAgent } from "./PixelAgent";
 import { PixelDesk } from "./PixelDesk";
@@ -68,12 +69,12 @@ export function PayLabsOfficeCanvas({
 
       <section className="po-bottom-zone po-gateway-zone">
         <strong>CIRCLE GATEWAY</strong>
-        <a href="/explorer" className="po-gateway-machine po-clickable">
+        <Link href="/explorer" className="po-gateway-machine po-clickable">
           <span>x402</span>
-        </a>
-        <a href="/receipts" className="po-receipt-printer po-clickable">
+        </Link>
+        <Link href="/receipts" className="po-receipt-printer po-clickable">
           RECEIPT
-        </a>
+        </Link>
       </section>
 
       <section className="po-bottom-zone po-treasury-zone">
