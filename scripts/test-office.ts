@@ -297,4 +297,231 @@ assert.ok(!popoverSource.includes("price"), "AgentDetailPopover does not render 
 assert.ok(popoverSource.includes("definition.label"), "AgentDetailPopover shows agent label");
 assert.ok(popoverSource.includes("agent.status"), "AgentDetailPopover shows agent status");
 
+// ── Monetary sanitization tests ─────────────────────────────────
+
+import { sanitizeOfficeMessage, sanitizeDisplayMessage } from "../lib/paylabs/office/sanitizer";
+
+function expectOfficeMessageToBeNonMonetary(message: string | null | undefined): void {
+  if (message == null) return;
+  assert.ok(!/\bUSDC\b/i.test(message), `message must not contain USDC: "${message}"`);
+  assert.ok(!/[\$€£¥₹]\s*\d/.test(message), `message must not contain currency symbols with amounts: "${message}"`);
+  assert.ok(!/\b\d+\.?\d*\s*(?:USD|EUR|GBP|BTC|ETH|DAI|USDT)\b/i.test(message), `message must not contain token amounts: "${message}"`);
+  assert.ok(!/\b(?:cost|spend|budget|fee|balance|price)\s*[:=]\s*\d/i.test(message), `message must not contain named monetary fields: "${message}"`);
+}
+
+// Test: x402.settled bubble is sanitized at emission boundary
+const x402SettledMsg = sanitizeOfficeMessage("0.000001 USDC", "x402.settled");
+expectOfficeMessageToBeNonMonetary(x402SettledMsg);
+assert.equal(x402SettledMsg, "x402 settlement completed", "x402.settled monetary message replaced with safe fallback");
+
+// Test: x402.settled with larger amount
+const x402LargeMsg = sanitizeOfficeMessage("1.500000 USDC", "x402.settled");
+expectOfficeMessageToBeNonMonetary(x402LargeMsg);
+assert.equal(x402LargeMsg, "x402 settlement completed", "x402.settled large monetary message replaced");
+
+// Test: treasury.retained with reserve amount is sanitized
+const treasuryMsg = sanitizeOfficeMessage("0.00002 USDC retained in treasury reserve", "treasury.retained");
+expectOfficeMessageToBeNonMonetary(treasuryMsg);
+assert.equal(treasuryMsg, "Funds retained in treasury reserve", "treasury.retained monetary message replaced");
+
+// Test: treasury.retained safe message is preserved
+const treasurySafeMsg = sanitizeOfficeMessage("No verified creator payout; funds retained in treasury reserve", "treasury.retained");
+assert.equal(treasurySafeMsg, "No verified creator payout; funds retained in treasury reserve", "treasury.retained non-monetary message preserved");
+
+// Test: generic agent.completed with monetary safeSummary is sanitized
+const deciderSummary = "Approved 3/5 items, total spend: 0.000012 USDC, remaining budget: 0.000088 USDC.";
+const completedMsg = sanitizeOfficeMessage(deciderSummary, "agent.completed");
+expectOfficeMessageToBeNonMonetary(completedMsg);
+assert.equal(completedMsg, "Service completed", "agent.completed monetary safeSummary replaced with safe fallback");
+
+// Test: historical Supabase event message containing 0.00002 USDC is sanitized at render boundary
+const historicalMsg = sanitizeDisplayMessage("0.00002 USDC retained in treasury reserve");
+expectOfficeMessageToBeNonMonetary(historicalMsg);
+assert.equal(historicalMsg, "Service completed", "historical Supabase message with USDC sanitized at render boundary");
+
+// Test: historical message with just "USDC" is sanitized
+const historicalUsdcOnly = sanitizeDisplayMessage("x402 settlement: 0.000001 USDC");
+expectOfficeMessageToBeNonMonetary(historicalUsdcOnly);
+
+// Test: safe operational messages remain readable
+const safeMessages = [
+  "Working in payment_decision",
+  "x402 settlement completed",
+  "Creator payout completed",
+  "Funds retained in treasury reserve",
+  "No verified creator payout; funds retained in treasury reserve",
+  "Service completed",
+  "Service failed",
+  "Preparing Brain plan and route execution",
+  "Selecting route tier, phases, and services",
+  "advanced route · 8 services",
+  "Planning unavailable; continuing with tier defaults",
+  "Required x402 child is not enabled",
+  "2 candidates · 1 source cards",
+  "3 approved · 1 skipped",
+];
+for (const msg of safeMessages) {
+  const result = sanitizeOfficeMessage(msg, "agent.completed");
+  assert.equal(result, msg, `safe message preserved: "${msg}"`);
+}
+
+// Test: $ symbol with amount is sanitized
+const dollarMsg = sanitizeOfficeMessage("$0.01 per citation", "agent.completed");
+expectOfficeMessageToBeNonMonetary(dollarMsg);
+
+// Test: payment.amountUsdc remains unchanged in event data (data layer preserved)
+const x402Event = event({
+  sequence: 300,
+  agentId: "payment_decider",
+  type: "x402.settled",
+  status: "settling",
+  payment: { amountUsdc: "0.000001", status: "settled", txHash: "0xabc123" },
+  message: "0.000001 USDC",
+});
+const sanitizedEvent = (await import("../lib/paylabs/office/sanitizer")).sanitizeOfficeEvent(x402Event);
+expectOfficeMessageToBeNonMonetary(sanitizedEvent.message);
+assert.equal(sanitizedEvent.payment?.amountUsdc, "0.000001", "payment.amountUsdc preserved after sanitization");
+assert.equal(sanitizedEvent.payment?.txHash, "0xabc123", "payment.txHash preserved after sanitization");
+
+// Test: metadata monetary fields are not mutated by sanitization
+const metaEvent = event({
+  sequence: 301,
+  agentId: "creator_payout_router",
+  type: "treasury.retained",
+  status: "settling",
+  message: "0.005 USDC retained in treasury reserve",
+  metadata: { pendingReserveUsdc: 0.005, costUsdc: 0.01 },
+});
+const sanitizedMetaEvent = (await import("../lib/paylabs/office/sanitizer")).sanitizeOfficeEvent(metaEvent);
+expectOfficeMessageToBeNonMonetary(sanitizedMetaEvent.message);
+assert.equal((sanitizedMetaEvent.metadata as Record<string, unknown>)?.pendingReserveUsdc, 0.005, "metadata.pendingReserveUsdc preserved");
+assert.equal((sanitizedMetaEvent.metadata as Record<string, unknown>)?.costUsdc, 0.01, "metadata.costUsdc preserved");
+
+// Test: null/undefined messages pass through
+assert.equal(sanitizeOfficeMessage(null, "agent.completed"), null, "null message passes through");
+assert.equal(sanitizeOfficeMessage(undefined, "agent.completed"), null, "undefined message passes through as null");
+assert.equal(sanitizeDisplayMessage(null), null, "null display message passes through");
+assert.equal(sanitizeDisplayMessage(undefined), null, "undefined display message passes through as null");
+
+// Test: PixelAgent source imports sanitizer
+assert.ok(agentSource.includes("sanitizeDisplayMessage"), "PixelAgent imports sanitizeDisplayMessage");
+assert.ok(agentSource.includes("displayMessage"), "PixelAgent uses sanitized displayMessage for bubble");
+
+// Test: sanitizer source file exists and exports expected functions
+import { readFileSync as readSync } from "node:fs";
+const sanitizerSource = readSync(
+  new URL("../lib/paylabs/office/sanitizer.ts", import.meta.url),
+  "utf-8",
+);
+assert.ok(sanitizerSource.includes("sanitizeOfficeMessage"), "sanitizer exports sanitizeOfficeMessage");
+assert.ok(sanitizerSource.includes("sanitizeOfficeEvent"), "sanitizer exports sanitizeOfficeEvent");
+assert.ok(sanitizerSource.includes("sanitizeDisplayMessage"), "sanitizer exports sanitizeDisplayMessage");
+assert.ok(!sanitizerSource.includes("createClient"), "sanitizer has no Supabase dependency (pure function)");
+
+// Test: server.ts imports sanitizer
+const serverSource = readSync(
+  new URL("../lib/paylabs/office/server.ts", import.meta.url),
+  "utf-8",
+);
+assert.ok(serverSource.includes('from "./sanitizer"'), "server.ts imports from sanitizer");
+assert.ok(serverSource.includes("sanitizeOfficeEvent"), "server.ts uses sanitizeOfficeEvent at emission boundary");
+
+// ── Brain bubble operational status tests ──────────────────────
+
+// Test: all Brain bubble messages are preserved by sanitizer (no monetary content)
+const brainMessages = [
+  "Analyzing request",
+  "Selecting route",
+  "Execution plan ready",
+];
+for (const msg of brainMessages) {
+  const sanitized = sanitizeOfficeMessage(msg, "agent.completed");
+  assert.equal(sanitized, msg, `Brain message preserved by sanitizer: "${msg}"`);
+  expectOfficeMessageToBeNonMonetary(sanitized);
+}
+
+// Test: Brain messages contain no USDC, no reasoning, no monetary fields
+for (const msg of brainMessages) {
+  assert.ok(!msg.includes("USDC"), `Brain message has no USDC: "${msg}"`);
+  assert.ok(!msg.includes("route tier"), `Brain message has no route tier detail: "${msg}"`);
+  assert.ok(!msg.includes("·"), `Brain message has no separator/count: "${msg}"`);
+  assert.ok(!/\d+\s*service/.test(msg), `Brain message has no service count: "${msg}"`);
+  assert.ok(!/\d+\s*candidate/.test(msg), `Brain message has no candidate count: "${msg}"`);
+  assert.ok(!/budget|cost|spend|fee|balance|price|planned/i.test(msg), `Brain message has no monetary field names: "${msg}"`);
+  assert.ok(!/considering|suggesting|reasoning|because|therefore|alternatives/i.test(msg), `Brain message has no chain-of-thought: "${msg}"`);
+}
+
+// Test: Brain messages reach the bubble through the reducer flow
+let brainState = createInitialOfficeState();
+
+// Step 1: run.started → "Analyzing request"
+brainState = reduceOfficeEvent(brainState, event({
+  sequence: 40,
+  agentId: "brain_planner",
+  type: "run.started",
+  status: "planning",
+  message: "Analyzing request",
+}));
+assert.equal(brainState.brain_planner.message, "Analyzing request", "Brain bubble shows 'Analyzing request' after run.started");
+assert.equal(brainState.brain_planner.status, "planning", "Brain status is planning after run.started");
+
+// Step 2: agent.started → "Selecting route" (overwrites previous)
+brainState = reduceOfficeEvent(brainState, event({
+  sequence: 41,
+  agentId: "brain_planner",
+  type: "agent.started",
+  status: "planning",
+  message: "Selecting route",
+}));
+assert.equal(brainState.brain_planner.message, "Selecting route", "Brain bubble updates to 'Selecting route'");
+assert.equal(brainState.brain_planner.status, "planning", "Brain status remains planning");
+
+// Step 3: agent.completed → "Execution plan ready" (final)
+brainState = reduceOfficeEvent(brainState, event({
+  sequence: 42,
+  agentId: "brain_planner",
+  type: "agent.completed",
+  status: "completed",
+  message: "Execution plan ready",
+}));
+assert.equal(brainState.brain_planner.message, "Execution plan ready", "Brain bubble shows 'Execution plan ready' after plan lock");
+assert.equal(brainState.brain_planner.status, "completed", "Brain status is completed");
+
+// Step 4: child agent event does NOT clear Brain bubble
+brainState = reduceOfficeEvent(brainState, event({
+  sequence: 43,
+  agentId: "query_builder",
+  type: "agent.started",
+  status: "planning",
+  message: "Working in discovery_planner",
+}));
+assert.equal(brainState.brain_planner.message, "Execution plan ready", "Brain bubble unchanged after child agent event");
+
+// Test: Brain messages don't alter payment or metadata fields
+const brainEvent = event({
+  sequence: 50,
+  agentId: "brain_planner",
+  type: "agent.completed",
+  status: "completed",
+  message: "Execution plan ready",
+  metadata: { tier: "advanced", plannedCostUsdc: 0.008 },
+});
+const sanitizedBrainEvent = (await import("../lib/paylabs/office/sanitizer")).sanitizeOfficeEvent(brainEvent);
+assert.equal(sanitizedBrainEvent.message, "Execution plan ready", "Brain message preserved after sanitization");
+assert.equal((sanitizedBrainEvent.metadata as Record<string, unknown>)?.tier, "advanced", "Brain metadata.tier preserved");
+assert.equal((sanitizedBrainEvent.metadata as Record<string, unknown>)?.plannedCostUsdc, 0.008, "Brain metadata.plannedCostUsdc preserved");
+
+// Test: orchestrator source contains the new Brain messages
+const orchestratorSource = readSync(
+  new URL("../lib/paylabs/delegated-runtime/orchestrator.ts", import.meta.url),
+  "utf-8",
+);
+assert.ok(orchestratorSource.includes('"Analyzing request"'), "orchestrator emits 'Analyzing request'");
+assert.ok(orchestratorSource.includes('"Selecting route"'), "orchestrator emits 'Selecting route'");
+assert.ok(orchestratorSource.includes('"Execution plan ready"'), "orchestrator emits 'Execution plan ready'");
+assert.ok(!orchestratorSource.includes("Preparing Brain plan"), "orchestrator no longer emits old verbose Brain message");
+assert.ok(!orchestratorSource.includes("Selecting route tier"), "orchestrator no longer emits old route tier message");
+assert.ok(!orchestratorSource.includes("route ·"), "orchestrator no longer emits tier/service count separator");
+assert.ok(!orchestratorSource.includes("Planning unavailable"), "orchestrator no longer emits old fallback message");
+
 console.log("PayLabs office tests passed");

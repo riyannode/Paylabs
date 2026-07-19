@@ -3,6 +3,7 @@
 import type { CSSProperties } from "react";
 import { OFFICE_AGENTS } from "@/lib/paylabs/office/registry";
 import type { OfficeAgentViewState } from "@/lib/paylabs/office/types";
+import { sanitizeDisplayMessage } from "@/lib/paylabs/office/sanitizer";
 
 export function PixelAgent({ agent }: { agent: OfficeAgentViewState }) {
   const definition = OFFICE_AGENTS[agent.id];
@@ -13,6 +14,8 @@ export function PixelAgent({ agent }: { agent: OfficeAgentViewState }) {
     transform: `translate3d(${agent.x}px, ${agent.y}px, 0) scaleX(${flipped ? -1 : 1})`,
   } as CSSProperties;
 
+  const displayMessage = sanitizeDisplayMessage(agent.message);
+
   return (
     <button
       type="button"
@@ -22,7 +25,7 @@ export function PixelAgent({ agent }: { agent: OfficeAgentViewState }) {
     >
       <div className="po-agent-meta" style={{ transform: `scaleX(${flipped ? -1 : 1})` }}>
         <div className="po-agent-label">{definition.shortLabel}</div>
-        {agent.message ? <div className="po-agent-bubble">{agent.message.slice(0, 52)}</div> : null}
+        {displayMessage ? <div className="po-agent-bubble">{displayMessage.slice(0, 52)}</div> : null}
       </div>
 
       <div className={["po-agent", active ? "is-working" : "", `is-${agent.status}`].join(" ")}>
