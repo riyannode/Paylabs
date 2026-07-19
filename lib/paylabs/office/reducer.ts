@@ -33,7 +33,7 @@ function destinationFor(event: PayLabsOfficeEvent, agentId: OfficeAgentId): { x:
   if (event.status === "failed" || event.type === "run.failed" || event.type === "agent.failed") {
     return OFFICE_STATIONS.error;
   }
-  if (event.status === "completed" || event.type === "run.completed") {
+  if (event.status === "completed" || event.type === "agent.completed" || event.type === "run.completed") {
     return OFFICE_AGENTS[agentId].idle;
   }
   return OFFICE_AGENTS[agentId].desk;

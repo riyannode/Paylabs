@@ -26,7 +26,27 @@ assert.equal(officeAgentIdFromServiceName("signal_scout_basics"), "signal_scout_
 assert.equal(isOfficeServiceName("signal_scout_basics"), true);
 assert.equal(isOfficeServiceName("signal_scout_basic"), false);
 
+const childAgentIdleSpots = Object.values(OFFICE_AGENTS).filter((agent) => agent.id !== "brain_planner").map((agent) => `${agent.id}:${agent.idle.x},${agent.idle.y}`);
+const uniqueChildIdleCoordinates = new Set(
+  Object.values(OFFICE_AGENTS)
+    .filter((agent) => agent.id !== "brain_planner")
+    .map((agent) => `${agent.idle.x},${agent.idle.y}`),
+);
+assert.equal(uniqueChildIdleCoordinates.size, childAgentIdleSpots.length, "child agents have unique Lounge idle positions");
+for (const agent of Object.values(OFFICE_AGENTS)) {
+  if (agent.id === "brain_planner") continue;
+  assert.equal(agent.idle.x >= 0 && agent.idle.x <= 354, true, `${agent.id} idle x stays inside Lounge`);
+  assert.equal(agent.idle.y >= 318 && agent.idle.y <= 385, true, `${agent.id} idle y stays inside Lounge`);
+}
+
 let state = createInitialOfficeState();
+for (const agent of Object.values(OFFICE_AGENTS)) {
+  assert.deepEqual(
+    { x: state[agent.id].x, y: state[agent.id].y },
+    agent.idle,
+    `${agent.id} initial state starts at idle position`,
+  );
+}
 state = reduceOfficeEvent(state, event({ sequence: 1, agentId: "query_builder", status: "planning" }));
 assert.deepEqual(
   { x: state.query_builder.x, y: state.query_builder.y },
@@ -62,27 +82,34 @@ assert.deepEqual(
   "completed agent returns idle",
 );
 
-state = reduceOfficeEvent(state, event({ sequence: 6, agentId: "brain_planner", type: "agent.started", status: "planning" }));
+state = reduceOfficeEvent(state, event({ sequence: 6, agentId: "intent_matcher", type: "agent.completed" }));
+assert.deepEqual(
+  { x: state.intent_matcher.x, y: state.intent_matcher.y },
+  OFFICE_AGENTS.intent_matcher.idle,
+  "agent.completed without status returns child agent to its assigned Lounge idle spot",
+);
+
+state = reduceOfficeEvent(state, event({ sequence: 7, agentId: "brain_planner", type: "agent.started", status: "planning" }));
 assert.equal(state.brain_planner.status, "planning", "brain starts planning");
 assert.deepEqual(
   { x: state.brain_planner.x, y: state.brain_planner.y },
   OFFICE_AGENTS.brain_planner.desk,
   "brain starts and stays at marked Control spot",
 );
-state = reduceOfficeEvent(state, event({ sequence: 7, agentId: "brain_planner", type: "x402.settled", status: "paying" }));
+state = reduceOfficeEvent(state, event({ sequence: 8, agentId: "brain_planner", type: "x402.settled", status: "paying" }));
 assert.deepEqual(
   { x: state.brain_planner.x, y: state.brain_planner.y },
   OFFICE_AGENTS.brain_planner.desk,
   "brain ignores gateway movement and stays at marked Control spot",
 );
-state = reduceOfficeEvent(state, event({ sequence: 8, agentId: "brain_planner", type: "agent.completed", status: "completed" }));
+state = reduceOfficeEvent(state, event({ sequence: 9, agentId: "brain_planner", type: "agent.completed", status: "completed" }));
 assert.equal(state.brain_planner.status, "completed", "brain completed event closes planning state");
 assert.deepEqual(
   { x: state.brain_planner.x, y: state.brain_planner.y },
   OFFICE_AGENTS.brain_planner.desk,
   "brain completed state stays at marked Control spot",
 );
-state = reduceOfficeEvent(state, event({ sequence: 9, agentId: "brain_planner", type: "agent.failed", status: "failed" }));
+state = reduceOfficeEvent(state, event({ sequence: 10, agentId: "brain_planner", type: "agent.failed", status: "failed" }));
 assert.equal(state.brain_planner.status, "failed", "brain failed event closes planning state");
 assert.deepEqual(
   { x: state.brain_planner.x, y: state.brain_planner.y },
