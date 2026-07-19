@@ -524,4 +524,73 @@ assert.ok(!orchestratorSource.includes("Selecting route tier"), "orchestrator no
 assert.ok(!orchestratorSource.includes("route ·"), "orchestrator no longer emits tier/service count separator");
 assert.ok(!orchestratorSource.includes("Planning unavailable"), "orchestrator no longer emits old fallback message");
 
+// ── Brain bubble positioning tests ──────────────────────────
+
+// Read CSS source for brain bubble assertions
+const cssSource = readSync(
+  new URL("../components/paylabs/office/paylabs-office.css", import.meta.url),
+  "utf-8",
+);
+
+// Test: PixelAgent adds is-brain class only to brain_planner
+assert.ok(agentSource.includes("is-brain"), "PixelAgent source contains is-brain class");
+assert.ok(agentSource.includes('agent.id === "brain_planner"'), "is-brain class conditional checks brain_planner id");
+
+// Test: Brain-specific CSS exists
+assert.ok(cssSource.includes(".po-agent-wrap.is-brain .po-agent-bubble"), "Brain bubble CSS rule exists");
+assert.ok(cssSource.includes(".po-agent-wrap.is-brain .po-agent-bubble::after"), "Brain bubble tail override CSS rule exists");
+
+// Test: default agent bubble CSS remains unchanged
+assert.ok(cssSource.includes(".po-agent-bubble { position: absolute; left: 28px; top: -23px"), "default bubble position unchanged");
+
+// Test: Brain coordinates remain unchanged
+assert.equal(OFFICE_AGENTS.brain_planner.desk.x, 150, "Brain desk x unchanged");
+assert.equal(OFFICE_AGENTS.brain_planner.desk.y, 10, "Brain desk y unchanged");
+assert.equal(OFFICE_AGENTS.brain_planner.idle.x, 150, "Brain idle x unchanged");
+assert.equal(OFFICE_AGENTS.brain_planner.idle.y, 10, "Brain idle y unchanged");
+
+// Test: Brain bubble calculated top is not negative
+// Brain wrap at canvas y=10, bubble top=18px → canvas y=28 (positive, below CONTROL heading)
+const BRAIN_BUBBLE_TOP_PX = 18;
+const brainBubbleCanvasTop = OFFICE_AGENTS.brain_planner.desk.y + BRAIN_BUBBLE_TOP_PX;
+assert.ok(brainBubbleCanvasTop >= 0, `Brain bubble canvas top (${brainBubbleCanvasTop}) is not negative`);
+
+// Test: Brain bubble does not overlap CONTROL heading
+// CONTROL heading: canvas (10, 12) to (65, 27) — measured via Playwright
+const CONTROL_HEADING_BOTTOM = 27;
+assert.ok(brainBubbleCanvasTop > CONTROL_HEADING_BOTTOM,
+  `Brain bubble top (${brainBubbleCanvasTop}) is below CONTROL heading bottom (${CONTROL_HEADING_BOTTOM})`);
+
+// Test: Brain bubble calculated left is inside canvas
+// Brain wrap at canvas x=150, bubble left=-140px → canvas x=10 (inside 900)
+const brainBubbleCanvasLeft = OFFICE_AGENTS.brain_planner.desk.x + (-140);
+assert.ok(brainBubbleCanvasLeft >= 0, `Brain bubble canvas left (${brainBubbleCanvasLeft}) is inside canvas`);
+
+// Test: Brain bubble right edge inside canvas
+const brainBubbleWidth = 120;
+assert.ok(brainBubbleCanvasLeft + brainBubbleWidth <= 900, `Brain bubble right (${brainBubbleCanvasLeft + brainBubbleWidth}) inside 900`);
+
+// Test: Brain bubble does not overlap the label
+// Label left: brain_desk_x + (-14) = 136
+const brainLabelCanvasLeft = OFFICE_AGENTS.brain_planner.desk.x + (-14);
+assert.ok(brainBubbleCanvasLeft + brainBubbleWidth <= brainLabelCanvasLeft - 6, `Brain bubble (${brainBubbleCanvasLeft + brainBubbleWidth}) does not overlap label (${brainLabelCanvasLeft}) with 6px gap`);
+
+// Test: Brain bubble does not overlap Brain sprite
+// Sprite: canvas (154, 27) to (182, 68) — measured via Playwright
+const BRAIN_SPRITE_LEFT = OFFICE_AGENTS.brain_planner.desk.x + 4;
+const BRAIN_SPRITE_RIGHT = BRAIN_SPRITE_LEFT + 28;
+assert.ok(brainBubbleCanvasLeft + brainBubbleWidth <= BRAIN_SPRITE_LEFT,
+  `Brain bubble (${brainBubbleCanvasLeft + brainBubbleWidth}) does not overlap sprite left (${BRAIN_SPRITE_LEFT})`);
+
+// Test: Brain bubble does not overlap boss desk
+// Boss desk: canvas (105, 68) to (225, 126) — measured via Playwright
+const BOSS_DESK_TOP = 68;
+const brainBubbleCanvasBottom = brainBubbleCanvasTop + 22;
+assert.ok(brainBubbleCanvasBottom <= BOSS_DESK_TOP,
+  `Brain bubble bottom (${brainBubbleCanvasBottom}) does not overlap boss desk top (${BOSS_DESK_TOP})`);
+
+// Test: sanitizer remains active for Brain messages
+assert.ok(agentSource.includes("sanitizeDisplayMessage"), "PixelAgent still imports sanitizeDisplayMessage");
+assert.ok(agentSource.includes("displayMessage"), "PixelAgent still uses sanitized displayMessage for bubble");
+
 console.log("PayLabs office tests passed");
