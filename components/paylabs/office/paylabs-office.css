@@ -76,7 +76,7 @@
   text-shadow: 1px 1px #ffffff;
 }
 .po-room-control { left: 0; width: 280px; background: rgba(139, 92, 246, 0.07); border-right: 5px solid #e4c51a; }
-.po-room-discovery { left: 0; top: 64px; width: 280px; height: 254px; background: rgba(37, 99, 235, 0.07); border-top: 4px solid #2563eb; border-right: 5px solid #2563eb; }
+.po-room-discovery { left: 0; top: 64px; width: 280px; height: 254px; background: rgba(37, 99, 235, 0.07); border-top: none; border-right: 5px solid #2563eb; }
 .po-room-payment { left: 280px; width: 330px; background: rgba(249, 115, 22, 0.08); border-right: 5px solid #f97316; }
 .po-room-settlement { left: 610px; right: 0; background: rgba(34, 197, 94, 0.08); }
 .po-room-accent { position: absolute; left: 0; right: 0; bottom: 0; height: 12px; }

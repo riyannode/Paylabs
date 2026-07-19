@@ -67,20 +67,27 @@ assert.equal(state.brain_planner.status, "planning", "brain starts planning");
 assert.deepEqual(
   { x: state.brain_planner.x, y: state.brain_planner.y },
   OFFICE_AGENTS.brain_planner.desk,
-  "brain starts and stays at Control desk",
+  "brain starts and stays at marked Control spot",
 );
 state = reduceOfficeEvent(state, event({ sequence: 7, agentId: "brain_planner", type: "x402.settled", status: "paying" }));
 assert.deepEqual(
   { x: state.brain_planner.x, y: state.brain_planner.y },
   OFFICE_AGENTS.brain_planner.desk,
-  "brain ignores gateway movement and stays at Control desk",
+  "brain ignores gateway movement and stays at marked Control spot",
 );
-state = reduceOfficeEvent(state, event({ sequence: 8, agentId: "brain_planner", type: "agent.failed", status: "failed" }));
+state = reduceOfficeEvent(state, event({ sequence: 8, agentId: "brain_planner", type: "agent.completed", status: "completed" }));
+assert.equal(state.brain_planner.status, "completed", "brain completed event closes planning state");
+assert.deepEqual(
+  { x: state.brain_planner.x, y: state.brain_planner.y },
+  OFFICE_AGENTS.brain_planner.desk,
+  "brain completed state stays at marked Control spot",
+);
+state = reduceOfficeEvent(state, event({ sequence: 9, agentId: "brain_planner", type: "agent.failed", status: "failed" }));
 assert.equal(state.brain_planner.status, "failed", "brain failed event closes planning state");
 assert.deepEqual(
   { x: state.brain_planner.x, y: state.brain_planner.y },
   OFFICE_AGENTS.brain_planner.desk,
-  "brain failed state stays at Control desk",
+  "brain failed state stays at marked Control spot",
 );
 
 const beforeDuplicate = state.query_builder;
