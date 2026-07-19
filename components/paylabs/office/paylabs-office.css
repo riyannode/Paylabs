@@ -27,6 +27,9 @@
 .po-office-visual-block {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -52,6 +55,8 @@
 .po-stage-viewport {
   position: relative;
   flex: 1;
+  width: 100%;
+  min-width: 0;
   min-height: 520px;
   overflow: hidden;
   background: #ffffff;
