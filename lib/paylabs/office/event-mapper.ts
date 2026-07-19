@@ -11,6 +11,7 @@ export function phaseFromMacroNode(macroNode: string): OfficePhase {
 }
 
 export function statusFromServiceName(serviceName: string): OfficeAgentStatus {
+  if (serviceName === "intent_matcher") return "verifying";
   if (serviceName.includes("scout")) return "searching";
   if (serviceName.includes("verifier")) return "verifying";
   if (serviceName.includes("allocator")) return "calculating";

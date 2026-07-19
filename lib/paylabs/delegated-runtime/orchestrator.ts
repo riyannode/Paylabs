@@ -63,6 +63,22 @@ async function emitRunFailed(
   });
 }
 
+async function emitBrainFinished(
+  runId: string,
+  result: "completed" | "failed",
+  message: string,
+): Promise<void> {
+  await safeEmitOfficeEvent({
+    runId,
+    type: result === "completed" ? "agent.completed" : "agent.failed",
+    phase: "brain",
+    status: result,
+    agentId: "brain_planner",
+    title: result === "completed" ? "Brain planning completed" : "Brain planning failed",
+    message,
+  });
+}
+
 async function emitPhaseStarted(
   runId: string,
   phase: "discovery_planner" | "payment_decision" | "settlement_memory",
@@ -191,10 +207,24 @@ export async function executeDelegatedDiscoveryRun(
     if (isLlmRequired()) {
       markOrchestratorComplete(state, "failed", "Brain planning failed and PAYLABS_LLM_REQUIRED=true");
       addProgressSummary(state, "Brain planning failed — LLM required, orchestrator stopped");
+      await emitBrainFinished(
+        input.discoveryRunId,
+        "failed",
+        "Brain planning failed and LLM is required",
+      );
       await emitRunFailed(input.discoveryRunId, "Brain planning failed and PAYLABS_LLM_REQUIRED=true", { phase: "brain" });
       return buildOutput(state);
     }
     addProgressSummary(state, "Brain planning unavailable; continuing with tier defaults.");
+    await safeEmitOfficeEvent({
+      runId: input.discoveryRunId,
+      type: "agent.completed",
+      phase: "brain",
+      status: "completed",
+      agentId: "brain_planner",
+      title: "Brain fallback applied",
+      message: "Planning unavailable; continuing with tier defaults",
+    });
   }
 
   try {

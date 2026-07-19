@@ -62,6 +62,11 @@ assert.deepEqual(
   "completed agent returns idle",
 );
 
+state = reduceOfficeEvent(state, event({ sequence: 6, agentId: "brain_planner", type: "agent.started", status: "planning" }));
+assert.equal(state.brain_planner.status, "planning", "brain starts planning");
+state = reduceOfficeEvent(state, event({ sequence: 7, agentId: "brain_planner", type: "agent.failed", status: "failed" }));
+assert.equal(state.brain_planner.status, "failed", "brain failed event closes planning state");
+
 const beforeDuplicate = state.query_builder;
 state = reduceOfficeEvent(state, event({ sequence: 4, agentId: "query_builder", type: "agent.started", status: "searching" }));
 assert.deepEqual(state.query_builder, beforeDuplicate, "out-of-order sequence ignored");
@@ -69,6 +74,7 @@ state = reduceOfficeEvent(state, event({ sequence: 5, agentId: "query_builder", 
 assert.deepEqual(state.query_builder, beforeDuplicate, "duplicate sequence ignored");
 
 assert.equal(statusFromServiceName("signal_scout_basics"), "searching");
+assert.equal(statusFromServiceName("intent_matcher"), "verifying");
 assert.equal(statusFromServiceName("source_verifier"), "verifying");
 assert.equal(statusFromServiceName("value_allocator"), "calculating");
 assert.equal(statusFromServiceName("creator_payout_router"), "settling");

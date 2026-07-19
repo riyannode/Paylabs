@@ -20,33 +20,34 @@ export async function emitOfficeEvent(
   input: Omit<PayLabsOfficeEvent, "id" | "sequence" | "createdAt">,
 ): Promise<PayLabsOfficeEvent> {
   const supabase = getAdminClient();
-  const { data: sequence, error: sequenceError } = await supabase.rpc(
-    "next_paylabs_office_sequence",
-    { p_run_id: input.runId },
-  );
-  if (sequenceError) throw new Error(`Office sequence failed: ${sequenceError.message}`);
-  const event: PayLabsOfficeEvent = {
-    ...input,
-    id: randomUUID(),
-    sequence: Number(sequence),
-    createdAt: new Date().toISOString(),
-  };
-  const { error } = await supabase.from("paylabs_office_events").insert({
-    id: event.id,
-    run_id: event.runId,
-    sequence: event.sequence,
-    event_type: event.type,
-    agent_id: event.agentId ?? null,
-    phase: event.phase ?? null,
-    status: event.status ?? null,
-    title: event.title,
-    message: event.message ?? null,
-    payment: event.payment ?? null,
-    metadata: event.metadata ?? null,
-    created_at: event.createdAt,
+  const id = randomUUID();
+  const { data, error } = await supabase.rpc("emit_paylabs_office_event", {
+    p_id: id,
+    p_run_id: input.runId,
+    p_event_type: input.type,
+    p_agent_id: input.agentId ?? null,
+    p_phase: input.phase ?? null,
+    p_status: input.status ?? null,
+    p_title: input.title,
+    p_message: input.message ?? null,
+    p_payment: input.payment ?? null,
+    p_metadata: input.metadata ?? null,
   });
-  if (error) throw new Error(`Office event insert failed: ${error.message}`);
-  return event;
+  if (error) throw new Error(`Office event emit failed: ${error.message}`);
+  const row = data as {
+    id: string;
+    sequence: number | string;
+    created_at: string;
+  } | null;
+  if (!row?.id || row.sequence == null || !row.created_at) {
+    throw new Error("Office event emit returned no row");
+  }
+  return {
+    ...input,
+    id: row.id,
+    sequence: Number(row.sequence),
+    createdAt: row.created_at,
+  };
 }
 
 export async function safeEmitOfficeEvent(
