@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import SidebarPanel from "@/components/paylabs/SidebarPanel";
 import MobileNav from "@/components/paylabs/MobileNav";
@@ -16,6 +17,16 @@ import { ChatInputPanel } from "@/components/paylabs/chat/ChatInputPanel";
 import { RouteGuideBlock } from "@/components/paylabs/chat/RouteGuideBlock";
 
 // ─── Types ──────────────────────────────────────────────────
+
+const PayLabsOfficePanel = dynamic(
+  () => import("@/components/paylabs/office/PayLabsOfficePanel").then((module) => module.PayLabsOfficePanel),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="mx-auto mt-6 h-[470px] w-full max-w-[1180px] animate-pulse rounded-lg bg-slate-100" />
+    ),
+  },
+);
 
 type Analytics = {
   uniqueUsers: number;
@@ -399,6 +410,21 @@ export default function PayLabsChatClient({ analytics }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [recentChats, setRecentChats] = useState<RecentChatItem[]>([]);
   const chatThreadRef = useRef<HTMLDivElement | null>(null);
+
+  const latestAssistantResult = useMemo(() => {
+    const message = [...messages].reverse().find((item) => item.role === "assistant");
+    return message?.role === "assistant" ? message.result ?? null : null;
+  }, [messages]);
+
+  const officeRun = useMemo(() => ({
+    runId: latestAssistantResult?.runId ?? null,
+    tier: latestAssistantResult?.effectiveTier ?? latestAssistantResult?.tier ?? null,
+    plannedCostUsdc: latestAssistantResult?.plannedCostUsdc ?? null,
+    paidEdges: latestAssistantResult?.paidEdges ?? 0,
+    totalEdges: latestAssistantResult?.totalEdges ?? 0,
+    receiptReady: latestAssistantResult?.receiptReady ?? false,
+    status: latestAssistantResult?.status ?? null,
+  }), [latestAssistantResult]);
 
   // Wallet state — DCW only
   const [dcwOpen, setDcwOpen] = useState(false);
@@ -857,6 +883,8 @@ export default function PayLabsChatClient({ analytics }: Props) {
           </div>
 
           <RouteGuideBlock onUsePrompt={setPrompt} />
+
+          <PayLabsOfficePanel run={officeRun} />
         </section>
       </main>
 
