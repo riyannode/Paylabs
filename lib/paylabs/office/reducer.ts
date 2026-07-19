@@ -42,12 +42,17 @@ function destinationFor(event: PayLabsOfficeEvent, agentId: OfficeAgentId): { x:
   return OFFICE_AGENTS[agentId].desk;
 }
 
+function isVisitEvent(type: PayLabsOfficeEvent["type"]): boolean {
+  return type === "creator.paid" || type === "treasury.retained";
+}
+
 export function reduceOfficeEvent(state: OfficeState, event: PayLabsOfficeEvent): OfficeState {
   if (!event.agentId) return state;
   const current = state[event.agentId];
   if (!current) return state;
   if (event.sequence <= current.lastEventSequence) return state;
   const destination = destinationFor(event, event.agentId);
+  const isVisit = isVisitEvent(event.type);
   return {
     ...state,
     [event.agentId]: {
@@ -58,6 +63,25 @@ export function reduceOfficeEvent(state: OfficeState, event: PayLabsOfficeEvent)
       y: destination.y,
       facing: destination.x < current.x ? "left" : "right",
       lastEventSequence: event.sequence,
+      visitingReturn: isVisit
+        ? { ...OFFICE_AGENTS[event.agentId].idle }
+        : undefined,
+    },
+  };
+}
+
+export function reduceReturnToIdle(state: OfficeState, agentId: OfficeAgentId): OfficeState {
+  const current = state[agentId];
+  if (!current?.visitingReturn) return state;
+  return {
+    ...state,
+    [agentId]: {
+      ...current,
+      status: "completed",
+      x: current.visitingReturn.x,
+      y: current.visitingReturn.y,
+      facing: current.visitingReturn.x < current.x ? "left" : "right",
+      visitingReturn: undefined,
     },
   };
 }
