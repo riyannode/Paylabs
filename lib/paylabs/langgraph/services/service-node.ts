@@ -17,6 +17,8 @@ import type { ServiceName } from "../../agent-services/types";
 import type { ServiceEvaluation, PaymentEdge } from "../../delegated-runtime/types";
 import { isX402EnabledForService } from "../../feature-flags";
 import { randomUUID } from "node:crypto";
+import { phaseFromMacroNode, statusFromServiceName, isOfficeServiceName } from "../../office/event-mapper";
+import { safeEmitOfficeEvent } from "../../office/server";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -140,6 +142,18 @@ export function createServiceNode(
         settled: false,
         mode: "x402",
       };
+      if (isOfficeServiceName(serviceName)) {
+        await safeEmitOfficeEvent({
+          runId: discoveryRunId,
+          type: "agent.failed",
+          phase: phaseFromMacroNode(macroNode),
+          status: "failed",
+          agentId: serviceName,
+          title: `${serviceName} failed`,
+          message: "Required x402 child is not enabled",
+          metadata: { reason: "required_x402_child_not_enabled" },
+        });
+      }
       return {
         serviceEvaluations: [failedEval],
         paymentEdges: [],
@@ -154,6 +168,18 @@ export function createServiceNode(
       };
     }
 
+    if (isOfficeServiceName(serviceName)) {
+      await safeEmitOfficeEvent({
+        runId: discoveryRunId,
+        type: "agent.started",
+        phase: phaseFromMacroNode(macroNode),
+        status: statusFromServiceName(serviceName),
+        agentId: serviceName,
+        title: `${serviceName} started`,
+        message: `Working in ${macroNode}`,
+      });
+    }
+
     const result = await callDelegatedService({
       discoveryRunId,
       buyerAgentName: macroNode,
@@ -163,6 +189,24 @@ export function createServiceNode(
       paymentLayer: options?.paymentLayer,
       paymentSchemeOverride: options?.paymentSchemeOverride,
     });
+
+    if (isOfficeServiceName(serviceName) && result.settled) {
+      await safeEmitOfficeEvent({
+        runId: discoveryRunId,
+        type: "x402.settled",
+        phase: phaseFromMacroNode(macroNode),
+        status: "paying",
+        agentId: serviceName,
+        title: `x402 settled for ${serviceName}`,
+        message: `${result.safeCallMeta.costUsdc} USDC`,
+        payment: {
+          amountUsdc: String(result.safeCallMeta.costUsdc),
+          status: "settled",
+          txHash: (result.paymentMeta?.txHash as string | null | undefined) ?? null,
+          explorerUrl: (result.paymentMeta?.explorerUrl as string | null | undefined) ?? null,
+        },
+      });
+    }
 
     const evaluation: ServiceEvaluation = {
       serviceName,
@@ -202,6 +246,23 @@ export function createServiceNode(
     }
 
     const summary = `${macroNode} → ${serviceName}: ${result.ok ? "completed" : "failed"} (${result.mode}, settled=${result.settled})`;
+
+    if (isOfficeServiceName(serviceName)) {
+      await safeEmitOfficeEvent({
+        runId: discoveryRunId,
+        type: result.ok ? "agent.completed" : "agent.failed",
+        phase: phaseFromMacroNode(macroNode),
+        status: result.ok ? "completed" : "failed",
+        agentId: serviceName,
+        title: `${serviceName} ${result.ok ? "completed" : "failed"}`,
+        message: result.safeSummary,
+        metadata: {
+          settled: result.settled,
+          mode: result.mode,
+          costUsdc: result.safeCallMeta.costUsdc,
+        },
+      });
+    }
 
     return {
       serviceEvaluations: [evaluation],

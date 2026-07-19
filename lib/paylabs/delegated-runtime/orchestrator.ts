@@ -32,6 +32,61 @@ import {
   addProgressSummary,
   validateAndLockExecutionPlan,
 } from "./state";
+import { safeEmitOfficeEvent } from "../office/server";
+
+
+async function emitRunCompleted(
+  runId: string,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  await safeEmitOfficeEvent({
+    runId,
+    type: "run.completed",
+    status: "completed",
+    title: "PayLabs run completed",
+    metadata: metadata ?? null,
+  });
+}
+
+async function emitRunFailed(
+  runId: string,
+  message: string,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  await safeEmitOfficeEvent({
+    runId,
+    type: "run.failed",
+    status: "failed",
+    title: "PayLabs run failed",
+    message: message.slice(0, 220),
+    metadata: metadata ?? null,
+  });
+}
+
+async function emitPhaseStarted(
+  runId: string,
+  phase: "discovery_planner" | "payment_decision" | "settlement_memory",
+  status: "searching" | "calculating" | "settling",
+  title: string,
+): Promise<void> {
+  await safeEmitOfficeEvent({ runId, type: "phase.started", phase, status, title });
+}
+
+async function emitPhaseCompleted(
+  runId: string,
+  phase: "discovery_planner" | "payment_decision" | "settlement_memory",
+  title: string,
+  message?: string,
+): Promise<void> {
+  await safeEmitOfficeEvent({
+    runId,
+    type: "phase.completed",
+    phase,
+    status: "completed",
+    title,
+    message: message ?? null,
+  });
+}
 
 // ─── Public API ──────────────────────────────────────────────
 
@@ -46,6 +101,24 @@ export async function executeDelegatedDiscoveryRun(
   input: OrchestratorInput
 ): Promise<OrchestratorOutput> {
   const state = createOrchestratorState(input);
+  await safeEmitOfficeEvent({
+    runId: input.discoveryRunId,
+    type: "run.started",
+    phase: "brain",
+    status: "planning",
+    agentId: "brain_planner",
+    title: "PayLabs run started",
+    message: "Preparing Brain plan and route execution",
+  });
+  await safeEmitOfficeEvent({
+    runId: input.discoveryRunId,
+    type: "agent.started",
+    phase: "brain",
+    status: "planning",
+    agentId: "brain_planner",
+    title: "Brain started planning",
+    message: "Selecting route tier, phases, and services",
+  });
   // ── Brain Planning (LangGraph) ──
   const brainResult = await runBrainPlanning(input);
 
@@ -98,11 +171,27 @@ export async function executeDelegatedDiscoveryRun(
       state,
       `Brain planning: strategy="${brainResult.data.discovery_strategy.slice(0, 60)}", ${brainResult.data.service_execution_plan.length} services planned, ${brainResult.data.suggested_query_variants.length} query variants`
     );
+    await safeEmitOfficeEvent({
+      runId: input.discoveryRunId,
+      type: "agent.completed",
+      phase: "brain",
+      status: "completed",
+      agentId: "brain_planner",
+      title: "Execution plan locked",
+      message: `${resolvedTier} route · ${executionPlan.selectedServices.length} services`,
+      metadata: {
+        tier: resolvedTier,
+        plannedCostUsdc: executionPlan.plannedCostUsdc,
+        selectedMacroNodes: executionPlan.selectedMacroNodes,
+        selectedServices: executionPlan.selectedServices,
+      },
+    });
   } else {
     const { isLlmRequired } = await import("@/lib/paylabs/ai/llm");
     if (isLlmRequired()) {
       markOrchestratorComplete(state, "failed", "Brain planning failed and PAYLABS_LLM_REQUIRED=true");
       addProgressSummary(state, "Brain planning failed — LLM required, orchestrator stopped");
+      await emitRunFailed(input.discoveryRunId, "Brain planning failed and PAYLABS_LLM_REQUIRED=true", { phase: "brain" });
       return buildOutput(state);
     }
     addProgressSummary(state, "Brain planning unavailable; continuing with tier defaults.");
@@ -118,6 +207,7 @@ export async function executeDelegatedDiscoveryRun(
 
     // ── Phase 1: Discovery Planner (LangGraph) ──
     setMacroPhaseStatus(state, "discovery_planner", "running");
+    await emitPhaseStarted(input.discoveryRunId, "discovery_planner", "searching", "Discovery phase started");
 
     const { runDiscoveryPlannerGraph } = await import("../langgraph/macro-nodes/discovery-planner-graph");
     const discoveryResult = await runDiscoveryPlannerGraph({
@@ -135,6 +225,7 @@ export async function executeDelegatedDiscoveryRun(
     if (!discoveryResult.ok) {
       setMacroPhaseStatus(state, "discovery_planner", "failed");
       markOrchestratorComplete(state, "failed", discoveryResult.error || "Discovery planner failed");
+      await emitRunFailed(input.discoveryRunId, discoveryResult.error || "Discovery planner failed", { phase: "discovery_planner" });
       return buildOutput(state);
     }
 
@@ -158,14 +249,22 @@ export async function executeDelegatedDiscoveryRun(
       state,
       `Discovery Planner completed: ${discoveryResult.rankedCandidates.length} candidates, ${discoveryResult.sourceCards?.length || 0} source cards`
     );
+    await emitPhaseCompleted(
+      input.discoveryRunId,
+      "discovery_planner",
+      "Discovery phase completed",
+      `${discoveryResult.rankedCandidates.length} candidates · ${discoveryResult.sourceCards?.length ?? 0} source cards`,
+    );
 
     if (!activePhases.includes("payment_decision")) {
       markOrchestratorComplete(state, "completed");
+      await emitRunCompleted(input.discoveryRunId, { routeTier: resolvedTier });
       return buildOutput(state);
     }
 
     // ── Phase 2: Payment Decision (LangGraph) ──
     setMacroPhaseStatus(state, "payment_decision", "running");
+    await emitPhaseStarted(input.discoveryRunId, "payment_decision", "calculating", "Payment decision phase started");
 
     const { runPaymentDecisionGraph } = await import("../langgraph/macro-nodes/payment-decision-graph");
     const paymentResult = await runPaymentDecisionGraph({
@@ -181,6 +280,7 @@ export async function executeDelegatedDiscoveryRun(
     if (!paymentResult.ok) {
       setMacroPhaseStatus(state, "payment_decision", "failed");
       markOrchestratorComplete(state, "failed", paymentResult.error || "Payment decision failed");
+      await emitRunFailed(input.discoveryRunId, paymentResult.error || "Payment decision failed", { phase: "payment_decision" });
       return buildOutput(state);
     }
 
@@ -196,6 +296,12 @@ export async function executeDelegatedDiscoveryRun(
       state,
       `Payment Decision completed: ${paymentResult.approvedItems.length} approved, ${paymentResult.skippedItems.length} skipped`
     );
+    await emitPhaseCompleted(
+      input.discoveryRunId,
+      "payment_decision",
+      "Payment decision completed",
+      `${paymentResult.approvedItems.length} approved · ${paymentResult.skippedItems.length} skipped`,
+    );
 
     state.paymentPlan = paymentResult.approvedItems.map((item) => ({
       itemId: item.feed_item_id,
@@ -210,11 +316,13 @@ export async function executeDelegatedDiscoveryRun(
 
     if (!activePhases.includes("settlement_memory")) {
       markOrchestratorComplete(state, "completed");
+      await emitRunCompleted(input.discoveryRunId, { routeTier: resolvedTier });
       return buildOutput(state);
     }
 
     // ── Phase 3: Settlement Memory (LangGraph) ──
     setMacroPhaseStatus(state, "settlement_memory", "running");
+    await emitPhaseStarted(input.discoveryRunId, "settlement_memory", "settling", "Settlement phase started");
 
     const { runSettlementMemoryGraph } = await import("../langgraph/macro-nodes/settlement-memory-graph");
     const settlementResult = await runSettlementMemoryGraph({
@@ -229,6 +337,7 @@ export async function executeDelegatedDiscoveryRun(
     if (!settlementResult.ok) {
       setMacroPhaseStatus(state, "settlement_memory", "failed");
       markOrchestratorComplete(state, "failed", settlementResult.error || "Settlement failed");
+      await emitRunFailed(input.discoveryRunId, settlementResult.error || "Settlement failed", { phase: "settlement_memory" });
       return buildOutput(state);
     }
 
@@ -258,12 +367,20 @@ export async function executeDelegatedDiscoveryRun(
       state,
       `Settlement completed: ${settlementResult.routedItems.length} routed, ${settlementResult.failedItems.length} failed. Mode: creator-distribution.`
     );
+    await emitPhaseCompleted(
+      input.discoveryRunId,
+      "settlement_memory",
+      "Settlement phase completed",
+      `${settlementResult.routedItems.length} routed · ${settlementResult.failedItems.length} failed`,
+    );
 
     markOrchestratorComplete(state, "completed");
+    await emitRunCompleted(input.discoveryRunId, { routeTier: resolvedTier });
     return await buildOutputWithRefund(state, input);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     markOrchestratorComplete(state, "failed", `Orchestrator error: ${msg}`);
+    await emitRunFailed(input.discoveryRunId, `Orchestrator error: ${msg}`);
     return buildOutput(state);
   }
 }
