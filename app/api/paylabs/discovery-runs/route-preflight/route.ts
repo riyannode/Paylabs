@@ -420,17 +420,6 @@ export async function POST(req: NextRequest) {
       expectedInternalX402RoutingUsdc,
     } = preflightResult;
 
-    // Emit Brain planning completed — moves Brain back to idle in Virtual Office
-    await safeEmitOfficeEvent({
-      runId: discoveryRunId,
-      type: "agent.completed",
-      agentId: "brain_planner",
-      phase: "brain",
-      status: "completed",
-      title: "Brain planner completed",
-      message: "Execution plan ready",
-    });
-
     const traceData = {
       requested_route_tier: resolvedRequestedRouteTier,
       selected_tier: selectedTier,
@@ -476,6 +465,18 @@ export async function POST(req: NextRequest) {
     if (lockPersistErr) {
       // Payment was settled but persist failed — report error, do not pretend success
       console.error("[route-preflight] persist failed after payment settle:", lockPersistErr.message);
+
+      // Emit Brain failed — persist failed after successful planning
+      await safeEmitOfficeEvent({
+        runId: discoveryRunId,
+        type: "agent.failed",
+        agentId: "brain_planner",
+        phase: "brain",
+        status: "failed",
+        title: "Brain planner failed",
+        message: "Execution plan could not be saved",
+      });
+
       return NextResponse.json(
         {
           ok: false,
@@ -485,6 +486,18 @@ export async function POST(req: NextRequest) {
         { status: 500 },
       );
     }
+
+    // Emit Brain planning completed — moves Brain back to idle in Virtual Office
+    // Only after locked preflight result is persisted successfully
+    await safeEmitOfficeEvent({
+      runId: discoveryRunId,
+      type: "agent.completed",
+      agentId: "brain_planner",
+      phase: "brain",
+      status: "completed",
+      title: "Brain planner completed",
+      message: "Execution plan ready",
+    });
 
     // ── Return safe response ────────────────────────────────
     const response = buildRoutePreflightResponse(

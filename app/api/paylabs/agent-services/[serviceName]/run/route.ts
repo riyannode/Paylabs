@@ -272,6 +272,13 @@ async function executeX402SellerPath(
     status: "paying",
     title: `${serviceNameTyped} x402 settled`,
     message: "x402 settlement completed",
+    payment: {
+      amountUsdc: config.priceUsdc.toString(),
+      status: "settled",
+      txHash: settleResult.paymentMeta?.txHash ?? null,
+      settlementId: settleResult.paymentMeta?.settlementId ?? null,
+      explorerUrl: settleResult.paymentMeta?.explorerUrl ?? null,
+    },
   });
 
   // Emit agent.started — moves agent from Gateway to its assigned desk

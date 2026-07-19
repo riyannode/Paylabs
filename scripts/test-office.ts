@@ -978,6 +978,49 @@ console.log("x402 visual order regression tests passed");
     "x402.settled uses safe message, not amount");
   assert.ok(sellerSource.includes('message: "Awaiting x402 payment"'),
     "x402.requested uses safe message, not amount");
+
+  // Test: x402.settled contains payment metadata fields
+  assert.ok(sellerSource.includes('amountUsdc: config.priceUsdc.toString()'),
+    "x402.settled payment includes amountUsdc from config");
+  assert.ok(sellerSource.includes('txHash: settleResult.paymentMeta?.txHash'),
+    "x402.settled payment includes txHash from settleResult");
+  assert.ok(sellerSource.includes('settlementId: settleResult.paymentMeta?.settlementId'),
+    "x402.settled payment includes settlementId from settleResult");
+  assert.ok(sellerSource.includes('explorerUrl: settleResult.paymentMeta?.explorerUrl'),
+    "x402.settled payment includes explorerUrl from settleResult");
 }
 
 console.log("Source code structure regression tests passed");
+
+// ── Brain lockPersistErr regression tests ───────────────────────────
+// Verifies Brain agent.completed is only emitted after persist succeeds,
+// and lockPersistErr emits agent.failed with safe message.
+
+{
+  const routePreflightSource = readSync(
+    new URL("../app/api/paylabs/discovery-runs/route-preflight/route.ts", import.meta.url),
+    "utf-8",
+  );
+
+  // Test: Brain agent.completed appears AFTER lockPersistErr guard
+  const lockPersistErrIdx = routePreflightSource.indexOf("if (lockPersistErr)");
+  const completedIdx = routePreflightSource.indexOf('type: "agent.completed"');
+  assert.ok(lockPersistErrIdx > 0, "route-preflight has lockPersistErr guard");
+  assert.ok(completedIdx > 0, "route-preflight emits agent.completed");
+  assert.ok(completedIdx > lockPersistErrIdx,
+    "Brain agent.completed emitted AFTER lockPersistErr guard");
+
+  // Test: lockPersistErr branch emits agent.failed
+  const lockPersistErrBlock = routePreflightSource.slice(
+    lockPersistErrIdx,
+    routePreflightSource.indexOf("}", routePreflightSource.indexOf("return NextResponse.json", lockPersistErrIdx)) + 1
+  );
+  assert.ok(lockPersistErrBlock.includes('type: "agent.failed"'),
+    "lockPersistErr branch emits agent.failed");
+  assert.ok(lockPersistErrBlock.includes('"Execution plan could not be saved"'),
+    "lockPersistErr agent.failed uses safe message");
+  assert.ok(lockPersistErrBlock.includes('agentId: "brain_planner"'),
+    "lockPersistErr agent.failed targets brain_planner");
+}
+
+console.log("Brain lockPersistErr regression tests passed");
