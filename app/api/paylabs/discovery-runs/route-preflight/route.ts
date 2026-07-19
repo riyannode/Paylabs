@@ -35,6 +35,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import { isAutoTierPreflightEnabled } from "@/lib/paylabs/feature-flags";
+import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
 
 export const maxDuration = 120;
 
@@ -337,6 +338,17 @@ export async function POST(req: NextRequest) {
     const { createDcwSigner } = await import("@/lib/paylabs/x402/dcw-signer-adapter");
     const dcwSigner = createDcwSigner();
 
+    // Emit Brain planning started — moves Brain to desk in Virtual Office
+    await safeEmitOfficeEvent({
+      runId: discoveryRunId,
+      type: "agent.started",
+      agentId: "brain_planner",
+      phase: "brain",
+      status: "planning",
+      title: "Brain planner started",
+      message: "Analyzing request",
+    });
+
     let preflightResult;
     try {
       preflightResult = await runRouteOnlyBrainPreflight({
@@ -349,6 +361,17 @@ export async function POST(req: NextRequest) {
       });
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message.slice(0, 300) : String(e).slice(0, 300);
+
+      // Emit Brain failed — moves Brain to error station in Virtual Office
+      await safeEmitOfficeEvent({
+        runId: discoveryRunId,
+        type: "agent.failed",
+        agentId: "brain_planner",
+        phase: "brain",
+        status: "failed",
+        title: "Brain planner failed",
+        message: "Brain planning failed",
+      });
 
       // Merge existing agent_trace — preserve prior payment metadata
       const { data: traceOnBrainFail } = await supabaseAdmin()
@@ -395,7 +418,7 @@ export async function POST(req: NextRequest) {
       grossUserChargeUsdc,
       grossRunChargeUsdc,
       expectedInternalX402RoutingUsdc,
-      } = preflightResult;
+    } = preflightResult;
 
     const traceData = {
       requested_route_tier: resolvedRequestedRouteTier,
@@ -442,6 +465,18 @@ export async function POST(req: NextRequest) {
     if (lockPersistErr) {
       // Payment was settled but persist failed — report error, do not pretend success
       console.error("[route-preflight] persist failed after payment settle:", lockPersistErr.message);
+
+      // Emit Brain failed — persist failed after successful planning
+      await safeEmitOfficeEvent({
+        runId: discoveryRunId,
+        type: "agent.failed",
+        agentId: "brain_planner",
+        phase: "brain",
+        status: "failed",
+        title: "Brain planner failed",
+        message: "Execution plan could not be saved",
+      });
+
       return NextResponse.json(
         {
           ok: false,
@@ -451,6 +486,18 @@ export async function POST(req: NextRequest) {
         { status: 500 },
       );
     }
+
+    // Emit Brain planning completed — moves Brain back to idle in Virtual Office
+    // Only after locked preflight result is persisted successfully
+    await safeEmitOfficeEvent({
+      runId: discoveryRunId,
+      type: "agent.completed",
+      agentId: "brain_planner",
+      phase: "brain",
+      status: "completed",
+      title: "Brain planner completed",
+      message: "Execution plan ready",
+    });
 
     // ── Return safe response ────────────────────────────────
     const response = buildRoutePreflightResponse(
