@@ -37,13 +37,9 @@ function destinationFor(event: PayLabsOfficeEvent, agentId: OfficeAgentId): { x:
     return OFFICE_STATIONS.error;
   }
   if (event.status === "completed" || event.type === "agent.completed" || event.type === "run.completed") {
-    return OFFICE_AGENTS[agentId].idle;
+    return OFFICE_AGENTS[agentId].desk;
   }
   return OFFICE_AGENTS[agentId].desk;
-}
-
-function isVisitEvent(type: PayLabsOfficeEvent["type"]): boolean {
-  return type === "creator.paid" || type === "treasury.retained";
 }
 
 export function reduceOfficeEvent(state: OfficeState, event: PayLabsOfficeEvent): OfficeState {
@@ -53,6 +49,7 @@ export function reduceOfficeEvent(state: OfficeState, event: PayLabsOfficeEvent)
   if (event.sequence <= current.lastEventSequence) return state;
   const destination = destinationFor(event, event.agentId);
   const isVisit = isVisitEvent(event.type);
+  const isDeskDwell = !isVisit && isDeskDwellEvent(event, event.agentId);
   return {
     ...state,
     [event.agentId]: {
@@ -63,11 +60,20 @@ export function reduceOfficeEvent(state: OfficeState, event: PayLabsOfficeEvent)
       y: destination.y,
       facing: destination.x < current.x ? "left" : "right",
       lastEventSequence: event.sequence,
-      visitingReturn: isVisit
+      visitingReturn: isVisit || isDeskDwell
         ? { ...OFFICE_AGENTS[event.agentId].idle }
         : undefined,
     },
   };
+}
+
+function isVisitEvent(type: PayLabsOfficeEvent["type"]): boolean {
+  return type === "creator.paid" || type === "treasury.retained";
+}
+
+function isDeskDwellEvent(event: PayLabsOfficeEvent, agentId: OfficeAgentId): boolean {
+  if (agentId === "brain_planner") return false;
+  return event.type === "agent.completed";
 }
 
 export function reduceReturnToIdle(state: OfficeState, agentId: OfficeAgentId): OfficeState {

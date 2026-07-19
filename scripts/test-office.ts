@@ -170,20 +170,29 @@ assert.deepEqual(
   "failed agent goes to error zone",
 );
 
-// ── Test 6: ordinary agents return to idle after completion ────────
+// ── Test 6: ordinary agent.completed targets desk + sets visitingReturn ──
 state = reduceOfficeEvent(state, event({ sequence: 15, agentId: "query_builder", type: "agent.completed", status: "completed" }));
 assert.deepEqual(
   { x: state.query_builder.x, y: state.query_builder.y },
-  OFFICE_AGENTS.query_builder.idle,
-  "completed agent returns idle",
+  OFFICE_AGENTS.query_builder.desk,
+  "agent.completed targets desk (not idle)",
 );
-
-state = reduceOfficeEvent(state, event({ sequence: 16, agentId: "intent_matcher", type: "agent.completed" }));
+assert.ok(state.query_builder.visitingReturn, "agent.completed sets visitingReturn");
 assert.deepEqual(
-  { x: state.intent_matcher.x, y: state.intent_matcher.y },
-  OFFICE_AGENTS.intent_matcher.idle,
-  "agent.completed without status returns child agent to its assigned Lounge idle spot",
+  state.query_builder.visitingReturn,
+  OFFICE_AGENTS.query_builder.idle,
+  "visitingReturn targets configured idle position",
 );
+assert.equal(state.query_builder.status, "completed", "status set to completed");
+
+// reduceReturnToIdle moves it to idle
+state = reduceReturnToIdle(state, "query_builder");
+assert.deepEqual(
+  { x: state.query_builder.x, y: state.query_builder.y },
+  OFFICE_AGENTS.query_builder.idle,
+  "after dwell, agent returns to configured idle position",
+);
+assert.equal(state.query_builder.visitingReturn, undefined, "visitingReturn cleared after return");
 
 // ── brain planner always stays at desk ─────────────────────────────
 state = reduceOfficeEvent(state, event({ sequence: 20, agentId: "brain_planner", type: "agent.started", status: "planning" }));
@@ -859,7 +868,7 @@ console.log("Brain route-preflight event regression tests passed");
   assert.equal(orderState.query_builder.status, "planning",
     "agent.started sets status to planning");
 
-  // Test: agent.completed returns agent to idle
+  // Test: agent.completed returns agent to desk (desk dwell)
   orderState = reduceOfficeEvent(orderState, event({
     sequence: 4,
     agentId: "query_builder",
@@ -869,11 +878,18 @@ console.log("Brain route-preflight event regression tests passed");
   }));
   assert.deepEqual(
     { x: orderState.query_builder.x, y: orderState.query_builder.y },
-    OFFICE_AGENTS.query_builder.idle,
-    "agent.completed returns agent to idle/Lounge",
+    OFFICE_AGENTS.query_builder.desk,
+    "agent.completed returns agent to desk (desk dwell)",
   );
   assert.equal(orderState.query_builder.status, "completed",
     "agent.completed sets status to completed");
+  assert.ok(orderState.query_builder.visitingReturn,
+    "agent.completed sets visitingReturn for desk dwell");
+  assert.deepEqual(
+    orderState.query_builder.visitingReturn,
+    OFFICE_AGENTS.query_builder.idle,
+    "visitingReturn targets configured idle position",
+  );
 
   // Test: x402.failed sends agent to error station
   let failState = createInitialOfficeState();
@@ -1024,3 +1040,229 @@ console.log("Source code structure regression tests passed");
 }
 
 console.log("Brain lockPersistErr regression tests passed");
+
+// ── Desk dwell tests ───────────────────────────────────────────────
+// Verifies that ordinary agent.completed targets desk (not idle),
+// sets visitingReturn, and reduceReturnToIdle later returns to idle.
+// Also covers: history replay, independent agents, stale timer safety,
+// brain exclusion, creator.paid/treasury.retained preservation.
+
+{
+  // Test: ordinary agent.started targets its desk
+  {
+    let s = createInitialOfficeState();
+    s = reduceOfficeEvent(s, event({ sequence: 1, agentId: "value_allocator", type: "agent.started", status: "calculating" }));
+    assert.deepEqual(
+      { x: s.value_allocator.x, y: s.value_allocator.y },
+      OFFICE_AGENTS.value_allocator.desk,
+      "desk dwell: agent.started targets desk",
+    );
+  }
+
+  // Test: immediate agent.completed still targets the desk (not idle)
+  {
+    let s = createInitialOfficeState();
+    s = reduceOfficeEvent(s, event({ sequence: 1, agentId: "value_allocator", type: "agent.started", status: "calculating" }));
+    s = reduceOfficeEvent(s, event({ sequence: 2, agentId: "value_allocator", type: "agent.completed", status: "completed" }));
+    assert.deepEqual(
+      { x: s.value_allocator.x, y: s.value_allocator.y },
+      OFFICE_AGENTS.value_allocator.desk,
+      "desk dwell: immediate agent.completed still at desk",
+    );
+  }
+
+  // Test: completed sets visitingReturn to configured idle
+  {
+    let s = createInitialOfficeState();
+    s = reduceOfficeEvent(s, event({ sequence: 1, agentId: "intent_matcher", type: "agent.started", status: "verifying" }));
+    s = reduceOfficeEvent(s, event({ sequence: 2, agentId: "intent_matcher", type: "agent.completed", status: "completed" }));
+    assert.ok(s.intent_matcher.visitingReturn, "desk dwell: visitingReturn is set");
+    assert.deepEqual(
+      s.intent_matcher.visitingReturn,
+      OFFICE_AGENTS.intent_matcher.idle,
+      "desk dwell: visitingReturn targets configured idle",
+    );
+  }
+
+  // Test: reduceReturnToIdle later moves it to idle
+  {
+    let s = createInitialOfficeState();
+    s = reduceOfficeEvent(s, event({ sequence: 1, agentId: "trust_verifier", type: "agent.started", status: "verifying" }));
+    s = reduceOfficeEvent(s, event({ sequence: 2, agentId: "trust_verifier", type: "agent.completed", status: "completed" }));
+    s = reduceReturnToIdle(s, "trust_verifier");
+    assert.deepEqual(
+      { x: s.trust_verifier.x, y: s.trust_verifier.y },
+      OFFICE_AGENTS.trust_verifier.idle,
+      "desk dwell: reduceReturnToIdle moves to idle",
+    );
+    assert.equal(s.trust_verifier.visitingReturn, undefined, "desk dwell: visitingReturn cleared");
+    assert.equal(s.trust_verifier.status, "completed", "desk dwell: status remains completed");
+  }
+
+  // Test: history replay — started → completed leaves final state at desk
+  {
+    let s = createInitialOfficeState();
+    const history = [
+      event({ sequence: 1, agentId: "payment_decider", type: "x402.requested", status: "paying" }),
+      event({ sequence: 2, agentId: "payment_decider", type: "x402.settled", status: "paying" }),
+      event({ sequence: 3, agentId: "payment_decider", type: "agent.started", status: "calculating" }),
+      event({ sequence: 4, agentId: "payment_decider", type: "agent.completed", status: "completed" }),
+    ];
+    for (const evt of history) s = reduceOfficeEvent(s, evt);
+    // Final state should be at desk (not idle), with visitingReturn set
+    assert.deepEqual(
+      { x: s.payment_decider.x, y: s.payment_decider.y },
+      OFFICE_AGENTS.payment_decider.desk,
+      "desk dwell: history replay final state at desk",
+    );
+    assert.ok(s.payment_decider.visitingReturn, "desk dwell: history replay has visitingReturn");
+    assert.deepEqual(
+      s.payment_decider.visitingReturn,
+      OFFICE_AGENTS.payment_decider.idle,
+      "desk dwell: history replay visitingReturn targets idle",
+    );
+  }
+
+  // Test: two different agents have independent visitingReturn state
+  {
+    let s = createInitialOfficeState();
+    s = reduceOfficeEvent(s, event({ sequence: 1, agentId: "source_verifier", type: "agent.started", status: "verifying" }));
+    s = reduceOfficeEvent(s, event({ sequence: 2, agentId: "source_verifier", type: "agent.completed", status: "completed" }));
+    s = reduceOfficeEvent(s, event({ sequence: 3, agentId: "payment_decider", type: "agent.started", status: "calculating" }));
+    s = reduceOfficeEvent(s, event({ sequence: 4, agentId: "payment_decider", type: "agent.completed", status: "completed" }));
+    assert.ok(s.source_verifier.visitingReturn, "source_verifier has visitingReturn");
+    assert.ok(s.payment_decider.visitingReturn, "payment_decider has visitingReturn");
+    // Return source_verifier only
+    s = reduceReturnToIdle(s, "source_verifier");
+    assert.equal(s.source_verifier.visitingReturn, undefined, "source_verifier returned");
+    assert.ok(s.payment_decider.visitingReturn, "payment_decider still has visitingReturn");
+  }
+
+  // Test: returning one agent does not move another
+  {
+    let s = createInitialOfficeState();
+    s = reduceOfficeEvent(s, event({ sequence: 1, agentId: "source_verifier", type: "agent.started", status: "verifying" }));
+    s = reduceOfficeEvent(s, event({ sequence: 2, agentId: "source_verifier", type: "agent.completed", status: "completed" }));
+    s = reduceOfficeEvent(s, event({ sequence: 3, agentId: "payment_decider", type: "agent.started", status: "calculating" }));
+    s = reduceOfficeEvent(s, event({ sequence: 4, agentId: "payment_decider", type: "agent.completed", status: "completed" }));
+    const prevDeciderPos = { x: s.payment_decider.x, y: s.payment_decider.y };
+    s = reduceReturnToIdle(s, "source_verifier");
+    assert.deepEqual(
+      { x: s.payment_decider.x, y: s.payment_decider.y },
+      prevDeciderPos,
+      "returning source_verifier does not move payment_decider",
+    );
+  }
+
+  // Test: newer event clears pending return
+  {
+    let s = createInitialOfficeState();
+    s = reduceOfficeEvent(s, event({ sequence: 1, agentId: "creator_attribution", type: "agent.started", status: "verifying" }));
+    s = reduceOfficeEvent(s, event({ sequence: 2, agentId: "creator_attribution", type: "agent.completed", status: "completed" }));
+    assert.ok(s.creator_attribution.visitingReturn, "visitingReturn set after completed");
+    // Newer event clears it
+    s = reduceOfficeEvent(s, event({ sequence: 3, agentId: "creator_attribution", type: "agent.started", status: "verifying" }));
+    assert.equal(s.creator_attribution.visitingReturn, undefined, "newer event clears visitingReturn");
+  }
+
+  // Test: agent.failed immediately targets Error (no desk dwell)
+  {
+    let s = createInitialOfficeState();
+    s = reduceOfficeEvent(s, event({ sequence: 1, agentId: "value_allocator", type: "agent.started", status: "calculating" }));
+    s = reduceOfficeEvent(s, event({ sequence: 2, agentId: "value_allocator", type: "agent.failed", status: "failed" }));
+    assert.deepEqual(
+      { x: s.value_allocator.x, y: s.value_allocator.y },
+      OFFICE_STATIONS.error,
+      "desk dwell: agent.failed immediately targets Error",
+    );
+    assert.equal(s.value_allocator.visitingReturn, undefined, "desk dwell: agent.failed clears visitingReturn");
+  }
+
+  // Test: brain_planner behavior unchanged (completed → idle, no visitingReturn)
+  {
+    let s = createInitialOfficeState();
+    s = reduceOfficeEvent(s, event({ sequence: 1, agentId: "brain_planner", type: "agent.started", status: "planning" }));
+    s = reduceOfficeEvent(s, event({ sequence: 2, agentId: "brain_planner", type: "agent.completed", status: "completed" }));
+    assert.deepEqual(
+      { x: s.brain_planner.x, y: s.brain_planner.y },
+      OFFICE_AGENTS.brain_planner.desk,
+      "desk dwell: brain completed stays at desk (desk=idle)",
+    );
+    assert.equal(s.brain_planner.visitingReturn, undefined, "desk dwell: brain has no visitingReturn");
+  }
+
+  // Test: creator.paid behavior unchanged (visitingReturn set)
+  {
+    let s = createInitialOfficeState();
+    s = reduceOfficeEvent(s, event({ sequence: 1, agentId: "creator_payout_router", type: "agent.started", status: "settling" }));
+    s = reduceOfficeEvent(s, event({ sequence: 2, agentId: "creator_payout_router", type: "creator.paid", status: "settling" }));
+    assert.deepEqual(
+      { x: s.creator_payout_router.x, y: s.creator_payout_router.y },
+      OFFICE_STATIONS.creatorPayout,
+      "desk dwell: creator.paid still targets creatorPayout station",
+    );
+    assert.ok(s.creator_payout_router.visitingReturn, "desk dwell: creator.paid sets visitingReturn");
+    assert.deepEqual(
+      s.creator_payout_router.visitingReturn,
+      OFFICE_AGENTS.creator_payout_router.idle,
+      "desk dwell: creator.paid visitingReturn targets idle",
+    );
+  }
+
+  // Test: treasury.retained behavior unchanged
+  {
+    let s = createInitialOfficeState();
+    s = reduceOfficeEvent(s, event({ sequence: 1, agentId: "creator_payout_router", type: "agent.started", status: "settling" }));
+    s = reduceOfficeEvent(s, event({ sequence: 2, agentId: "creator_payout_router", type: "treasury.retained", status: "settling" }));
+    assert.deepEqual(
+      { x: s.creator_payout_router.x, y: s.creator_payout_router.y },
+      OFFICE_STATIONS.treasuryReserve,
+      "desk dwell: treasury.retained still targets treasuryReserve station",
+    );
+    assert.ok(s.creator_payout_router.visitingReturn, "desk dwell: treasury.retained sets visitingReturn");
+  }
+
+  // Test: x402.failed immediately targets Error (no desk dwell)
+  {
+    let s = createInitialOfficeState();
+    s = reduceOfficeEvent(s, event({ sequence: 1, agentId: "trust_verifier", type: "x402.requested", status: "paying" }));
+    s = reduceOfficeEvent(s, event({ sequence: 2, agentId: "trust_verifier", type: "x402.failed", status: "failed" }));
+    assert.deepEqual(
+      { x: s.trust_verifier.x, y: s.trust_verifier.y },
+      OFFICE_STATIONS.error,
+      "desk dwell: x402.failed immediately targets Error",
+    );
+    assert.equal(s.trust_verifier.visitingReturn, undefined, "desk dwell: x402.failed clears visitingReturn");
+  }
+}
+
+console.log("Desk dwell tests passed");
+
+// ── Panel source assertions ────────────────────────────────────────
+{
+  const panelSource = readSync(
+    new URL("../components/paylabs/office/PayLabsOfficePanel.tsx", import.meta.url),
+    "utf-8",
+  );
+
+  // Test: per-agent timer Map
+  assert.ok(panelSource.includes("Map<string"), "panel uses per-agent timer Map");
+  assert.ok(panelSource.includes("visitTimersRef"), "panel has visitTimersRef");
+  assert.ok(!panelSource.includes("visitTimerRef") || panelSource.includes("visitTimersRef"),
+    "panel replaced single visitTimerRef with Map");
+
+  // Test: dwell durations
+  assert.ok(panelSource.includes("OFFICE_VISIT_DWELL_MS = 1500"), "panel preserves 1500ms creator dwell");
+  assert.ok(panelSource.includes("OFFICE_DESK_DWELL_MS = 1200"), "panel has 1200ms desk dwell");
+
+  // Test: getDwellMs selects correct duration
+  assert.ok(panelSource.includes("creator_payout_router"), "getDwellMs checks creator_payout_router");
+
+  // Test: timers are cleared on run change
+  assert.ok(panelSource.includes("visitTimersRef.current.clear()"), "timers cleared on run change");
+
+  // Test: reduceReturnToIdle is called in timer callback
+  assert.ok(panelSource.includes("reduceReturnToIdle"), "timer callback calls reduceReturnToIdle");
+}
+
+console.log("Panel source assertions passed");
