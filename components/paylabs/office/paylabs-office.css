@@ -9,11 +9,9 @@
   align-items: stretch;
   box-sizing: border-box;
   background: #ffffff;
-  border: 1px solid #dbe3f0;
-  border-radius: 12px;
-  box-shadow:
-    0 18px 55px rgba(15, 23, 42, 0.10),
-    0 2px 8px rgba(15, 23, 42, 0.05);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
   overflow: hidden;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   image-rendering: pixelated;
