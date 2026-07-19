@@ -131,29 +131,29 @@
 .po-agent.is-paying .po-body { box-shadow: 0 0 11px #22d3ee, inset -4px 0 rgba(0, 0, 0, 0.2); }
 .po-agent.is-failed .po-body { background: #dc2626; }
 .po-agent.is-completed { filter: brightness(1.12); }
-.po-dashboard { min-width: 0; padding: 10px; background: #ffffff; color: #334155; overflow: hidden; min-height: 100%; }
-.po-dashboard-title { display: flex; flex-direction: column; align-items: center; padding: 9px 4px 12px; color: #1d4ed8; border-bottom: 1px solid #dbe3f0; letter-spacing: 0.1em; }
-.po-dashboard-title small { margin-top: 3px; color: #64748b; font-size: 9px; }
+.po-dashboard { min-width: 0; padding: 10px; background: #ffffff; color: #334155; overflow: hidden; min-height: 100%; font-size: 11px; line-height: 1.45; }
+.po-dashboard-title { display: flex; flex-direction: column; align-items: center; padding: 9px 4px 12px; color: #0f172a; border-bottom: 1px solid #dbe3f0; letter-spacing: 0.08em; font-size: 13px; line-height: 1.35; }
+.po-dashboard-title small { margin-top: 3px; color: #475569; font-size: 10px; line-height: 1.3; }
 .po-panel { margin-top: 9px; padding: 8px; background: #f8fafc; border: 1px solid #dbe3f0; border-radius: 7px; }
-.po-panel h3 { margin: 0 0 7px; font-size: 9px; color: #2563eb; letter-spacing: 0.08em; }
+.po-panel h3 { margin: 0 0 8px; font-size: 11px; color: #0f172a; letter-spacing: 0.06em; line-height: 1.35; }
 .po-panel dl { margin: 0; }
-.po-panel dl > div { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; font-size: 8px; border-bottom: 1px solid #e5eaf2; }
-.po-panel dt { color: #64748b; }
-.po-panel dd { margin: 0; color: #111827; text-align: right; }
-.po-agent-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; font-size: 8px; }
+.po-panel dl > div { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; font-size: 11px; line-height: 1.5; border-bottom: 1px solid #e5eaf2; }
+.po-panel dt { color: #475569; }
+.po-panel dd { margin: 0; color: #0f172a; text-align: right; font-weight: 600; }
+.po-agent-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; font-size: 10px; line-height: 1.45; }
 .po-agent-directory { margin-top: 7px; max-height: clamp(120px, 22dvh, 240px); overflow: auto; }
-.po-agent-directory > div { display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: 5px; padding: 2px 0; font-size: 8px; }
-.po-agent-directory small { color: #64748b; }
+.po-agent-directory > div { display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: 5px; padding: 3px 0; font-size: 10px; line-height: 1.45; }
+.po-agent-directory small { color: #475569; }
 .po-status-dot { width: 5px; height: 5px; border-radius: 50%; background: #64748b; }
 .po-status-dot.is-searching, .po-status-dot.is-planning, .po-status-dot.is-calculating, .po-status-dot.is-verifying, .po-status-dot.is-paying, .po-status-dot.is-settling { background: #facc15; box-shadow: 0 0 6px #facc15; }
 .po-status-dot.is-completed { background: #22c55e; }
 .po-status-dot.is-failed { background: #ef4444; }
 .po-payment-list { margin-top: 6px; }
-.po-payment-row { display: flex; align-items: center; justify-content: space-between; gap: 5px; padding: 4px 0; border-top: 1px solid #e5eaf2; font-size: 8px; }
+.po-payment-row { display: flex; align-items: center; justify-content: space-between; gap: 5px; padding: 5px 0; border-top: 1px solid #e5eaf2; font-size: 10px; line-height: 1.45; }
 .po-payment-row > div { display: flex; flex-direction: column; }
 .po-payment-row a { color: #2563eb; }
 .po-activity-panel { margin-bottom: 0; }
-.po-activity-log { max-height: clamp(90px, 18dvh, 180px); overflow-y: auto; display: flex; flex-direction: column; gap: 3px; font-size: 7px; color: #475569; }
+.po-activity-log { max-height: clamp(90px, 18dvh, 180px); overflow-y: auto; display: flex; flex-direction: column; gap: 4px; font-size: 10px; line-height: 1.45; color: #475569; }
 .po-effect { position: absolute; inset: auto; pointer-events: none; }
 .is-paused .po-agent, .is-paused .po-agent-wrap { animation-play-state: paused !important; transition: none !important; }
 @keyframes po-idle { 50% { transform: translateY(-1px); } }
