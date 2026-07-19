@@ -488,6 +488,32 @@ a:hover { text-decoration: none; }
   padding: var(--pl-space-lg) var(--pl-space-lg) var(--pl-space-lg);
 }
 
+.paylabs-chat-main {
+  width: 100%;
+  min-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.paylabs-chat-main > .pl-topbar,
+.paylabs-chat-main > .pl-wallet-error-v3 {
+  margin-left: var(--pl-space-lg);
+  margin-right: var(--pl-space-lg);
+}
+
+.paylabs-chat-hero {
+  width: min(760px, calc(100% - 48px));
+  margin: 0 auto;
+}
+
+.paylabs-office-section {
+  width: 100%;
+  min-width: 0;
+  margin-top: 20px;
+  padding: 0 18px 18px;
+  box-sizing: border-box;
+}
+
 .pl-topbar {
   height: 40px;
   display: flex;

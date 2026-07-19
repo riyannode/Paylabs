@@ -60,6 +60,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
+    const reservedDiscoveryRunId = String(body.discovery_run_id || body.run_id || "").trim();
     const goal = (body.goal || "").trim();
     if (!goal) {
       return NextResponse.json({ ok: false, error: "Goal required" }, { status: 400 });
@@ -166,6 +167,8 @@ export async function POST(req: NextRequest) {
           budget_usdc: maxAmountUsdc,
           route_tier: normalizedRouteTier,
           routeTier: normalizedRouteTier,
+          discovery_run_id: reservedDiscoveryRunId || undefined,
+          run_id: reservedDiscoveryRunId || undefined,
         },
         headers: {},
         buyerWalletId: wallet.wallet_id,
@@ -218,7 +221,7 @@ export async function POST(req: NextRequest) {
       }
 
       const preflightData = preflightResult.data as Record<string, unknown>;
-      const discoveryRunId = preflightData.discovery_run_id as string;
+      const discoveryRunId = (preflightData.discovery_run_id as string) || reservedDiscoveryRunId;
       const finalEntryPaymentUsdc = Number(preflightData.final_entry_payment_usdc);
       // Fail-closed guard: final_entry_payment_usdc must be finite and positive
       if (!Number.isFinite(finalEntryPaymentUsdc) || finalEntryPaymentUsdc <= 0) {
@@ -242,6 +245,7 @@ export async function POST(req: NextRequest) {
         method: "POST",
         body: {
           discovery_run_id: discoveryRunId,
+          run_id: discoveryRunId,
           user_wallet: normalizedWallet,
           budget_usdc: maxAmountUsdc,
         },

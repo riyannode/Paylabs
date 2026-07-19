@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import VisitTracker from "@/components/paylabs/VisitTracker";
+import "@/components/paylabs/office/paylabs-office.css";
 
 export const metadata: Metadata = {
   title: "PayLabs — Source-backed AI search",
