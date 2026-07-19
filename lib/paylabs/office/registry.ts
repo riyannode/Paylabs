@@ -46,8 +46,8 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     shortLabel: "Brain",
     phase: "brain",
     department: "executive",
-    desk: { x: 165, y: 91 },
-    idle: { x: 165, y: 91 },
+    desk: { x: 150, y: 10 },
+    idle: { x: 150, y: 10 },
     color: "#8b5cf6",
   },
   intent_planner: {
