@@ -174,7 +174,8 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
 
 export const OFFICE_STATIONS = {
   gateway: { x: 605, y: 245 },
-  treasury: { x: 840, y: 245 },
+  creatorPayout: { x: 748, y: 245 },
+  treasuryReserve: { x: 842, y: 245 },
   lounge: { x: 500, y: 350 },
   error: { x: 870, y: 360 },
 };

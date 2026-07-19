@@ -75,9 +75,9 @@ export function PayLabsOfficeCanvas({
       </section>
 
       <section className="po-bottom-zone po-treasury-zone">
-        <strong>CREATOR TREASURY</strong>
-        <div className="po-treasury-safe">USDC</div>
-        <div className="po-arc-screen">ARC</div>
+        <strong>CREATOR PAYOUT / TREASURY</strong>
+        <div className="po-treasury-safe">CREATOR PAYOUT</div>
+        <div className="po-arc-screen">TREASURY RESERVE</div>
       </section>
 
       {agents.map((agent) => (

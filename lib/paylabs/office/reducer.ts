@@ -28,7 +28,10 @@ function destinationFor(event: PayLabsOfficeEvent, agentId: OfficeAgentId): { x:
     return OFFICE_STATIONS.gateway;
   }
   if (event.type === "creator.paid") {
-    return OFFICE_STATIONS.treasury;
+    return OFFICE_STATIONS.creatorPayout;
+  }
+  if (event.type === "treasury.retained") {
+    return OFFICE_STATIONS.treasuryReserve;
   }
   if (event.status === "failed" || event.type === "run.failed" || event.type === "agent.failed") {
     return OFFICE_STATIONS.error;

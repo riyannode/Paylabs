@@ -26,7 +26,8 @@ export type OfficeEventType =
   | "x402.requested"
   | "x402.settled"
   | "x402.failed"
-  | "creator.paid";
+  | "creator.paid"
+  | "treasury.retained";
 
 export type OfficeAgentId =
   | "brain_planner"

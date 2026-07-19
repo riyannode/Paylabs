@@ -248,19 +248,79 @@ export function createServiceNode(
     const summary = `${macroNode} → ${serviceName}: ${result.ok ? "completed" : "failed"} (${result.mode}, settled=${result.settled})`;
 
     if (isOfficeServiceName(serviceName)) {
+      const output = (result.data ?? {}) as Record<string, unknown>;
+      const isCreatorPayoutRouter = serviceName === "creator_payout_router";
+      const creatorPayoutResults = isCreatorPayoutRouter
+        ? ((output.creator_payout_results as Array<Record<string, unknown>> | undefined) ?? [])
+        : [];
+      const paidCreatorResults = creatorPayoutResults.filter(
+        (row) => row.status === "paid" || row.status === "gateway_accepted",
+      );
+      const splitPlan = isCreatorPayoutRouter ? (output.split_plan as Record<string, unknown> | undefined) : undefined;
+      const pendingReserveAtomicRaw = splitPlan?.pending_creator_reserve_atomic ?? output.pending_creator_reserve_atomic;
+      const pendingReserveAtomic = pendingReserveAtomicRaw == null ? null : String(pendingReserveAtomicRaw);
+      const pendingReserveUsdcRaw = output.pending_creator_reserve;
+      const pendingReserveUsdc = typeof pendingReserveUsdcRaw === "number"
+        ? pendingReserveUsdcRaw
+        : pendingReserveUsdcRaw == null
+          ? null
+          : Number(pendingReserveUsdcRaw);
+      const hasPendingReserve = pendingReserveAtomic ? (() => {
+        try {
+          return BigInt(pendingReserveAtomic) > BigInt(0);
+        } catch {
+          return (pendingReserveUsdc ?? 0) > 0;
+        }
+      })() : (pendingReserveUsdc ?? 0) > 0;
+
+      const officeEvent = result.ok && isCreatorPayoutRouter
+        ? paidCreatorResults.length > 0
+          ? {
+              type: "creator.paid" as const,
+              title: `${serviceName} creator payout completed`,
+              message: `${paidCreatorResults.length} creator payout(s) completed`,
+              metadata: {
+                settled: result.settled,
+                mode: result.mode,
+                costUsdc: result.safeCallMeta.costUsdc,
+                creatorPaidCount: paidCreatorResults.length,
+                pendingReserveAtomic,
+                pendingReserveUsdc,
+              },
+            }
+          : {
+              type: "treasury.retained" as const,
+              title: `${serviceName} treasury reserve retained`,
+              message: hasPendingReserve
+                ? `${pendingReserveUsdc ?? 0} USDC retained in treasury reserve`
+                : "No verified creator payout; funds retained in treasury reserve",
+              metadata: {
+                settled: result.settled,
+                mode: result.mode,
+                costUsdc: result.safeCallMeta.costUsdc,
+                treasuryRetained: true,
+                pendingReserveAtomic,
+                pendingReserveUsdc,
+                retentionReason: "no_verified_or_eligible_creator_or_unallocated_reserve",
+              },
+            }
+        : {
+            type: result.ok ? "agent.completed" as const : "agent.failed" as const,
+            title: `${serviceName} ${result.ok ? "completed" : "failed"}`,
+            message: result.safeSummary,
+            metadata: {
+              settled: result.settled,
+              mode: result.mode,
+              costUsdc: result.safeCallMeta.costUsdc,
+            },
+          };
+
       await safeEmitOfficeEvent({
         runId: discoveryRunId,
-        type: result.ok ? "agent.completed" : "agent.failed",
         phase: phaseFromMacroNode(macroNode),
         status: result.ok ? "completed" : "failed",
         agentId: serviceName,
-        title: `${serviceName} ${result.ok ? "completed" : "failed"}`,
-        message: result.safeSummary,
-        metadata: {
-          settled: result.settled,
-          mode: result.mode,
-          costUsdc: result.safeCallMeta.costUsdc,
-        },
+        ...officeEvent,
       });
     }
 

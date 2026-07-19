@@ -61,11 +61,17 @@ assert.deepEqual(
   "x402.settled sends agent to Gateway",
 );
 
-state = reduceOfficeEvent(state, event({ sequence: 3, agentId: "creator_payout_router", type: "creator.paid", status: "settling" }));
+state = reduceOfficeEvent(state, event({ sequence: 3, agentId: "creator_payout_router", type: "creator.paid", status: "completed" }));
 assert.deepEqual(
   { x: state.creator_payout_router.x, y: state.creator_payout_router.y },
-  OFFICE_STATIONS.treasury,
-  "creator.paid sends payout router to Treasury",
+  OFFICE_STATIONS.creatorPayout,
+  "creator.paid sends payout router to Creator Payout station",
+);
+state = reduceOfficeEvent(state, event({ sequence: 4, agentId: "creator_payout_router", type: "treasury.retained", status: "completed" }));
+assert.deepEqual(
+  { x: state.creator_payout_router.x, y: state.creator_payout_router.y },
+  OFFICE_STATIONS.treasuryReserve,
+  "treasury.retained sends payout router to Treasury Reserve station",
 );
 
 state = reduceOfficeEvent(state, event({ sequence: 4, agentId: "source_verifier", type: "agent.failed", status: "failed" }));
