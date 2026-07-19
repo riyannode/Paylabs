@@ -297,4 +297,133 @@ assert.ok(!popoverSource.includes("price"), "AgentDetailPopover does not render 
 assert.ok(popoverSource.includes("definition.label"), "AgentDetailPopover shows agent label");
 assert.ok(popoverSource.includes("agent.status"), "AgentDetailPopover shows agent status");
 
+// ── Monetary sanitization tests ─────────────────────────────────
+
+import { sanitizeOfficeMessage, sanitizeDisplayMessage } from "../lib/paylabs/office/sanitizer";
+
+function expectOfficeMessageToBeNonMonetary(message: string | null | undefined): void {
+  if (message == null) return;
+  assert.ok(!/\bUSDC\b/i.test(message), `message must not contain USDC: "${message}"`);
+  assert.ok(!/[\$€£¥₹]\s*\d/.test(message), `message must not contain currency symbols with amounts: "${message}"`);
+  assert.ok(!/\b\d+\.?\d*\s*(?:USD|EUR|GBP|BTC|ETH|DAI|USDT)\b/i.test(message), `message must not contain token amounts: "${message}"`);
+  assert.ok(!/\b(?:cost|spend|budget|fee|balance|price)\s*[:=]\s*\d/i.test(message), `message must not contain named monetary fields: "${message}"`);
+}
+
+// Test: x402.settled bubble is sanitized at emission boundary
+const x402SettledMsg = sanitizeOfficeMessage("0.000001 USDC", "x402.settled");
+expectOfficeMessageToBeNonMonetary(x402SettledMsg);
+assert.equal(x402SettledMsg, "x402 settlement completed", "x402.settled monetary message replaced with safe fallback");
+
+// Test: x402.settled with larger amount
+const x402LargeMsg = sanitizeOfficeMessage("1.500000 USDC", "x402.settled");
+expectOfficeMessageToBeNonMonetary(x402LargeMsg);
+assert.equal(x402LargeMsg, "x402 settlement completed", "x402.settled large monetary message replaced");
+
+// Test: treasury.retained with reserve amount is sanitized
+const treasuryMsg = sanitizeOfficeMessage("0.00002 USDC retained in treasury reserve", "treasury.retained");
+expectOfficeMessageToBeNonMonetary(treasuryMsg);
+assert.equal(treasuryMsg, "Funds retained in treasury reserve", "treasury.retained monetary message replaced");
+
+// Test: treasury.retained safe message is preserved
+const treasurySafeMsg = sanitizeOfficeMessage("No verified creator payout; funds retained in treasury reserve", "treasury.retained");
+assert.equal(treasurySafeMsg, "No verified creator payout; funds retained in treasury reserve", "treasury.retained non-monetary message preserved");
+
+// Test: generic agent.completed with monetary safeSummary is sanitized
+const deciderSummary = "Approved 3/5 items, total spend: 0.000012 USDC, remaining budget: 0.000088 USDC.";
+const completedMsg = sanitizeOfficeMessage(deciderSummary, "agent.completed");
+expectOfficeMessageToBeNonMonetary(completedMsg);
+assert.equal(completedMsg, "Service completed", "agent.completed monetary safeSummary replaced with safe fallback");
+
+// Test: historical Supabase event message containing 0.00002 USDC is sanitized at render boundary
+const historicalMsg = sanitizeDisplayMessage("0.00002 USDC retained in treasury reserve");
+expectOfficeMessageToBeNonMonetary(historicalMsg);
+assert.equal(historicalMsg, "Service completed", "historical Supabase message with USDC sanitized at render boundary");
+
+// Test: historical message with just "USDC" is sanitized
+const historicalUsdcOnly = sanitizeDisplayMessage("x402 settlement: 0.000001 USDC");
+expectOfficeMessageToBeNonMonetary(historicalUsdcOnly);
+
+// Test: safe operational messages remain readable
+const safeMessages = [
+  "Working in payment_decision",
+  "x402 settlement completed",
+  "Creator payout completed",
+  "Funds retained in treasury reserve",
+  "No verified creator payout; funds retained in treasury reserve",
+  "Service completed",
+  "Service failed",
+  "Preparing Brain plan and route execution",
+  "Selecting route tier, phases, and services",
+  "advanced route · 8 services",
+  "Planning unavailable; continuing with tier defaults",
+  "Required x402 child is not enabled",
+  "2 candidates · 1 source cards",
+  "3 approved · 1 skipped",
+];
+for (const msg of safeMessages) {
+  const result = sanitizeOfficeMessage(msg, "agent.completed");
+  assert.equal(result, msg, `safe message preserved: "${msg}"`);
+}
+
+// Test: $ symbol with amount is sanitized
+const dollarMsg = sanitizeOfficeMessage("$0.01 per citation", "agent.completed");
+expectOfficeMessageToBeNonMonetary(dollarMsg);
+
+// Test: payment.amountUsdc remains unchanged in event data (data layer preserved)
+const x402Event = event({
+  sequence: 300,
+  agentId: "payment_decider",
+  type: "x402.settled",
+  status: "settling",
+  payment: { amountUsdc: "0.000001", status: "settled", txHash: "0xabc123" },
+  message: "0.000001 USDC",
+});
+const sanitizedEvent = (await import("../lib/paylabs/office/sanitizer")).sanitizeOfficeEvent(x402Event);
+expectOfficeMessageToBeNonMonetary(sanitizedEvent.message);
+assert.equal(sanitizedEvent.payment?.amountUsdc, "0.000001", "payment.amountUsdc preserved after sanitization");
+assert.equal(sanitizedEvent.payment?.txHash, "0xabc123", "payment.txHash preserved after sanitization");
+
+// Test: metadata monetary fields are not mutated by sanitization
+const metaEvent = event({
+  sequence: 301,
+  agentId: "creator_payout_router",
+  type: "treasury.retained",
+  status: "settling",
+  message: "0.005 USDC retained in treasury reserve",
+  metadata: { pendingReserveUsdc: 0.005, costUsdc: 0.01 },
+});
+const sanitizedMetaEvent = (await import("../lib/paylabs/office/sanitizer")).sanitizeOfficeEvent(metaEvent);
+expectOfficeMessageToBeNonMonetary(sanitizedMetaEvent.message);
+assert.equal((sanitizedMetaEvent.metadata as Record<string, unknown>)?.pendingReserveUsdc, 0.005, "metadata.pendingReserveUsdc preserved");
+assert.equal((sanitizedMetaEvent.metadata as Record<string, unknown>)?.costUsdc, 0.01, "metadata.costUsdc preserved");
+
+// Test: null/undefined messages pass through
+assert.equal(sanitizeOfficeMessage(null, "agent.completed"), null, "null message passes through");
+assert.equal(sanitizeOfficeMessage(undefined, "agent.completed"), null, "undefined message passes through as null");
+assert.equal(sanitizeDisplayMessage(null), null, "null display message passes through");
+assert.equal(sanitizeDisplayMessage(undefined), null, "undefined display message passes through as null");
+
+// Test: PixelAgent source imports sanitizer
+assert.ok(agentSource.includes("sanitizeDisplayMessage"), "PixelAgent imports sanitizeDisplayMessage");
+assert.ok(agentSource.includes("displayMessage"), "PixelAgent uses sanitized displayMessage for bubble");
+
+// Test: sanitizer source file exists and exports expected functions
+import { readFileSync as readSync } from "node:fs";
+const sanitizerSource = readSync(
+  new URL("../lib/paylabs/office/sanitizer.ts", import.meta.url),
+  "utf-8",
+);
+assert.ok(sanitizerSource.includes("sanitizeOfficeMessage"), "sanitizer exports sanitizeOfficeMessage");
+assert.ok(sanitizerSource.includes("sanitizeOfficeEvent"), "sanitizer exports sanitizeOfficeEvent");
+assert.ok(sanitizerSource.includes("sanitizeDisplayMessage"), "sanitizer exports sanitizeDisplayMessage");
+assert.ok(!sanitizerSource.includes("createClient"), "sanitizer has no Supabase dependency (pure function)");
+
+// Test: server.ts imports sanitizer
+const serverSource = readSync(
+  new URL("../lib/paylabs/office/server.ts", import.meta.url),
+  "utf-8",
+);
+assert.ok(serverSource.includes('from "./sanitizer"'), "server.ts imports from sanitizer");
+assert.ok(serverSource.includes("sanitizeOfficeEvent"), "server.ts uses sanitizeOfficeEvent at emission boundary");
+
 console.log("PayLabs office tests passed");

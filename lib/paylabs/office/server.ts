@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import type { PayLabsOfficeEvent } from "./types";
+import { sanitizeOfficeEvent } from "./sanitizer";
 
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -54,7 +55,7 @@ export async function safeEmitOfficeEvent(
   input: Omit<PayLabsOfficeEvent, "id" | "sequence" | "createdAt">,
 ): Promise<void> {
   try {
-    await emitOfficeEvent(input);
+    await emitOfficeEvent(sanitizeOfficeEvent(input));
   } catch (error) {
     console.error("[paylabs-office-event]", boundedError(error));
   }
