@@ -1948,14 +1948,14 @@ console.log("ALL PR #171 TESTS PASSED");
   // Test: S-NODE station remains exactly (485,436)
   assert.deepEqual(OFFICE_MACRO_AGENTS.settlement_memory.station, { x: 485, y: 436 }, "S-NODE station unchanged");
 
-  // Test: D brainApproach equals (398,300)
-  assert.deepEqual(OFFICE_MACRO_AGENTS.discovery_planner.brainApproach, { x: 398, y: 300 }, "D brainApproach is (398,300)");
+  // Test: D brainApproach equals (398,308)
+  assert.deepEqual(OFFICE_MACRO_AGENTS.discovery_planner.brainApproach, { x: 398, y: 308 }, "D brainApproach is (398,308)");
 
-  // Test: P brainApproach equals (430,300)
-  assert.deepEqual(OFFICE_MACRO_AGENTS.payment_decision.brainApproach, { x: 430, y: 300 }, "P brainApproach is (430,300)");
+  // Test: P brainApproach equals (438,330)
+  assert.deepEqual(OFFICE_MACRO_AGENTS.payment_decision.brainApproach, { x: 438, y: 330 }, "P brainApproach is (438,330)");
 
-  // Test: S brainApproach equals (398,439)
-  assert.deepEqual(OFFICE_MACRO_AGENTS.settlement_memory.brainApproach, { x: 398, y: 439 }, "S brainApproach is (398,439)");
+  // Test: S brainApproach equals (394,432)
+  assert.deepEqual(OFFICE_MACRO_AGENTS.settlement_memory.brainApproach, { x: 394, y: 432 }, "S brainApproach is (394,432)");
 
   // Test: Brain desk remains exactly (150,10)
   assert.deepEqual(OFFICE_AGENTS.brain_planner.desk, { x: 150, y: 10 }, "Brain desk remains (150,10)");
