@@ -246,6 +246,18 @@ graph TD
     linkStyle 24 stroke:transparent,stroke-width:0px,color:transparent;
 ```
 
+## PayLabs Agent Office
+
+Watch PayLabs agents coordinate tasks, move between service desks, process payments, and complete jobs through the live office runtime.
+
+<p align="center">
+  <img
+    src="https://i.imgur.com/4ZxUGHK.gif"
+    alt="PayLabs Agent Office runtime demo"
+    width="900"
+  />
+</p>
+
 
 `x402 Macro Edge`
 = Paid orchestration transition between macro node phases.
