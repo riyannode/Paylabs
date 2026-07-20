@@ -34,6 +34,8 @@ import {
 import type { X402CallResult } from "@/lib/paylabs/delegated-runtime/locked-orchestration";
 import { resolvePaylabsAppUrl, resolvePublicAppUrl } from "@/lib/paylabs/runtime/resolve-app-url";
 import { randomUUID } from "node:crypto";
+import { isOfficeMacroAgentId } from "@/lib/paylabs/office/registry";
+import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
 
 // ─── Local helpers (same as inline/route.ts) ─────────────────
 
@@ -41,6 +43,114 @@ function resolveAppUrl(): string {
   const { baseUrl } = resolvePaylabsAppUrl();
   return baseUrl;
 }
+/**
+ * Best-effort deduped Brain macro visit event emission.
+ * Validates targetMacroNode, checks existing event history, emits once.
+ * Never blocks payment or macro execution on failure.
+ */
+async function emitBrainMacroVisitOnce(
+  discoveryRunId: string,
+  targetMacroNode: string,
+): Promise<void> {
+  if (!isOfficeMacroAgentId(targetMacroNode)) return;
+  try {
+    const supabase = (await import("@/lib/paylabs/db/server")).supabaseAdmin();
+    const { data: existingEvents, error: lookupError } = await supabase
+      .from("paylabs_office_events")
+      .select("id")
+      .eq("run_id", discoveryRunId)
+      .eq("agent_id", "brain_planner")
+      .eq("event_type", "phase.started")
+      .eq("phase", targetMacroNode)
+      .limit(1);
+
+    if (lookupError) {
+      console.warn("[execute_locked] Brain visit dedupe lookup failed; skipping visualization", {
+        discoveryRunId,
+        targetMacroNode,
+        error: lookupError.message.slice(0, 120),
+      });
+      return;
+    }
+
+    if (existingEvents && existingEvents.length > 0) return;
+
+    await safeEmitOfficeEvent({
+      runId: discoveryRunId,
+      type: "phase.started",
+      agentId: "brain_planner",
+      phase: targetMacroNode as import("@/lib/paylabs/office/types").OfficePhase,
+      status: "planning",
+      title: `Brain visiting ${targetMacroNode}`,
+      message: null,
+      metadata: {
+        targetMacroNode,
+        stage: "locked_macro_execution",
+      },
+    });
+  } catch (error) {
+    console.error("[execute_locked] brain macro visit emit failed (best-effort)", {
+      discoveryRunId,
+      targetMacroNode,
+      error: error instanceof Error ? error.message.slice(0, 120) : String(error).slice(0, 120),
+    });
+  }
+}
+
+/**
+ * Best-effort deduped Brain terminal event for locked macro execution.
+ * Uses metadata.stage = "locked_macro_execution" to distinguish from route-preflight events.
+ */
+async function emitBrainTerminalOnce(
+  discoveryRunId: string,
+  eventType: "agent.completed" | "agent.failed",
+  status: "completed" | "failed",
+  title: string,
+  message: string,
+): Promise<void> {
+  try {
+    const supabase = (await import("@/lib/paylabs/db/server")).supabaseAdmin();
+    const { data: existingEvents, error: lookupError } = await supabase
+      .from("paylabs_office_events")
+      .select("id")
+      .eq("run_id", discoveryRunId)
+      .eq("agent_id", "brain_planner")
+      .in("event_type", ["agent.completed", "agent.failed"])
+      .like("metadata->>stage", "locked_macro_execution")
+      .limit(1);
+
+    if (lookupError) {
+      console.warn("[execute_locked] Brain terminal dedupe lookup failed; skipping visualization", {
+        discoveryRunId,
+        eventType,
+        error: lookupError.message.slice(0, 120),
+      });
+      return;
+    }
+
+    if (existingEvents && existingEvents.length > 0) return;
+
+    await safeEmitOfficeEvent({
+      runId: discoveryRunId,
+      type: eventType,
+      agentId: "brain_planner",
+      phase: "brain",
+      status,
+      title,
+      message,
+      metadata: {
+        stage: "locked_macro_execution",
+      },
+    });
+  } catch (error) {
+    console.error("[execute_locked] brain terminal event emit failed (best-effort)", {
+      discoveryRunId,
+      eventType,
+      error: error instanceof Error ? error.message.slice(0, 120) : String(error).slice(0, 120),
+    });
+  }
+}
+
 
 async function callMacroNodeX402(
   dcwSigner: import("@/lib/paylabs/x402/buyer-transport").DcwSigner,
@@ -56,6 +166,12 @@ async function callMacroNodeX402(
 ): Promise<X402CallResult> {
   const { callPaidSeller } = await import("@/lib/paylabs/x402/buyer-transport");
   const base = resolveAppUrl();
+
+  // ── Brain macro visit visualization (best-effort, before payment) ──
+  if (isOfficeMacroAgentId(nodeName)) {
+    await emitBrainMacroVisitOnce(body.discoveryRunId, nodeName);
+  }
+
   const result = await callPaidSeller(dcwSigner, {
     sellerUrl: `${base}/api/paylabs/macro-nodes/${nodeName}/run`,
     method: "POST",
@@ -598,18 +714,50 @@ export async function POST(req: NextRequest) {
     const dcwSigner = createDcwSigner();
 
     // ── Run locked macro-node pipeline ──────────────────────
-    const { output: result } = await executeLockedMacroNodePipeline({
-      discoveryRunId,
-      userGoal: resolvedGoal,
-      userWallet: resolvedWallet,
-      userBudgetUsdc: resolvedBudget,
-      lockedTier,
-      lockedPlan,
-      brainData: brainFields,
-      dcwSigner,
-      callMacroNode: callMacroNodeX402,
-      buildOutput: buildLockedOutput,
-    });
+    let result: import("@/lib/paylabs/delegated-runtime/types").OrchestratorOutput;
+    try {
+      ({ output: result } = await executeLockedMacroNodePipeline({
+        discoveryRunId,
+        userGoal: resolvedGoal,
+        userWallet: resolvedWallet,
+        userBudgetUsdc: resolvedBudget,
+        lockedTier,
+        lockedPlan,
+        brainData: brainFields,
+        dcwSigner,
+        callMacroNode: callMacroNodeX402,
+        buildOutput: buildLockedOutput,
+      }));
+    } catch (pipelineError) {
+      // Emit Brain failed terminal event, then re-throw
+      await emitBrainTerminalOnce(
+        discoveryRunId,
+        "agent.failed",
+        "failed",
+        "Brain macro execution failed",
+        "Macro execution failed",
+      );
+      throw pipelineError;
+    }
+
+    // ── Brain terminal event for locked execution ──────────
+    if (result.status === "completed") {
+      await emitBrainTerminalOnce(
+        discoveryRunId,
+        "agent.completed",
+        "completed",
+        "Brain macro execution completed",
+        "Macro execution completed",
+      );
+    } else {
+      await emitBrainTerminalOnce(
+        discoveryRunId,
+        "agent.failed",
+        "failed",
+        "Brain macro execution failed",
+        "Macro execution failed",
+      );
+    }
 
     // ── Prepend controller→brain edge (execution parity with old inline) ──
     // Old inline payment graph: controller → brain → macro-node → child service

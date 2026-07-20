@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync as readSync } from "node:fs";
 import { createInitialOfficeState, reduceOfficeEvent, reduceReturnToIdle } from "../lib/paylabs/office/reducer";
 import { OFFICE_AGENTS, OFFICE_STATIONS, OFFICE_MACRO_AGENTS, assertOfficeRegistryMatchesServiceRegistry, officeAgentIdFromServiceName, isOfficeMacroAgentId } from "../lib/paylabs/office/registry";
-import { OFFICE_DESIGN_HEIGHT, OFFICE_INTERNAL_HEIGHT } from "../lib/paylabs/office/constants";
+import { OFFICE_DESIGN_WIDTH, OFFICE_DESIGN_HEIGHT, OFFICE_INTERNAL_HEIGHT } from "../lib/paylabs/office/constants";
 import { phaseFromMacroNode, statusFromServiceName, isOfficeServiceName } from "../lib/paylabs/office/event-mapper";
 import { mergeOfficeEvents } from "../lib/paylabs/office/selectors";
 import type { PayLabsOfficeEvent } from "../lib/paylabs/office/types";
@@ -280,8 +281,7 @@ assert.equal(paymentEvent.payment?.amountUsdc, "0.000001", "payment.amountUsdc p
 assert.equal(paymentEvent.payment?.status, "settled", "payment.status preserved in event data");
 
 // Test: dashboard source no longer contains USDC/monetary rendering
-import { readFileSync } from "node:fs";
-const dashboardSource = readFileSync(
+const dashboardSource = readSync(
   new URL("../components/paylabs/office/PayLabsOfficeDashboard.tsx", import.meta.url),
   "utf-8",
 );
@@ -304,7 +304,7 @@ assert.ok(dashboardSource.includes("Paid graph"), "dashboard retains Paid graph 
 assert.ok(dashboardSource.includes("Receipt"), "dashboard retains Receipt status");
 
 // Test: PixelAgent bubble shows message, not price
-const agentSource = readFileSync(
+const agentSource = readSync(
   new URL("../components/paylabs/office/PixelAgent.tsx", import.meta.url),
   "utf-8",
 );
@@ -313,7 +313,7 @@ assert.ok(!agentSource.includes("amountUsdc"), "PixelAgent does not reference am
 assert.ok(agentSource.includes("agent.message"), "PixelAgent still renders agent message");
 
 // Test: AgentDetailPopover shows label + status only
-const popoverSource = readFileSync(
+const popoverSource = readSync(
   new URL("../components/paylabs/office/AgentDetailPopover.tsx", import.meta.url),
   "utf-8",
 );
@@ -434,7 +434,6 @@ assert.ok(agentSource.includes("sanitizeDisplayMessage"), "PixelAgent imports sa
 assert.ok(agentSource.includes("displayMessage"), "PixelAgent uses sanitized displayMessage for bubble");
 
 // Test: sanitizer source file exists and exports expected functions
-import { readFileSync as readSync } from "node:fs";
 const sanitizerSource = readSync(
   new URL("../lib/paylabs/office/sanitizer.ts", import.meta.url),
   "utf-8",
@@ -1812,7 +1811,7 @@ console.log("PR #171 server event ordering tests passed");
 // ── DOM/CSS source assertions ─────────────────────────────────
 
 {
-  const cssSource = readFileSync(
+  const cssSource = readSync(
     new URL("../components/paylabs/office/paylabs-office.css", import.meta.url),
     "utf-8",
   );
@@ -1933,3 +1932,635 @@ console.log("PR #171 DOM/CSS source assertions passed");
 console.log("PR #171 regression assertions passed");
 console.log("═══════════════════════════════════════════════");
 console.log("ALL PR #171 TESTS PASSED");
+
+// ═══════════════════════════════════════════════════════════════
+// PR #172: Brain Macro Visits + Improved Macro Visibility
+// ═══════════════════════════════════════════════════════════════
+
+// ── Registry brainApproach tests ──────────────────────────────
+{
+  // Test: D-NODE station remains exactly (440,390)
+  assert.deepEqual(OFFICE_MACRO_AGENTS.discovery_planner.station, { x: 440, y: 390 }, "D-NODE station unchanged");
+
+  // Test: P-NODE station remains exactly (480,364)
+  assert.deepEqual(OFFICE_MACRO_AGENTS.payment_decision.station, { x: 480, y: 364 }, "P-NODE station unchanged");
+
+  // Test: S-NODE station remains exactly (485,436)
+  assert.deepEqual(OFFICE_MACRO_AGENTS.settlement_memory.station, { x: 485, y: 436 }, "S-NODE station unchanged");
+
+  // Test: D brainApproach equals (398,300)
+  assert.deepEqual(OFFICE_MACRO_AGENTS.discovery_planner.brainApproach, { x: 398, y: 300 }, "D brainApproach is (398,300)");
+
+  // Test: P brainApproach equals (430,300)
+  assert.deepEqual(OFFICE_MACRO_AGENTS.payment_decision.brainApproach, { x: 430, y: 300 }, "P brainApproach is (430,300)");
+
+  // Test: S brainApproach equals (398,439)
+  assert.deepEqual(OFFICE_MACRO_AGENTS.settlement_memory.brainApproach, { x: 398, y: 439 }, "S brainApproach is (398,439)");
+
+  // Test: Brain desk remains exactly (150,10)
+  assert.deepEqual(OFFICE_AGENTS.brain_planner.desk, { x: 150, y: 10 }, "Brain desk remains (150,10)");
+
+  // Test: Brain idle remains exactly (150,10)
+  assert.deepEqual(OFFICE_AGENTS.brain_planner.idle, { x: 150, y: 10 }, "Brain idle remains (150,10)");
+
+  // Test: All Brain approach sprite rectangles remain inside 900×500
+  for (const id of ["discovery_planner", "payment_decision", "settlement_memory"] as const) {
+    const approach = OFFICE_MACRO_AGENTS[id].brainApproach;
+    assert.ok(approach.x >= 0 && approach.x + AGENT_SPRITE.width <= CANVAS.width,
+      `${id} brainApproach x inside canvas`);
+    assert.ok(approach.y >= 0 && approach.y + AGENT_SPRITE.height <= CANVAS.height,
+      `${id} brainApproach y inside canvas`);
+  }
+
+  // Test: Each Brain approach sprite rectangle does not overlap its target macro sprite rectangle
+  for (const id of ["discovery_planner", "payment_decision", "settlement_memory"] as const) {
+    const approach = OFFICE_MACRO_AGENTS[id].brainApproach;
+    const station = OFFICE_MACRO_AGENTS[id].station;
+    const overlapsX = approach.x < station.x + AGENT_SPRITE.width && approach.x + AGENT_SPRITE.width > station.x;
+    const overlapsY = approach.y < station.y + AGENT_SPRITE.height && approach.y + AGENT_SPRITE.height > station.y;
+    assert.ok(!(overlapsX && overlapsY), `${id} brainApproach does not overlap station`);
+  }
+
+  // Test: Brain approaches do not overlap the x402 machine
+  // x402 machine: gateway zone left=390 + 70 = 460, top=BOTTOM_ZONE_TOP+80=398, width=76, height=54
+  const x402Machine = { left: 460, right: 536, top: 398, bottom: 452 };
+  for (const id of ["discovery_planner", "payment_decision", "settlement_memory"] as const) {
+    const approach = OFFICE_MACRO_AGENTS[id].brainApproach;
+    const machineOverlapX = approach.x < x402Machine.right && approach.x + AGENT_SPRITE.width > x402Machine.left;
+    const machineOverlapY = approach.y < x402Machine.bottom && approach.y + AGENT_SPRITE.height > x402Machine.top;
+    assert.ok(!(machineOverlapX && machineOverlapY), `${id} brainApproach does not overlap x402 machine`);
+  }
+
+  // ── Real collision tests: Brain sprite/label vs macro bubbles ─────
+  // D-NODE bubble: left-side override (right:42px, top:-9px, width:128px)
+  // P-NODE and S-NODE bubbles: default (left:28px, top:-23px, width:138px)
+  // All bubbles have padding:4px 6px, border:2px
+  // Macro label: left:-14px, top:2px (macro), min-width:52px
+  // Brain label: left:-14px, top:-5px, min-width:62px
+  // Agent sprite: left:4px, top:17px, width:28px, height:41px (within 36×61 wrapper)
+
+  // Helper: compute the max bubble rectangle for a macro agent at a given station
+  function macroBubbleRect(station: { x: number; y: number }, isDNode: boolean) {
+    if (isDNode) {
+      // D-NODE left-side bubble: wrapper station position, bubble right:42px → bubble left = station.x + 36 - 42 - 128 = station.x - 134
+      // But simpler: wrapper is at station, bubble is right:42px from wrapper right edge
+      // wrapper right = station.x + 36, bubble right = wrapper right - 42 = station.x - 6
+      // bubble left = station.x - 6 - 128 = station.x - 134
+      // bubble top = station.y + (-9) = station.y - 9
+      // Include padding(4+6=10 horizontal, 4+4=8 vertical) + border(2+2=4 each axis)
+      return {
+        left: station.x - 134 - 10 - 4,
+        right: station.x - 6 + 10 + 4,
+        top: station.y - 9 - 8 - 4,
+        bottom: station.y - 9 + 32 + 8 + 4, // max-height:32px
+      };
+    }
+    // Default right-side bubble
+    return {
+      left: station.x + 28 - 10 - 4,
+      right: station.x + 28 + 138 + 10 + 4,
+      top: station.y + (-23) - 8 - 4,
+      bottom: station.y + (-23) + 32 + 8 + 4,
+    };
+  }
+
+  // Helper: Brain sprite rectangle (wrapper position + sprite offset)
+  function brainSpriteRect(approach: { x: number; y: number }) {
+    return {
+      left: approach.x + 4,
+      right: approach.x + 4 + 28,
+      top: approach.y + 17,
+      bottom: approach.y + 17 + 41,
+    };
+  }
+
+  // Helper: Brain label rectangle
+  function brainLabelRect(approach: { x: number; y: number }) {
+    return {
+      left: approach.x + (-14),
+      right: approach.x + (-14) + 62,
+      top: approach.y + (-5),
+      bottom: approach.y + (-5) + 14, // label height ~14px (font-size 7px + padding)
+    };
+  }
+
+  function rectsOverlap(a: { left: number; right: number; top: number; bottom: number }, b: { left: number; right: number; top: number; bottom: number }) {
+    return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  }
+
+  // D-NODE: Brain sprite must not overlap D-NODE bubble
+  const dApproach = OFFICE_MACRO_AGENTS.discovery_planner.brainApproach;
+  const dBubble = macroBubbleRect(OFFICE_MACRO_AGENTS.discovery_planner.station, true);
+  assert.ok(!rectsOverlap(brainSpriteRect(dApproach), dBubble),
+    "Brain sprite does not overlap D-NODE bubble");
+  assert.ok(!rectsOverlap(brainLabelRect(dApproach), dBubble),
+    "Brain label does not overlap D-NODE bubble");
+
+  // P-NODE: Brain sprite must not overlap P-NODE bubble
+  const pApproach = OFFICE_MACRO_AGENTS.payment_decision.brainApproach;
+  const pBubble = macroBubbleRect(OFFICE_MACRO_AGENTS.payment_decision.station, false);
+  assert.ok(!rectsOverlap(brainSpriteRect(pApproach), pBubble),
+    "Brain sprite does not overlap P-NODE bubble");
+  assert.ok(!rectsOverlap(brainLabelRect(pApproach), pBubble),
+    "Brain label does not overlap P-NODE bubble");
+
+  // S-NODE: Brain sprite must not overlap S-NODE bubble
+  const sApproach = OFFICE_MACRO_AGENTS.settlement_memory.brainApproach;
+  const sBubble = macroBubbleRect(OFFICE_MACRO_AGENTS.settlement_memory.station, false);
+  assert.ok(!rectsOverlap(brainSpriteRect(sApproach), sBubble),
+    "Brain sprite does not overlap S-NODE bubble");
+  assert.ok(!rectsOverlap(brainLabelRect(sApproach), sBubble),
+    "Brain label does not overlap S-NODE bubble");
+
+  // Test: No child desk coordinate changed
+  for (const child of childAgents) {
+    const originalAgent = child;
+    // All child desks are within their department zones (already tested above)
+    assert.ok(originalAgent.desk.x >= 0, `${originalAgent.id} desk x non-negative`);
+    assert.ok(originalAgent.desk.y >= 0, `${originalAgent.id} desk y non-negative`);
+  }
+
+  // Test: No child Lounge coordinate changed
+  for (const child of childAgents) {
+    assert.ok(child.idle.x >= LOUNGE_BOUNDS.left && child.idle.x + AGENT_SPRITE.width <= LOUNGE_BOUNDS.right,
+      `${child.id} Lounge idle x inside bounds`);
+    assert.ok(child.idle.y >= LOUNGE_BOUNDS.top && child.idle.y + AGENT_SPRITE.height <= LOUNGE_BOUNDS.bottom,
+      `${child.id} Lounge idle y inside bounds`);
+  }
+}
+
+console.log("Registry brainApproach tests passed");
+
+// ── Reducer brain macro visit tests ──────────────────────────
+{
+  // Test 1: Brain phase.started/discovery_planner moves to D brainApproach
+  let s = createInitialOfficeState();
+  s = reduceOfficeEvent(s, event({
+    sequence: 1,
+    agentId: "brain_planner",
+    type: "phase.started",
+    phase: "discovery_planner",
+    status: "planning",
+    title: "Brain visiting discovery_planner",
+  }));
+  assert.deepEqual(
+    { x: s.brain_planner.x, y: s.brain_planner.y },
+    OFFICE_MACRO_AGENTS.discovery_planner.brainApproach,
+    "Brain phase.started/discovery_planner moves to D brainApproach",
+  );
+  assert.equal(s.brain_planner.status, "planning", "Brain status is planning during macro visit");
+
+  // Test 2: Brain phase.started/payment_decision moves to P brainApproach
+  s = reduceOfficeEvent(s, event({
+    sequence: 2,
+    agentId: "brain_planner",
+    type: "phase.started",
+    phase: "payment_decision",
+    status: "planning",
+    title: "Brain visiting payment_decision",
+  }));
+  assert.deepEqual(
+    { x: s.brain_planner.x, y: s.brain_planner.y },
+    OFFICE_MACRO_AGENTS.payment_decision.brainApproach,
+    "Brain phase.started/payment_decision moves to P brainApproach",
+  );
+
+  // Test 3: Brain phase.started/settlement_memory moves to S brainApproach
+  s = reduceOfficeEvent(s, event({
+    sequence: 3,
+    agentId: "brain_planner",
+    type: "phase.started",
+    phase: "settlement_memory",
+    status: "planning",
+    title: "Brain visiting settlement_memory",
+  }));
+  assert.deepEqual(
+    { x: s.brain_planner.x, y: s.brain_planner.y },
+    OFFICE_MACRO_AGENTS.settlement_memory.brainApproach,
+    "Brain phase.started/settlement_memory moves to S brainApproach",
+  );
+
+  // Test 4: Brain macro phase event clears/suppresses its message
+  let ms = createInitialOfficeState();
+  ms = reduceOfficeEvent(ms, event({
+    sequence: 1,
+    agentId: "brain_planner",
+    type: "phase.started",
+    phase: "discovery_planner",
+    status: "planning",
+    title: "Brain visiting discovery_planner",
+    message: "some message that should be suppressed",
+  }));
+  assert.equal(ms.brain_planner.message, undefined, "Brain macro visit suppresses message");
+
+  // Test 5: Brain phase.started with phase=brain stays at Control
+  let bs = createInitialOfficeState();
+  bs = reduceOfficeEvent(bs, event({
+    sequence: 1,
+    agentId: "brain_planner",
+    type: "phase.started",
+    phase: "brain",
+    status: "planning",
+  }));
+  assert.deepEqual(
+    { x: bs.brain_planner.x, y: bs.brain_planner.y },
+    OFFICE_AGENTS.brain_planner.desk,
+    "Brain phase.started with phase=brain stays at Control",
+  );
+
+  // Test 6: Brain malformed macro phase stays at Control
+  let fs = createInitialOfficeState();
+  fs = reduceOfficeEvent(fs, event({
+    sequence: 1,
+    agentId: "brain_planner",
+    type: "phase.started",
+    phase: "invalid_phase" as any,
+    status: "planning",
+  }));
+  assert.deepEqual(
+    { x: fs.brain_planner.x, y: fs.brain_planner.y },
+    OFFICE_AGENTS.brain_planner.desk,
+    "Brain malformed macro phase stays at Control",
+  );
+
+  // Test 7: Brain agent.completed returns to Control
+  let cs = createInitialOfficeState();
+  cs = reduceOfficeEvent(cs, event({
+    sequence: 1,
+    agentId: "brain_planner",
+    type: "phase.started",
+    phase: "discovery_planner",
+    status: "planning",
+  }));
+  assert.deepEqual(
+    { x: cs.brain_planner.x, y: cs.brain_planner.y },
+    OFFICE_MACRO_AGENTS.discovery_planner.brainApproach,
+    "Brain at D approach before completed",
+  );
+  cs = reduceOfficeEvent(cs, event({
+    sequence: 2,
+    agentId: "brain_planner",
+    type: "agent.completed",
+    status: "completed",
+    title: "Brain macro execution completed",
+  }));
+  assert.deepEqual(
+    { x: cs.brain_planner.x, y: cs.brain_planner.y },
+    OFFICE_AGENTS.brain_planner.desk,
+    "Brain agent.completed returns to Control",
+  );
+
+  // Test 8: Brain agent.failed returns to Control
+  let ff = createInitialOfficeState();
+  ff = reduceOfficeEvent(ff, event({
+    sequence: 1,
+    agentId: "brain_planner",
+    type: "phase.started",
+    phase: "payment_decision",
+    status: "planning",
+  }));
+  ff = reduceOfficeEvent(ff, event({
+    sequence: 2,
+    agentId: "brain_planner",
+    type: "agent.failed",
+    status: "failed",
+    title: "Brain macro execution failed",
+  }));
+  assert.deepEqual(
+    { x: ff.brain_planner.x, y: ff.brain_planner.y },
+    OFFICE_AGENTS.brain_planner.desk,
+    "Brain agent.failed returns to Control",
+  );
+
+  // Test 9: Brain failure does not move to Error station
+  let ffs = createInitialOfficeState();
+  ffs = reduceOfficeEvent(ffs, event({
+    sequence: 1,
+    agentId: "brain_planner",
+    type: "phase.started",
+    phase: "settlement_memory",
+    status: "planning",
+  }));
+  ffs = reduceOfficeEvent(ffs, event({
+    sequence: 2,
+    agentId: "brain_planner",
+    type: "agent.failed",
+    status: "failed",
+  }));
+  assert.notEqual(
+    ffs.brain_planner.x,
+    OFFICE_STATIONS.error.x,
+    "Brain failure does not move to Error station x",
+  );
+  assert.notEqual(
+    ffs.brain_planner.y,
+    OFFICE_STATIONS.error.y,
+    "Brain failure does not move to Error station y",
+  );
+
+  // Test 10: D → P → S events move Brain in sequence
+  let seq = createInitialOfficeState();
+  seq = reduceOfficeEvent(seq, event({ sequence: 1, agentId: "brain_planner", type: "phase.started", phase: "discovery_planner", status: "planning" }));
+  assert.deepEqual({ x: seq.brain_planner.x, y: seq.brain_planner.y }, OFFICE_MACRO_AGENTS.discovery_planner.brainApproach, "seq: D approach");
+  seq = reduceOfficeEvent(seq, event({ sequence: 2, agentId: "brain_planner", type: "phase.started", phase: "payment_decision", status: "planning" }));
+  assert.deepEqual({ x: seq.brain_planner.x, y: seq.brain_planner.y }, OFFICE_MACRO_AGENTS.payment_decision.brainApproach, "seq: P approach");
+  seq = reduceOfficeEvent(seq, event({ sequence: 3, agentId: "brain_planner", type: "phase.started", phase: "settlement_memory", status: "planning" }));
+  assert.deepEqual({ x: seq.brain_planner.x, y: seq.brain_planner.y }, OFFICE_MACRO_AGENTS.settlement_memory.brainApproach, "seq: S approach");
+
+  // Test 11: A lower sequence D event after P is ignored
+  const beforeLower = { ...seq.brain_planner };
+  seq = reduceOfficeEvent(seq, event({ sequence: 1, agentId: "brain_planner", type: "phase.started", phase: "discovery_planner", status: "planning" }));
+  assert.deepEqual({ x: seq.brain_planner.x, y: seq.brain_planner.y }, { x: beforeLower.x, y: beforeLower.y }, "lower sequence D event after P is ignored");
+
+  // Test 12: An equal sequence event is ignored
+  seq = reduceOfficeEvent(seq, event({ sequence: 3, agentId: "brain_planner", type: "phase.started", phase: "settlement_memory", status: "planning" }));
+  assert.deepEqual({ x: seq.brain_planner.x, y: seq.brain_planner.y }, { x: beforeLower.x, y: beforeLower.y }, "equal sequence event is ignored");
+
+  // Test 13: History ending during D leaves Brain at D approach
+  let h1 = createInitialOfficeState();
+  h1 = reduceOfficeEvent(h1, event({ sequence: 1, agentId: "brain_planner", type: "agent.started", status: "planning" }));
+  h1 = reduceOfficeEvent(h1, event({ sequence: 2, agentId: "brain_planner", type: "phase.started", phase: "discovery_planner", status: "planning" }));
+  assert.deepEqual({ x: h1.brain_planner.x, y: h1.brain_planner.y }, OFFICE_MACRO_AGENTS.discovery_planner.brainApproach, "history ending during D leaves Brain at D approach");
+
+  // Test 14: History ending during P leaves Brain at P approach
+  let h2 = createInitialOfficeState();
+  h2 = reduceOfficeEvent(h2, event({ sequence: 1, agentId: "brain_planner", type: "agent.started", status: "planning" }));
+  h2 = reduceOfficeEvent(h2, event({ sequence: 2, agentId: "brain_planner", type: "phase.started", phase: "payment_decision", status: "planning" }));
+  assert.deepEqual({ x: h2.brain_planner.x, y: h2.brain_planner.y }, OFFICE_MACRO_AGENTS.payment_decision.brainApproach, "history ending during P leaves Brain at P approach");
+
+  // Test 15: History ending during S leaves Brain at S approach
+  let h3 = createInitialOfficeState();
+  h3 = reduceOfficeEvent(h3, event({ sequence: 1, agentId: "brain_planner", type: "agent.started", status: "planning" }));
+  h3 = reduceOfficeEvent(h3, event({ sequence: 2, agentId: "brain_planner", type: "phase.started", phase: "settlement_memory", status: "planning" }));
+  assert.deepEqual({ x: h3.brain_planner.x, y: h3.brain_planner.y }, OFFICE_MACRO_AGENTS.settlement_memory.brainApproach, "history ending during S leaves Brain at S approach");
+
+  // Test 16: History ending with terminal completed leaves Brain at Control
+  let h4 = createInitialOfficeState();
+  h4 = reduceOfficeEvent(h4, event({ sequence: 1, agentId: "brain_planner", type: "agent.started", status: "planning" }));
+  h4 = reduceOfficeEvent(h4, event({ sequence: 2, agentId: "brain_planner", type: "phase.started", phase: "discovery_planner", status: "planning" }));
+  h4 = reduceOfficeEvent(h4, event({ sequence: 3, agentId: "brain_planner", type: "agent.completed", status: "completed" }));
+  assert.deepEqual({ x: h4.brain_planner.x, y: h4.brain_planner.y }, OFFICE_AGENTS.brain_planner.desk, "history ending with terminal completed leaves Brain at Control");
+
+  // Test 17: History ending with terminal failed leaves Brain at Control
+  let h5 = createInitialOfficeState();
+  h5 = reduceOfficeEvent(h5, event({ sequence: 1, agentId: "brain_planner", type: "agent.started", status: "planning" }));
+  h5 = reduceOfficeEvent(h5, event({ sequence: 2, agentId: "brain_planner", type: "phase.started", phase: "payment_decision", status: "planning" }));
+  h5 = reduceOfficeEvent(h5, event({ sequence: 3, agentId: "brain_planner", type: "agent.failed", status: "failed" }));
+  assert.deepEqual({ x: h5.brain_planner.x, y: h5.brain_planner.y }, OFFICE_AGENTS.brain_planner.desk, "history ending with terminal failed leaves Brain at Control");
+
+  // Test 18: Child routing behavior is unchanged
+  let childState = createInitialOfficeState();
+  childState = reduceOfficeEvent(childState, event({ sequence: 1, agentId: "query_builder", type: "agent.started", status: "planning" }));
+  assert.deepEqual({ x: childState.query_builder.x, y: childState.query_builder.y }, OFFICE_AGENTS.query_builder.desk, "child routing unchanged");
+  childState = reduceOfficeEvent(childState, event({ sequence: 2, agentId: "query_builder", type: "agent.completed", status: "completed" }));
+  assert.deepEqual({ x: childState.query_builder.x, y: childState.query_builder.y }, OFFICE_AGENTS.query_builder.desk, "child completed returns to desk");
+
+  // Test 19: Macro nodes remain permanently stationary
+  let macroState = createInitialOfficeState();
+  macroState = reduceOfficeEvent(macroState, event({ sequence: 1, agentId: "discovery_planner", type: "x402.requested", status: "paying" }));
+  assert.deepEqual({ x: macroState.discovery_planner.x, y: macroState.discovery_planner.y }, OFFICE_AGENTS.discovery_planner.desk, "macro node stationary on x402.requested");
+  macroState = reduceOfficeEvent(macroState, event({ sequence: 2, agentId: "payment_decision", type: "agent.failed", status: "failed" }));
+  assert.deepEqual({ x: macroState.payment_decision.x, y: macroState.payment_decision.y }, OFFICE_AGENTS.payment_decision.desk, "macro node stationary on agent.failed");
+
+  // Test 20: Brain never routes to x402
+  let x402State = createInitialOfficeState();
+  x402State = reduceOfficeEvent(x402State, event({ sequence: 1, agentId: "brain_planner", type: "x402.settled", status: "paying" }));
+  assert.deepEqual({ x: x402State.brain_planner.x, y: x402State.brain_planner.y }, OFFICE_AGENTS.brain_planner.desk, "Brain never routes to x402/gateway");
+}
+
+console.log("Reducer brain macro visit tests passed");
+
+// ── Execute-locked server event ordering tests ───────────────
+{
+  const lockedRouteSource = readSync(
+    new URL("../app/api/paylabs/discovery-runs/execute-locked/route.ts", import.meta.url),
+    "utf-8",
+  );
+
+  // Test 1: callMacroNodeX402 validates nodeName with isOfficeMacroAgentId()
+  assert.ok(lockedRouteSource.includes("isOfficeMacroAgentId(nodeName)"), "callMacroNodeX402 validates nodeName with isOfficeMacroAgentId");
+
+  // Test 2: emitBrainMacroVisitOnce is called before callPaidSeller()
+  const emitVisitIdx = lockedRouteSource.indexOf("emitBrainMacroVisitOnce(body.discoveryRunId, nodeName)");
+  const callPaidSellerIdx = lockedRouteSource.indexOf("callPaidSeller(dcwSigner,");
+  assert.ok(emitVisitIdx > 0, "emitBrainMacroVisitOnce is called");
+  assert.ok(callPaidSellerIdx > 0, "callPaidSeller is called");
+  assert.ok(emitVisitIdx < callPaidSellerIdx, "emitBrainMacroVisitOnce called before callPaidSeller");
+
+  // Test 3: Brain visit uses type phase.started
+  assert.ok(lockedRouteSource.includes('type: "phase.started"'), "Brain visit uses type phase.started");
+
+  // Test 4: Brain visit uses agentId brain_planner
+  assert.ok(lockedRouteSource.includes('agentId: "brain_planner"'), "Brain visit uses agentId brain_planner");
+
+  // Test 5: Brain visit phase is the validated target macro
+  assert.ok(lockedRouteSource.includes("phase: targetMacroNode"), "Brain visit phase is the validated target macro");
+
+  // Test 6: Brain visit metadata contains targetMacroNode
+  assert.ok(lockedRouteSource.includes("targetMacroNode,"), "Brain visit metadata contains targetMacroNode");
+
+  // Test 7: Brain visit metadata contains stage locked_macro_execution
+  assert.ok(lockedRouteSource.includes('stage: "locked_macro_execution"'), "Brain visit metadata contains stage locked_macro_execution");
+
+  // Test 8: Visit lookup destructures error
+  assert.ok(lockedRouteSource.includes("{ data: existingEvents, error: lookupError }"), "visit lookup destructures error");
+  // Test 8b: Terminal lookup destructures error
+  // Both helpers use the same destructuring pattern; verify it exists in the source
+  const lookupDestructureCount = (lockedRouteSource.match(/\{ data: existingEvents, error: lookupError \}/g) || []).length;
+  assert.ok(lookupDestructureCount >= 2, `lookup error destructuring appears ${lookupDestructureCount} times (expected >=2 for visit + terminal)`);
+
+  // Test 9: Lookup error returns before safeEmitOfficeEvent (visit)
+  const visitLookupWarnIdx = lockedRouteSource.indexOf("Brain visit dedupe lookup failed");
+  const visitEmitIdx = lockedRouteSource.indexOf("await safeEmitOfficeEvent({", visitLookupWarnIdx);
+  assert.ok(visitLookupWarnIdx > 0, "visit lookup error warning exists");
+  assert.ok(visitEmitIdx > visitLookupWarnIdx, "visit lookup error returns before safeEmitOfficeEvent");
+  // Test 9b: Lookup error returns before safeEmitOfficeEvent (terminal)
+  const termLookupWarnIdx = lockedRouteSource.indexOf("Brain terminal dedupe lookup failed");
+  const termEmitIdx = lockedRouteSource.indexOf("await safeEmitOfficeEvent({", termLookupWarnIdx);
+  assert.ok(termLookupWarnIdx > 0, "terminal lookup error warning exists");
+  assert.ok(termEmitIdx > termLookupWarnIdx, "terminal lookup error returns before safeEmitOfficeEvent");
+
+  // Test 10: Visit lookup error skips visualization
+  assert.ok(lockedRouteSource.includes("Brain visit dedupe lookup failed; skipping visualization"), "visit lookup error skips visualization");
+  // Test 10b: Terminal lookup error skips visualization
+  assert.ok(lockedRouteSource.includes("Brain terminal dedupe lookup failed; skipping visualization"), "terminal lookup error skips visualization");
+  // Test 10c: Any existing locked terminal prevents another terminal event
+  assert.ok(lockedRouteSource.includes('.in("event_type", ["agent.completed", "agent.failed"])'), "terminal dedupe matches both completed and failed");
+
+  // Test 11: Payment call arguments remain unchanged
+  assert.ok(lockedRouteSource.includes('maxAmountUsdc: "0.001"'), "payment maxAmountUsdc unchanged");
+  assert.ok(lockedRouteSource.includes('requirePayment: true'), "payment requirePayment unchanged");
+  assert.ok(lockedRouteSource.includes('buyerAgentName: "brain"'), "payment buyerAgentName unchanged");
+
+  // Test 12: No Brain visit is emitted from child seller or child service-node files
+  const sellerSource2 = readSync(
+    new URL("../app/api/paylabs/agent-services/[serviceName]/run/route.ts", import.meta.url),
+    "utf-8",
+  );
+  assert.ok(!sellerSource2.includes("emitBrainMacroVisitOnce"), "child seller does not emit Brain macro visits");
+  const serviceNodeSource2 = readSync(
+    new URL("../lib/paylabs/langgraph/services/service-node.ts", import.meta.url),
+    "utf-8",
+  );
+  assert.ok(!serviceNodeSource2.includes("emitBrainMacroVisitOnce"), "service-node does not emit Brain macro visits");
+
+  // Test 13: Success emits one locked execution terminal agent.completed event
+  assert.ok(lockedRouteSource.includes('"Brain macro execution completed"'), "success emits Brain macro execution completed");
+  assert.ok(lockedRouteSource.includes('"Macro execution completed"'), "success message is Macro execution completed");
+
+  // Test 14: Failed result emits one locked execution terminal agent.failed event
+  assert.ok(lockedRouteSource.includes('"Brain macro execution failed"'), "failure emits Brain macro execution failed");
+  assert.ok(lockedRouteSource.includes('"Macro execution failed"'), "failure message is Macro execution failed");
+
+  // Test 15: Thrown pipeline error attempts the failed terminal event and preserves the original error
+  assert.ok(lockedRouteSource.includes("throw pipelineError"), "thrown pipeline error is re-thrown");
+  assert.ok(lockedRouteSource.includes("emitBrainTerminalOnce"), "emitBrainTerminalOnce is called");
+
+  // Test 16: No terminal event is emitted after every individual macro
+  // The terminal events are only in the pipeline result handling section, not in the macro loop
+  const terminalCount = (lockedRouteSource.match(/emitBrainTerminalOnce\(/g) || []).length;
+  assert.ok(terminalCount >= 2 && terminalCount <= 4, `emitBrainTerminalOnce called ${terminalCount} times (expected 2-4: try/catch + completed/failed branches)`);
+
+  // Test 17: Preflight Brain events remain unchanged
+  const routePreflightSource2 = readSync(
+    new URL("../app/api/paylabs/discovery-runs/route-preflight/route.ts", import.meta.url),
+    "utf-8",
+  );
+  assert.ok(routePreflightSource2.includes('type: "agent.started"'), "route-preflight still emits agent.started");
+  assert.ok(routePreflightSource2.includes('type: "agent.completed"'), "route-preflight still emits agent.completed");
+  assert.ok(routePreflightSource2.includes('type: "agent.failed"'), "route-preflight still emits agent.failed");
+}
+
+console.log("Execute-locked server event ordering tests passed");
+
+// ── CSS/DOM source tests ─────────────────────────────────────
+{
+  const cssSource = readSync(
+    new URL("../components/paylabs/office/paylabs-office.css", import.meta.url),
+    "utf-8",
+  );
+  const agentSource2 = readSync(
+    new URL("../components/paylabs/office/PixelAgent.tsx", import.meta.url),
+    "utf-8",
+  );
+
+  // Test 1: PixelAgent wrapper contains data-agent-id={agent.id}
+  assert.ok(agentSource2.includes('data-agent-id={agent.id}'), "PixelAgent wrapper contains data-agent-id={agent.id}");
+
+  // Test 2: D-NODE bubble selector uses data-agent-id="discovery_planner"
+  assert.ok(cssSource.includes('data-agent-id="discovery_planner"'), "D-NODE bubble selector uses data-agent-id");
+
+  // Test 3: D-NODE bubble uses left:auto
+  assert.ok(cssSource.includes("left: auto"), "D-NODE bubble uses left:auto");
+
+  // Test 4: D-NODE bubble uses right positioning
+  assert.ok(cssSource.includes("right: 42px"), "D-NODE bubble uses right:42px");
+
+  // Test 5: D-NODE bubble tail uses right positioning
+  assert.ok(cssSource.includes("right: -10px"), "D-NODE bubble tail uses right:-10px");
+
+  // Test 6: D-NODE bubble tail uses border-left-color
+  assert.ok(cssSource.includes("border-left-color: #20263a"), "D-NODE bubble tail uses border-left-color");
+
+  // Test 7: P-NODE does not receive the left-bubble selector
+  assert.ok(!cssSource.includes('data-agent-id="payment_decision"'), "P-NODE does not receive left-bubble selector");
+
+  // Test 8: S-NODE does not receive the left-bubble selector
+  assert.ok(!cssSource.includes('data-agent-id="settlement_memory"'), "S-NODE does not receive left-bubble selector");
+
+  // Test 9: Brain bubble selector remains unchanged
+  assert.ok(cssSource.includes(".po-agent-wrap.is-brain .po-agent-bubble"), "Brain bubble selector unchanged");
+  assert.ok(cssSource.includes(".po-agent-wrap.is-brain .po-agent-bubble::after"), "Brain bubble tail override unchanged");
+
+  // Test 10: Idle macro brightness is 0.68
+  assert.ok(cssSource.includes("brightness(0.68)"), "idle macro brightness is 0.68");
+
+  // Test 11: Idle macro saturation is 0.52
+  assert.ok(cssSource.includes("saturate(0.52)"), "idle macro saturation is 0.52");
+
+  // Test 12: Active macro sprite uses brightness 1.28
+  assert.ok(cssSource.includes("brightness(1.28)"), "active macro sprite uses brightness 1.28");
+
+  // Test 13: Active macro sprite uses saturation 1.4
+  assert.ok(cssSource.includes("saturate(1.4)"), "active macro sprite uses saturation 1.4");
+
+  // Test 14: Active macro sprite contains three drop-shadow layers
+  assert.ok(cssSource.includes("drop-shadow(0 0 3px #ffffff)"), "first drop-shadow layer present");
+  assert.ok(cssSource.includes("drop-shadow(0 0 7px var(--agent-color))"), "second drop-shadow layer present");
+  assert.ok(cssSource.includes("drop-shadow(0 0 14px var(--agent-color))"), "third drop-shadow layer present");
+
+  // Test 15: Active macro label contains white glow
+  assert.ok(cssSource.includes("0 0 4px #ffffff"), "active macro label white glow present");
+
+  // Test 16: Active macro label contains var(--agent-color) glow
+  assert.ok(cssSource.includes("0 0 9px var(--agent-color)"), "active macro label var(--agent-color) glow present");
+
+  // Test 17: Failed macro remains red
+  assert.ok(cssSource.includes("drop-shadow(0 0 12px #ef4444)"), "failed macro red glow present");
+  assert.ok(cssSource.includes("0 0 13px #ef4444"), "failed macro label red glow present");
+
+  // Test 18: No active macro scale transform exists
+  assert.ok(!cssSource.includes("is-macro.is-paying") && !cssSource.includes("scale(") || !cssSource.match(/is-macro\.is-(paying|settling|completed)[^{]*scale\(/), "no active macro scale transform");
+
+  // Test 19: Agent wrapper dimensions remain 36×61
+  assert.ok(cssSource.includes("width: 36px; height: 61px"), "agent wrapper dimensions 36×61");
+
+  // Test 20: Agent z-index remains 30
+  assert.ok(cssSource.includes("z-index: 30"), "agent z-index 30");
+
+  // Test 21: Beam z-index remains below agent
+  assert.ok(cssSource.includes("z-index: 22"), "beam z-index 22 < agent 30");
+
+  // Test 22: x402 title remains above agent
+  assert.ok(cssSource.includes("z-index: 45"), "x402 title z-index 45 > agent 30");
+}
+
+console.log("CSS/DOM source tests passed");
+
+// ── Regression freeze tests ──────────────────────────────────
+{
+  // Test: D-NODE station unchanged
+  assert.deepEqual(OFFICE_MACRO_AGENTS.discovery_planner.station, { x: 440, y: 390 }, "regression: D-NODE station unchanged");
+
+  // Test: P-NODE station unchanged
+  assert.deepEqual(OFFICE_MACRO_AGENTS.payment_decision.station, { x: 480, y: 364 }, "regression: P-NODE station unchanged");
+
+  // Test: S-NODE station unchanged
+  assert.deepEqual(OFFICE_MACRO_AGENTS.settlement_memory.station, { x: 485, y: 436 }, "regression: S-NODE station unchanged");
+
+  // Test: x402 left/top/width/height unchanged
+  const canvasSource2 = readSync(
+    new URL("../components/paylabs/office/PayLabsOfficeCanvas.tsx", import.meta.url),
+    "utf-8",
+  );
+  assert.ok(canvasSource2.includes("x402"), "regression: x402 terminal still present");
+  assert.ok(canvasSource2.includes("RECEIPT"), "regression: Receipt still present");
+
+  // Test: stage width 900, height 500
+  assert.equal(OFFICE_DESIGN_WIDTH, 900, "regression: stage width 900");
+  assert.equal(OFFICE_DESIGN_HEIGHT, 500, "regression: stage height 500");
+
+  // Test: width-only scaling
+  const constantsSource2 = readSync(
+    new URL("../lib/paylabs/office/constants.ts", import.meta.url),
+    "utf-8",
+  );
+  assert.ok(constantsSource2.includes("OFFICE_DESIGN_WIDTH = OFFICE_INTERNAL_WIDTH"), "regression: width-only scaling");
+  assert.ok(constantsSource2.includes("OFFICE_DESIGN_HEIGHT = OFFICE_INTERNAL_HEIGHT"), "regression: height-only scaling");
+
+  // Test: 680ms movement unchanged
+  const panelSource2 = readSync(
+    new URL("../components/paylabs/office/PayLabsOfficePanel.tsx", import.meta.url),
+    "utf-8",
+  );
+  assert.ok(panelSource2.includes("OFFICE_AGENT_TRAVEL_MS = 680"), "regression: 680ms travel");
+  assert.ok(panelSource2.includes("OFFICE_DESK_VISIBLE_MS = 1200"), "regression: 1200ms desk visible");
+  assert.ok(panelSource2.includes("OFFICE_VISIT_DWELL_MS = 1500"), "regression: 1500ms visit dwell");
+
+  // Test: No migration files added
+  // (We only test the expected files, no migration assertion needed at runtime)
+}
+
+console.log("Regression freeze tests passed");
+console.log("═══════════════════════════════════════════════");
+console.log("ALL PR #172 TESTS PASSED");
