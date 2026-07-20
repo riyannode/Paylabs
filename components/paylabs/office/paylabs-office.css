@@ -192,7 +192,68 @@
 .po-agent-wrap.is-macro.is-settling .po-body { box-shadow: 0 0 11px #f97316, inset -4px 0 rgba(0, 0, 0, 0.2); }
 .po-agent-wrap.is-macro.is-completed .po-body { box-shadow: 0 0 11px #22c55e, inset -4px 0 rgba(0, 0, 0, 0.2); }
 .po-agent-wrap.is-macro.is-failed .po-body { background: #dc2626; box-shadow: 0 0 11px #dc2626; }
-.po-agent-wrap.is-macro.is-idle .po-agent { filter: brightness(0.85) saturate(0.7); }
+
+/* ── D-NODE bubble on the left ─────────────────────────────── */
+
+.po-agent-wrap[data-agent-id="discovery_planner"] .po-agent-bubble {
+  left: auto;
+  right: 42px;
+  top: -9px;
+  width: 128px;
+}
+
+.po-agent-wrap[data-agent-id="discovery_planner"] .po-agent-bubble::after {
+  left: auto;
+  right: -10px;
+  top: 14px;
+  bottom: auto;
+  border: 5px solid transparent;
+  border-left-color: #20263a;
+}
+
+/* Idle macro: more clearly inactive */
+.po-agent-wrap.is-macro.is-idle .po-agent {
+  filter: brightness(0.68) saturate(0.52);
+}
+
+/* Active macro: glow the complete sprite silhouette */
+.po-agent-wrap.is-macro.is-paying .po-agent,
+.po-agent-wrap.is-macro.is-settling .po-agent,
+.po-agent-wrap.is-macro.is-completed .po-agent {
+  filter:
+    brightness(1.28)
+    saturate(1.4)
+    drop-shadow(0 0 3px #ffffff)
+    drop-shadow(0 0 7px var(--agent-color))
+    drop-shadow(0 0 14px var(--agent-color));
+}
+
+/* Active label glow */
+.po-agent-wrap.is-macro.is-paying .po-agent-label,
+.po-agent-wrap.is-macro.is-settling .po-agent-label,
+.po-agent-wrap.is-macro.is-completed .po-agent-label {
+  border-color: #f8fafc;
+  box-shadow:
+    0 0 4px #ffffff,
+    0 0 9px var(--agent-color),
+    0 0 15px var(--agent-color);
+}
+
+/* Failure remains clearly red */
+.po-agent-wrap.is-macro.is-failed .po-agent {
+  filter:
+    brightness(1.2)
+    saturate(1.3)
+    drop-shadow(0 0 5px #ffffff)
+    drop-shadow(0 0 12px #ef4444);
+}
+
+.po-agent-wrap.is-macro.is-failed .po-agent-label {
+  border-color: #ffffff;
+  box-shadow:
+    0 0 5px #ffffff,
+    0 0 13px #ef4444;
+}
 .po-agent.is-paying .po-body { box-shadow: 0 0 11px #22d3ee, inset -4px 0 rgba(0, 0, 0, 0.2); }
 .po-agent.is-failed .po-body { background: #dc2626; }
 .po-agent.is-completed { filter: brightness(1.12); }

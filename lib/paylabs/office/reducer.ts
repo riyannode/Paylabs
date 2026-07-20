@@ -1,4 +1,4 @@
-import { OFFICE_AGENTS, OFFICE_STATIONS } from "./registry";
+import { OFFICE_AGENTS, OFFICE_MACRO_AGENTS, OFFICE_STATIONS, isOfficeMacroAgentId } from "./registry";
 import type { OfficeAgentId, OfficeAgentStatus, OfficeAgentViewState, OfficeMacroAgentId, OfficeMacroBeamState, PayLabsOfficeEvent } from "./types";
 
 export type OfficeState = Record<OfficeAgentId, OfficeAgentViewState>;
@@ -45,6 +45,14 @@ export function createInitialOfficeState(): OfficeState {
 
 function destinationFor(event: PayLabsOfficeEvent, agentId: OfficeAgentId): { x: number; y: number } {
   if (agentId === "brain_planner") {
+    // Brain macro visit: phase.started with valid macro phase → brainApproach
+    if (
+      event.type === "phase.started" &&
+      event.phase &&
+      isOfficeMacroAgentId(event.phase)
+    ) {
+      return OFFICE_MACRO_AGENTS[event.phase].brainApproach;
+    }
     return OFFICE_AGENTS.brain_planner.desk;
   }
 
@@ -137,7 +145,7 @@ export function reduceOfficeEvent(state: OfficeState, event: PayLabsOfficeEvent)
     [event.agentId]: {
       ...current,
       status: status ?? (event.status ?? current.status),
-      message: event.message ?? event.title,
+      message: isBrainMacroVisit(event, event.agentId) ? undefined : (event.message ?? event.title),
       x: destination.x,
       y: destination.y,
       facing: destination.x < current.x ? "left" : "right",
@@ -158,6 +166,18 @@ function isDeskDwellEvent(event: PayLabsOfficeEvent, agentId: OfficeAgentId): bo
   if (agentId === "brain_planner") return false;
   if (agentId === "discovery_planner" || agentId === "payment_decision" || agentId === "settlement_memory") return false;
   return event.type === "agent.completed";
+}
+
+function isBrainMacroVisit(
+  event: PayLabsOfficeEvent,
+  agentId: OfficeAgentId,
+): boolean {
+  return (
+    agentId === "brain_planner" &&
+    event.type === "phase.started" &&
+    !!event.phase &&
+    isOfficeMacroAgentId(event.phase)
+  );
 }
 
 export function reduceReturnToIdle(state: OfficeState, agentId: OfficeAgentId): OfficeState {
