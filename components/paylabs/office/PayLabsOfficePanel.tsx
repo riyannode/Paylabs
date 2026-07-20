@@ -185,13 +185,9 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
     };
   }, [run.runId, supabase]);
 
-  const scale = Math.min(
-    viewportSize.width / OFFICE_DESIGN_WIDTH,
-    viewportSize.height / OFFICE_DESIGN_HEIGHT,
-  );
-  const scaledWidth = OFFICE_DESIGN_WIDTH * scale;
+  const scale = viewportSize.width / OFFICE_DESIGN_WIDTH;
   const scaledHeight = OFFICE_DESIGN_HEIGHT * scale;
-  const offsetX = Math.max(0, (viewportSize.width - scaledWidth) / 2);
+  const offsetX = 0;
   const offsetY = 0;
   const stageStyle = {
     width: OFFICE_DESIGN_WIDTH,
@@ -218,7 +214,7 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
             </div>
           </header>
 
-          <div className="po-stage-viewport" ref={viewportRef}>
+          <div className="po-stage-viewport" ref={viewportRef} style={{ height: scaledHeight }}>
             <PayLabsOfficeCanvas agents={agents} paused={paused} stageStyle={stageStyle} />
           </div>
         </div>

@@ -53,11 +53,11 @@
 .po-header-metrics span { max-width: 64px; overflow: hidden; white-space: nowrap; text-overflow: clip; padding: 4px 6px; color: #334155; background: #f8fafc; border: 1px solid #dbe3f0; border-radius: 5px; }
 
 .po-stage-viewport {
+  flex: none;
+  min-height: 0;
   position: relative;
-  flex: 1;
   width: 100%;
   min-width: 0;
-  min-height: 590px;
   overflow: hidden;
   background: #ffffff;
 }
@@ -235,7 +235,7 @@
     min-height: auto;
   }
 
-  .po-stage-viewport {
+  .po-stage-viewport { flex: none; min-height: 0;
     display: none;
   }
 
