@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { OFFICE_DESIGN_HEIGHT, OFFICE_DESIGN_WIDTH } from "@/lib/paylabs/office/constants";
-import { createInitialOfficeState, reduceOfficeEvent, reduceReturnToIdle } from "@/lib/paylabs/office/reducer";
+import { createInitialOfficeState, reduceOfficeEvent, reduceReturnToIdle, reduceClearMacroBeam, getMacroBeamRemainingMs } from "@/lib/paylabs/office/reducer";
 import type { OfficeState } from "@/lib/paylabs/office/reducer";
-import type { OfficeAgentId, OfficeRunSummary, PayLabsOfficeEvent } from "@/lib/paylabs/office/types";
+import type { OfficeAgentId, OfficeMacroAgentId, OfficeRunSummary, PayLabsOfficeEvent } from "@/lib/paylabs/office/types";
+import { isOfficeMacroAgentId } from "@/lib/paylabs/office/registry";
 import { PayLabsOfficeCanvas } from "./PayLabsOfficeCanvas";
 import { PayLabsOfficeDashboard } from "./PayLabsOfficeDashboard";
 import { mergeOfficeEvents } from "@/lib/paylabs/office/selectors";
@@ -43,6 +44,11 @@ function mapRow(row: Record<string, unknown>): PayLabsOfficeEvent {
   };
 }
 
+/** Build a stable signature for beam timer scheduling. */
+function beamTimerKey(macroId: OfficeMacroAgentId, beam: { type: string; sequence: number; createdAt: string }): string {
+  return `${macroId}:${beam.type}:${beam.sequence}:${beam.createdAt}`;
+}
+
 export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
   const [officeState, setOfficeState] = useState<OfficeState>(() => createInitialOfficeState());
   const [events, setEvents] = useState<PayLabsOfficeEvent[]>([]);
@@ -51,6 +57,7 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const supabase = useMemo(createBrowserClient, []);
   const visitTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const beamTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useEffect(() => {
     const onVisibility = () => setPaused(document.hidden);
@@ -92,15 +99,55 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
     }
   }, [visitingAgentsSig]);
 
+  // ── Beam timer management ────────────────────────────────────
+  const beamSig = Object.values(officeState)
+    .filter((a) => a.beam?.active && isOfficeMacroAgentId(a.id))
+    .map((a) => beamTimerKey(a.id as OfficeMacroAgentId, a.beam!))
+    .join("|");
+
+  useEffect(() => {
+    const timers = beamTimersRef.current;
+    const nowMs = Date.now();
+    const activeBeamKeys = new Set<string>();
+
+    for (const agent of Object.values(officeState)) {
+      if (!agent.beam?.active || !isOfficeMacroAgentId(agent.id)) continue;
+      const macroId = agent.id as OfficeMacroAgentId;
+      const key = beamTimerKey(macroId, agent.beam);
+      activeBeamKeys.add(key);
+
+      if (!timers.has(key)) {
+        const remainingMs = getMacroBeamRemainingMs(agent.beam, nowMs);
+        if (remainingMs <= 0) {
+          // Already expired — clear immediately
+          setOfficeState((prev) => reduceClearMacroBeam(prev, macroId, agent.beam!.sequence));
+        } else {
+          const expectedSequence = agent.beam.sequence;
+          const timer = setTimeout(() => {
+            setOfficeState((prev) => reduceClearMacroBeam(prev, macroId, expectedSequence));
+            timers.delete(key);
+          }, remainingMs);
+          timers.set(key, timer);
+        }
+      }
+    }
+
+    // Clear timers for beams that no longer exist
+    for (const [key, timer] of timers.entries()) {
+      if (!activeBeamKeys.has(key)) {
+        clearTimeout(timer);
+        timers.delete(key);
+      }
+    }
+  }, [beamSig, officeState]);
+
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
-
     const update = () => {
       const rect = el.getBoundingClientRect();
       setViewportSize({ width: rect.width, height: rect.height });
     };
-
     update();
     const observer = new ResizeObserver(update);
     observer.observe(el);
@@ -111,6 +158,10 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
     // Clear all dwell timers on run change
     for (const timer of visitTimersRef.current.values()) clearTimeout(timer);
     visitTimersRef.current.clear();
+
+    // Clear all beam timers on run change
+    for (const timer of beamTimersRef.current.values()) clearTimeout(timer);
+    beamTimersRef.current.clear();
 
     setOfficeState(createInitialOfficeState());
     setEvents([]);
@@ -182,6 +233,9 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
       // Clear all dwell timers on unmount
       for (const timer of visitTimersRef.current.values()) clearTimeout(timer);
       visitTimersRef.current.clear();
+      // Clear all beam timers on unmount
+      for (const timer of beamTimersRef.current.values()) clearTimeout(timer);
+      beamTimersRef.current.clear();
     };
   }, [run.runId, supabase]);
 

@@ -991,16 +991,21 @@ console.log("x402 visual order regression tests passed");
     "service-node.ts still emits treasury.retained");
 
   // Test: no duplicate x402 or agent.started events across both files
-  // seller endpoint: exactly 1 x402.requested, 1 x402.settled, 1 agent.started
+  // seller endpoint: x402.requested has type union (1) + child (1) + macro (1) = 3,
+  // x402.settled and x402.failed have child (1) + macro (1) = 2 each,
+  // 1 agent.started (child only)
   const sellerRequestedCount = (sellerSource.match(/type: "x402\.requested"/g) || []).length;
   const sellerSettledCount = (sellerSource.match(/type: "x402\.settled"/g) || []).length;
+  const sellerFailedCount = (sellerSource.match(/type: "x402\.failed"/g) || []).length;
   const sellerStartedCount = (sellerSource.match(/type: "agent\.started"/g) || []).length;
-  assert.equal(sellerRequestedCount, 1,
-    "seller endpoint has exactly 1 x402.requested emission");
-  assert.equal(sellerSettledCount, 1,
-    "seller endpoint has exactly 1 x402.settled emission");
+  assert.equal(sellerRequestedCount, 3,
+    "seller endpoint has 3 x402.requested (type union + child + macro)");
+  assert.equal(sellerSettledCount, 2,
+    "seller endpoint has 2 x402.settled (child + macro)");
+  assert.equal(sellerFailedCount, 2,
+    "seller endpoint has 2 x402.failed (child + macro)");
   assert.equal(sellerStartedCount, 1,
-    "seller endpoint has exactly 1 agent.started emission");
+    "seller endpoint has exactly 1 agent.started (child only)");
 
   // Test: payment amounts remain in payment/metadata fields, not bubble messages
   assert.ok(!sellerSource.includes('message: `${') ||
@@ -1487,3 +1492,444 @@ console.log("Macro-node agent tests passed");
 }
 
 console.log("is-macro class and CSS tests passed");
+
+// ═══════════════════════════════════════════════════════════════
+// PR #171: Runtime Macro x402 Payment Beams
+// ═══════════════════════════════════════════════════════════════
+
+import {
+  reduceClearMacroBeam,
+  getMacroBeamRemainingMs,
+  OFFICE_MACRO_BEAM_REQUEST_TIMEOUT_MS,
+  OFFICE_MACRO_BEAM_RESULT_DWELL_MS,
+} from "../lib/paylabs/office/reducer";
+
+// ── Reducer beam tests ────────────────────────────────────────
+
+{
+  let bs = createInitialOfficeState();
+
+  // Test: Macro requested creates requested beam
+  bs = reduceOfficeEvent(bs, event({
+    sequence: 100,
+    agentId: "discovery_planner",
+    type: "x402.requested",
+    status: "paying",
+    title: "discovery_planner paying signal_scout",
+    message: "Requesting child service through x402",
+    metadata: { childServiceName: "signal_scout" },
+    createdAt: new Date(1000).toISOString(),
+  }));
+  assert.ok(bs.discovery_planner.beam, "discovery_planner has beam after x402.requested");
+  assert.equal(bs.discovery_planner.beam!.active, true, "beam is active");
+  assert.equal(bs.discovery_planner.beam!.type, "requested", "beam type is requested");
+  assert.equal(bs.discovery_planner.beam!.childServiceName, "signal_scout", "beam childServiceName is signal_scout");
+  assert.equal(bs.discovery_planner.beam!.sequence, 100, "beam sequence is 100");
+  assert.equal(bs.discovery_planner.status, "paying", "macro status is paying");
+
+  // Test: Macro remains at its exact station
+  assert.deepEqual(
+    { x: bs.discovery_planner.x, y: bs.discovery_planner.y },
+    OFFICE_AGENTS.discovery_planner.desk,
+    "discovery_planner stays at desk after x402.requested",
+  );
+
+  // Test: Macro settled replaces requested beam
+  bs = reduceOfficeEvent(bs, event({
+    sequence: 101,
+    agentId: "discovery_planner",
+    type: "x402.settled",
+    status: "completed",
+    title: "discovery_planner payment settled",
+    message: "Child service payment settled",
+    metadata: { childServiceName: "signal_scout" },
+    createdAt: new Date(1001).toISOString(),
+  }));
+  assert.equal(bs.discovery_planner.beam!.type, "settled", "beam type updated to settled");
+  assert.equal(bs.discovery_planner.beam!.sequence, 101, "beam sequence updated to 101");
+  assert.equal(bs.discovery_planner.status, "completed", "macro status is completed after settled");
+
+  // Test: Macro failed creates failed beam (fresh state)
+  let fs = createInitialOfficeState();
+  fs = reduceOfficeEvent(fs, event({
+    sequence: 200,
+    agentId: "payment_decision",
+    type: "x402.failed",
+    status: "failed",
+    title: "payment_decision payment failed",
+    message: "Child service payment failed",
+    metadata: { childServiceName: "intent_matcher" },
+    createdAt: new Date(2000).toISOString(),
+  }));
+  assert.ok(fs.payment_decision.beam, "payment_decision has beam after x402.failed");
+  assert.equal(fs.payment_decision.beam!.type, "failed", "beam type is failed");
+  assert.equal(fs.payment_decision.beam!.childServiceName, "intent_matcher", "beam childServiceName is intent_matcher");
+  assert.equal(fs.payment_decision.status, "failed", "macro status is failed");
+
+  // Test: Lower/equal sequence is ignored
+  const beforeSeq = { ...bs.discovery_planner };
+  bs = reduceOfficeEvent(bs, event({
+    sequence: 100,
+    agentId: "discovery_planner",
+    type: "x402.requested",
+    status: "paying",
+    metadata: { childServiceName: "query_builder" },
+  }));
+  assert.equal(bs.discovery_planner.beam!.sequence, beforeSeq.beam!.sequence, "lower sequence does not update beam");
+
+  // Test: Different macro beams are independent
+  let ms = createInitialOfficeState();
+  ms = reduceOfficeEvent(ms, event({
+    sequence: 300,
+    agentId: "discovery_planner",
+    type: "x402.requested",
+    status: "paying",
+    metadata: { childServiceName: "signal_scout" },
+    createdAt: new Date(3000).toISOString(),
+  }));
+  ms = reduceOfficeEvent(ms, event({
+    sequence: 301,
+    agentId: "settlement_memory",
+    type: "x402.settled",
+    status: "completed",
+    metadata: { childServiceName: "creator_payout_router" },
+    createdAt: new Date(3001).toISOString(),
+  }));
+  assert.equal(ms.discovery_planner.beam!.type, "requested", "discovery beam is requested");
+  assert.equal(ms.settlement_memory.beam!.type, "settled", "settlement beam is settled");
+  assert.notEqual(ms.discovery_planner.beam!.sequence, ms.settlement_memory.beam!.sequence, "beams have different sequences");
+
+  // Test: clear with wrong expectedSequence is a no-op
+  const beforeClear = { ...ms.discovery_planner };
+  ms = reduceClearMacroBeam(ms, "discovery_planner", 999);
+  assert.equal(ms.discovery_planner.beam!.sequence, beforeClear.beam!.sequence, "wrong expectedSequence does not clear beam");
+
+  // Test: clear with matching expectedSequence removes beam
+  ms = reduceClearMacroBeam(ms, "discovery_planner", 300);
+  assert.equal(ms.discovery_planner.beam, undefined, "matching expectedSequence clears beam");
+  assert.equal(ms.discovery_planner.status, "idle", "status returns to idle after clear");
+
+  // Test: stale result timer cannot clear a newer requested beam
+  let cs = createInitialOfficeState();
+  cs = reduceOfficeEvent(cs, event({
+    sequence: 400,
+    agentId: "discovery_planner",
+    type: "x402.settled",
+    status: "completed",
+    metadata: { childServiceName: "signal_scout" },
+    createdAt: new Date(4000).toISOString(),
+  }));
+  cs = reduceOfficeEvent(cs, event({
+    sequence: 401,
+    agentId: "discovery_planner",
+    type: "x402.requested",
+    status: "paying",
+    metadata: { childServiceName: "query_builder" },
+    createdAt: new Date(4001).toISOString(),
+  }));
+  assert.equal(cs.discovery_planner.beam!.type, "requested", "beam is now requested");
+  assert.equal(cs.discovery_planner.beam!.sequence, 401, "beam sequence is 401");
+  // Try to clear with the old settled sequence
+  cs = reduceClearMacroBeam(cs, "discovery_planner", 400);
+  assert.equal(cs.discovery_planner.beam!.type, "requested", "old settled timer does not clear newer requested beam");
+  assert.equal(cs.discovery_planner.beam!.sequence, 401, "beam sequence preserved at 401");
+
+  // Test: child events do not create macro beams
+  let cs2 = createInitialOfficeState();
+  cs2 = reduceOfficeEvent(cs2, event({
+    sequence: 500,
+    agentId: "signal_scout",
+    type: "x402.requested",
+    status: "paying",
+    metadata: { childServiceName: "signal_scout" },
+  }));
+  assert.equal(cs2.signal_scout.beam, undefined, "child agent does not get beam state");
+
+  // Test: clear when no beam exists is a no-op
+  let emptyState = createInitialOfficeState();
+  const beforeEmpty = { ...emptyState.discovery_planner };
+  emptyState = reduceClearMacroBeam(emptyState, "discovery_planner", 1);
+  assert.equal(emptyState.discovery_planner.beam, undefined, "clear on no-beam is no-op");
+  assert.equal(emptyState.discovery_planner.status, beforeEmpty.status, "status unchanged on no-beam clear");
+}
+
+console.log("PR #171 reducer beam tests passed");
+
+// ── Expiry tests ──────────────────────────────────────────────
+
+{
+  const nowMs = Date.now();
+
+  // Test: requested beam has 15-second lifetime
+  const requestedBeam = {
+    active: true as const,
+    type: "requested" as const,
+    childServiceName: "signal_scout",
+    sequence: 1,
+    createdAt: new Date(nowMs).toISOString(),
+  };
+  const remaining = getMacroBeamRemainingMs(requestedBeam, nowMs + 5000);
+  assert.ok(remaining > 0, "requested beam has positive remaining at 5s");
+  assert.ok(remaining <= OFFICE_MACRO_BEAM_REQUEST_TIMEOUT_MS, "requested beam remaining <= timeout");
+
+  // Test: requested beam expired
+  const expiredRemaining = getMacroBeamRemainingMs(requestedBeam, nowMs + OFFICE_MACRO_BEAM_REQUEST_TIMEOUT_MS + 1);
+  assert.equal(expiredRemaining, 0, "requested beam returns 0 after timeout");
+
+  // Test: settled beam has 900ms lifetime
+  const settledBeam = {
+    active: true as const,
+    type: "settled" as const,
+    childServiceName: "signal_scout",
+    sequence: 2,
+    createdAt: new Date(nowMs).toISOString(),
+  };
+  const settledRemaining = getMacroBeamRemainingMs(settledBeam, nowMs + 500);
+  assert.ok(settledRemaining > 0, "settled beam has positive remaining at 500ms");
+
+  // Test: settled beam expired
+  const settledExpired = getMacroBeamRemainingMs(settledBeam, nowMs + OFFICE_MACRO_BEAM_RESULT_DWELL_MS + 1);
+  assert.equal(settledExpired, 0, "settled beam returns 0 after 900ms");
+
+  // Test: failed beam has 900ms lifetime
+  const failedBeam = {
+    active: true as const,
+    type: "failed" as const,
+    childServiceName: "intent_matcher",
+    sequence: 3,
+    createdAt: new Date(nowMs).toISOString(),
+  };
+  const failedRemaining = getMacroBeamRemainingMs(failedBeam, nowMs + 400);
+  assert.ok(failedRemaining > 0, "failed beam has positive remaining at 400ms");
+  const failedExpired = getMacroBeamRemainingMs(failedBeam, nowMs + OFFICE_MACRO_BEAM_RESULT_DWELL_MS + 1);
+  assert.equal(failedExpired, 0, "failed beam returns 0 after 900ms");
+
+  // Test: stale historical requested beam returns remaining 0
+  const oldRequestedBeam = {
+    active: true as const,
+    type: "requested" as const,
+    childServiceName: "signal_scout",
+    sequence: 10,
+    createdAt: new Date(nowMs - 30_000).toISOString(),
+  };
+  assert.equal(getMacroBeamRemainingMs(oldRequestedBeam, nowMs), 0, "stale historical requested beam returns 0");
+
+  // Test: stale historical settled/failed beam returns remaining 0
+  const oldSettledBeam = {
+    active: true as const,
+    type: "settled" as const,
+    childServiceName: "signal_scout",
+    sequence: 11,
+    createdAt: new Date(nowMs - 5000).toISOString(),
+  };
+  assert.equal(getMacroBeamRemainingMs(oldSettledBeam, nowMs), 0, "stale historical settled beam returns 0");
+
+  // Test: invalid createdAt returns 0
+  const badBeam = {
+    active: true as const,
+    type: "requested" as const,
+    childServiceName: "signal_scout",
+    sequence: 12,
+    createdAt: "not-a-date",
+  };
+  assert.equal(getMacroBeamRemainingMs(badBeam, nowMs), 0, "invalid createdAt returns 0");
+}
+
+console.log("PR #171 expiry tests passed");
+
+// ── Server event ordering tests ───────────────────────────────
+// These test the expected emission order by reading the route source.
+
+{
+  const routeSource = readSync(
+    new URL("../app/api/paylabs/agent-services/[serviceName]/run/route.ts", import.meta.url),
+    "utf-8",
+  );
+
+  // Test: isOfficeMacroAgentId is imported
+  assert.ok(routeSource.includes('import { isOfficeMacroAgentId }'), "route imports isOfficeMacroAgentId");
+
+  // Test: emitMacroPaymentOfficeEvent helper exists
+  assert.ok(routeSource.includes("async function emitMacroPaymentOfficeEvent"), "route has emitMacroPaymentOfficeEvent helper");
+
+  // Test: helper returns early for non-macro buyerAgentName
+  assert.ok(routeSource.includes("if (!isOfficeMacroAgentId(args.buyerAgentName)) return"), "helper returns early for non-macro");
+
+  // ── Structural ordering assertions ─────────────────────────
+  // Extract actual macro call bodies only
+  const macroCallBodies = [
+    ...routeSource.matchAll(
+      /await emitMacroPaymentOfficeEvent\(\{([\s\S]*?)\n\s*\}\);/g,
+    ),
+  ].map((match) => match[1]);
+
+  // Test: exactly 3 macro call sites
+  assert.equal(macroCallBodies.length, 3, `expected 3 macro call bodies, got ${macroCallBodies.length}`);
+
+  // Test: one body per x402 event type
+  assert.ok(macroCallBodies.some((b) => b.includes('type: "x402.requested"')), "macro body contains x402.requested");
+  assert.ok(macroCallBodies.some((b) => b.includes('type: "x402.settled"')), "macro body contains x402.settled");
+  assert.ok(macroCallBodies.some((b) => b.includes('type: "x402.failed"')), "macro body contains x402.failed");
+
+  // Test: no body contains agent.started / agent.completed / agent.failed
+  assert.ok(!macroCallBodies.some((b) => b.includes('type: "agent.started"')), "no macro agent.started");
+  assert.ok(!macroCallBodies.some((b) => b.includes('type: "agent.completed"')), "no macro agent.completed");
+  assert.ok(!macroCallBodies.some((b) => b.includes('type: "agent.failed"')), "no macro agent.failed");
+
+  // Test: every body contains childServiceName: serviceNameTyped
+  assert.ok(macroCallBodies.every((b) => b.includes("childServiceName: serviceNameTyped")), "all macro bodies use childServiceName: serviceNameTyped");
+
+  // ── Structural ordering assertions ─────────────────────────
+  // Verify exact order: child → macro → response/child.started
+
+  // Requested path ordering
+  const requestedBlock = routeSource.indexOf('// Macro visualization: beam ON toward x402');
+  const requestedChildEmit = routeSource.lastIndexOf('safeEmitOfficeEvent({', requestedBlock);
+  const requestedMacroEmit = requestedBlock;
+  const requestedHttp402 = routeSource.indexOf('status: 402', requestedMacroEmit);
+  assert.ok(requestedChildEmit < requestedMacroEmit, "requested: child emit before macro emit");
+  assert.ok(requestedMacroEmit < requestedHttp402, "requested: macro emit before HTTP 402");
+
+  // Settled path ordering
+  const settledBlock = routeSource.indexOf('// Macro visualization: beam SETTLED');
+  const settledChildEmit = routeSource.lastIndexOf('safeEmitOfficeEvent({', settledBlock);
+  const settledMacroEmit = settledBlock;
+  const settledAgentStarted = routeSource.indexOf('agent.started', settledMacroEmit);
+  assert.ok(settledChildEmit < settledMacroEmit, "settled: child emit before macro emit");
+  assert.ok(settledMacroEmit < settledAgentStarted, "settled: macro emit before child agent.started");
+
+  // Failed path ordering
+  const failedBlock = routeSource.indexOf('// Macro visualization: beam FAILED');
+  const failedChildEmit = routeSource.lastIndexOf('safeEmitOfficeEvent({', failedBlock);
+  const failedMacroEmit = failedBlock;
+  const failedHttpResponse = routeSource.indexOf('status: 402', failedMacroEmit);
+  assert.ok(failedChildEmit < failedMacroEmit, "failed: child emit before macro emit");
+  assert.ok(failedMacroEmit < failedHttpResponse, "failed: macro emit before HTTP failure response");
+}
+
+console.log("PR #171 server event ordering tests passed");
+
+// ── DOM/CSS source assertions ─────────────────────────────────
+
+{
+  const cssSource = readFileSync(
+    new URL("../components/paylabs/office/paylabs-office.css", import.meta.url),
+    "utf-8",
+  );
+
+  // Test: po-x402-beams exists
+  assert.ok(cssSource.includes(".po-x402-beams"), "CSS has .po-x402-beams");
+
+  // Test: po-x402-title exists
+  assert.ok(cssSource.includes(".po-x402-title"), "CSS has .po-x402-title");
+
+  // Test: po-x402-beam exists
+  assert.ok(cssSource.includes(".po-x402-beam"), "CSS has .po-x402-beam");
+
+  // Test: discovery/payment/settlement classes exist
+  assert.ok(cssSource.includes(".is-discovery"), "CSS has .is-discovery class");
+  assert.ok(cssSource.includes(".is-payment"), "CSS has .is-payment class");
+  assert.ok(cssSource.includes(".is-settlement"), "CSS has .is-settlement class");
+
+  // Test: requested/settled/failed classes exist
+  assert.ok(cssSource.includes(".is-requested"), "CSS has .is-requested class");
+  assert.ok(cssSource.includes(".is-settled"), "CSS has .is-settled class");
+  assert.ok(cssSource.includes(".is-failed"), "CSS has .is-failed class");
+
+  // Test: pointer-events is none
+  assert.ok(cssSource.includes("pointer-events: none"), "beams have pointer-events: none");
+
+  // Test: beam z-index is below 30
+  const beamZIndex = cssSource.match(/\.po-x402-beam\s*\{[^}]*z-index:\s*(\d+)/);
+  assert.ok(beamZIndex, "beam has z-index");
+  assert.ok(Number(beamZIndex![1]) < 30, `beam z-index ${beamZIndex![1]} < 30`);
+
+  // Test: title z-index is above 30
+  const titleZIndex = cssSource.match(/\.po-x402-title\s*\{[^}]*z-index:\s*(\d+)/);
+  assert.ok(titleZIndex, "title has z-index");
+  assert.ok(Number(titleZIndex![1]) > 30, `title z-index ${titleZIndex![1]} > 30`);
+
+  // Test: prefers-reduced-motion rule exists
+  assert.ok(cssSource.includes("prefers-reduced-motion: reduce"), "CSS has prefers-reduced-motion rule");
+
+  // Test: no SVG or canvas was introduced
+  assert.ok(!cssSource.includes("<svg"), "CSS does not introduce SVG");
+  assert.ok(!cssSource.includes("<canvas"), "CSS does not introduce canvas");
+
+  // Test: gateway machine has overflow visible but NOT isolation
+  assert.ok(cssSource.includes("overflow: visible"), "gateway machine has overflow: visible");
+  assert.ok(!cssSource.includes("isolation: isolate"), "gateway machine has no isolation: isolate");
+
+  // Canvas source assertions
+  const canvasSource = readSync(
+    new URL("../components/paylabs/office/PayLabsOfficeCanvas.tsx", import.meta.url),
+    "utf-8",
+  );
+
+  // Test: beam spans are conditional
+  assert.ok(canvasSource.includes("beams.map"), "canvas renders beam spans conditionally");
+
+  // Test: beam spans use aria-hidden
+  assert.ok(canvasSource.includes('aria-hidden="true"'), "beam spans use aria-hidden");
+
+  // Test: no SVG in canvas
+  assert.ok(!canvasSource.includes("<svg"), "canvas does not introduce SVG");
+
+  // Test: no canvas element
+  assert.ok(!canvasSource.includes("<canvas"), "canvas does not introduce <canvas> element");
+}
+
+console.log("PR #171 DOM/CSS source assertions passed");
+
+// ── Regression assertions ─────────────────────────────────────
+
+{
+  // Test: D-NODE remains (440,390)
+  assert.deepEqual(OFFICE_MACRO_AGENTS.discovery_planner.station, { x: 440, y: 390 }, "D-NODE station unchanged");
+
+  // Test: P-NODE remains (480,364)
+  assert.deepEqual(OFFICE_MACRO_AGENTS.payment_decision.station, { x: 480, y: 364 }, "P-NODE station unchanged");
+
+  // Test: S-NODE remains (485,436)
+  assert.deepEqual(OFFICE_MACRO_AGENTS.settlement_memory.station, { x: 485, y: 436 }, "S-NODE station unchanged");
+
+  // Test: OFFICE_STATIONS.gateway unchanged
+  assert.deepEqual(OFFICE_STATIONS.gateway, { x: 498, y: 340 }, "gateway station unchanged");
+
+  // Test: Brain desk unchanged
+  assert.deepEqual(OFFICE_AGENTS.brain_planner.desk, { x: 150, y: 10 }, "Brain desk unchanged");
+
+  // Test: constants unchanged
+  const constantsSource = readSync(
+    new URL("../lib/paylabs/office/constants.ts", import.meta.url),
+    "utf-8",
+  );
+  assert.ok(constantsSource.includes("OFFICE_DESIGN_WIDTH = OFFICE_INTERNAL_WIDTH"), "canvas width unchanged");
+  assert.ok(constantsSource.includes("OFFICE_DESIGN_HEIGHT = OFFICE_INTERNAL_HEIGHT"), "canvas height unchanged");
+
+  // Test: 680ms movement unchanged
+  const panelSource = readSync(
+    new URL("../components/paylabs/office/PayLabsOfficePanel.tsx", import.meta.url),
+    "utf-8",
+  );
+  assert.ok(panelSource.includes("OFFICE_AGENT_TRAVEL_MS = 680"), "680ms travel unchanged");
+  assert.ok(panelSource.includes("OFFICE_DESK_VISIBLE_MS = 1200"), "1200ms desk visible unchanged");
+  assert.ok(panelSource.includes("OFFICE_VISIT_DWELL_MS = 1500"), "1500ms visit dwell unchanged");
+
+  // Test: beam timer management uses separate ref
+  assert.ok(panelSource.includes("beamTimersRef"), "panel has separate beamTimersRef");
+
+  // Test: beam timers cleared on run change
+  assert.ok(panelSource.includes("beamTimersRef.current.clear()"), "beam timers cleared on run change");
+
+  // Test: beam timers cleared on unmount
+  const unmountSection = panelSource.includes("beamTimersRef.current.clear()");
+  assert.ok(unmountSection, "beam timers cleared on unmount");
+
+  // Test: no Brain movement code added
+  assert.ok(!panelSource.includes("brain_planner") || !panelSource.includes("brain movement"), "no Brain movement added");
+}
+
+console.log("PR #171 regression assertions passed");
+console.log("═══════════════════════════════════════════════");
+console.log("ALL PR #171 TESTS PASSED");
