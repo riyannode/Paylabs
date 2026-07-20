@@ -259,7 +259,7 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
         <div className="po-office-visual-block">
           <header className="po-header">
             <div>
-              <strong>PAYLABS VIRTUAL OFFICE</strong>
+              <strong>PAYLABS AGENT RUNTIME</strong>
               <span>{run.runId ? `RUN ${run.runId.slice(0, 12)}` : "IDLE"}</span>
             </div>
             <div className="po-header-metrics">
