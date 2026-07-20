@@ -193,11 +193,11 @@
 .po-agent-wrap.is-macro.is-completed .po-body { box-shadow: 0 0 11px #22c55e, inset -4px 0 rgba(0, 0, 0, 0.2); }
 .po-agent-wrap.is-macro.is-failed .po-body { background: #dc2626; box-shadow: 0 0 11px #dc2626; }
 
-/* ── D-NODE bubble on the left ─────────────────────────────── */
+/* D-NODE bubble on the left, shifted horizontally closer to the node */
 
 .po-agent-wrap[data-agent-id="discovery_planner"] .po-agent-bubble {
   left: auto;
-  right: 42px;
+  right: 28px;
   top: -9px;
   width: 128px;
 }
