@@ -211,7 +211,10 @@ async function executeX402SellerPath(
   // ── Resolve seller wallet address ──
   const walletEnvName = config.sellerWalletAddressEnv;
   if (!walletEnvName) {
-    return NextResponse.json({ ok: false, error: "Service x402 config error: sellerWalletAddressEnv not set" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "Service x402 config error: sellerWalletAddressEnv not set" },
+      { status: 500 }
+    );
   }
 
   let sellerAddress = (process.env[walletEnvName] || "").trim();
@@ -225,7 +228,10 @@ async function executeX402SellerPath(
   }
 
   if (!sellerAddress || !/^0x[a-fA-F0-9]{40}$/.test(sellerAddress)) {
-    return NextResponse.json({ ok: false, error: "Service x402 config error: invalid seller wallet address" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "Service x402 config error: invalid seller wallet address" },
+      { status: 500 }
+    );
   }
 
   // ── Check for payment header ──
@@ -362,7 +368,10 @@ async function executeX402SellerPath(
 
   const handler = SERVICE_HANDLERS[serviceNameTyped];
   if (!handler) {
-    return NextResponse.json({ ok: false, error: `No handler for service: ${serviceNameTyped}` }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: `No handler for service: ${serviceNameTyped}` },
+      { status: 500 }
+    );
   }
 
   const handlerInput: ServiceHandlerInput = {
@@ -374,6 +383,7 @@ async function executeX402SellerPath(
 
   try {
     const result = await handler(handlerInput);
+
     return NextResponse.json({
       ok: result.ok,
       serviceName: result.serviceName,

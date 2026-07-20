@@ -1,5 +1,5 @@
 import { OFFICE_AGENTS, OFFICE_STATIONS } from "./registry";
-import type { OfficeAgentId, OfficeAgentViewState, OfficeMacroAgentId, OfficeMacroBeamState, PayLabsOfficeEvent } from "./types";
+import type { OfficeAgentId, OfficeAgentStatus, OfficeAgentViewState, OfficeMacroAgentId, OfficeMacroBeamState, PayLabsOfficeEvent } from "./types";
 
 export type OfficeState = Record<OfficeAgentId, OfficeAgentViewState>;
 
@@ -116,6 +116,7 @@ export function reduceOfficeEvent(state: OfficeState, event: PayLabsOfficeEvent)
 
   // Compute beam update for macro agents
   let beam: OfficeMacroBeamState | undefined = current.beam;
+  let status: OfficeAgentStatus | undefined;
   if (isMacroBeamEvent(event, event.agentId)) {
     const childName =
       event.metadata && typeof event.metadata === "object" && "childServiceName" in event.metadata
@@ -128,13 +129,14 @@ export function reduceOfficeEvent(state: OfficeState, event: PayLabsOfficeEvent)
       sequence: event.sequence,
       createdAt: event.createdAt,
     };
+    status = beamStatusFromEventType(event.type);
   }
 
   return {
     ...state,
     [event.agentId]: {
       ...current,
-      status: event.status ?? current.status,
+      status: status ?? (event.status ?? current.status),
       message: event.message ?? event.title,
       x: destination.x,
       y: destination.y,

@@ -9,13 +9,14 @@ import { PixelAgent } from "./PixelAgent";
 import { PixelDesk } from "./PixelDesk";
 
 // ── Beam geometry constants ───────────────────────────────────
-// x402 machine center in stage coordinates
-// Gateway zone left=390, x402 machine left=70 top=80 width=76 height=54
-const X402_CENTER_X = 390 + 70 + 38; // 498
-const X402_CENTER_Y = 500 - 182 + 80 + 27; // 425
+// x402 machine inner center in stage coordinates
+// Gateway zone left=390, x402 machine left=70 top=80, 5px border, inner 66×44
+const X402_BORDER_PX = 5;
 // x402 machine local center (within the 76×54 box)
 const X402_LOCAL_CENTER_X = 38;
 const X402_LOCAL_CENTER_Y = 27;
+const X402_CENTER_X = 390 + 70 + X402_BORDER_PX + X402_LOCAL_CENTER_X; // 503
+const X402_CENTER_Y = 500 - 182 + 80 + X402_BORDER_PX + X402_LOCAL_CENTER_Y; // 430
 // Sprite visual center offset from station position
 const SPRITE_CENTER_X = 18;
 const SPRITE_CENTER_Y = 30.5;

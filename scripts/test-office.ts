@@ -991,16 +991,21 @@ console.log("x402 visual order regression tests passed");
     "service-node.ts still emits treasury.retained");
 
   // Test: no duplicate x402 or agent.started events across both files
-  // seller endpoint: exactly 1 x402.requested, 1 x402.settled, 1 agent.started
+  // seller endpoint: x402.requested has type union (1) + child (1) + macro (1) = 3,
+  // x402.settled and x402.failed have child (1) + macro (1) = 2 each,
+  // 1 agent.started (child only)
   const sellerRequestedCount = (sellerSource.match(/type: "x402\.requested"/g) || []).length;
   const sellerSettledCount = (sellerSource.match(/type: "x402\.settled"/g) || []).length;
+  const sellerFailedCount = (sellerSource.match(/type: "x402\.failed"/g) || []).length;
   const sellerStartedCount = (sellerSource.match(/type: "agent\.started"/g) || []).length;
-  assert.equal(sellerRequestedCount, 1,
-    "seller endpoint has exactly 1 x402.requested emission");
-  assert.equal(sellerSettledCount, 1,
-    "seller endpoint has exactly 1 x402.settled emission");
+  assert.equal(sellerRequestedCount, 3,
+    "seller endpoint has 3 x402.requested (type union + child + macro)");
+  assert.equal(sellerSettledCount, 2,
+    "seller endpoint has 2 x402.settled (child + macro)");
+  assert.equal(sellerFailedCount, 2,
+    "seller endpoint has 2 x402.failed (child + macro)");
   assert.equal(sellerStartedCount, 1,
-    "seller endpoint has exactly 1 agent.started emission");
+    "seller endpoint has exactly 1 agent.started (child only)");
 
   // Test: payment amounts remain in payment/metadata fields, not bubble messages
   assert.ok(!sellerSource.includes('message: `${') ||
@@ -1736,7 +1741,7 @@ console.log("PR #171 expiry tests passed");
 // These test the expected emission order by reading the route source.
 
 {
-  const routeSource = readFileSync(
+  const routeSource = readSync(
     new URL("../app/api/paylabs/agent-services/[serviceName]/run/route.ts", import.meta.url),
     "utf-8",
   );
@@ -1750,29 +1755,56 @@ console.log("PR #171 expiry tests passed");
   // Test: helper returns early for non-macro buyerAgentName
   assert.ok(routeSource.includes("if (!isOfficeMacroAgentId(args.buyerAgentName)) return"), "helper returns early for non-macro");
 
-  // Test: macro x402.requested emission exists
-  assert.ok(routeSource.includes('type: "x402.requested"') && routeSource.includes("emitMacroPaymentOfficeEvent"), "macro x402.requested emission exists");
+  // ── Structural ordering assertions ─────────────────────────
+  // Extract actual macro call bodies only
+  const macroCallBodies = [
+    ...routeSource.matchAll(
+      /await emitMacroPaymentOfficeEvent\(\{([\s\S]*?)\n\s*\}\);/g,
+    ),
+  ].map((match) => match[1]);
 
-  // Test: macro x402.settled emission exists
-  assert.ok(routeSource.includes('type: "x402.settled"') && routeSource.includes("emitMacroPaymentOfficeEvent"), "macro x402.settled emission exists");
+  // Test: exactly 3 macro call sites
+  assert.equal(macroCallBodies.length, 3, `expected 3 macro call bodies, got ${macroCallBodies.length}`);
 
-  // Test: macro x402.failed emission exists
-  assert.ok(routeSource.includes('type: "x402.failed"') && routeSource.includes("emitMacroPaymentOfficeEvent"), "macro x402.failed emission exists");
+  // Test: one body per x402 event type
+  assert.ok(macroCallBodies.some((b) => b.includes('type: "x402.requested"')), "macro body contains x402.requested");
+  assert.ok(macroCallBodies.some((b) => b.includes('type: "x402.settled"')), "macro body contains x402.settled");
+  assert.ok(macroCallBodies.some((b) => b.includes('type: "x402.failed"')), "macro body contains x402.failed");
 
-  // Test: no macro agent.started emission
-  const macroAgentStarted = routeSource.match(/emitMacroPaymentOfficeEvent[\s\S]*?agent\.started/);
-  assert.equal(macroAgentStarted, null, "no macro agent.started emission");
+  // Test: no body contains agent.started / agent.completed / agent.failed
+  assert.ok(!macroCallBodies.some((b) => b.includes('type: "agent.started"')), "no macro agent.started");
+  assert.ok(!macroCallBodies.some((b) => b.includes('type: "agent.completed"')), "no macro agent.completed");
+  assert.ok(!macroCallBodies.some((b) => b.includes('type: "agent.failed"')), "no macro agent.failed");
 
-  // Test: no macro agent.completed emission
-  const macroAgentCompleted = routeSource.match(/emitMacroPaymentOfficeEvent[\s\S]*?agent\.completed/);
-  assert.equal(macroAgentCompleted, null, "no macro agent.completed emission");
+  // Test: every body contains childServiceName: serviceNameTyped
+  assert.ok(macroCallBodies.every((b) => b.includes("childServiceName: serviceNameTyped")), "all macro bodies use childServiceName: serviceNameTyped");
 
-  // Test: no macro agent.failed emission
-  const macroAgentFailed = routeSource.match(/emitMacroPaymentOfficeEvent[\s\S]*?agent\.failed/);
-  assert.equal(macroAgentFailed, null, "no macro agent.failed emission");
+  // ── Structural ordering assertions ─────────────────────────
+  // Verify exact order: child → macro → response/child.started
 
-  // Test: childServiceName in metadata
-  assert.ok(routeSource.includes("childServiceName: args.childServiceName"), "helper puts childServiceName in metadata");
+  // Requested path ordering
+  const requestedBlock = routeSource.indexOf('// Macro visualization: beam ON toward x402');
+  const requestedChildEmit = routeSource.lastIndexOf('safeEmitOfficeEvent({', requestedBlock);
+  const requestedMacroEmit = requestedBlock;
+  const requestedHttp402 = routeSource.indexOf('status: 402', requestedMacroEmit);
+  assert.ok(requestedChildEmit < requestedMacroEmit, "requested: child emit before macro emit");
+  assert.ok(requestedMacroEmit < requestedHttp402, "requested: macro emit before HTTP 402");
+
+  // Settled path ordering
+  const settledBlock = routeSource.indexOf('// Macro visualization: beam SETTLED');
+  const settledChildEmit = routeSource.lastIndexOf('safeEmitOfficeEvent({', settledBlock);
+  const settledMacroEmit = settledBlock;
+  const settledAgentStarted = routeSource.indexOf('agent.started', settledMacroEmit);
+  assert.ok(settledChildEmit < settledMacroEmit, "settled: child emit before macro emit");
+  assert.ok(settledMacroEmit < settledAgentStarted, "settled: macro emit before child agent.started");
+
+  // Failed path ordering
+  const failedBlock = routeSource.indexOf('// Macro visualization: beam FAILED');
+  const failedChildEmit = routeSource.lastIndexOf('safeEmitOfficeEvent({', failedBlock);
+  const failedMacroEmit = failedBlock;
+  const failedHttpResponse = routeSource.indexOf('status: 402', failedMacroEmit);
+  assert.ok(failedChildEmit < failedMacroEmit, "failed: child emit before macro emit");
+  assert.ok(failedMacroEmit < failedHttpResponse, "failed: macro emit before HTTP failure response");
 }
 
 console.log("PR #171 server event ordering tests passed");
@@ -1824,12 +1856,12 @@ console.log("PR #171 server event ordering tests passed");
   assert.ok(!cssSource.includes("<svg"), "CSS does not introduce SVG");
   assert.ok(!cssSource.includes("<canvas"), "CSS does not introduce canvas");
 
-  // Test: gateway machine has isolation and overflow visible
-  assert.ok(cssSource.includes("isolation: isolate"), "gateway machine has isolation: isolate");
+  // Test: gateway machine has overflow visible but NOT isolation
   assert.ok(cssSource.includes("overflow: visible"), "gateway machine has overflow: visible");
+  assert.ok(!cssSource.includes("isolation: isolate"), "gateway machine has no isolation: isolate");
 
   // Canvas source assertions
-  const canvasSource = readFileSync(
+  const canvasSource = readSync(
     new URL("../components/paylabs/office/PayLabsOfficeCanvas.tsx", import.meta.url),
     "utf-8",
   );
@@ -1868,15 +1900,15 @@ console.log("PR #171 DOM/CSS source assertions passed");
   assert.deepEqual(OFFICE_AGENTS.brain_planner.desk, { x: 150, y: 10 }, "Brain desk unchanged");
 
   // Test: constants unchanged
-  const constantsSource = readFileSync(
+  const constantsSource = readSync(
     new URL("../lib/paylabs/office/constants.ts", import.meta.url),
     "utf-8",
   );
-  assert.ok(constantsSource.includes("OFFICE_DESIGN_WIDTH = 900"), "canvas width unchanged");
-  assert.ok(constantsSource.includes("OFFICE_DESIGN_HEIGHT = 500"), "canvas height unchanged");
+  assert.ok(constantsSource.includes("OFFICE_DESIGN_WIDTH = OFFICE_INTERNAL_WIDTH"), "canvas width unchanged");
+  assert.ok(constantsSource.includes("OFFICE_DESIGN_HEIGHT = OFFICE_INTERNAL_HEIGHT"), "canvas height unchanged");
 
   // Test: 680ms movement unchanged
-  const panelSource = readFileSync(
+  const panelSource = readSync(
     new URL("../components/paylabs/office/PayLabsOfficePanel.tsx", import.meta.url),
     "utf-8",
   );
