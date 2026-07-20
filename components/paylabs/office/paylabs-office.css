@@ -156,7 +156,7 @@
 }
 .po-gateway-machine, .po-treasury-safe, .po-arc-screen, .po-receipt-printer { position: absolute; display: grid; place-items: center; border: 5px solid #334155; background: #0f172a; color: #9cf7ff; text-shadow: none; }
 .po-clickable { text-decoration: none; cursor: pointer; }
-.po-gateway-machine { left: 70px; top: 80px; width: 76px; height: 54px; box-shadow: 0 0 15px rgba(34, 211, 238, 0.7); }
+.po-gateway-machine { left: 70px; top: 80px; width: 76px; height: 54px; box-shadow: 0 0 15px rgba(34, 211, 238, 0.7); isolation: isolate; overflow: visible; }
 .po-receipt-printer { right: 22px; top: 88px; width: 58px; height: 40px; color: #f8fafc; }
 .po-treasury-safe { left: 48px; top: 36px; width: 80px; height: 54px; color: #86efac; box-shadow: 0 0 15px rgba(34, 197, 94, 0.55); font-size: 8px; line-height: 1.15; text-align: center; }
 .po-arc-screen { right: 45px; top: 36px; width: 72px; height: 54px; color: #bfdbfe; box-shadow: 0 0 15px rgba(59, 130, 246, 0.5); font-size: 8px; line-height: 1.15; text-align: center; }
@@ -247,4 +247,96 @@
     display: block;
     min-height: auto;
   }
+}
+
+/* ── x402 Payment Beams ───────────────────────────────────── */
+
+.po-x402-title {
+  position: relative;
+  z-index: 45;
+  background: #0f172a;
+  padding: 2px 4px;
+  pointer-events: none;
+}
+
+.po-x402-beams {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 22;
+}
+
+.po-x402-beam {
+  position: absolute;
+  display: block;
+  height: 2px;
+  pointer-events: none;
+  transform-origin: left center;
+  z-index: 22;
+}
+
+/* Beam state: requested — cyan animated dash */
+.po-x402-beam.is-requested {
+  background: repeating-linear-gradient(
+    90deg,
+    #22d3ee 0,
+    #22d3ee 6px,
+    transparent 6px,
+    transparent 10px
+  );
+  animation: po-beam-dash 0.6s linear infinite;
+  box-shadow: 0 0 6px rgba(34, 211, 238, 0.6);
+}
+
+/* Beam state: settled — green flash */
+.po-x402-beam.is-settled {
+  background: #22c55e;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.7);
+  animation: po-beam-flash 0.3s ease-out;
+}
+
+/* Beam state: failed — red flash */
+.po-x402-beam.is-failed {
+  background: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.7);
+  animation: po-beam-flash 0.3s ease-out;
+}
+
+/* Macro-type tints */
+.po-x402-beam.is-discovery.is-requested {
+  background: repeating-linear-gradient(90deg, #22d3ee 0, #22d3ee 6px, transparent 6px, transparent 10px);
+}
+.po-x402-beam.is-payment.is-requested {
+  background: repeating-linear-gradient(90deg, #f97316 0, #f97316 6px, transparent 6px, transparent 10px);
+  box-shadow: 0 0 6px rgba(249, 115, 22, 0.6);
+}
+.po-x402-beam.is-settlement.is-requested {
+  background: repeating-linear-gradient(90deg, #22c55e 0, #22c55e 6px, transparent 6px, transparent 10px);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+}
+
+@keyframes po-beam-dash {
+  from { background-position: 0 0; }
+  to { background-position: 10px 0; }
+}
+
+@keyframes po-beam-flash {
+  from { opacity: 1; }
+  to { opacity: 0.6; }
+}
+
+/* Reduced motion: disable beam animation, keep static color */
+@media (prefers-reduced-motion: reduce) {
+  .po-x402-beam.is-requested {
+    animation: none;
+  }
+  .po-x402-beam.is-settled,
+  .po-x402-beam.is-failed {
+    animation: none;
+  }
+}
+
+/* Paused state: freeze beam animations */
+.is-paused .po-x402-beam {
+  animation-play-state: paused !important;
 }

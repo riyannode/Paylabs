@@ -36,6 +36,8 @@ import {
 } from "@/lib/paylabs/x402/seller-challenge";
 import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
 import { phaseFromMacroNode, statusFromServiceName } from "@/lib/paylabs/office/event-mapper";
+import { isOfficeMacroAgentId } from "@/lib/paylabs/office/registry";
+import type { OfficeMacroAgentId, OfficePaymentMeta } from "@/lib/paylabs/office/types";
 
 export async function POST(
   req: NextRequest,
@@ -152,6 +154,42 @@ export async function POST(
   return executeX402SellerPath(req, serviceNameTyped, config, buyerAgentName, discoveryRunId, payload);
 }
 
+// ─── Macro Payment Visualization Event ─────────────────────────
+
+/**
+ * Emit a macro-node Office event for x402 payment visualization.
+ * Only emits when buyerAgentName is a valid OfficeMacroAgentId.
+ * Never throws — fire-and-forget via safeEmitOfficeEvent.
+ */
+async function emitMacroPaymentOfficeEvent(args: {
+  runId: string;
+  buyerAgentName: string;
+  childServiceName: ServiceName;
+  type: "x402.requested" | "x402.settled" | "x402.failed";
+  status: "paying" | "completed" | "failed";
+  payment?: OfficePaymentMeta;
+}): Promise<void> {
+  if (!isOfficeMacroAgentId(args.buyerAgentName)) return;
+  const macroId = args.buyerAgentName as OfficeMacroAgentId;
+  const safeMessage =
+    args.type === "x402.requested"
+      ? "Requesting child service through x402"
+      : args.type === "x402.settled"
+        ? "Child service payment settled"
+        : "Child service payment failed";
+  await safeEmitOfficeEvent({
+    runId: args.runId,
+    type: args.type,
+    agentId: macroId,
+    phase: macroId,
+    status: args.status,
+    title: `${macroId} ${args.type === "x402.requested" ? "paying " : args.type === "x402.settled" ? "payment settled" : "payment failed"} ${args.childServiceName}`,
+    message: safeMessage,
+    payment: args.payment ?? null,
+    metadata: { childServiceName: args.childServiceName },
+  });
+}
+
 // ─── x402 Seller Path ────────────────────────────────────────
 
 /**
@@ -173,10 +211,7 @@ async function executeX402SellerPath(
   // ── Resolve seller wallet address ──
   const walletEnvName = config.sellerWalletAddressEnv;
   if (!walletEnvName) {
-    return NextResponse.json(
-      { ok: false, error: "Service x402 config error: sellerWalletAddressEnv not set" },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: "Service x402 config error: sellerWalletAddressEnv not set" }, { status: 500 });
   }
 
   let sellerAddress = (process.env[walletEnvName] || "").trim();
@@ -190,10 +225,7 @@ async function executeX402SellerPath(
   }
 
   if (!sellerAddress || !/^0x[a-fA-F0-9]{40}$/.test(sellerAddress)) {
-    return NextResponse.json(
-      { ok: false, error: "Service x402 config error: invalid seller wallet address" },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: "Service x402 config error: invalid seller wallet address" }, { status: 500 });
   }
 
   // ── Check for payment header ──
@@ -213,6 +245,16 @@ async function executeX402SellerPath(
       status: "paying",
       title: `${serviceNameTyped} payment requested`,
       message: "Awaiting x402 payment",
+    });
+
+    // Macro visualization: beam ON toward x402
+    await emitMacroPaymentOfficeEvent({
+      runId: discoveryRunId,
+      buyerAgentName,
+      childServiceName: serviceNameTyped,
+      type: "x402.requested",
+      status: "paying",
+      payment: { amountUsdc: config.priceUsdc.toString(), status: "pending" },
     });
 
     const amountAtomic = computeAmountAtomic(config.priceUsdc);
@@ -251,6 +293,16 @@ async function executeX402SellerPath(
       message: "x402 settlement failed",
     });
 
+    // Macro visualization: beam FAILED
+    await emitMacroPaymentOfficeEvent({
+      runId: discoveryRunId,
+      buyerAgentName,
+      childServiceName: serviceNameTyped,
+      type: "x402.failed",
+      status: "failed",
+      payment: { amountUsdc: config.priceUsdc.toString(), status: "failed" },
+    });
+
     return NextResponse.json(
       {
         ok: false,
@@ -281,6 +333,22 @@ async function executeX402SellerPath(
     },
   });
 
+  // Macro visualization: beam SETTLED
+  await emitMacroPaymentOfficeEvent({
+    runId: discoveryRunId,
+    buyerAgentName,
+    childServiceName: serviceNameTyped,
+    type: "x402.settled",
+    status: "completed",
+    payment: {
+      amountUsdc: config.priceUsdc.toString(),
+      status: "settled",
+      txHash: settleResult.paymentMeta?.txHash ?? null,
+      settlementId: settleResult.paymentMeta?.settlementId ?? null,
+      explorerUrl: settleResult.paymentMeta?.explorerUrl ?? null,
+    },
+  });
+
   // Emit agent.started — moves agent from Gateway to its assigned desk
   await safeEmitOfficeEvent({
     runId: discoveryRunId,
@@ -294,10 +362,7 @@ async function executeX402SellerPath(
 
   const handler = SERVICE_HANDLERS[serviceNameTyped];
   if (!handler) {
-    return NextResponse.json(
-      { ok: false, error: `No handler for service: ${serviceNameTyped}` },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: `No handler for service: ${serviceNameTyped}` }, { status: 500 });
   }
 
   const handlerInput: ServiceHandlerInput = {
@@ -309,7 +374,6 @@ async function executeX402SellerPath(
 
   try {
     const result = await handler(handlerInput);
-
     return NextResponse.json({
       ok: result.ok,
       serviceName: result.serviceName,
