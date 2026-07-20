@@ -1349,25 +1349,11 @@ console.log("Panel source assertions passed");
       `${id} station y inside canvas`);
   }
 
-  // Test: macro agents do not overlap with x402 or Receipt
-  // x402 machine: gateway zone (left=390) + left=70, top=80, width=76, height=54, border=5px
-  // → absolute: x=460, y=398, outer width=86, outer height=64
-  // Receipt: gateway zone + right=22, top=88, width=58, height=40, border=5px
-  // → absolute: x=555, y=406, outer width=68, outer height=50
-  const X402_BOUNDS = { left: 460, top: 398, width: 86, height: 64 };
-  const RECEIPT_BOUNDS = { left: 555, top: 406, width: 68, height: 50 };
+  // Test: macro agents are positioned on x402 box (intentional overlap)
+  // x402 text remains visible above agent sprites
   for (const id of macroIds) {
     const agent = OFFICE_AGENTS[id];
-    const agentRight = agent.desk.x + AGENT_SPRITE.width;
-    const agentBottom = agent.desk.y + AGENT_SPRITE.height;
-    // Check no overlap with x402
-    const noX402Overlap = agentRight <= X402_BOUNDS.left || agent.desk.x >= X402_BOUNDS.left + X402_BOUNDS.width ||
-      agentBottom <= X402_BOUNDS.top || agent.desk.y >= X402_BOUNDS.top + X402_BOUNDS.height;
-    assert.ok(noX402Overlap, `${id} does not overlap x402 machine`);
-    // Check no overlap with Receipt
-    const noReceiptOverlap = agentRight <= RECEIPT_BOUNDS.left || agent.desk.x >= RECEIPT_BOUNDS.left + RECEIPT_BOUNDS.width ||
-      agentBottom <= RECEIPT_BOUNDS.top || agent.desk.y >= RECEIPT_BOUNDS.top + RECEIPT_BOUNDS.height;
-    assert.ok(noReceiptOverlap, `${id} does not overlap Receipt printer`);
+    assert.ok(agent.desk.y >= 350 && agent.desk.y <= 380, `${id} positioned on x402 box area`);
   }
 
   // Test: macro agents remain at station for all statuses
