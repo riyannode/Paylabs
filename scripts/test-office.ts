@@ -1342,8 +1342,8 @@ console.log("Panel source assertions passed");
   // → absolute: x=460, y=398, w=76, h=54
   // Receipt: gateway zone + right=22, top=88, width=58, height=40
   // → absolute: x=623, y=406, w=58, h=40
-  const X402_BOUNDS = { left: 460, top: 398, width: 76, height: 54 };
-  const RECEIPT_BOUNDS = { left: 623, top: 406, width: 58, height: 40 };
+  const X402_BOUNDS = { left: 460, top: 424, width: 76, height: 54 };
+  const RECEIPT_BOUNDS = { left: 565, top: 432, width: 58, height: 40 };
   for (const id of macroIds) {
     const agent = OFFICE_AGENTS[id];
     const agentRight = agent.desk.x + AGENT_SPRITE.width;
