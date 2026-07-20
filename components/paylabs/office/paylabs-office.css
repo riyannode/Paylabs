@@ -57,7 +57,7 @@
   flex: 1;
   width: 100%;
   min-width: 0;
-  min-height: 520px;
+  min-height: 590px;
   overflow: hidden;
   background: #ffffff;
 }
@@ -156,8 +156,8 @@
 }
 .po-gateway-machine, .po-treasury-safe, .po-arc-screen, .po-receipt-printer { position: absolute; display: grid; place-items: center; border: 5px solid #334155; background: #0f172a; color: #9cf7ff; text-shadow: none; }
 .po-clickable { text-decoration: none; cursor: pointer; }
-.po-gateway-machine { left: 70px; top: 36px; width: 76px; height: 54px; box-shadow: 0 0 15px rgba(34, 211, 238, 0.7); }
-.po-receipt-printer { right: 22px; top: 44px; width: 58px; height: 40px; color: #f8fafc; }
+.po-gateway-machine { left: 70px; top: 80px; width: 76px; height: 54px; box-shadow: 0 0 15px rgba(34, 211, 238, 0.7); }
+.po-receipt-printer { right: 22px; top: 88px; width: 58px; height: 40px; color: #f8fafc; }
 .po-treasury-safe { left: 48px; top: 36px; width: 80px; height: 54px; color: #86efac; box-shadow: 0 0 15px rgba(34, 197, 94, 0.55); font-size: 8px; line-height: 1.15; text-align: center; }
 .po-arc-screen { right: 45px; top: 36px; width: 72px; height: 54px; color: #bfdbfe; box-shadow: 0 0 15px rgba(59, 130, 246, 0.5); font-size: 8px; line-height: 1.15; text-align: center; }
 .po-agent-wrap { position: absolute; width: 36px; height: 61px; padding: 0; border: 0; background: transparent; transition: transform 680ms steps(12, end), filter 180ms linear; transform-origin: center; z-index: 30; will-change: transform; cursor: pointer; }
@@ -181,6 +181,18 @@
 .po-agent-bubble::after { content: ""; position: absolute; left: 8px; bottom: -7px; border: 4px solid transparent; border-top-color: #20263a; }
 .po-agent-wrap.is-brain .po-agent-bubble { left: -140px; top: 18px; width: 120px; max-height: none; box-sizing: border-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .po-agent-wrap.is-brain .po-agent-bubble::after { display: none; }
+.po-agent-wrap.is-macro .po-agent-label { font-size: 7px; min-width: 52px; letter-spacing: 0.04em; }
+.po-agent-wrap.is-macro .po-agent-bubble { font-size: 7px; line-height: 1.2; }
+.po-agent-wrap.is-macro.is-paying .po-agent-bubble { border-color: #22d3ee; }
+.po-agent-wrap.is-macro.is-settling .po-agent-bubble { border-color: #f97316; }
+.po-agent-wrap.is-macro.is-completed .po-agent-bubble { border-color: #22c55e; }
+.po-agent-wrap.is-macro.is-failed .po-agent-bubble { border-color: #dc2626; }
+.po-agent-wrap.is-macro.is-idle .po-agent-bubble { border-color: #94a3b8; }
+.po-agent-wrap.is-macro.is-paying .po-body { box-shadow: 0 0 11px #22d3ee, inset -4px 0 rgba(0, 0, 0, 0.2); }
+.po-agent-wrap.is-macro.is-settling .po-body { box-shadow: 0 0 11px #f97316, inset -4px 0 rgba(0, 0, 0, 0.2); }
+.po-agent-wrap.is-macro.is-completed .po-body { box-shadow: 0 0 11px #22c55e, inset -4px 0 rgba(0, 0, 0, 0.2); }
+.po-agent-wrap.is-macro.is-failed .po-body { background: #dc2626; box-shadow: 0 0 11px #dc2626; }
+.po-agent-wrap.is-macro.is-idle .po-agent { filter: brightness(0.85) saturate(0.7); }
 .po-agent.is-paying .po-body { box-shadow: 0 0 11px #22d3ee, inset -4px 0 rgba(0, 0, 0, 0.2); }
 .po-agent.is-failed .po-body { background: #dc2626; }
 .po-agent.is-completed { filter: brightness(1.12); }

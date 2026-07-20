@@ -29,9 +29,19 @@ export type OfficeEventType =
   | "creator.paid"
   | "treasury.retained";
 
+export type OfficeMacroAgentId =
+  | "discovery_planner"
+  | "payment_decision"
+  | "settlement_memory";
+
 export type OfficeAgentId =
   | "brain_planner"
+  | OfficeMacroAgentId
   | ServiceName;
+
+export function isOfficeMacroAgentId(value: string): value is OfficeMacroAgentId {
+  return value === "discovery_planner" || value === "payment_decision" || value === "settlement_memory";
+}
 
 export type OfficePhase =
   | "brain"

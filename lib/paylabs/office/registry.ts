@@ -1,19 +1,19 @@
 import type { ServiceName } from "../agent-services/types";
 import { isValidServiceName } from "../agent-services/registry";
-import type { OfficeAgentId, OfficePhase } from "./types";
+import type { OfficeAgentId, OfficeMacroAgentId, OfficePhase } from "./types";
 
 export interface OfficeAgentDefinition {
   id: OfficeAgentId;
   label: string;
   shortLabel: string;
   phase: OfficePhase;
-  department: "executive" | "discovery" | "payment" | "settlement";
+  department: "executive" | "discovery" | "payment" | "settlement" | "macro_hub";
   desk: { x: number; y: number };
   idle: { x: number; y: number };
   color: string;
 }
 
-type ServiceOfficeAgentId = Exclude<OfficeAgentId, "brain_planner">;
+type ServiceOfficeAgentId = Exclude<OfficeAgentId, "brain_planner" | OfficeMacroAgentId>;
 
 const SERVICE_AGENT_IDS: ReadonlySet<ServiceOfficeAgentId> = new Set<ServiceOfficeAgentId>([
   "intent_planner",
@@ -31,7 +31,9 @@ const SERVICE_AGENT_IDS: ReadonlySet<ServiceOfficeAgentId> = new Set<ServiceOffi
 ]);
 
 export function isOfficeAgentId(value: string): value is OfficeAgentId {
-  return value === "brain_planner" || (isValidServiceName(value) && SERVICE_AGENT_IDS.has(value));
+  if (value === "brain_planner") return true;
+  if (isOfficeMacroAgentId(value)) return true;
+  return isValidServiceName(value) && SERVICE_AGENT_IDS.has(value);
 }
 
 export function officeAgentIdFromServiceName(serviceName: string): ServiceName | null {
@@ -170,6 +172,36 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     idle: { x: 240, y: 365 },
     color: "#15803d",
   },
+  discovery_planner: {
+    id: "discovery_planner",
+    label: "Discovery Node",
+    shortLabel: "D-NODE",
+    phase: "discovery_planner",
+    department: "macro_hub",
+    desk: { x: 414, y: 335 },
+    idle: { x: 414, y: 335 },
+    color: "#22d3ee",
+  },
+  payment_decision: {
+    id: "payment_decision",
+    label: "Payment Node",
+    shortLabel: "P-NODE",
+    phase: "payment_decision",
+    department: "macro_hub",
+    desk: { x: 486, y: 335 },
+    idle: { x: 486, y: 335 },
+    color: "#f97316",
+  },
+  settlement_memory: {
+    id: "settlement_memory",
+    label: "Settlement Node",
+    shortLabel: "S-NODE",
+    phase: "settlement_memory",
+    department: "macro_hub",
+    desk: { x: 558, y: 335 },
+    idle: { x: 558, y: 335 },
+    color: "#22c55e",
+  },
 };
 
 export const OFFICE_STATIONS = {
@@ -180,9 +212,60 @@ export const OFFICE_STATIONS = {
   error: { x: 862, y: 355 },
 };
 
+export interface OfficeMacroAgentDefinition {
+  id: OfficeMacroAgentId;
+  label: string;
+  shortLabel: string;
+  station: { x: number; y: number };
+  brainApproach: { x: number; y: number };
+  department: "macro_hub";
+  color: string;
+}
+
+const OFFICE_MACRO_AGENT_IDS: ReadonlySet<OfficeMacroAgentId> = new Set<OfficeMacroAgentId>([
+  "discovery_planner",
+  "payment_decision",
+  "settlement_memory",
+]);
+
+export const OFFICE_MACRO_AGENTS: Record<OfficeMacroAgentId, OfficeMacroAgentDefinition> = {
+  discovery_planner: {
+    id: "discovery_planner",
+    label: "Discovery Node",
+    shortLabel: "D-NODE",
+    station: { x: 414, y: 335 },
+    brainApproach: { x: 414, y: 388 },
+    department: "macro_hub",
+    color: "#22d3ee",
+  },
+  payment_decision: {
+    id: "payment_decision",
+    label: "Payment Node",
+    shortLabel: "P-NODE",
+    station: { x: 486, y: 335 },
+    brainApproach: { x: 486, y: 388 },
+    department: "macro_hub",
+    color: "#f97316",
+  },
+  settlement_memory: {
+    id: "settlement_memory",
+    label: "Settlement Node",
+    shortLabel: "S-NODE",
+    station: { x: 558, y: 335 },
+    brainApproach: { x: 558, y: 388 },
+    department: "macro_hub",
+    color: "#22c55e",
+  },
+};
+
+export function isOfficeMacroAgentId(value: string): value is OfficeMacroAgentId {
+  return OFFICE_MACRO_AGENT_IDS.has(value as OfficeMacroAgentId);
+}
+
 export function assertOfficeRegistryMatchesServiceRegistry(): void {
   for (const agentId of Object.keys(OFFICE_AGENTS)) {
     if (agentId === "brain_planner") continue;
+    if (isOfficeMacroAgentId(agentId)) continue;
     if (!isValidServiceName(agentId)) {
       throw new Error(`Office agent ${agentId} is not an actual PayLabs ServiceName`);
     }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createInitialOfficeState, reduceOfficeEvent, reduceReturnToIdle } from "../lib/paylabs/office/reducer";
-import { OFFICE_AGENTS, OFFICE_STATIONS, assertOfficeRegistryMatchesServiceRegistry, officeAgentIdFromServiceName } from "../lib/paylabs/office/registry";
+import { OFFICE_AGENTS, OFFICE_STATIONS, assertOfficeRegistryMatchesServiceRegistry, officeAgentIdFromServiceName, isOfficeMacroAgentId } from "../lib/paylabs/office/registry";
+import { OFFICE_DESIGN_HEIGHT, OFFICE_INTERNAL_HEIGHT } from "../lib/paylabs/office/constants";
 import { phaseFromMacroNode, statusFromServiceName, isOfficeServiceName } from "../lib/paylabs/office/event-mapper";
 import { mergeOfficeEvents } from "../lib/paylabs/office/selectors";
 import type { PayLabsOfficeEvent } from "../lib/paylabs/office/types";
@@ -32,25 +33,28 @@ const allDeskCoords = Object.values(OFFICE_AGENTS).map((a) => `${a.desk.x},${a.d
 assert.equal(new Set(allDeskCoords).size, allDeskCoords.length, "all desk coordinates are unique");
 
 // ── Test 8: all idle coordinates are unique ────────────────────────
-const childAgents = Object.values(OFFICE_AGENTS).filter((a) => a.id !== "brain_planner");
+const childAgents = Object.values(OFFICE_AGENTS).filter((a) => a.id !== "brain_planner" && !isOfficeMacroAgentId(a.id));
 const childIdleCoords = childAgents.map((a) => `${a.idle.x},${a.idle.y}`);
 assert.equal(new Set(childIdleCoords).size, childIdleCoords.length, "child agents have unique Lounge idle positions");
 
 // ── Test 9: all coordinates inside correct zones ───────────────────
-const CANVAS = { width: 900, height: 430 };
+const CANVAS = { width: 900, height: 500 };
 const AGENT_SPRITE = { width: 36, height: 61 };
-const LOUNGE_BOUNDS = { left: 0, right: 390, top: 318, bottom: 430 };
+const LOUNGE_BOUNDS = { left: 0, right: 390, top: 318, bottom: 500 };
 
 const DISCOVERY_BOUNDS = { left: 0, right: 280, top: 64, bottom: 318 };
 const PAYMENT_BOUNDS = { left: 280, right: 610, top: 0, bottom: 318 };
 const SETTLEMENT_BOUNDS = { left: 610, right: 900, top: 0, bottom: 318 };
 const CONTROL_BOUNDS = { left: 0, right: 280, top: 0, bottom: 318 };
 
+const MACRO_HUB_BOUNDS = { left: 390, right: 645, top: 318, bottom: 500 };
+
 const ZONE_MAP: Record<string, { left: number; right: number; top: number; bottom: number }> = {
   executive: CONTROL_BOUNDS,
   discovery: DISCOVERY_BOUNDS,
   payment: PAYMENT_BOUNDS,
   settlement: SETTLEMENT_BOUNDS,
+  macro_hub: MACRO_HUB_BOUNDS,
 };
 
 for (const agent of Object.values(OFFICE_AGENTS)) {
@@ -1282,3 +1286,191 @@ console.log("Desk dwell tests passed");
 }
 
 console.log("Panel source assertions passed");
+
+// ── Macro-node agent tests ────────────────────────────────────────
+// Verifies that the three macro-node agents are properly defined,
+// have unique stations, idle = station, and are not treated as child services.
+
+{
+  // Test: three macro IDs exist in OFFICE_AGENTS
+  const macroIds = ["discovery_planner", "payment_decision", "settlement_memory"] as const;
+  for (const id of macroIds) {
+    assert.ok(OFFICE_AGENTS[id], `macro agent ${id} exists in OFFICE_AGENTS`);
+  }
+  assert.equal(
+    Object.keys(OFFICE_AGENTS).length,
+    16,
+    "OFFICE_AGENTS has 16 entries (12 child + 1 brain + 3 macro)",
+  );
+
+  // Test: macro IDs are not treated as ServiceName child agents
+  for (const id of macroIds) {
+    assert.equal(officeAgentIdFromServiceName(id), null, `macro agent ${id} is not a ServiceName child`);
+  }
+
+  // Test: each macro has a unique station
+  const macroStations = macroIds.map((id) => `${OFFICE_AGENTS[id].desk.x},${OFFICE_AGENTS[id].desk.y}`);
+  assert.equal(new Set(macroStations).size, 3, "macro agents have unique stations");
+
+  // Test: each macro idle equals station (permanently in Payment Hub)
+  for (const id of macroIds) {
+    const agent = OFFICE_AGENTS[id];
+    assert.deepEqual(agent.idle, agent.desk, `${id} idle equals station`);
+  }
+
+  // Test: macro labels are D-NODE, P-NODE and S-NODE
+  assert.equal(OFFICE_AGENTS.discovery_planner.shortLabel, "D-NODE", "discovery_planner shortLabel is D-NODE");
+  assert.equal(OFFICE_AGENTS.payment_decision.shortLabel, "P-NODE", "payment_decision shortLabel is P-NODE");
+  assert.equal(OFFICE_AGENTS.settlement_memory.shortLabel, "S-NODE", "settlement_memory shortLabel is S-NODE");
+
+  // Test: macro agents have department macro_hub
+  for (const id of macroIds) {
+    assert.equal(OFFICE_AGENTS[id].department, "macro_hub", `${id} department is macro_hub`);
+  }
+
+  // Test: macro agents are inside canvas bounds
+  for (const id of macroIds) {
+    const agent = OFFICE_AGENTS[id];
+    assert.ok(agent.desk.x >= 0 && agent.desk.x + AGENT_SPRITE.width <= CANVAS.width,
+      `${id} station x inside canvas`);
+    assert.ok(agent.desk.y >= 0 && agent.desk.y + AGENT_SPRITE.height <= CANVAS.height,
+      `${id} station y inside canvas`);
+  }
+
+  // Test: macro agents do not overlap with x402 or Receipt
+  // x402 machine: gateway zone (left=390) + left=70, top=80, width=76, height=54
+  // → absolute: x=460, y=398, w=76, h=54
+  // Receipt: gateway zone + right=22, top=88, width=58, height=40
+  // → absolute: x=623, y=406, w=58, h=40
+  const X402_BOUNDS = { left: 460, top: 398, width: 76, height: 54 };
+  const RECEIPT_BOUNDS = { left: 623, top: 406, width: 58, height: 40 };
+  for (const id of macroIds) {
+    const agent = OFFICE_AGENTS[id];
+    const agentRight = agent.desk.x + AGENT_SPRITE.width;
+    const agentBottom = agent.desk.y + AGENT_SPRITE.height;
+    // Check no overlap with x402
+    const noX402Overlap = agentRight <= X402_BOUNDS.left || agent.desk.x >= X402_BOUNDS.left + X402_BOUNDS.width ||
+      agentBottom <= X402_BOUNDS.top || agent.desk.y >= X402_BOUNDS.top + X402_BOUNDS.height;
+    assert.ok(noX402Overlap, `${id} does not overlap x402 machine`);
+    // Check no overlap with Receipt
+    const noReceiptOverlap = agentRight <= RECEIPT_BOUNDS.left || agent.desk.x >= RECEIPT_BOUNDS.left + RECEIPT_BOUNDS.width ||
+      agentBottom <= RECEIPT_BOUNDS.top || agent.desk.y >= RECEIPT_BOUNDS.top + RECEIPT_BOUNDS.height;
+    assert.ok(noReceiptOverlap, `${id} does not overlap Receipt printer`);
+  }
+
+  // Test: macro agents remain at station for all statuses
+  {
+    let s = createInitialOfficeState();
+    // x402.requested should NOT move macro agent
+    s = reduceOfficeEvent(s, event({ sequence: 1, agentId: "discovery_planner", type: "x402.requested", status: "paying" }));
+    assert.deepEqual(
+      { x: s.discovery_planner.x, y: s.discovery_planner.y },
+      OFFICE_AGENTS.discovery_planner.desk,
+      "macro agent stays at station on x402.requested",
+    );
+    // agent.started should NOT move macro agent
+    s = reduceOfficeEvent(s, event({ sequence: 2, agentId: "payment_decision", type: "agent.started", status: "planning" }));
+    assert.deepEqual(
+      { x: s.payment_decision.x, y: s.payment_decision.y },
+      OFFICE_AGENTS.payment_decision.desk,
+      "macro agent stays at station on agent.started",
+    );
+    // agent.completed should NOT set visitingReturn for macro agents
+    s = reduceOfficeEvent(s, event({ sequence: 3, agentId: "settlement_memory", type: "agent.completed", status: "completed" }));
+    assert.equal(s.settlement_memory.visitingReturn, undefined, "macro agent has no visitingReturn on agent.completed");
+    assert.deepEqual(
+      { x: s.settlement_memory.x, y: s.settlement_memory.y },
+      OFFICE_AGENTS.settlement_memory.desk,
+      "macro agent stays at station on agent.completed",
+    );
+    // agent.failed should NOT move macro agent to error
+    s = reduceOfficeEvent(s, event({ sequence: 4, agentId: "discovery_planner", type: "agent.failed", status: "failed" }));
+    assert.deepEqual(
+      { x: s.discovery_planner.x, y: s.discovery_planner.y },
+      OFFICE_AGENTS.discovery_planner.desk,
+      "macro agent stays at station on agent.failed",
+    );
+    // creator.paid should NOT move macro agent
+    s = reduceOfficeEvent(s, event({ sequence: 5, agentId: "payment_decision", type: "creator.paid", status: "settling" }));
+    assert.deepEqual(
+      { x: s.payment_decision.x, y: s.payment_decision.y },
+      OFFICE_AGENTS.payment_decision.desk,
+      "macro agent stays at station on creator.paid",
+    );
+  }
+
+  // Test: macro agents initialize at station (idle = station)
+  {
+    const initState = createInitialOfficeState();
+    for (const id of macroIds) {
+      assert.deepEqual(
+        { x: initState[id].x, y: initState[id].y },
+        OFFICE_AGENTS[id].desk,
+        `${id} initializes at station`,
+      );
+    }
+  }
+}
+
+console.log("Macro-node agent tests passed");
+
+// ── is-macro class and CSS tests ──────────────────────────────────
+{
+  // Test: PixelAgent adds is-macro class to macro agents
+  assert.ok(agentSource.includes("is-macro"), "PixelAgent source contains is-macro class");
+  assert.ok(agentSource.includes("isOfficeMacroAgentId"), "PixelAgent imports isOfficeMacroAgentId");
+
+  // Test: macro-specific CSS rules exist
+  assert.ok(cssSource.includes(".po-agent-wrap.is-macro .po-agent-label"), "macro agent label CSS exists");
+  assert.ok(cssSource.includes(".po-agent-wrap.is-macro .po-agent-bubble"), "macro agent bubble CSS exists");
+  assert.ok(cssSource.includes(".po-agent-wrap.is-macro.is-paying .po-agent-bubble"), "macro paying bubble CSS exists");
+  assert.ok(cssSource.includes(".po-agent-wrap.is-macro.is-settling .po-agent-bubble"), "macro settling bubble CSS exists");
+  assert.ok(cssSource.includes(".po-agent-wrap.is-macro.is-completed .po-agent-bubble"), "macro completed bubble CSS exists");
+  assert.ok(cssSource.includes(".po-agent-wrap.is-macro.is-failed .po-agent-bubble"), "macro failed bubble CSS exists");
+  assert.ok(cssSource.includes(".po-agent-wrap.is-macro.is-idle .po-agent-bubble"), "macro idle bubble CSS exists");
+  assert.ok(cssSource.includes(".po-agent-wrap.is-macro.is-paying .po-body"), "macro paying body glow CSS exists");
+  assert.ok(cssSource.includes(".po-agent-wrap.is-macro.is-settling .po-body"), "macro settling body glow CSS exists");
+  assert.ok(cssSource.includes(".po-agent-wrap.is-macro.is-completed .po-body"), "macro completed body glow CSS exists");
+  assert.ok(cssSource.includes(".po-agent-wrap.is-macro.is-failed .po-body"), "macro failed body CSS exists");
+  assert.ok(cssSource.includes(".po-agent-wrap.is-macro.is-idle .po-agent"), "macro idle dim CSS exists");
+
+  // Test: x402 and Receipt elements remain present in canvas
+  const canvasSource = readSync(
+    new URL("../components/paylabs/office/PayLabsOfficeCanvas.tsx", import.meta.url),
+    "utf-8",
+  );
+  assert.ok(canvasSource.includes("x402"), "canvas still renders x402 terminal");
+  assert.ok(canvasSource.includes("RECEIPT"), "canvas still renders Receipt printer");
+  assert.ok(canvasSource.includes("CIRCLE GATEWAY"), "canvas still renders Circle Gateway section");
+
+  // Test: OFFICE_DESIGN_HEIGHT is 500
+  assert.equal(OFFICE_DESIGN_HEIGHT, 500, "OFFICE_DESIGN_HEIGHT is 500");
+  assert.equal(OFFICE_INTERNAL_HEIGHT, 500, "OFFICE_INTERNAL_HEIGHT is 500");
+
+  // Test: existing child agent tests still pass (verify SERVICE_AGENT_IDS unchanged)
+  const expectedChildIds = [
+    "intent_planner", "query_builder", "signal_scout_basics", "signal_scout",
+    "intent_matcher", "source_verifier", "value_allocator", "trust_verifier",
+    "payment_decider", "creator_attribution", "advanced_evidence_evaluator", "creator_payout_router",
+  ];
+  for (const id of expectedChildIds) {
+    assert.ok(OFFICE_AGENTS[id as keyof typeof OFFICE_AGENTS], `child agent ${id} still exists in OFFICE_AGENTS`);
+    assert.notEqual(OFFICE_AGENTS[id as keyof typeof OFFICE_AGENTS].department, "macro_hub", `child agent ${id} is not macro_hub`);
+  }
+
+  // Test: Brain remains unchanged
+  assert.equal(OFFICE_AGENTS.brain_planner.desk.x, 150, "Brain desk x unchanged");
+  assert.equal(OFFICE_AGENTS.brain_planner.desk.y, 10, "Brain desk y unchanged");
+  assert.equal(OFFICE_AGENTS.brain_planner.department, "executive", "Brain department unchanged");
+
+  // Test: PR #169 timing constants remain unchanged in panel
+  const panelSrc = readSync(
+    new URL("../components/paylabs/office/PayLabsOfficePanel.tsx", import.meta.url),
+    "utf-8",
+  );
+  assert.ok(panelSrc.includes("OFFICE_AGENT_TRAVEL_MS = 680"), "PR #169 travel time preserved");
+  assert.ok(panelSrc.includes("OFFICE_DESK_VISIBLE_MS = 1200"), "PR #169 desk visible time preserved");
+  assert.ok(panelSrc.includes("OFFICE_VISIT_DWELL_MS = 1500"), "PR #169 creator dwell preserved");
+}
+
+console.log("is-macro class and CSS tests passed");

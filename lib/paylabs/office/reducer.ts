@@ -24,6 +24,11 @@ function destinationFor(event: PayLabsOfficeEvent, agentId: OfficeAgentId): { x:
     return OFFICE_AGENTS.brain_planner.desk;
   }
 
+  // Macro agents remain at their permanent station for all statuses
+  if (agentId === "discovery_planner" || agentId === "payment_decision" || agentId === "settlement_memory") {
+    return OFFICE_AGENTS[agentId].desk;
+  }
+
   if (event.type === "x402.requested" || event.type === "x402.settled") {
     return OFFICE_STATIONS.gateway;
   }
@@ -73,6 +78,7 @@ function isVisitEvent(type: PayLabsOfficeEvent["type"]): boolean {
 
 function isDeskDwellEvent(event: PayLabsOfficeEvent, agentId: OfficeAgentId): boolean {
   if (agentId === "brain_planner") return false;
+  if (agentId === "discovery_planner" || agentId === "payment_decision" || agentId === "settlement_memory") return false;
   return event.type === "agent.completed";
 }
 
