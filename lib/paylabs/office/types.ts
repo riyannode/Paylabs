@@ -29,9 +29,16 @@ export type OfficeEventType =
   | "creator.paid"
   | "treasury.retained";
 
+export type OfficeMacroAgentId =
+  | "discovery_planner"
+  | "payment_decision"
+  | "settlement_memory";
+
 export type OfficeAgentId =
   | "brain_planner"
+  | OfficeMacroAgentId
   | ServiceName;
+
 
 export type OfficePhase =
   | "brain"
