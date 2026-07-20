@@ -55,7 +55,7 @@ async function emitBrainMacroVisitOnce(
   if (!isOfficeMacroAgentId(targetMacroNode)) return;
   try {
     const supabase = (await import("@/lib/paylabs/db/server")).supabaseAdmin();
-    const { data: existingEvents } = await supabase
+    const { data: existingEvents, error: lookupError } = await supabase
       .from("paylabs_office_events")
       .select("id")
       .eq("run_id", discoveryRunId)
@@ -63,6 +63,15 @@ async function emitBrainMacroVisitOnce(
       .eq("event_type", "phase.started")
       .eq("phase", targetMacroNode)
       .limit(1);
+
+    if (lookupError) {
+      console.warn("[execute_locked] Brain visit dedupe lookup failed; skipping visualization", {
+        discoveryRunId,
+        targetMacroNode,
+        error: lookupError.message.slice(0, 120),
+      });
+      return;
+    }
 
     if (existingEvents && existingEvents.length > 0) return;
 
@@ -101,14 +110,23 @@ async function emitBrainTerminalOnce(
 ): Promise<void> {
   try {
     const supabase = (await import("@/lib/paylabs/db/server")).supabaseAdmin();
-    const { data: existingEvents } = await supabase
+    const { data: existingEvents, error: lookupError } = await supabase
       .from("paylabs_office_events")
       .select("id")
       .eq("run_id", discoveryRunId)
       .eq("agent_id", "brain_planner")
-      .eq("event_type", eventType)
+      .in("event_type", ["agent.completed", "agent.failed"])
       .like("metadata->>stage", "locked_macro_execution")
       .limit(1);
+
+    if (lookupError) {
+      console.warn("[execute_locked] Brain terminal dedupe lookup failed; skipping visualization", {
+        discoveryRunId,
+        eventType,
+        error: lookupError.message.slice(0, 120),
+      });
+      return;
+    }
 
     if (existingEvents && existingEvents.length > 0) return;
 

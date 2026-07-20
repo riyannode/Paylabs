@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync as readSync } from "node:fs";
 import { createInitialOfficeState, reduceOfficeEvent, reduceReturnToIdle } from "../lib/paylabs/office/reducer";
 import { OFFICE_AGENTS, OFFICE_STATIONS, OFFICE_MACRO_AGENTS, assertOfficeRegistryMatchesServiceRegistry, officeAgentIdFromServiceName, isOfficeMacroAgentId } from "../lib/paylabs/office/registry";
 import { OFFICE_DESIGN_WIDTH, OFFICE_DESIGN_HEIGHT, OFFICE_INTERNAL_HEIGHT } from "../lib/paylabs/office/constants";
@@ -280,8 +281,7 @@ assert.equal(paymentEvent.payment?.amountUsdc, "0.000001", "payment.amountUsdc p
 assert.equal(paymentEvent.payment?.status, "settled", "payment.status preserved in event data");
 
 // Test: dashboard source no longer contains USDC/monetary rendering
-import { readFileSync } from "node:fs";
-const dashboardSource = readFileSync(
+const dashboardSource = readSync(
   new URL("../components/paylabs/office/PayLabsOfficeDashboard.tsx", import.meta.url),
   "utf-8",
 );
@@ -304,7 +304,7 @@ assert.ok(dashboardSource.includes("Paid graph"), "dashboard retains Paid graph 
 assert.ok(dashboardSource.includes("Receipt"), "dashboard retains Receipt status");
 
 // Test: PixelAgent bubble shows message, not price
-const agentSource = readFileSync(
+const agentSource = readSync(
   new URL("../components/paylabs/office/PixelAgent.tsx", import.meta.url),
   "utf-8",
 );
@@ -313,7 +313,7 @@ assert.ok(!agentSource.includes("amountUsdc"), "PixelAgent does not reference am
 assert.ok(agentSource.includes("agent.message"), "PixelAgent still renders agent message");
 
 // Test: AgentDetailPopover shows label + status only
-const popoverSource = readFileSync(
+const popoverSource = readSync(
   new URL("../components/paylabs/office/AgentDetailPopover.tsx", import.meta.url),
   "utf-8",
 );
@@ -434,7 +434,6 @@ assert.ok(agentSource.includes("sanitizeDisplayMessage"), "PixelAgent imports sa
 assert.ok(agentSource.includes("displayMessage"), "PixelAgent uses sanitized displayMessage for bubble");
 
 // Test: sanitizer source file exists and exports expected functions
-import { readFileSync as readSync } from "node:fs";
 const sanitizerSource = readSync(
   new URL("../lib/paylabs/office/sanitizer.ts", import.meta.url),
   "utf-8",
@@ -1812,7 +1811,7 @@ console.log("PR #171 server event ordering tests passed");
 // ── DOM/CSS source assertions ─────────────────────────────────
 
 {
-  const cssSource = readFileSync(
+  const cssSource = readSync(
     new URL("../components/paylabs/office/paylabs-office.css", import.meta.url),
     "utf-8",
   );
@@ -1949,14 +1948,14 @@ console.log("ALL PR #171 TESTS PASSED");
   // Test: S-NODE station remains exactly (485,436)
   assert.deepEqual(OFFICE_MACRO_AGENTS.settlement_memory.station, { x: 485, y: 436 }, "S-NODE station unchanged");
 
-  // Test: D brainApproach equals (398,350)
-  assert.deepEqual(OFFICE_MACRO_AGENTS.discovery_planner.brainApproach, { x: 398, y: 350 }, "D brainApproach is (398,350)");
+  // Test: D brainApproach equals (398,300)
+  assert.deepEqual(OFFICE_MACRO_AGENTS.discovery_planner.brainApproach, { x: 398, y: 300 }, "D brainApproach is (398,300)");
 
-  // Test: P brainApproach equals (560,330)
-  assert.deepEqual(OFFICE_MACRO_AGENTS.payment_decision.brainApproach, { x: 560, y: 330 }, "P brainApproach is (560,330)");
+  // Test: P brainApproach equals (430,244)
+  assert.deepEqual(OFFICE_MACRO_AGENTS.payment_decision.brainApproach, { x: 430, y: 244 }, "P brainApproach is (430,244)");
 
-  // Test: S brainApproach equals (560,436)
-  assert.deepEqual(OFFICE_MACRO_AGENTS.settlement_memory.brainApproach, { x: 560, y: 436 }, "S brainApproach is (560,436)");
+  // Test: S brainApproach equals (298,420)
+  assert.deepEqual(OFFICE_MACRO_AGENTS.settlement_memory.brainApproach, { x: 298, y: 420 }, "S brainApproach is (298,420)");
 
   // Test: Brain desk remains exactly (150,10)
   assert.deepEqual(OFFICE_AGENTS.brain_planner.desk, { x: 150, y: 10 }, "Brain desk remains (150,10)");
@@ -1982,23 +1981,96 @@ console.log("ALL PR #171 TESTS PASSED");
     assert.ok(!(overlapsX && overlapsY), `${id} brainApproach does not overlap station`);
   }
 
-  // Test: Brain approaches do not overlap the x402 terminal outer rectangle
-  // x402 is at gateway zone: left: 390px, width: 255px → x402 box is roughly (390, 318) to (645, 500)
-  // But the x402 MACHINE is at (70, 80) within gateway zone → absolute: (460, 398)
-  // The outer x402 rectangle is the gateway zone itself: (390, 318) to (645, 500)
-  // Brain approaches should not overlap gateway zone sprite area
-  const x402Zone = { left: 390, right: 645, top: BOTTOM_ZONE_TOP, bottom: OFFICE_DESIGN_HEIGHT };
+  // Test: Brain approaches do not overlap the x402 machine
+  // x402 machine: gateway zone left=390 + 70 = 460, top=BOTTOM_ZONE_TOP+80=398, width=76, height=54
+  const x402Machine = { left: 460, right: 536, top: 398, bottom: 452 };
   for (const id of ["discovery_planner", "payment_decision", "settlement_memory"] as const) {
     const approach = OFFICE_MACRO_AGENTS[id].brainApproach;
-    const overlapsX = approach.x < x402Zone.right && approach.x + AGENT_SPRITE.width > x402Zone.left;
-    const overlapsY = approach.y < x402Zone.bottom && approach.y + AGENT_SPRITE.height > x402Zone.top;
-    // Brain approaches CAN be in the gateway zone area (macro hub zone overlaps), but must not overlap the x402 MACHINE itself
-    // x402 machine: gateway zone left=390 + 70 = 460, top=BOTTOM_ZONE_TOP+80=398, width=76, height=54
-    const x402Machine = { left: 460, right: 536, top: 398, height: 54 };
     const machineOverlapX = approach.x < x402Machine.right && approach.x + AGENT_SPRITE.width > x402Machine.left;
-    const machineOverlapY = approach.y < x402Machine.top + x402Machine.height && approach.y + AGENT_SPRITE.height > x402Machine.top;
+    const machineOverlapY = approach.y < x402Machine.bottom && approach.y + AGENT_SPRITE.height > x402Machine.top;
     assert.ok(!(machineOverlapX && machineOverlapY), `${id} brainApproach does not overlap x402 machine`);
   }
+
+  // ── Real collision tests: Brain sprite/label vs macro bubbles ─────
+  // D-NODE bubble: left-side override (right:42px, top:-9px, width:128px)
+  // P-NODE and S-NODE bubbles: default (left:28px, top:-23px, width:138px)
+  // All bubbles have padding:4px 6px, border:2px
+  // Macro label: left:-14px, top:2px (macro), min-width:52px
+  // Brain label: left:-14px, top:-5px, min-width:62px
+  // Agent sprite: left:4px, top:17px, width:28px, height:41px (within 36×61 wrapper)
+
+  // Helper: compute the max bubble rectangle for a macro agent at a given station
+  function macroBubbleRect(station: { x: number; y: number }, isDNode: boolean) {
+    if (isDNode) {
+      // D-NODE left-side bubble: wrapper station position, bubble right:42px → bubble left = station.x + 36 - 42 - 128 = station.x - 134
+      // But simpler: wrapper is at station, bubble is right:42px from wrapper right edge
+      // wrapper right = station.x + 36, bubble right = wrapper right - 42 = station.x - 6
+      // bubble left = station.x - 6 - 128 = station.x - 134
+      // bubble top = station.y + (-9) = station.y - 9
+      // Include padding(4+6=10 horizontal, 4+4=8 vertical) + border(2+2=4 each axis)
+      return {
+        left: station.x - 134 - 10 - 4,
+        right: station.x - 6 + 10 + 4,
+        top: station.y - 9 - 8 - 4,
+        bottom: station.y - 9 + 32 + 8 + 4, // max-height:32px
+      };
+    }
+    // Default right-side bubble
+    return {
+      left: station.x + 28 - 10 - 4,
+      right: station.x + 28 + 138 + 10 + 4,
+      top: station.y + (-23) - 8 - 4,
+      bottom: station.y + (-23) + 32 + 8 + 4,
+    };
+  }
+
+  // Helper: Brain sprite rectangle (wrapper position + sprite offset)
+  function brainSpriteRect(approach: { x: number; y: number }) {
+    return {
+      left: approach.x + 4,
+      right: approach.x + 4 + 28,
+      top: approach.y + 17,
+      bottom: approach.y + 17 + 41,
+    };
+  }
+
+  // Helper: Brain label rectangle
+  function brainLabelRect(approach: { x: number; y: number }) {
+    return {
+      left: approach.x + (-14),
+      right: approach.x + (-14) + 62,
+      top: approach.y + (-5),
+      bottom: approach.y + (-5) + 14, // label height ~14px (font-size 7px + padding)
+    };
+  }
+
+  function rectsOverlap(a: { left: number; right: number; top: number; bottom: number }, b: { left: number; right: number; top: number; bottom: number }) {
+    return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  }
+
+  // D-NODE: Brain sprite must not overlap D-NODE bubble
+  const dApproach = OFFICE_MACRO_AGENTS.discovery_planner.brainApproach;
+  const dBubble = macroBubbleRect(OFFICE_MACRO_AGENTS.discovery_planner.station, true);
+  assert.ok(!rectsOverlap(brainSpriteRect(dApproach), dBubble),
+    "Brain sprite does not overlap D-NODE bubble");
+  assert.ok(!rectsOverlap(brainLabelRect(dApproach), dBubble),
+    "Brain label does not overlap D-NODE bubble");
+
+  // P-NODE: Brain sprite must not overlap P-NODE bubble
+  const pApproach = OFFICE_MACRO_AGENTS.payment_decision.brainApproach;
+  const pBubble = macroBubbleRect(OFFICE_MACRO_AGENTS.payment_decision.station, false);
+  assert.ok(!rectsOverlap(brainSpriteRect(pApproach), pBubble),
+    "Brain sprite does not overlap P-NODE bubble");
+  assert.ok(!rectsOverlap(brainLabelRect(pApproach), pBubble),
+    "Brain label does not overlap P-NODE bubble");
+
+  // S-NODE: Brain sprite must not overlap S-NODE bubble
+  const sApproach = OFFICE_MACRO_AGENTS.settlement_memory.brainApproach;
+  const sBubble = macroBubbleRect(OFFICE_MACRO_AGENTS.settlement_memory.station, false);
+  assert.ok(!rectsOverlap(brainSpriteRect(sApproach), sBubble),
+    "Brain sprite does not overlap S-NODE bubble");
+  assert.ok(!rectsOverlap(brainLabelRect(sApproach), sBubble),
+    "Brain label does not overlap S-NODE bubble");
 
   // Test: No child desk coordinate changed
   for (const child of childAgents) {
@@ -2290,18 +2362,30 @@ console.log("Reducer brain macro visit tests passed");
   // Test 7: Brain visit metadata contains stage locked_macro_execution
   assert.ok(lockedRouteSource.includes('stage: "locked_macro_execution"'), "Brain visit metadata contains stage locked_macro_execution");
 
-  // Test 8: Duplicate visit lookup occurs before safeEmitOfficeEvent
-  const lookupIdx = lockedRouteSource.indexOf('existingEvents && existingEvents.length > 0');
-  const emitIdx = lockedRouteSource.indexOf("await safeEmitOfficeEvent({", lookupIdx);
-  assert.ok(lookupIdx > 0, "duplicate visit lookup exists");
-  assert.ok(emitIdx > lookupIdx, "lookup occurs before safeEmitOfficeEvent");
+  // Test 8: Visit lookup destructures error
+  assert.ok(lockedRouteSource.includes("{ data: existingEvents, error: lookupError }"), "visit lookup destructures error");
+  // Test 8b: Terminal lookup destructures error
+  // Both helpers use the same destructuring pattern; verify it exists in the source
+  const lookupDestructureCount = (lockedRouteSource.match(/\{ data: existingEvents, error: lookupError \}/g) || []).length;
+  assert.ok(lookupDestructureCount >= 2, `lookup error destructuring appears ${lookupDestructureCount} times (expected >=2 for visit + terminal)`);
 
-  // Test 9: Existing visit skips only visualization and still allows callPaidSeller
-  // The emitBrainMacroVisitOnce function returns without throwing when a visit exists
-  assert.ok(lockedRouteSource.includes("if (existingEvents && existingEvents.length > 0) return;"), "existing visit returns early without throwing");
+  // Test 9: Lookup error returns before safeEmitOfficeEvent (visit)
+  const visitLookupWarnIdx = lockedRouteSource.indexOf("Brain visit dedupe lookup failed");
+  const visitEmitIdx = lockedRouteSource.indexOf("await safeEmitOfficeEvent({", visitLookupWarnIdx);
+  assert.ok(visitLookupWarnIdx > 0, "visit lookup error warning exists");
+  assert.ok(visitEmitIdx > visitLookupWarnIdx, "visit lookup error returns before safeEmitOfficeEvent");
+  // Test 9b: Lookup error returns before safeEmitOfficeEvent (terminal)
+  const termLookupWarnIdx = lockedRouteSource.indexOf("Brain terminal dedupe lookup failed");
+  const termEmitIdx = lockedRouteSource.indexOf("await safeEmitOfficeEvent({", termLookupWarnIdx);
+  assert.ok(termLookupWarnIdx > 0, "terminal lookup error warning exists");
+  assert.ok(termEmitIdx > termLookupWarnIdx, "terminal lookup error returns before safeEmitOfficeEvent");
 
-  // Test 10: Dedupe lookup errors skip visualization and still allow callPaidSeller
-  assert.ok(lockedRouteSource.includes("brain macro visit emit failed (best-effort)"), "dedupe lookup errors are caught and logged as best-effort");
+  // Test 10: Visit lookup error skips visualization
+  assert.ok(lockedRouteSource.includes("Brain visit dedupe lookup failed; skipping visualization"), "visit lookup error skips visualization");
+  // Test 10b: Terminal lookup error skips visualization
+  assert.ok(lockedRouteSource.includes("Brain terminal dedupe lookup failed; skipping visualization"), "terminal lookup error skips visualization");
+  // Test 10c: Any existing locked terminal prevents another terminal event
+  assert.ok(lockedRouteSource.includes('.in("event_type", ["agent.completed", "agent.failed"])'), "terminal dedupe matches both completed and failed");
 
   // Test 11: Payment call arguments remain unchanged
   assert.ok(lockedRouteSource.includes('maxAmountUsdc: "0.001"'), "payment maxAmountUsdc unchanged");
@@ -2351,11 +2435,11 @@ console.log("Execute-locked server event ordering tests passed");
 
 // ── CSS/DOM source tests ─────────────────────────────────────
 {
-  const cssSource = readFileSync(
+  const cssSource = readSync(
     new URL("../components/paylabs/office/paylabs-office.css", import.meta.url),
     "utf-8",
   );
-  const agentSource2 = readFileSync(
+  const agentSource2 = readSync(
     new URL("../components/paylabs/office/PixelAgent.tsx", import.meta.url),
     "utf-8",
   );
