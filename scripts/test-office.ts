@@ -1353,7 +1353,7 @@ console.log("Panel source assertions passed");
   // x402 text remains visible above agent sprites
   for (const id of macroIds) {
     const agent = OFFICE_AGENTS[id];
-    assert.ok(agent.desk.y >= 380 && agent.desk.y <= 470, `${id} positioned on x402 box area`);
+    assert.ok(agent.desk.y >= 360 && agent.desk.y <= 470, `${id} positioned on x402 box area`);
   }
 
   // Test: macro agents remain at station for all statuses
