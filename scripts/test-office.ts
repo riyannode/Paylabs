@@ -76,6 +76,21 @@ for (const agent of childAgents) {
   assert.equal(agent.idle.y + AGENT_SPRITE.height <= LOUNGE_BOUNDS.bottom, true, `${agent.id} idle y inside Lounge bottom`);
 }
 
+// ── Lounge row separation test ────────────────────────────────────
+// Upper row y=345, lower row y=420, separation=75px > sprite height 61px
+const UPPER_ROW_Y = 345;
+const LOWER_ROW_Y = 420;
+const LOWER_ROW_AGENTS = ["trust_verifier", "payment_decider", "creator_attribution", "advanced_evidence_evaluator", "creator_payout_router"] as const;
+const lowerRowIdleCoords = LOWER_ROW_AGENTS.map((id) => `${OFFICE_AGENTS[id].idle.x},${OFFICE_AGENTS[id].idle.y}`);
+assert.equal(new Set(lowerRowIdleCoords).size, LOWER_ROW_AGENTS.length, "lower-row agents have unique idle positions");
+assert.ok(LOWER_ROW_Y - UPPER_ROW_Y >= 70, "lower row is at least 70px below upper row");
+for (const id of LOWER_ROW_AGENTS) {
+  const agent = OFFICE_AGENTS[id];
+  assert.equal(agent.idle.y, LOWER_ROW_Y, `${id} idle y is ${LOWER_ROW_Y}`);
+  assert.ok(agent.idle.x >= LOUNGE_BOUNDS.left && agent.idle.x + AGENT_SPRITE.width <= LOUNGE_BOUNDS.right, `${id} idle x inside Lounge`);
+  assert.ok(agent.idle.y + AGENT_SPRITE.height <= LOUNGE_BOUNDS.bottom, `${id} idle y inside Lounge and canvas`);
+}
+
 for (const [name, pos] of Object.entries(OFFICE_STATIONS)) {
   assert.ok(pos.x >= 0 && pos.x + AGENT_SPRITE.width <= CANVAS.width,
     `station ${name} x inside canvas`);
@@ -1487,6 +1502,9 @@ console.log("Macro-node agent tests passed");
   assert.ok(panelSrc.includes("OFFICE_AGENT_TRAVEL_MS = 680"), "PR #169 travel time preserved");
   assert.ok(panelSrc.includes("OFFICE_DESK_VISIBLE_MS = 1200"), "PR #169 desk visible time preserved");
   assert.ok(panelSrc.includes("OFFICE_VISIT_DWELL_MS = 1500"), "PR #169 creator dwell preserved");
+
+  // Test: panel uses top-aligned offsetY (no vertical centering)
+  assert.ok(panelSrc.includes("const offsetY = 0"), "panel uses top-aligned offsetY");
 }
 
 console.log("is-macro class and CSS tests passed");

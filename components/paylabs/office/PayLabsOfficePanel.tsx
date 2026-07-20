@@ -192,7 +192,7 @@ export function PayLabsOfficePanel({ run }: { run: OfficeRunSummary }) {
   const scaledWidth = OFFICE_DESIGN_WIDTH * scale;
   const scaledHeight = OFFICE_DESIGN_HEIGHT * scale;
   const offsetX = Math.max(0, (viewportSize.width - scaledWidth) / 2);
-  const offsetY = Math.max(0, (viewportSize.height - scaledHeight) / 2);
+  const offsetY = 0;
   const stageStyle = {
     width: OFFICE_DESIGN_WIDTH,
     height: OFFICE_DESIGN_HEIGHT,
