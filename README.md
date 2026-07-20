@@ -706,8 +706,14 @@ PAYLABS_AGENT_SERVICE_EXECUTION_MODE
 PAYLABS_AGENT_SERVICE_LLM_ENABLED
 PAYLABS_AGENT_SERVICE_EXECUTION_MODE_<AGENT_KEY>
 PAYLABS_AGENT_SERVICE_LLM_ENABLED_<AGENT_KEY>
+
+# LangGraph checkpointing
+PAYLABS_LANGGRAPH_CHECKPOINT_ENABLED=true
+PAYLABS_LANGGRAPH_CHECKPOINT_DATABASE_URL
 ```
 > Production note: `PAYLABS_LLM_REQUIRED=true` should be set in production. This makes the Brain planner and LLM-backed services fail closed when LLM credentials are missing or unavailable, instead of silently falling back.
+
+> `PAYLABS_LANGGRAPH_CHECKPOINT_DATABASE_URL` must be a server-side PostgreSQL connection string. Do not use `NEXT_PUBLIC_SUPABASE_URL` or the Supabase anon key. Run `pnpm tsx scripts/setup-langgraph-checkpointer.ts` once before enabling checkpointing in production.
 
 ## LLM Configuration
 
