@@ -36,6 +36,8 @@ import {
 } from "@/lib/paylabs/x402/seller-challenge";
 import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
 import { phaseFromMacroNode, statusFromServiceName } from "@/lib/paylabs/office/event-mapper";
+import { isOfficeMacroAgentId } from "@/lib/paylabs/office/registry";
+import type { OfficeMacroAgentId, OfficePaymentMeta } from "@/lib/paylabs/office/types";
 
 export async function POST(
   req: NextRequest,
@@ -152,6 +154,42 @@ export async function POST(
   return executeX402SellerPath(req, serviceNameTyped, config, buyerAgentName, discoveryRunId, payload);
 }
 
+// ─── Macro Payment Visualization Event ─────────────────────────
+
+/**
+ * Emit a macro-node Office event for x402 payment visualization.
+ * Only emits when buyerAgentName is a valid OfficeMacroAgentId.
+ * Never throws — fire-and-forget via safeEmitOfficeEvent.
+ */
+async function emitMacroPaymentOfficeEvent(args: {
+  runId: string;
+  buyerAgentName: string;
+  childServiceName: ServiceName;
+  type: "x402.requested" | "x402.settled" | "x402.failed";
+  status: "paying" | "completed" | "failed";
+  payment?: OfficePaymentMeta;
+}): Promise<void> {
+  if (!isOfficeMacroAgentId(args.buyerAgentName)) return;
+  const macroId = args.buyerAgentName as OfficeMacroAgentId;
+  const safeMessage =
+    args.type === "x402.requested"
+      ? "Requesting child service through x402"
+      : args.type === "x402.settled"
+        ? "Child service payment settled"
+        : "Child service payment failed";
+  await safeEmitOfficeEvent({
+    runId: args.runId,
+    type: args.type,
+    agentId: macroId,
+    phase: macroId,
+    status: args.status,
+    title: `${macroId} ${args.type === "x402.requested" ? "paying " : args.type === "x402.settled" ? "payment settled" : "payment failed"} ${args.childServiceName}`,
+    message: safeMessage,
+    payment: args.payment ?? null,
+    metadata: { childServiceName: args.childServiceName },
+  });
+}
+
 // ─── x402 Seller Path ────────────────────────────────────────
 
 /**
@@ -215,6 +253,16 @@ async function executeX402SellerPath(
       message: "Awaiting x402 payment",
     });
 
+    // Macro visualization: beam ON toward x402
+    await emitMacroPaymentOfficeEvent({
+      runId: discoveryRunId,
+      buyerAgentName,
+      childServiceName: serviceNameTyped,
+      type: "x402.requested",
+      status: "paying",
+      payment: { amountUsdc: config.priceUsdc.toString(), status: "pending" },
+    });
+
     const amountAtomic = computeAmountAtomic(config.priceUsdc);
     const challenge = buildX402Challenge(sellerAddress, amountAtomic, req.url);
     const encoded = encodeChallengeHeader(challenge);
@@ -251,6 +299,16 @@ async function executeX402SellerPath(
       message: "x402 settlement failed",
     });
 
+    // Macro visualization: beam FAILED
+    await emitMacroPaymentOfficeEvent({
+      runId: discoveryRunId,
+      buyerAgentName,
+      childServiceName: serviceNameTyped,
+      type: "x402.failed",
+      status: "failed",
+      payment: { amountUsdc: config.priceUsdc.toString(), status: "failed" },
+    });
+
     return NextResponse.json(
       {
         ok: false,
@@ -272,6 +330,22 @@ async function executeX402SellerPath(
     status: "paying",
     title: `${serviceNameTyped} x402 settled`,
     message: "x402 settlement completed",
+    payment: {
+      amountUsdc: config.priceUsdc.toString(),
+      status: "settled",
+      txHash: settleResult.paymentMeta?.txHash ?? null,
+      settlementId: settleResult.paymentMeta?.settlementId ?? null,
+      explorerUrl: settleResult.paymentMeta?.explorerUrl ?? null,
+    },
+  });
+
+  // Macro visualization: beam SETTLED
+  await emitMacroPaymentOfficeEvent({
+    runId: discoveryRunId,
+    buyerAgentName,
+    childServiceName: serviceNameTyped,
+    type: "x402.settled",
+    status: "completed",
     payment: {
       amountUsdc: config.priceUsdc.toString(),
       status: "settled",

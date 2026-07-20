@@ -78,6 +78,7 @@ export interface OfficeAgentViewState {
   facing: "left" | "right";
   lastEventSequence: number;
   visitingReturn?: { x: number; y: number };
+  beam?: OfficeMacroBeamState;
 }
 
 export interface OfficeRunSummary {
@@ -88,4 +89,17 @@ export interface OfficeRunSummary {
   totalEdges: number;
   receiptReady: boolean;
   status: string | null;
+}
+
+export type OfficeMacroBeamType =
+  | "requested"
+  | "settled"
+  | "failed";
+
+export interface OfficeMacroBeamState {
+  active: true;
+  type: OfficeMacroBeamType;
+  childServiceName: string;
+  sequence: number;
+  createdAt: string;
 }
