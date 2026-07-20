@@ -194,7 +194,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "payment_decision",
     department: "payment",
     desk: { x: 344, y: 167 },
-    idle: { x: 70, y: 420 },
+    idle: { x: 100, y: 365 },
     color: "#ea580c",
   },
   payment_decider: {
@@ -204,7 +204,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "payment_decision",
     department: "payment",
     desk: { x: 430, y: 167 },
-    idle: { x: 130, y: 420 },
+    idle: { x: 135, y: 365 },
     color: "#dc2626",
   },
   creator_attribution: {
@@ -214,7 +214,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "settlement_memory",
     department: "settlement",
     desk: { x: 714, y: 101 },
-    idle: { x: 190, y: 420 },
+    idle: { x: 170, y: 365 },
     color: "#22c55e",
   },
   advanced_evidence_evaluator: {
@@ -224,7 +224,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "settlement_memory",
     department: "settlement",
     desk: { x: 802, y: 101 },
-    idle: { x: 250, y: 420 },
+    idle: { x: 205, y: 365 },
     color: "#16a34a",
   },
   creator_payout_router: {
@@ -234,7 +234,7 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     phase: "settlement_memory",
     department: "settlement",
     desk: { x: 714, y: 167 },
-    idle: { x: 310, y: 420 },
+    idle: { x: 240, y: 365 },
     color: "#15803d",
   },
   // Macro nodes derived from OFFICE_MACRO_AGENTS (single source of truth)

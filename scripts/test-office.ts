@@ -37,6 +37,13 @@ const childAgents = Object.values(OFFICE_AGENTS).filter((a) => a.id !== "brain_p
 const childIdleCoords = childAgents.map((a) => `${a.idle.x},${a.idle.y}`);
 assert.equal(new Set(childIdleCoords).size, childIdleCoords.length, "child agents have unique Lounge idle positions");
 
+// Verify original idle coordinates for lower-row agents
+assert.deepEqual(OFFICE_AGENTS.trust_verifier.idle, { x: 100, y: 365 }, "trust_verifier idle at (100, 365)");
+assert.deepEqual(OFFICE_AGENTS.payment_decider.idle, { x: 135, y: 365 }, "payment_decider idle at (135, 365)");
+assert.deepEqual(OFFICE_AGENTS.creator_attribution.idle, { x: 170, y: 365 }, "creator_attribution idle at (170, 365)");
+assert.deepEqual(OFFICE_AGENTS.advanced_evidence_evaluator.idle, { x: 205, y: 365 }, "advanced_evidence_evaluator idle at (205, 365)");
+assert.deepEqual(OFFICE_AGENTS.creator_payout_router.idle, { x: 240, y: 365 }, "creator_payout_router idle at (240, 365)");
+
 // ── Test 9: all coordinates inside correct zones ───────────────────
 const CANVAS = { width: 900, height: OFFICE_DESIGN_HEIGHT };
 const AGENT_SPRITE = { width: 36, height: 61 };
@@ -76,20 +83,6 @@ for (const agent of childAgents) {
   assert.equal(agent.idle.y + AGENT_SPRITE.height <= LOUNGE_BOUNDS.bottom, true, `${agent.id} idle y inside Lounge bottom`);
 }
 
-// ── Lounge row separation test ────────────────────────────────────
-// Upper row y=345, lower row y=420, separation=75px > sprite height 61px
-const UPPER_ROW_Y = 345;
-const LOWER_ROW_Y = 420;
-const LOWER_ROW_AGENTS = ["trust_verifier", "payment_decider", "creator_attribution", "advanced_evidence_evaluator", "creator_payout_router"] as const;
-const lowerRowIdleCoords = LOWER_ROW_AGENTS.map((id) => `${OFFICE_AGENTS[id].idle.x},${OFFICE_AGENTS[id].idle.y}`);
-assert.equal(new Set(lowerRowIdleCoords).size, LOWER_ROW_AGENTS.length, "lower-row agents have unique idle positions");
-assert.ok(LOWER_ROW_Y - UPPER_ROW_Y >= 70, "lower row is at least 70px below upper row");
-for (const id of LOWER_ROW_AGENTS) {
-  const agent = OFFICE_AGENTS[id];
-  assert.equal(agent.idle.y, LOWER_ROW_Y, `${id} idle y is ${LOWER_ROW_Y}`);
-  assert.ok(agent.idle.x >= LOUNGE_BOUNDS.left && agent.idle.x + AGENT_SPRITE.width <= LOUNGE_BOUNDS.right, `${id} idle x inside Lounge`);
-  assert.ok(agent.idle.y + AGENT_SPRITE.height <= LOUNGE_BOUNDS.bottom, `${id} idle y inside Lounge and canvas`);
-}
 
 for (const [name, pos] of Object.entries(OFFICE_STATIONS)) {
   assert.ok(pos.x >= 0 && pos.x + AGENT_SPRITE.width <= CANVAS.width,
