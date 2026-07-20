@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createInitialOfficeState, reduceOfficeEvent, reduceReturnToIdle } from "../lib/paylabs/office/reducer";
-import { OFFICE_AGENTS, OFFICE_STATIONS, assertOfficeRegistryMatchesServiceRegistry, officeAgentIdFromServiceName, isOfficeMacroAgentId } from "../lib/paylabs/office/registry";
+import { OFFICE_AGENTS, OFFICE_STATIONS, OFFICE_MACRO_AGENTS, assertOfficeRegistryMatchesServiceRegistry, officeAgentIdFromServiceName, isOfficeMacroAgentId } from "../lib/paylabs/office/registry";
 import { OFFICE_DESIGN_HEIGHT, OFFICE_INTERNAL_HEIGHT } from "../lib/paylabs/office/constants";
 import { phaseFromMacroNode, statusFromServiceName, isOfficeServiceName } from "../lib/paylabs/office/event-mapper";
 import { mergeOfficeEvents } from "../lib/paylabs/office/selectors";
@@ -38,16 +38,20 @@ const childIdleCoords = childAgents.map((a) => `${a.idle.x},${a.idle.y}`);
 assert.equal(new Set(childIdleCoords).size, childIdleCoords.length, "child agents have unique Lounge idle positions");
 
 // ── Test 9: all coordinates inside correct zones ───────────────────
-const CANVAS = { width: 900, height: 500 };
+const CANVAS = { width: 900, height: OFFICE_DESIGN_HEIGHT };
 const AGENT_SPRITE = { width: 36, height: 61 };
-const LOUNGE_BOUNDS = { left: 0, right: 390, top: 318, bottom: 500 };
+const BOTTOM_ZONE_HEIGHT = 182;
+const BOTTOM_ZONE_TOP = OFFICE_DESIGN_HEIGHT - BOTTOM_ZONE_HEIGHT;
+assert.equal(BOTTOM_ZONE_TOP, 318, "bottom zone top is 318 (500 - 182)");
 
-const DISCOVERY_BOUNDS = { left: 0, right: 280, top: 64, bottom: 318 };
-const PAYMENT_BOUNDS = { left: 280, right: 610, top: 0, bottom: 318 };
-const SETTLEMENT_BOUNDS = { left: 610, right: 900, top: 0, bottom: 318 };
-const CONTROL_BOUNDS = { left: 0, right: 280, top: 0, bottom: 318 };
+const LOUNGE_BOUNDS = { left: 0, right: 390, top: BOTTOM_ZONE_TOP, bottom: OFFICE_DESIGN_HEIGHT };
 
-const MACRO_HUB_BOUNDS = { left: 390, right: 645, top: 318, bottom: 500 };
+const DISCOVERY_BOUNDS = { left: 0, right: 280, top: 64, bottom: BOTTOM_ZONE_TOP };
+const PAYMENT_BOUNDS = { left: 280, right: 610, top: 0, bottom: BOTTOM_ZONE_TOP };
+const SETTLEMENT_BOUNDS = { left: 610, right: 900, top: 0, bottom: BOTTOM_ZONE_TOP };
+const CONTROL_BOUNDS = { left: 0, right: 280, top: 0, bottom: BOTTOM_ZONE_TOP };
+
+const MACRO_HUB_BOUNDS = { left: 390, right: 645, top: BOTTOM_ZONE_TOP, bottom: OFFICE_DESIGN_HEIGHT };
 
 const ZONE_MAP: Record<string, { left: number; right: number; top: number; bottom: number }> = {
   executive: CONTROL_BOUNDS,
@@ -1338,12 +1342,12 @@ console.log("Panel source assertions passed");
   }
 
   // Test: macro agents do not overlap with x402 or Receipt
-  // x402 machine: gateway zone (left=390) + left=70, top=80, width=76, height=54
-  // → absolute: x=460, y=398, w=76, h=54
-  // Receipt: gateway zone + right=22, top=88, width=58, height=40
-  // → absolute: x=623, y=406, w=58, h=40
-  const X402_BOUNDS = { left: 460, top: 398, width: 76, height: 54 };
-  const RECEIPT_BOUNDS = { left: 565, top: 398, width: 58, height: 40 };
+  // x402 machine: gateway zone (left=390) + left=70, top=80, width=76, height=54, border=5px
+  // → absolute: x=460, y=398, outer width=86, outer height=64
+  // Receipt: gateway zone + right=22, top=88, width=58, height=40, border=5px
+  // → absolute: x=555, y=406, outer width=68, outer height=50
+  const X402_BOUNDS = { left: 460, top: 398, width: 86, height: 64 };
+  const RECEIPT_BOUNDS = { left: 555, top: 406, width: 68, height: 50 };
   for (const id of macroIds) {
     const agent = OFFICE_AGENTS[id];
     const agentRight = agent.desk.x + AGENT_SPRITE.width;
@@ -1410,6 +1414,18 @@ console.log("Panel source assertions passed");
       );
     }
   }
+
+  // Test: OFFICE_AGENTS macro entries match OFFICE_MACRO_AGENTS (single source of truth)
+  for (const id of macroIds) {
+    const macroDef = OFFICE_MACRO_AGENTS[id];
+    const agentDef = OFFICE_AGENTS[id];
+    assert.deepEqual(agentDef.desk, macroDef.station, `${id} desk equals macro station`);
+    assert.deepEqual(agentDef.idle, macroDef.station, `${id} idle equals macro station`);
+    assert.equal(agentDef.label, macroDef.label, `${id} label matches`);
+    assert.equal(agentDef.shortLabel, macroDef.shortLabel, `${id} shortLabel matches`);
+    assert.equal(agentDef.color, macroDef.color, `${id} color matches`);
+    assert.equal(agentDef.department, macroDef.department, `${id} department matches`);
+  }
 }
 
 console.log("Macro-node agent tests passed");
@@ -1443,9 +1459,9 @@ console.log("Macro-node agent tests passed");
   assert.ok(canvasSource.includes("RECEIPT"), "canvas still renders Receipt printer");
   assert.ok(canvasSource.includes("CIRCLE GATEWAY"), "canvas still renders Circle Gateway section");
 
-  // Test: OFFICE_DESIGN_HEIGHT is 500
+  // Test: OFFICE_DESIGN_HEIGHT equals OFFICE_INTERNAL_HEIGHT
+  assert.equal(OFFICE_DESIGN_HEIGHT, OFFICE_INTERNAL_HEIGHT, "OFFICE_DESIGN_HEIGHT equals OFFICE_INTERNAL_HEIGHT");
   assert.equal(OFFICE_DESIGN_HEIGHT, 500, "OFFICE_DESIGN_HEIGHT is 500");
-  assert.equal(OFFICE_INTERNAL_HEIGHT, 500, "OFFICE_INTERNAL_HEIGHT is 500");
 
   // Test: existing child agent tests still pass (verify SERVICE_AGENT_IDS unchanged)
   const expectedChildIds = [

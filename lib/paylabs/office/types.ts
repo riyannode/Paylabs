@@ -39,9 +39,6 @@ export type OfficeAgentId =
   | OfficeMacroAgentId
   | ServiceName;
 
-export function isOfficeMacroAgentId(value: string): value is OfficeMacroAgentId {
-  return value === "discovery_planner" || value === "payment_decision" || value === "settlement_memory";
-}
 
 export type OfficePhase =
   | "brain"

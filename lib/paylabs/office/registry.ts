@@ -41,6 +41,71 @@ export function officeAgentIdFromServiceName(serviceName: string): ServiceName |
   return SERVICE_AGENT_IDS.has(serviceName) ? serviceName : null;
 }
 
+// ── Macro agent definitions (single source of truth) ──────────────
+export interface OfficeMacroAgentDefinition {
+  id: OfficeMacroAgentId;
+  label: string;
+  shortLabel: string;
+  station: { x: number; y: number };
+  brainApproach: { x: number; y: number };
+  department: "macro_hub";
+  color: string;
+}
+
+const OFFICE_MACRO_AGENT_IDS: ReadonlySet<OfficeMacroAgentId> = new Set<OfficeMacroAgentId>([
+  "discovery_planner",
+  "payment_decision",
+  "settlement_memory",
+]);
+
+export const OFFICE_MACRO_AGENTS: Record<OfficeMacroAgentId, OfficeMacroAgentDefinition> = {
+  discovery_planner: {
+    id: "discovery_planner",
+    label: "Discovery Node",
+    shortLabel: "D-NODE",
+    station: { x: 414, y: 335 },
+    brainApproach: { x: 414, y: 388 },
+    department: "macro_hub",
+    color: "#22d3ee",
+  },
+  payment_decision: {
+    id: "payment_decision",
+    label: "Payment Node",
+    shortLabel: "P-NODE",
+    station: { x: 486, y: 335 },
+    brainApproach: { x: 486, y: 388 },
+    department: "macro_hub",
+    color: "#f97316",
+  },
+  settlement_memory: {
+    id: "settlement_memory",
+    label: "Settlement Node",
+    shortLabel: "S-NODE",
+    station: { x: 558, y: 335 },
+    brainApproach: { x: 558, y: 388 },
+    department: "macro_hub",
+    color: "#22c55e",
+  },
+};
+
+function macroAgentDef(m: OfficeMacroAgentDefinition): OfficeAgentDefinition {
+  return {
+    id: m.id,
+    label: m.label,
+    shortLabel: m.shortLabel,
+    phase: m.id,
+    department: m.department,
+    desk: { ...m.station },
+    idle: { ...m.station },
+    color: m.color,
+  };
+}
+
+export function isOfficeMacroAgentId(value: string): value is OfficeMacroAgentId {
+  return OFFICE_MACRO_AGENT_IDS.has(value as OfficeMacroAgentId);
+}
+
+// ── Office agents (brain + child services + macro nodes) ───────────
 export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
   brain_planner: {
     id: "brain_planner",
@@ -172,36 +237,10 @@ export const OFFICE_AGENTS: Record<OfficeAgentId, OfficeAgentDefinition> = {
     idle: { x: 240, y: 365 },
     color: "#15803d",
   },
-  discovery_planner: {
-    id: "discovery_planner",
-    label: "Discovery Node",
-    shortLabel: "D-NODE",
-    phase: "discovery_planner",
-    department: "macro_hub",
-    desk: { x: 414, y: 335 },
-    idle: { x: 414, y: 335 },
-    color: "#22d3ee",
-  },
-  payment_decision: {
-    id: "payment_decision",
-    label: "Payment Node",
-    shortLabel: "P-NODE",
-    phase: "payment_decision",
-    department: "macro_hub",
-    desk: { x: 486, y: 335 },
-    idle: { x: 486, y: 335 },
-    color: "#f97316",
-  },
-  settlement_memory: {
-    id: "settlement_memory",
-    label: "Settlement Node",
-    shortLabel: "S-NODE",
-    phase: "settlement_memory",
-    department: "macro_hub",
-    desk: { x: 558, y: 335 },
-    idle: { x: 558, y: 335 },
-    color: "#22c55e",
-  },
+  // Macro nodes derived from OFFICE_MACRO_AGENTS (single source of truth)
+  discovery_planner: macroAgentDef(OFFICE_MACRO_AGENTS.discovery_planner),
+  payment_decision: macroAgentDef(OFFICE_MACRO_AGENTS.payment_decision),
+  settlement_memory: macroAgentDef(OFFICE_MACRO_AGENTS.settlement_memory),
 };
 
 export const OFFICE_STATIONS = {
@@ -211,56 +250,6 @@ export const OFFICE_STATIONS = {
   lounge: { x: 200, y: 369 },
   error: { x: 862, y: 355 },
 };
-
-export interface OfficeMacroAgentDefinition {
-  id: OfficeMacroAgentId;
-  label: string;
-  shortLabel: string;
-  station: { x: number; y: number };
-  brainApproach: { x: number; y: number };
-  department: "macro_hub";
-  color: string;
-}
-
-const OFFICE_MACRO_AGENT_IDS: ReadonlySet<OfficeMacroAgentId> = new Set<OfficeMacroAgentId>([
-  "discovery_planner",
-  "payment_decision",
-  "settlement_memory",
-]);
-
-export const OFFICE_MACRO_AGENTS: Record<OfficeMacroAgentId, OfficeMacroAgentDefinition> = {
-  discovery_planner: {
-    id: "discovery_planner",
-    label: "Discovery Node",
-    shortLabel: "D-NODE",
-    station: { x: 414, y: 335 },
-    brainApproach: { x: 414, y: 388 },
-    department: "macro_hub",
-    color: "#22d3ee",
-  },
-  payment_decision: {
-    id: "payment_decision",
-    label: "Payment Node",
-    shortLabel: "P-NODE",
-    station: { x: 486, y: 335 },
-    brainApproach: { x: 486, y: 388 },
-    department: "macro_hub",
-    color: "#f97316",
-  },
-  settlement_memory: {
-    id: "settlement_memory",
-    label: "Settlement Node",
-    shortLabel: "S-NODE",
-    station: { x: 558, y: 335 },
-    brainApproach: { x: 558, y: 388 },
-    department: "macro_hub",
-    color: "#22c55e",
-  },
-};
-
-export function isOfficeMacroAgentId(value: string): value is OfficeMacroAgentId {
-  return OFFICE_MACRO_AGENT_IDS.has(value as OfficeMacroAgentId);
-}
 
 export function assertOfficeRegistryMatchesServiceRegistry(): void {
   for (const agentId of Object.keys(OFFICE_AGENTS)) {
