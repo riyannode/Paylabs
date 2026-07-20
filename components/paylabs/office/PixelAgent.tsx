@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { OFFICE_AGENTS } from "@/lib/paylabs/office/registry";
+import { OFFICE_AGENTS, isOfficeMacroAgentId } from "@/lib/paylabs/office/registry";
 import type { OfficeAgentViewState } from "@/lib/paylabs/office/types";
 import { sanitizeDisplayMessage } from "@/lib/paylabs/office/sanitizer";
 
@@ -19,7 +19,7 @@ export function PixelAgent({ agent }: { agent: OfficeAgentViewState }) {
   return (
     <button
       type="button"
-      className={`po-agent-wrap is-${agent.status}${agent.id === "brain_planner" ? " is-brain" : ""}`}
+      className={`po-agent-wrap is-${agent.status}${agent.id === "brain_planner" ? " is-brain" : ""}${isOfficeMacroAgentId(agent.id) ? " is-macro" : ""}`}
       style={style}
       aria-label={`${definition.label}: ${agent.status}`}
     >
