@@ -104,16 +104,17 @@ export async function GET(req: NextRequest) {
           return NextResponse.json({ ok: true, ...safeResponse(casResult.row) });
         }
       } else if (TERMINAL.has(txResult.state)) {
-        // P0-3: On Circle mint terminal failure, check Gateway transfer
+        // Circle mint terminal failure — check Gateway transfer for correct outcome
         if (row.gateway_transfer_id) {
           const gwTransfer = await getGatewayTransferById(row.gateway_transfer_id);
           if (gwTransfer.ok && gwTransfer.data) {
             const gwStatus = (gwTransfer.data.status || "").toLowerCase();
-            // P0-3: Gateway confirmed/finalized → finalize from Gateway transactionHash
+            const hasAttestation = !!gwTransfer.data.attestationPayload && !!gwTransfer.data.attestationSignature;
+
+            // confirmed/finalized → finalize using Gateway transactionHash
             if (gwStatus === "confirmed" || gwStatus === "finalized") {
               const casFinal = await updateWithdrawal(withdrawalId, {
-                status: "finalized",
-                expectedStatus: "mint_submitted",
+                status: "finalized", expectedStatus: "mint_submitted",
                 txHash: gwTransfer.data.transactionHash ?? txResult.txHash ?? undefined,
                 explorerUrl: explorerUrl(gwTransfer.data.transactionHash ?? txResult.txHash) ?? undefined,
               });
@@ -121,30 +122,51 @@ export async function GET(req: NextRequest) {
                 return NextResponse.json({ ok: true, ...safeResponse(casFinal.row) });
               }
             }
-            // Gateway not expired/confirmed/finalized and has attestation → retryable
-            const hasAttestation = !!gwTransfer.data.attestationPayload && !!gwTransfer.data.attestationSignature;
-            if (hasAttestation && gwStatus !== "expired" && gwStatus !== "confirmed" && gwStatus !== "finalized") {
+
+            // failed/expired → failed
+            if (gwStatus === "failed" || gwStatus === "expired") {
+              await updateWithdrawal(withdrawalId, {
+                status: "failed", expectedStatus: "mint_submitted",
+                errorCode: `gateway_${gwStatus}`, errorMessage: `Gateway: ${gwStatus}, Circle: ${txResult.state}`,
+                txHash: txResult.txHash ?? undefined,
+              });
+            } else if (gwStatus === "pending" && hasAttestation) {
+              // pending + attestation → retryable
               const casRetry = await updateWithdrawal(withdrawalId, {
-                status: "reconciliation_required",
-                expectedStatus: "mint_submitted",
-                errorCode: "mint_tx_retryable",
-                errorMessage: `Circle tx: ${txResult.state}, Gateway: ${gwStatus}`,
+                status: "reconciliation_required", expectedStatus: "mint_submitted",
+                errorCode: "mint_tx_retryable", errorMessage: `Circle tx: ${txResult.state}, Gateway: ${gwStatus}`,
                 txHash: txResult.txHash ?? undefined,
               });
               if (casRetry.ok && casRetry.row) {
                 return NextResponse.json({ ok: true, ...safeResponse(casRetry.row) });
               }
+            } else {
+              // Gateway GET failure, empty status, unknown status, missing attestation → reconciliation_required
+              const casRecon = await updateWithdrawal(withdrawalId, {
+                status: "reconciliation_required", expectedStatus: "mint_submitted",
+                errorCode: "gateway_unavailable", errorMessage: `Gateway: ${gwStatus || 'empty'}, attestation: ${hasAttestation}, Circle: ${txResult.state}`,
+                txHash: txResult.txHash ?? undefined,
+              });
+              if (casRecon.ok && casRecon.row) {
+                return NextResponse.json({ ok: true, ...safeResponse(casRecon.row) });
+              }
             }
+          } else {
+            // Gateway GET temporarily unavailable → reconciliation_required, never failed
+            await updateWithdrawal(withdrawalId, {
+              status: "reconciliation_required", expectedStatus: "mint_submitted",
+              errorCode: "gateway_unavailable", errorMessage: `Gateway GET failed, Circle: ${txResult.state}`,
+              txHash: txResult.txHash ?? undefined,
+            });
           }
+        } else {
+          // No transfer reference — hard failure
+          await updateWithdrawal(withdrawalId, {
+            status: "failed", expectedStatus: "mint_submitted",
+            errorCode: "circle_tx_failed", errorMessage: `Circle transaction: ${txResult.state}`,
+            txHash: txResult.txHash ?? undefined,
+          });
         }
-        // Definitively non-retryable or no attestation → hard failure
-        await updateWithdrawal(withdrawalId, {
-          status: "failed",
-          expectedStatus: "mint_submitted",
-          errorCode: "circle_tx_failed",
-          errorMessage: `Circle transaction: ${txResult.state}`,
-          txHash: txResult.txHash ?? undefined,
-        });
       }
       // If not terminal, re-read and return current state
     }
@@ -297,7 +319,8 @@ export async function POST(req: NextRequest) {
         const casAmb = await updateWithdrawal(withdrawalId, { status: "reconciliation_required", expectedStatus: "burn_signed", errorCode: "gateway_timeout", errorMessage: transferResult.error });
         if (!casAmb.ok) console.error("[dcw/withdraw] CAS failed after ambiguous:", casAmb.error);
         const { row: ambRow } = await getWithdrawal(withdrawalId, "dcw", session.sub);
-        return NextResponse.json({ ok: true, ...safeResponse(ambRow || { id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
+        if (!ambRow) return NextResponse.json({ ok: false, error: "Withdrawal not found after update" }, { status: 500 });
+        return NextResponse.json({ ok: true, ...safeResponse(ambRow) });
       }
 
       // transferId missing with attestation = protocol error → reconciliation, NOT failed
@@ -305,7 +328,8 @@ export async function POST(req: NextRequest) {
         const casProto = await updateWithdrawal(withdrawalId, { status: "reconciliation_required", expectedStatus: "burn_signed", errorCode: "missing_transfer_id", errorMessage: "Gateway returned attestation but no transferId" });
         if (!casProto.ok) console.error("[dcw/withdraw] CAS failed after protocol error:", casProto.error);
         const { row: protoRow } = await getWithdrawal(withdrawalId, "dcw", session.sub);
-        return NextResponse.json({ ok: true, ...safeResponse(protoRow || { id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
+        if (!protoRow) return NextResponse.json({ ok: false, error: "Withdrawal not found after update" }, { status: 500 });
+        return NextResponse.json({ ok: true, ...safeResponse(protoRow) });
       }
 
       const casFail = await updateWithdrawal(withdrawalId, { status: "failed", expectedStatus: "burn_signed", errorCode: "gateway_transfer_failed", errorMessage: transferResult.error?.slice(0, 300) });
@@ -334,7 +358,8 @@ export async function POST(req: NextRequest) {
       }
       // Recovery failed — re-read and return from DB
       const { row: recheckRow } = await getWithdrawal(withdrawalId, "dcw", session.sub);
-      return NextResponse.json({ ok: true, ...safeResponse(recheckRow || { id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
+      if (!recheckRow) return NextResponse.json({ ok: false, error: "Withdrawal not found after update" }, { status: 500 });
+      return NextResponse.json({ ok: true, ...safeResponse(recheckRow) });
     }
 
     // 16. CAS: gateway_submitted → attestation_received (CHECK CAS RESULT)
@@ -358,7 +383,8 @@ export async function POST(req: NextRequest) {
       }
       // Recovery failed — re-read and return from DB
       const { row: recheckRow2 } = await getWithdrawal(withdrawalId, "dcw", session.sub);
-      return NextResponse.json({ ok: true, ...safeResponse(recheckRow2 || { id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
+      if (!recheckRow2) return NextResponse.json({ ok: false, error: "Withdrawal not found after update" }, { status: 500 });
+      return NextResponse.json({ ok: true, ...safeResponse(recheckRow2) });
     }
 
     // 17. Pre-persist mint idempotency key BEFORE calling Circle
@@ -371,7 +397,8 @@ export async function POST(req: NextRequest) {
     if (!casPre.ok || !casPre.row) {
       // Re-read and return from DB
       const { row: preRow } = await getWithdrawal(withdrawalId, "dcw", session.sub);
-      return NextResponse.json({ ok: true, ...safeResponse(preRow || { id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
+      if (!preRow) return NextResponse.json({ ok: false, error: "Withdrawal not found after update" }, { status: 500 });
+      return NextResponse.json({ ok: true, ...safeResponse(preRow) });
     }
 
     // 18. Gas preflight
@@ -440,7 +467,8 @@ export async function POST(req: NextRequest) {
         }
         // Recovery failed — re-read and return from DB
         const { row: cas4Row } = await getWithdrawal(withdrawalId, "dcw", session.sub);
-        return NextResponse.json({ ok: true, ...safeResponse(cas4Row || { id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
+        if (!cas4Row) return NextResponse.json({ ok: false, error: "Withdrawal not found after update" }, { status: 500 });
+        return NextResponse.json({ ok: true, ...safeResponse(cas4Row) });
       }
 
       return NextResponse.json({ ok: true, ...safeResponse(cas4.row) });
@@ -456,7 +484,8 @@ export async function POST(req: NextRequest) {
       });
       // Re-read and return from DB
       const { row: catchRow } = await getWithdrawal(withdrawalId, "dcw", session.sub);
-      return NextResponse.json({ ok: true, ...safeResponse(catchRow || { id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
+      if (!catchRow) return NextResponse.json({ ok: false, error: "Withdrawal not found after update" }, { status: 500 });
+      return NextResponse.json({ ok: true, ...safeResponse(catchRow) });
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

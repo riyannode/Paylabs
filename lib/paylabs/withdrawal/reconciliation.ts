@@ -327,8 +327,9 @@ async function reconcileWithdrawal(row: WithdrawalRow): Promise<void> {
           });
           return;
         }
-        // Only retry if transfer is not expired and has attestation
-        if (transferStatus !== "expired" && transfer.data.attestationPayload) {
+        // Only retry if transfer is pending with valid attestation
+        const hasAttestation = !!transfer.data.attestationPayload && !!transfer.data.attestationSignature;
+        if (transferStatus === "pending" && hasAttestation) {
           // P0-2: Retry key logic — check error_code, not just status
           // Only confirmed terminal failures create a NEW key.
           // Ambiguous/no-response cases (mint_submission_failed, mint_no_tx_id,
@@ -346,7 +347,13 @@ async function reconcileWithdrawal(row: WithdrawalRow): Promise<void> {
               txHash: result.txHash ?? transfer.data.transactionHash ?? undefined,
               explorerUrl: explorerUrl(result.txHash ?? transfer.data.transactionHash) ?? undefined,
             });
+          } else if (result.kind === "failed") {
+            await updateWithdrawal(id, {
+              status: "failed", expectedStatus: status,
+              errorCode: result.reason, errorMessage: `Gateway: ${result.reason}, Circle transfer: ${transferStatus}`,
+            });
           }
+          // result.kind === "reconciliation_required" or "retried" — already persisted by retryDcwMint
           return;
         }
       }
