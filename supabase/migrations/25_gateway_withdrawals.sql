@@ -76,9 +76,9 @@ CREATE TABLE IF NOT EXISTS paylabs_gateway_withdrawals (
 );
 
 -- Idempotency: unique per wallet_mode + wallet_id
-ALTER TABLE paylabs_gateway_withdrawals
-  ADD CONSTRAINT uq_withdrawal_idempotency
-  UNIQUE (wallet_mode, wallet_id, idempotency_key);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_withdrawal_idempotency
+  ON public.paylabs_gateway_withdrawals
+  (wallet_mode, wallet_id, idempotency_key);
 
 -- Ownership lookup
 CREATE INDEX IF NOT EXISTS idx_withdrawals_owner
@@ -99,5 +99,12 @@ DROP TRIGGER IF EXISTS trg_withdrawals_updated_at ON paylabs_gateway_withdrawals
 CREATE TRIGGER trg_withdrawals_updated_at
   BEFORE UPDATE ON paylabs_gateway_withdrawals
   FOR EACH ROW EXECUTE FUNCTION update_withdrawals_updated_at();
+
+-- Service-role-only ledger: no anon/authenticated Data API access.
+ALTER TABLE public.paylabs_gateway_withdrawals
+  ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE public.paylabs_gateway_withdrawals FROM anon;
+REVOKE ALL ON TABLE public.paylabs_gateway_withdrawals FROM authenticated;
 
 COMMIT;
