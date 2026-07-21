@@ -104,13 +104,25 @@ export async function GET(req: NextRequest) {
           return NextResponse.json({ ok: true, ...safeResponse(casResult.row) });
         }
       } else if (TERMINAL.has(txResult.state)) {
-        // P0-7: On Circle mint terminal failure, check Gateway transfer before hard failure
+        // P0-3: On Circle mint terminal failure, check Gateway transfer
         if (row.gateway_transfer_id) {
           const gwTransfer = await getGatewayTransferById(row.gateway_transfer_id);
           if (gwTransfer.ok && gwTransfer.data) {
             const gwStatus = (gwTransfer.data.status || "").toLowerCase();
+            // P0-3: Gateway confirmed/finalized → finalize from Gateway transactionHash
+            if (gwStatus === "confirmed" || gwStatus === "finalized") {
+              const casFinal = await updateWithdrawal(withdrawalId, {
+                status: "finalized",
+                expectedStatus: "mint_submitted",
+                txHash: gwTransfer.data.transactionHash ?? txResult.txHash ?? undefined,
+                explorerUrl: explorerUrl(gwTransfer.data.transactionHash ?? txResult.txHash) ?? undefined,
+              });
+              if (casFinal.ok && casFinal.row) {
+                return NextResponse.json({ ok: true, ...safeResponse(casFinal.row) });
+              }
+            }
+            // Gateway not expired/confirmed/finalized and has attestation → retryable
             const hasAttestation = !!gwTransfer.data.attestationPayload && !!gwTransfer.data.attestationSignature;
-            // If attestation is still valid and transfer is not expired/confirmed/finalized → retryable
             if (hasAttestation && gwStatus !== "expired" && gwStatus !== "confirmed" && gwStatus !== "finalized") {
               const casRetry = await updateWithdrawal(withdrawalId, {
                 status: "reconciliation_required",
@@ -306,8 +318,22 @@ export async function POST(req: NextRequest) {
       gatewayTransferId: transferResult.transferId,
     });
     if (!cas2.ok || !cas2.row) {
-      console.error("[dcw/withdraw] CAS failed persisting transferId:", cas2.error);
-      // Transfer succeeded but DB failed — reconciliation needed
+      // P0-1: Use monotonic recovery to persist transferId and advance state
+      const { monotonicRecoveryPersist } = await import("@/lib/paylabs/withdrawal/reconciliation");
+      const recoveryResult = await monotonicRecoveryPersist(
+        withdrawalId, "dcw", session.sub,
+        ["burn_signed"],
+        { gatewayTransferId: transferResult.transferId, attestationHash: transferResult.attestationHash },
+        "attestation_received",
+      );
+      if (recoveryResult.ok && recoveryResult.row) {
+        return NextResponse.json({ ok: true, ...safeResponse(recoveryResult.row) });
+      }
+      // Recovery failed — mark for reconciliation with references in DB
+      const casReconcile = await updateWithdrawal(withdrawalId, {
+        status: "reconciliation_required", expectedStatus: "burn_signed", errorCode: "cas_recovery",
+        gatewayTransferId: transferResult.transferId, attestationHash: transferResult.attestationHash,
+      });
       return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
     }
 
@@ -318,7 +344,22 @@ export async function POST(req: NextRequest) {
       attestationHash: transferResult.attestationHash,
     });
     if (!cas3.ok || !cas3.row) {
-      console.error("[dcw/withdraw] CAS failed persisting attestation:", cas3.error);
+      // P0-1: Use monotonic recovery to persist attestationHash and advance state
+      const { monotonicRecoveryPersist } = await import("@/lib/paylabs/withdrawal/reconciliation");
+      const recoveryResult = await monotonicRecoveryPersist(
+        withdrawalId, "dcw", session.sub,
+        ["gateway_submitted"],
+        { attestationHash: transferResult.attestationHash },
+        "attestation_received",
+      );
+      if (recoveryResult.ok && recoveryResult.row) {
+        return NextResponse.json({ ok: true, ...safeResponse(recoveryResult.row) });
+      }
+      // Recovery failed — mark for reconciliation with attestation in DB
+      const casReconcile = await updateWithdrawal(withdrawalId, {
+        status: "reconciliation_required", expectedStatus: "gateway_submitted", errorCode: "cas_recovery",
+        attestationHash: transferResult.attestationHash,
+      });
       return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
     }
 

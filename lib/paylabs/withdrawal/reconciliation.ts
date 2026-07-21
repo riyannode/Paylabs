@@ -52,26 +52,28 @@ async function pollDcwTxOnce(txId: string): Promise<{ state: string; txHash: str
 
 // ─── DCW Mint Retry ──────────────────────────────────────────
 
-async function retryDcwMint(row: WithdrawalRow, newIdempotencyKey = false): Promise<boolean> {
-  if (!row.gateway_transfer_id || !row.mint_idempotency_key) return false;
+async function retryDcwMint(row: WithdrawalRow, newIdempotencyKey = false): Promise<{ retried: boolean; gatewayFinalized?: boolean; gatewayTxHash?: string }> {
+  if (!row.gateway_transfer_id || !row.mint_idempotency_key) return { retried: false };
 
   // Recover attestation from Gateway
   const transfer = await getGatewayTransferById(row.gateway_transfer_id);
-  if (!transfer.ok || !transfer.data) return false;
+  if (!transfer.ok || !transfer.data) return { retried: false };
 
-  const { status: rawStatus, attestationPayload, attestationSignature, expirationBlock } = transfer.data;
+  const { status: rawStatus, attestationPayload, attestationSignature, expirationBlock, transactionHash } = transfer.data;
 
   // P0-1: Normalize Gateway status — API returns lowercase
   const transferStatus = (rawStatus || "").toLowerCase();
 
-  // Don't retry if attestation is missing
-  if (!attestationPayload || !attestationSignature) return false;
+  // P0-3: Gateway confirmed/finalized = destination mint exists → finalize, don't retry
+  if (transferStatus === "confirmed" || transferStatus === "finalized") {
+    return { retried: false, gatewayFinalized: true, gatewayTxHash: transactionHash || undefined };
+  }
 
-  // Don't retry if transfer is confirmed/finalized (already settled on-chain)
-  if (transferStatus === "confirmed" || transferStatus === "finalized") return false;
+  // Don't retry if attestation is missing
+  if (!attestationPayload || !attestationSignature) return { retried: false };
 
   // Don't retry if transfer is expired (attestation expired)
-  if (transferStatus === "expired") return false;
+  if (transferStatus === "expired") return { retried: false };
 
   // Optional: check expirationBlock against current Arc destination block
   // If attestation has expired on-chain, don't waste gas retrying
@@ -84,20 +86,23 @@ async function retryDcwMint(row: WithdrawalRow, newIdempotencyKey = false): Prom
     ? crypto.randomUUID()
     : row.mint_idempotency_key;
 
-  // P0-3: Pre-persist new retry key BEFORE calling Circle (CAS)
+  // P0-4: Deliberate terminal retry — CAS status first to prevent concurrent workers
+  // Only ONE worker can win the CAS mint_submitted/reconciliation_required → mint_submission_pending
   if (newIdempotencyKey) {
-    const casKey = await updateWithdrawal(row.id, {
-      mintIdempotencyKey: idempotencyKey,
+    const casGate = await updateWithdrawal(row.id, {
+      status: "mint_submission_pending",
       expectedStatus: row.status as any,
+      mintIdempotencyKey: idempotencyKey,
       safeMetadata: {
         ...((row.safe_metadata as Record<string, unknown>) || {}),
         retryAttempt: ((row.safe_metadata as any)?.retryAttempt || 0) + 1,
         previousTransactionId: row.circle_transaction_id || null,
       },
     });
-    if (!casKey.ok) {
-      console.error("[retryDcwMint] CAS failed pre-persisting retry key:", casKey.error);
-      return false;
+    if (!casGate.ok) {
+      // Another worker already won the CAS — do not proceed
+      console.error("[retryDcwMint] CAS gate failed (another worker won):", casGate.error);
+      return { retried: false };
     }
   }
 
@@ -115,14 +120,36 @@ async function retryDcwMint(row: WithdrawalRow, newIdempotencyKey = false): Prom
     if (mintTxId) {
       const casResult = await updateWithdrawal(row.id, {
         status: "mint_submitted",
-        expectedStatus: row.status as any,
+        expectedStatus: "mint_submission_pending" as any,
         circleTransactionId: mintTxId,
         mintIdempotencyKey: idempotencyKey,
       });
-      return casResult.ok;
+      return { retried: casResult.ok };
     }
-  } catch { /* retry failed */ }
-  return false;
+    // No tx ID returned — ambiguous. Move to reconciliation_required with the NEW key preserved.
+    // Next reconciliation run will reuse this same key via Circle's idempotency dedup.
+    if (newIdempotencyKey) {
+      await updateWithdrawal(row.id, {
+        status: "reconciliation_required",
+        expectedStatus: "mint_submission_pending" as any,
+        errorCode: "mint_no_tx_id",
+        errorMessage: "Retry returned no transaction ID (ambiguous)",
+        mintIdempotencyKey: idempotencyKey,
+      });
+    }
+  } catch {
+    // Request timed out or failed — ambiguous. Move to reconciliation_required with NEW key preserved.
+    if (newIdempotencyKey) {
+      await updateWithdrawal(row.id, {
+        status: "reconciliation_required",
+        expectedStatus: "mint_submission_pending" as any,
+        errorCode: "mint_submission_failed",
+        errorMessage: "Retry request failed (ambiguous)",
+        mintIdempotencyKey: idempotencyKey,
+      });
+    }
+  }
+  return { retried: false };
 }
 
 // ─── Monotonic Recovery Helper ─────────────────────────────────
@@ -132,9 +159,10 @@ async function retryDcwMint(row: WithdrawalRow, newIdempotencyKey = false): Prom
  * mint_challenge_id, etc.) with monotonic state transition.
  * - Verifies wallet ownership
  * - Permits only explicitly allowed current statuses
- * - Persists the external reference
+ * - Persists the external reference (with select().maybeSingle() to detect zero-row updates)
+ * - Verifies each requested reference was actually persisted
  * - Performs a monotonic state transition (never regresses)
- * - Returns and checks the updated row
+ * - Returns the actual persisted row
  */
 export async function monotonicRecoveryPersist(
   withdrawalId: string,
@@ -153,7 +181,7 @@ export async function monotonicRecoveryPersist(
     return { ok: false, error: `Status '${row.status}' not in allowed recovery statuses` };
   }
 
-  // 3. Persist external references (direct update, no status change)
+  // 3. Persist external references with select().maybeSingle() to detect zero-row updates
   const db = supabaseAdmin();
   const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (fields.gatewayTransferId !== undefined) updatePayload.gateway_transfer_id = fields.gatewayTransferId;
@@ -162,23 +190,42 @@ export async function monotonicRecoveryPersist(
   if (fields.mintIdempotencyKey !== undefined) updatePayload.mint_idempotency_key = fields.mintIdempotencyKey;
   if (fields.circleTransactionId !== undefined) updatePayload.circle_transaction_id = fields.circleTransactionId;
 
-  const { error: updateError } = await db
+  const { data: updatedRow, error: updateError } = await db
     .from("paylabs_gateway_withdrawals")
     .update(updatePayload)
     .eq("id", withdrawalId)
     .eq("wallet_mode", walletMode)
     .eq("owner_ref", ownerRef)
-    .eq("status", row.status);
+    .eq("status", row.status)
+    .select()
+    .maybeSingle();
 
   if (updateError) return { ok: false, error: `Recovery persist failed: ${updateError.message}` };
+  if (!updatedRow) return { ok: false, error: "Recovery persist: zero rows matched (concurrent status change)" };
 
-  // 4. Monotonic state transition via CAS
+  // 4. Verify each requested external reference was actually persisted
+  if (fields.gatewayTransferId !== undefined && updatedRow.gateway_transfer_id !== fields.gatewayTransferId) {
+    return { ok: false, error: `Verification failed: gateway_transfer_id expected '${fields.gatewayTransferId}' got '${updatedRow.gateway_transfer_id}'` };
+  }
+  if (fields.attestationHash !== undefined && updatedRow.attestation_hash !== fields.attestationHash) {
+    return { ok: false, error: `Verification failed: attestation_hash expected '${fields.attestationHash}' got '${updatedRow.attestation_hash}'` };
+  }
+  if (fields.mintChallengeId !== undefined && updatedRow.mint_challenge_id !== fields.mintChallengeId) {
+    return { ok: false, error: `Verification failed: mint_challenge_id expected '${fields.mintChallengeId}' got '${updatedRow.mint_challenge_id}'` };
+  }
+  if (fields.mintIdempotencyKey !== undefined && updatedRow.mint_idempotency_key !== fields.mintIdempotencyKey) {
+    return { ok: false, error: `Verification failed: mint_idempotency_key expected '${fields.mintIdempotencyKey}' got '${updatedRow.mint_idempotency_key}'` };
+  }
+  if (fields.circleTransactionId !== undefined && updatedRow.circle_transaction_id !== fields.circleTransactionId) {
+    return { ok: false, error: `Verification failed: circle_transaction_id expected '${fields.circleTransactionId}' got '${updatedRow.circle_transaction_id}'` };
+  }
+
+  // 5. Monotonic state transition via CAS
   const casResult = await updateWithdrawal(withdrawalId, {
     status: nextStatus,
     expectedStatus: row.status,
   });
 
-  // 5. Return persisted row
   if (casResult.ok && casResult.row) {
     return { ok: true, row: casResult.row };
   }
@@ -206,8 +253,15 @@ async function reconcileWithdrawal(row: WithdrawalRow): Promise<void> {
       } else if (FAILURE.has(txResult.state)) {
         // Mint failed — check if attestation is retryable
         if (gateway_transfer_id) {
-          const retried = await retryDcwMint(row, true); // new key for confirmed failure
-          if (!retried) {
+          const result = await retryDcwMint(row, true); // new key for confirmed failure
+          // P0-3: Gateway confirmed/finalized → finalize from Gateway txHash
+          if (result.gatewayFinalized) {
+            await updateWithdrawal(id, {
+              status: "finalized", expectedStatus: "mint_submitted",
+              txHash: result.gatewayTxHash ?? txResult.txHash ?? undefined,
+              explorerUrl: explorerUrl(result.gatewayTxHash ?? txResult.txHash) ?? undefined,
+            });
+          } else if (!result.retried) {
             await updateWithdrawal(id, {
               status: "failed", expectedStatus: "mint_submitted",
               errorCode: "mint_tx_failed", errorMessage: `Circle tx: ${txResult.state}`,
@@ -228,11 +282,20 @@ async function reconcileWithdrawal(row: WithdrawalRow): Promise<void> {
     // Case 2: attestation_received / reconciliation_required / mint_submission_pending with transferId — retry mint
     if ((status === "attestation_received" || status === "reconciliation_required" || status === "mint_submission_pending") && gateway_transfer_id) {
       const transfer = await getGatewayTransferById(gateway_transfer_id);
-      if (transfer.ok && transfer.data?.attestationPayload) {
+      if (transfer.ok && transfer.data) {
         // P0-1: Normalize Gateway status to lowercase
         const transferStatus = (transfer.data.status || "").toLowerCase();
-        // Don't retry if transfer is expired or confirmed/finalized
-        if (transferStatus !== "expired" && transferStatus !== "confirmed" && transferStatus !== "finalized") {
+        // P0-3: Gateway confirmed/finalized → finalize from Gateway, don't retry
+        if (transferStatus === "confirmed" || transferStatus === "finalized") {
+          await updateWithdrawal(id, {
+            status: "finalized", expectedStatus: status,
+            txHash: transfer.data.transactionHash ?? undefined,
+            explorerUrl: explorerUrl(transfer.data.transactionHash) ?? undefined,
+          });
+          return;
+        }
+        // Only retry if transfer is not expired and has attestation
+        if (transferStatus !== "expired" && transfer.data.attestationPayload) {
           // P0-2: Retry key logic — check error_code, not just status
           // Only confirmed terminal failures create a NEW key.
           // Ambiguous/no-response cases (mint_submission_failed, mint_no_tx_id,
@@ -243,8 +306,16 @@ async function reconcileWithdrawal(row: WithdrawalRow): Promise<void> {
             && row.error_code !== "gateway_timeout"
             && row.error_code !== "mint_submission_pending"
             && row.error_code !== "cas_recovery";
-          const retried = await retryDcwMint(row, isNewKey);
-          if (retried) return;
+          const result = await retryDcwMint(row, isNewKey);
+          // P0-3: Gateway confirmed/finalized during retry → finalize
+          if (result.gatewayFinalized) {
+            await updateWithdrawal(id, {
+              status: "finalized", expectedStatus: status,
+              txHash: result.gatewayTxHash ?? transfer.data.transactionHash ?? undefined,
+              explorerUrl: explorerUrl(result.gatewayTxHash ?? transfer.data.transactionHash) ?? undefined,
+            });
+          }
+          return;
         }
       }
       return;
