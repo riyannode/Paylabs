@@ -10,14 +10,27 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/paylabs/db/server";
-import { getSession, getUserChallenge, getTransactionStatus } from "@/lib/paylabs/ucw";
+import { getSession, getUserChallenge, getTransactionStatus, refreshSession } from "@/lib/paylabs/ucw";
 import { getWithdrawal, updateWithdrawal } from "@/lib/paylabs/withdrawal/ledger";
 import type { WithdrawalRow, WithdrawalStatus } from "@/lib/paylabs/withdrawal/gateway-types";
 import { explorerUrl } from "@/lib/paylabs/withdrawal/explorer";
 
 const SUCCESS = new Set(["COMPLETE", "CONFIRMED"]);
 const FAILURE = new Set(["FAILED", "DENIED", "CANCELLED", "STUCK"]);
+const RECOVERABLE_MINT_STATUSES = new Set<WithdrawalStatus>([
+  "gateway_submitted",
+  "attestation_received",
+  "mint_submission_pending",
+  "reconciliation_required",
+]);
+
+const UCW_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: true,
+  sameSite: "lax" as const,
+  path: "/",
+  maxAge: 1800,
+};
 
 async function getUcwSession(req: NextRequest) {
   const sid = req.cookies.get("ucw_sid")?.value;
@@ -29,10 +42,41 @@ function safeResponse(row: any) {
   return {
     withdrawalId: row.id,
     status: row.status,
+    mintChallengeId: row.mint_challenge_id || null,
     circleTransactionId: row.circle_transaction_id || null,
     txHash: row.tx_hash || null,
     explorerUrl: row.explorer_url || null,
   };
+}
+
+async function refreshedStatusResponse(
+  req: NextRequest,
+  body: Record<string, unknown>,
+) {
+  const sid = req.cookies.get("ucw_sid")?.value;
+
+  if (sid) {
+    await refreshSession(sid);
+  }
+
+  const response = NextResponse.json(body);
+  response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
+
+  if (sid) {
+    response.cookies.set("ucw_sid", sid, UCW_COOKIE_OPTIONS);
+  }
+
+  return response;
+}
+
+async function refreshedRowResponse(
+  req: NextRequest,
+  withdrawalId: string,
+  walletId: string,
+  fallback: WithdrawalRow,
+) {
+  const { row } = await getWithdrawal(withdrawalId, "creator_ucw", walletId);
+  return refreshedStatusResponse(req, { ok: true, ...safeResponse(row || fallback) });
 }
 
 // ─── GET: Poll Status ────────────────────────────────────────
@@ -65,7 +109,7 @@ export async function GET(req: NextRequest) {
             txHash: txStatus.txHash || undefined, explorerUrl: explorerUrl(txStatus.txHash) || undefined,
           });
           if (casResult.ok && casResult.row) {
-            return NextResponse.json({ ok: true, ...safeResponse(casResult.row) });
+            return refreshedStatusResponse(req, { ok: true, ...safeResponse(casResult.row) });
           }
         } else if (FAILURE.has(txStatus.state)) {
           // Circle mint terminal failure — check Gateway transfer
@@ -84,7 +128,7 @@ export async function GET(req: NextRequest) {
                   explorerUrl: explorerUrl(gwTransfer.data.transactionHash || txStatus.txHash) || undefined,
                 });
                 if (casFinal.ok && casFinal.row) {
-                  return NextResponse.json({ ok: true, ...safeResponse(casFinal.row) });
+                  return refreshedStatusResponse(req, { ok: true, ...safeResponse(casFinal.row) });
                 }
               }
 
@@ -103,7 +147,7 @@ export async function GET(req: NextRequest) {
                   txHash: txStatus.txHash || undefined,
                 });
                 if (casRetry.ok && casRetry.row) {
-                  return NextResponse.json({ ok: true, ...safeResponse(casRetry.row) });
+                  return refreshedStatusResponse(req, { ok: true, ...safeResponse(casRetry.row) });
                 }
               } else {
                 // Gateway GET failure, empty status, unknown, missing attestation → reconciliation_required
@@ -135,7 +179,7 @@ export async function GET(req: NextRequest) {
 
     // Re-read after potential update
     const { row: freshRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-    return NextResponse.json({ ok: true, ...safeResponse(freshRow || row) });
+    return refreshedStatusResponse(req, safeResponse(freshRow || row));
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
@@ -163,170 +207,205 @@ export async function POST(req: NextRequest) {
     if (loadError || !row) {
       return NextResponse.json({ ok: false, error: "Withdrawal not found" }, { status: 404 });
     }
-    // Mutable reference — may advance during terminal failure CAS gate
-    let currentRow: WithdrawalRow = row;
-
     // ─── recover-challenge action ──────────────────────────────
-    // Authenticated recovery for mint_submission_pending or reconciliation_required
-    // where key was persisted but challenge was never created (crash) or
-    // Circle mint transaction explicitly failed (terminal failure).
+    // Authenticated recovery for Gateway-submitted, attested, mint-submission,
+    // and explicit reconciliation states. This never exposes attestation data.
     if (action === "recover-challenge") {
-      // Require status mint_submission_pending or reconciliation_required
-      if (row.status !== "mint_submission_pending" && row.status !== "reconciliation_required") {
+      if (!RECOVERABLE_MINT_STATUSES.has(row.status)) {
         return NextResponse.json({ ok: false, error: `Cannot recover from status '${row.status}'` }, { status: 400 });
       }
-      // Require persisted mintIdempotencyKey and gatewayTransferId
-      if (!row.mint_idempotency_key || !row.gateway_transfer_id) {
-        return NextResponse.json({ ok: false, error: "Missing persisted key or transferId" }, { status: 400 });
+      if (!row.gateway_transfer_id) {
+        return NextResponse.json({ ok: false, error: "Missing persisted transferId" }, { status: 400 });
       }
 
-      // GET /v1/transfer/{transferId}
-      const { getGatewayTransferById } = await import("@/lib/paylabs/withdrawal/gateway-transfer");
+      const { getGatewayTransferById, keccak256Hex } = await import("@/lib/paylabs/withdrawal/gateway-transfer");
       const gwTransfer = await getGatewayTransferById(row.gateway_transfer_id);
       if (!gwTransfer.ok || !gwTransfer.data) {
-        // Gateway GET failed → persist reconciliation_required, return DB row
         await updateWithdrawal(withdrawalId, {
           status: "reconciliation_required", expectedStatus: row.status,
           errorCode: "gateway_get_failed", errorMessage: "Gateway GET failed during recovery",
         });
-        const { row: reconRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-        return NextResponse.json({ ok: true, ...safeResponse(reconRow || row) });
+        return refreshedRowResponse(req, withdrawalId, session.walletId, row);
       }
 
       const gwStatus = (gwTransfer.data.status || "").toLowerCase();
 
-      // Gateway failed/expired → failed
       if (gwStatus === "failed" || gwStatus === "expired") {
         await updateWithdrawal(withdrawalId, {
           status: "failed", expectedStatus: row.status,
           errorCode: `gateway_${gwStatus}`, errorMessage: `Gateway transfer ${gwStatus}`,
         });
-        const { row: failRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-        return NextResponse.json({ ok: true, ...safeResponse(failRow || row) });
+        return refreshedRowResponse(req, withdrawalId, session.walletId, row);
       }
 
-      // Gateway confirmed/finalized → finalize from Gateway transactionHash
       if (gwStatus === "confirmed" || gwStatus === "finalized") {
         await updateWithdrawal(withdrawalId, {
           status: "finalized", expectedStatus: row.status,
           txHash: gwTransfer.data.transactionHash || undefined,
           explorerUrl: explorerUrl(gwTransfer.data.transactionHash) || undefined,
         });
-        const { row: finRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-        return NextResponse.json({ ok: true, ...safeResponse(finRow || row) });
+        return refreshedRowResponse(req, withdrawalId, session.walletId, row);
       }
 
-      // Gateway pending without complete attestation → reconciliation_required
-      if (gwStatus === "pending" && (!gwTransfer.data.attestationPayload || !gwTransfer.data.attestationSignature)) {
+      const hasAttestation = !!gwTransfer.data.attestationPayload && !!gwTransfer.data.attestationSignature;
+      if (gwStatus !== "pending" || !hasAttestation) {
         await updateWithdrawal(withdrawalId, {
           status: "reconciliation_required", expectedStatus: row.status,
-          errorCode: "missing_attestation", errorMessage: "Gateway pending without attestation during recovery",
+          errorCode: gwStatus === "pending" ? "missing_attestation" : "gateway_unknown_status",
+          errorMessage: gwStatus === "pending"
+            ? "Gateway pending without attestation during recovery"
+            : `Gateway status: ${gwStatus || "empty"}`,
         });
-        const { row: reconRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-        return NextResponse.json({ ok: true, ...safeResponse(reconRow || row) });
+        return refreshedRowResponse(req, withdrawalId, session.walletId, row);
       }
 
-      // Unknown/empty Gateway status → reconciliation_required
-      if (gwStatus !== "pending") {
-        await updateWithdrawal(withdrawalId, {
-          status: "reconciliation_required", expectedStatus: row.status,
-          errorCode: "gateway_unknown_status", errorMessage: `Gateway status: ${gwStatus || 'empty'}`,
+      let currentRow: WithdrawalRow = row;
+      const attestationHash = currentRow.attestation_hash || keccak256Hex(gwTransfer.data.attestationPayload!);
+
+      if (currentRow.status === "gateway_submitted") {
+        const casAttested = await updateWithdrawal(withdrawalId, {
+          status: "attestation_received",
+          expectedStatus: "gateway_submitted",
+          attestationHash,
         });
-        const { row: reconRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-        return NextResponse.json({ ok: true, ...safeResponse(reconRow || row) });
+        if (!casAttested.ok || !casAttested.row) {
+          return refreshedRowResponse(req, withdrawalId, session.walletId, currentRow);
+        }
+        currentRow = casAttested.row;
       }
 
-      // ─── Distinguish crash recovery vs terminal failure ────────
-      // A. Row is mint_submission_pending → crash recovery → reuse CURRENTLY persisted key
-      //    (do NOT generate new key even if old circle_transaction_id points to failed tx)
-      // B. Row is reconciliation_required AND Circle tx terminal FAILED → new key + CAS gate
-      let useKey = row.mint_idempotency_key;
-      let expectedStatusForChallenge: WithdrawalStatus = row.status;
+      if (currentRow.status === "attestation_received") {
+        const mintKey = currentRow.mint_idempotency_key || crypto.randomUUID();
+        const casPending = await updateWithdrawal(withdrawalId, {
+          status: "mint_submission_pending",
+          expectedStatus: "attestation_received",
+          attestationHash,
+          mintIdempotencyKey: mintKey,
+        });
+        if (!casPending.ok || !casPending.row) {
+          return refreshedRowResponse(req, withdrawalId, session.walletId, currentRow);
+        }
+        currentRow = casPending.row;
+      }
 
-      if (row.status === "reconciliation_required" && row.circle_transaction_id) {
-        // Check if Circle transaction explicitly failed — only then generate new key
-        try {
-          const txStatus = await getTransactionStatus(session.userToken, row.circle_transaction_id);
-          const FAILURE = new Set(["FAILED", "DENIED", "CANCELLED", "STUCK"]);
-          if (FAILURE.has(txStatus.state)) {
-            // Terminal failure → CAS to exclusive retry state, generate NEW key
-            useKey = crypto.randomUUID();
-            const casGate = await updateWithdrawal(withdrawalId, {
-              status: "mint_submission_pending",
-              expectedStatus: row.status,
-              mintIdempotencyKey: useKey,
-              safeMetadata: {
-                ...((row.safe_metadata as Record<string, unknown>) || {}),
-                retryAttempt: ((row.safe_metadata as any)?.retryAttempt || 0) + 1,
-                previousTransactionId: row.circle_transaction_id,
-              },
-            });
-            if (!casGate.ok || !casGate.row) {
-              // Another worker won the CAS or status changed
-              const { row: recheck } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-              return NextResponse.json({ ok: true, ...safeResponse(recheck || row) });
+      if (currentRow.status === "reconciliation_required") {
+        if (currentRow.circle_transaction_id) {
+          const previousTransactionId = currentRow.circle_transaction_id;
+          try {
+            const txStatus = await getTransactionStatus(session.userToken, previousTransactionId);
+            if (SUCCESS.has(txStatus.state)) {
+              const finalized = await updateWithdrawal(withdrawalId, {
+                status: "finalized",
+                expectedStatus: "reconciliation_required",
+                txHash: txStatus.txHash || undefined,
+                explorerUrl: explorerUrl(txStatus.txHash) || undefined,
+              });
+              if (!finalized.ok || !finalized.row) {
+                return refreshedRowResponse(req, withdrawalId, session.walletId, currentRow);
+              }
+              return refreshedStatusResponse(req, { ok: true, ...safeResponse(finalized.row) });
             }
-            currentRow = casGate.row;
-            expectedStatusForChallenge = "mint_submission_pending";
+            if (!FAILURE.has(txStatus.state)) {
+              return refreshedStatusResponse(req, { ok: true, ...safeResponse(currentRow) });
+            }
+          } catch {
+            return refreshedStatusResponse(req, { ok: true, ...safeResponse(currentRow) });
           }
-          // If not FAILURE (still in progress, or SUCCESS handled above), use same key
-        } catch {
-          // Cannot determine Circle tx status — safest to reuse same key (idempotent)
+
+          const retryKey = crypto.randomUUID();
+          const existingMetadata = (currentRow.safe_metadata as Record<string, unknown>) || {};
+          const previousRetryAttempt =
+            typeof existingMetadata.retryAttempt === "number" ? existingMetadata.retryAttempt : 0;
+          const casRetry = await updateWithdrawal(withdrawalId, {
+            status: "mint_submission_pending",
+            expectedStatus: "reconciliation_required",
+            attestationHash,
+            mintIdempotencyKey: retryKey,
+            mintChallengeId: null,
+            circleTransactionId: null,
+            txHash: null,
+            explorerUrl: null,
+            safeMetadata: {
+              ...existingMetadata,
+              retryAttempt: previousRetryAttempt + 1,
+              previousTransactionId,
+            },
+          });
+          if (!casRetry.ok || !casRetry.row) {
+            return refreshedRowResponse(req, withdrawalId, session.walletId, currentRow);
+          }
+          currentRow = casRetry.row;
+        } else if (currentRow.mint_idempotency_key && !currentRow.mint_challenge_id) {
+          const casResume = await updateWithdrawal(withdrawalId, {
+            status: "mint_submission_pending",
+            expectedStatus: "reconciliation_required",
+            attestationHash,
+          });
+          if (!casResume.ok || !casResume.row) {
+            return refreshedRowResponse(req, withdrawalId, session.walletId, currentRow);
+          }
+          currentRow = casResume.row;
+        } else {
+          return refreshedStatusResponse(req, { ok: true, ...safeResponse(currentRow) });
         }
       }
 
-      // Call createGatewayMintChallenge
-      // At this point: gwStatus === "pending" and attestation exists (checked above)
-      const attestationPayload = gwTransfer.data.attestationPayload!;
-      const attestationSignature = gwTransfer.data.attestationSignature!;
+      if (currentRow.status !== "mint_submission_pending") {
+        return refreshedStatusResponse(req, { ok: true, ...safeResponse(currentRow) });
+      }
+
+      if (currentRow.mint_challenge_id) {
+        return refreshedStatusResponse(req, { ok: true, ...safeResponse(currentRow) });
+      }
+
+      let mintKey = currentRow.mint_idempotency_key;
+      if (!mintKey) {
+        mintKey = crypto.randomUUID();
+        const casKey = await updateWithdrawal(withdrawalId, {
+          expectedStatus: "mint_submission_pending",
+          mintIdempotencyKey: mintKey,
+          attestationHash,
+        });
+        if (!casKey.ok || !casKey.row) {
+          return refreshedRowResponse(req, withdrawalId, session.walletId, currentRow);
+        }
+        currentRow = casKey.row;
+      }
+
       const { createGatewayMintChallenge } = await import("@/lib/paylabs/ucw");
       let mintChallengeId: string;
       try {
         const challenge = await createGatewayMintChallenge(
-          session.userToken, session.walletId,
-          attestationPayload, attestationSignature,
-          useKey,
+          session.userToken,
+          session.walletId,
+          gwTransfer.data.attestationPayload!,
+          gwTransfer.data.attestationSignature!,
+          mintKey,
         );
         mintChallengeId = challenge.challengeId;
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        return NextResponse.json({ ok: false, error: `Challenge creation failed: ${msg.slice(0, 200)}` }, { status: 502 });
+        await updateWithdrawal(withdrawalId, {
+          status: "reconciliation_required",
+          expectedStatus: "mint_submission_pending",
+          errorCode: "mint_challenge_failed",
+          errorMessage: msg.slice(0, 300),
+        });
+        return refreshedRowResponse(req, withdrawalId, session.walletId, currentRow);
       }
 
-      // CAS persist mintChallengeId → mint_approval_pending
       const casResult = await updateWithdrawal(withdrawalId, {
-        status: "mint_approval_pending", expectedStatus: expectedStatusForChallenge,
-        mintChallengeId, mintIdempotencyKey: useKey,
+        status: "mint_approval_pending",
+        expectedStatus: "mint_submission_pending",
+        mintChallengeId,
+        mintIdempotencyKey: mintKey,
+        attestationHash,
       });
       if (!casResult.ok || !casResult.row) {
-        // CAS failed — try monotonic recovery
-        const { monotonicRecoveryPersist } = await import("@/lib/paylabs/withdrawal/reconciliation");
-        const recoveryResult = await monotonicRecoveryPersist(
-          withdrawalId, "creator_ucw", session.walletId,
-          [expectedStatusForChallenge],
-          { mintChallengeId, mintIdempotencyKey: useKey },
-          "mint_approval_pending",
-          ["mint_approval_pending"],
-        );
-        if (!recoveryResult.ok || !recoveryResult.row) {
-          // Re-read and return actual DB state (Blocker 5)
-          const { row: failRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-          return NextResponse.json({ ok: true, ...safeResponse(failRow || row) });
-        }
-        // Re-read to return from DB
-        const { row: recoveredRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-        return NextResponse.json({ ok: true, ...safeResponse(recoveredRow || recoveryResult.row) });
+        return refreshedRowResponse(req, withdrawalId, session.walletId, currentRow);
       }
 
-      // Re-read to return from DB (Blocker 5)
-      const { row: finalRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-      const responseRow = finalRow || casResult.row;
-      return NextResponse.json({
-        ok: true,
-        withdrawalId: responseRow.id,
-        status: responseRow.status,
-        mintChallengeId: responseRow.mint_challenge_id,
-      });
+      return refreshedStatusResponse(req, { ok: true, ...safeResponse(casResult.row) });
     }
 
     // ─── Existing: resolve-challenge flow ────────────────────
@@ -368,7 +447,7 @@ export async function POST(req: NextRequest) {
           if (!recoveryResult.ok || !recoveryResult.row) {
             // Re-read and return actual DB state
             const { row: fallbackRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-            return NextResponse.json({ ok: true, ...safeResponse(fallbackRow || row) });
+            return refreshedStatusResponse(req, { ok: true, ...safeResponse(fallbackRow || row) });
           }
         }
       }
@@ -382,7 +461,7 @@ export async function POST(req: NextRequest) {
             txHash: txStatus.txHash || undefined, explorerUrl: explorerUrl(txStatus.txHash) || undefined,
           });
           if (finCas.ok && finCas.row) {
-            return NextResponse.json({ ok: true, ...safeResponse(finCas.row) });
+            return refreshedStatusResponse(req, { ok: true, ...safeResponse(finCas.row) });
           }
         } else if (FAILURE.has(txStatus.state)) {
           // Circle mint terminal failure — check Gateway transfer
@@ -438,7 +517,7 @@ export async function POST(req: NextRequest) {
     }
 
     const { row: finalRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-    return NextResponse.json({ ok: true, ...safeResponse(finalRow || row) });
+    return refreshedStatusResponse(req, { ok: true, ...safeResponse(finalRow || row) });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[ucw/mint] Error:", msg.slice(0, 200));

@@ -39,6 +39,7 @@ import {
   getWalletTokenBalance,
 } from "@/lib/paylabs/ucw";
 import { getSession as getDcwSession } from "@/lib/paylabs/auth/session";
+import { checkGatewayBalance } from "@/lib/paylabs/x402/gateway-balance";
 
 /** Parse body safely — empty POST bodies are valid for session actions */
 async function safeParseBody(req: NextRequest): Promise<Record<string, unknown>> {
@@ -319,15 +320,78 @@ export async function POST(req: NextRequest) {
 
       case "session-balance": {
         const sid = req.cookies.get("ucw_sid")?.value;
-        if (!sid) return NextResponse.json({ error: "No session" }, { status: 401 });
+
+        if (!sid) {
+          return NextResponse.json(
+            { error: "No session" },
+            { status: 401 },
+          );
+        }
+
         const session = await getSession(sid);
-        if (!session?.walletId || !session?.userToken) return NextResponse.json({ error: "No wallet in session" }, { status: 400 });
-        const balances = await getWalletTokenBalance(session.walletId, session.userToken);
-        const usdc = balances.find((b) => b.token === "USDC")?.amount ?? "0";
+
+        if (
+          !session?.walletId ||
+          !session.userToken ||
+          !session.walletAddress
+        ) {
+          return NextResponse.json(
+            { error: "No wallet in session" },
+            { status: 400 },
+          );
+        }
+
+        const walletBalances = await getWalletTokenBalance(
+          session.walletId,
+          session.userToken,
+        );
+
+        const gatewayBalance = await checkGatewayBalance({
+          depositor: session.walletAddress,
+        }).catch((error: unknown) => ({
+          ok: false as const,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Gateway balance unavailable",
+        }));
+
+        const usdc =
+          walletBalances.find(
+            (balance) => balance.token === "USDC",
+          )?.amount ?? "0";
+
         await refreshSession(sid);
-        const resp = NextResponse.json({ usdc, walletAddress: session.walletAddress });
-        resp.cookies.set("ucw_sid", sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 1800 });
-        return resp;
+
+        const response = NextResponse.json({
+          usdc,
+          walletAddress: session.walletAddress,
+          gatewayUsdc: gatewayBalance.ok
+            ? gatewayBalance.balanceUsdc ?? "0"
+            : null,
+          pendingBatchUsdc: gatewayBalance.ok
+            ? gatewayBalance.pendingBatchUsdc ?? "0"
+            : "0",
+          gatewayError: gatewayBalance.ok
+            ? null
+            : gatewayBalance.error ??
+              "Gateway balance unavailable",
+        });
+
+        response.headers.set(
+          "Cache-Control",
+          "no-store, no-cache, must-revalidate",
+        );
+
+        response.cookies.set("ucw_sid", sid, {
+          httpOnly: true,
+          secure: true,
+          sameSite: "lax",
+          path: "/",
+          maxAge: 1800,
+        });
+
+        return response;
       }
 
       case "session-destroy": {

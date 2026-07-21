@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/paylabs/db/server";
-import { getSession } from "@/lib/paylabs/ucw";
+import { getSession, refreshSession } from "@/lib/paylabs/ucw";
 import { checkGatewayBalance } from "@/lib/paylabs/x402/gateway-balance";
 import { buildTransferSpec } from "@/lib/paylabs/withdrawal/burn-intent";
 import { estimateGatewayWithdrawal } from "@/lib/paylabs/withdrawal/gateway-estimate";
@@ -37,6 +37,34 @@ function safeResponse(row: any) {
   };
 }
 
+const UCW_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: true,
+  sameSite: "lax" as const,
+  path: "/",
+  maxAge: 1800,
+};
+
+async function refreshedStatusResponse(
+  req: NextRequest,
+  body: Record<string, unknown>,
+) {
+  const sid = req.cookies.get("ucw_sid")?.value;
+
+  if (sid) {
+    await refreshSession(sid);
+  }
+
+  const response = NextResponse.json(body);
+  response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
+
+  if (sid) {
+    response.cookies.set("ucw_sid", sid, UCW_COOKIE_OPTIONS);
+  }
+
+  return response;
+}
+
 // ─── GET: Status ─────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
@@ -56,7 +84,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Withdrawal not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ ok: true, ...safeResponse(row) });
+    return refreshedStatusResponse(req, safeResponse(row));
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
@@ -75,8 +103,52 @@ export async function POST(req: NextRequest) {
 
     // 2. Parse body
     const body = await req.json().catch(() => ({}));
+    const action = body.action;
+    const withdrawalId = body.withdrawalId;
     const amountUsdc = body.amount;
     const idempotencyKey = body.idempotencyKey;
+
+    const walletId = session.walletId;
+    const walletAddress = session.walletAddress.toLowerCase();
+
+    if (action === "recover-sign-challenge") {
+      if (!withdrawalId || typeof withdrawalId !== "string") {
+        return NextResponse.json({ ok: false, error: "withdrawalId required" }, { status: 400 });
+      }
+
+      const { row, error: loadError } = await getWithdrawal(withdrawalId, "creator_ucw", walletId);
+      if (loadError || !row) {
+        return NextResponse.json({ ok: false, error: "Withdrawal not found" }, { status: 404 });
+      }
+
+      if (row.status !== "burn_signature_pending") {
+        return refreshedStatusResponse(req, { ok: true, ...safeResponse(row) });
+      }
+      if (!row.burn_intent || !row.burn_intent_hash) {
+        return NextResponse.json({ ok: false, error: "Missing stored BurnIntent" }, { status: 500 });
+      }
+      if (computeBurnIntentDigest(row.burn_intent) !== row.burn_intent_hash) {
+        return NextResponse.json({ ok: false, error: "BurnIntent integrity check failed" }, { status: 500 });
+      }
+
+      const typedData = {
+        types: GATEWAY_EIP712_TYPES,
+        domain: GATEWAY_EIP712_DOMAIN,
+        primaryType: "BurnIntent",
+        message: row.burn_intent,
+      };
+      const { challengeId } = await signTypedDataForGateway(session.userToken, walletId, typedData);
+      const updated = await updateWithdrawal(row.id, {
+        signingChallengeId: challengeId,
+        expectedStatus: "burn_signature_pending",
+      });
+      if (!updated.ok || !updated.row) {
+        const { row: fresh } = await getWithdrawal(withdrawalId, "creator_ucw", walletId);
+        return refreshedStatusResponse(req, { ok: true, ...safeResponse(fresh || row) });
+      }
+
+      return refreshedStatusResponse(req, { ok: true, ...safeResponse(updated.row) });
+    }
 
     if (!amountUsdc || typeof amountUsdc !== "string") {
       return NextResponse.json({ ok: false, error: "amount (string) required" }, { status: 400 });
@@ -84,9 +156,6 @@ export async function POST(req: NextRequest) {
     if (!idempotencyKey || typeof idempotencyKey !== "string") {
       return NextResponse.json({ ok: false, error: "idempotencyKey (UUID) required" }, { status: 400 });
     }
-
-    const walletId = session.walletId;
-    const walletAddress = session.walletAddress.toLowerCase();
 
     // 3. EARLY IDEMPOTENCY CHECK — before balance/estimate
     {
@@ -111,13 +180,13 @@ export async function POST(req: NextRequest) {
           try {
             const { challengeId } = await signTypedDataForGateway(session.userToken, walletId, typedData);
             await updateWithdrawal(existing.id, { signingChallengeId: challengeId, expectedStatus: "burn_signature_pending" });
-            return NextResponse.json({ ok: true, ...safeResponse({ ...existing, signing_challenge_id: challengeId, status: "burn_signature_pending" }) });
+            return refreshedStatusResponse(req, { ok: true, ...safeResponse({ ...existing, signing_challenge_id: challengeId, status: "burn_signature_pending" }) });
           } catch {
             // Challenge recreation failed — return existing as-is, frontend can retry
-            return NextResponse.json({ ok: true, ...safeResponse(existing) });
+            return refreshedStatusResponse(req, { ok: true, ...safeResponse(existing) });
           }
         }
-        return NextResponse.json({ ok: true, ...safeResponse(existing) });
+        return refreshedStatusResponse(req, { ok: true, ...safeResponse(existing) });
       }
     }
 
@@ -170,7 +239,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: createError || "Failed to create withdrawal" }, { status: 500 });
     }
     if (!created) {
-      return NextResponse.json({ ok: true, ...safeResponse(row) });
+      return refreshedStatusResponse(req, { ok: true, ...safeResponse(row) });
     }
 
     // 9. CAS: prepared → burn_signature_pending
@@ -198,7 +267,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, error: "Concurrent modification" }, { status: 409 });
       }
 
-      return NextResponse.json({ ok: true, withdrawalId: row.id, status: "burn_signature_pending", signChallengeId });
+      return refreshedStatusResponse(req, { ok: true, withdrawalId: row.id, status: "burn_signature_pending", signChallengeId });
     } catch (e: unknown) {
       // Challenge creation failed — CAS back to failed, allow retry
       const msg = e instanceof Error ? e.message : String(e);

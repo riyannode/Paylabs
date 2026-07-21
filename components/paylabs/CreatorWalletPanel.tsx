@@ -22,6 +22,7 @@ export default function CreatorWalletPanel() {
   const {
     walletState,
     walletInfo,
+    ucwWalletId,
     ucwBalance,
     walletError,
     needsReconnectToSign,
@@ -37,6 +38,8 @@ export default function CreatorWalletPanel() {
     connectPin,
     reconnect,
     disconnect,
+    refreshBalance,
+    executeUcwChallenge,
   } = useCreatorUcwWallet();
 
   const refreshDcwConflict = useCallback(async () => {
@@ -179,6 +182,9 @@ export default function CreatorWalletPanel() {
         autoPrepareGoogleLogin={false}
         showEmailLogin={false}
         onDisconnect={disconnect}
+        walletId={ucwWalletId}
+        onRefreshBalance={refreshBalance}
+        executeUcwChallenge={executeUcwChallenge}
         finalizingCreatorWallet={finalizingCreatorWallet}
       />
     </>

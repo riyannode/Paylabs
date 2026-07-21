@@ -163,11 +163,11 @@ export interface UpdateWithdrawalFields {
   signingChallengeId?: string;
   gatewayTransferId?: string;
   attestationHash?: string;
-  mintChallengeId?: string;
+  mintChallengeId?: string | null;
   mintIdempotencyKey?: string;
-  circleTransactionId?: string;
-  txHash?: string;
-  explorerUrl?: string;
+  circleTransactionId?: string | null;
+  txHash?: string | null;
+  explorerUrl?: string | null;
   gasPreflightOk?: boolean;
   gasPreflightFee?: string;
   gasPreflightError?: string;
