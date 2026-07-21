@@ -2,10 +2,11 @@
  * POST /api/paylabs/wallet/ucw/withdraw/mint — Resolve mint challenge
  * GET  /api/paylabs/wallet/ucw/withdraw/mint?withdrawalId=uuid — Poll mint status
  *
- * After browser executes sdk.execute(mintChallengeId), call this endpoint
+ * After browser executes sdk.execute(mintChallengeId), call POST
  * to resolve the Circle transaction ID via getChallenge → correlationIds → getTransaction.
  *
- * REQUIRES valid UCW session cookie (ucw_sid).
+ * Required flow:
+ *   mint_approval_pending → (resolve challenge) → mint_submitted → finalized/failed
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -14,10 +15,8 @@ import { getSession, getUserChallenge, getTransactionStatus } from "@/lib/paylab
 import { getWithdrawal, updateWithdrawal } from "@/lib/paylabs/withdrawal/ledger";
 import { explorerUrl } from "@/lib/paylabs/withdrawal/explorer";
 
-const TERMINAL_SUCCESS = new Set(["COMPLETE", "CONFIRMED"]);
-const TERMINAL_FAILURE = new Set(["FAILED", "DENIED", "CANCELLED", "STUCK"]);
-
-// ─── Auth ────────────────────────────────────────────────────
+const SUCCESS = new Set(["COMPLETE", "CONFIRMED"]);
+const FAILURE = new Set(["FAILED", "DENIED", "CANCELLED", "STUCK"]);
 
 async function getUcwSession(req: NextRequest) {
   const sid = req.cookies.get("ucw_sid")?.value;
@@ -54,38 +53,46 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Withdrawal not found" }, { status: 404 });
     }
 
-    // If we have a circle_transaction_id, poll it
-    if (row.circle_transaction_id && session.userToken) {
+    // If mint_submitted and we have a circle_transaction_id, poll once
+    if (row.status === "mint_submitted" && row.circle_transaction_id && session.userToken) {
       try {
         const txStatus = await getTransactionStatus(session.userToken, row.circle_transaction_id);
 
-        if (TERMINAL_SUCCESS.has(txStatus.state)) {
-          await updateWithdrawal(withdrawalId, {
-            status: "finalized",
-            txHash: txStatus.txHash || undefined,
-            explorerUrl: explorerUrl(txStatus.txHash) || undefined,
+        if (SUCCESS.has(txStatus.state)) {
+          const casResult = await updateWithdrawal(withdrawalId, {
+            status: "finalized", expectedStatus: "mint_submitted",
+            txHash: txStatus.txHash || undefined, explorerUrl: explorerUrl(txStatus.txHash) || undefined,
           });
-          // Re-read
-          const { row: updated } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-          return NextResponse.json({ ok: true, ...safeResponse(updated || row) });
+          if (casResult.ok && casResult.row) {
+            return NextResponse.json({ ok: true, ...safeResponse(casResult.row) });
+          }
+        } else if (FAILURE.has(txStatus.state)) {
+          // Mint failed — check if attestation is still valid for retry
+          if (row.gateway_transfer_id) {
+            // Retryable — go to reconciliation_required
+            const casRetry = await updateWithdrawal(withdrawalId, {
+              status: "reconciliation_required", expectedStatus: "mint_submitted",
+              errorCode: "mint_tx_failed", errorMessage: `Circle tx: ${txStatus.state}`,
+              txHash: txStatus.txHash || undefined,
+            });
+            if (casRetry.ok && casRetry.row) {
+              return NextResponse.json({ ok: true, ...safeResponse(casRetry.row) });
+            }
+          } else {
+            // No transfer to retry from — hard failure
+            await updateWithdrawal(withdrawalId, {
+              status: "failed", expectedStatus: "mint_submitted",
+              errorCode: "mint_tx_failed", errorMessage: `Circle tx: ${txStatus.state}`,
+              txHash: txStatus.txHash || undefined,
+            });
+          }
         }
-
-        if (TERMINAL_FAILURE.has(txStatus.state)) {
-          await updateWithdrawal(withdrawalId, {
-            status: "failed",
-            errorCode: "mint_tx_failed",
-            errorMessage: `Circle mint transaction: ${txStatus.state}`,
-            txHash: txStatus.txHash || undefined,
-          });
-          const { row: updated } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-          return NextResponse.json({ ok: true, ...safeResponse(updated || row) });
-        }
-      } catch {
-        // Transaction polling failed — leave status as is
-      }
+      } catch { /* polling failed — leave status as is */ }
     }
 
-    return NextResponse.json({ ok: true, ...safeResponse(row) });
+    // Re-read after potential update
+    const { row: freshRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
+    return NextResponse.json({ ok: true, ...safeResponse(freshRow || row) });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
@@ -96,13 +103,11 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    // 1. Auth
     const session = await getUcwSession(req);
     if (!session?.userToken || !session.walletId) {
       return NextResponse.json({ ok: false, error: "UCW authentication required" }, { status: 401 });
     }
 
-    // 2. Parse body
     const body = await req.json().catch(() => ({}));
     const withdrawalId = body.withdrawalId;
 
@@ -110,7 +115,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "withdrawalId required" }, { status: 400 });
     }
 
-    // 3. Load withdrawal
     const { row, error: loadError } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
     if (loadError || !row) {
       return NextResponse.json({ ok: false, error: "Withdrawal not found" }, { status: 404 });
@@ -120,47 +124,71 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "No mint challenge to resolve" }, { status: 400 });
     }
 
-    // 4. Resolve challenge → correlationIds → transaction ID
+    // Resolve challenge → correlationIds → transaction ID
+    let resolvedTxId: string | null = null;
     try {
       const challenge = await getUserChallenge(session.userToken, row.mint_challenge_id);
       const correlationId = challenge.correlationIds?.[0];
-
       if (correlationId) {
-        // Try to get transaction by correlation ID
-        try {
-          const txStatus = await getTransactionStatus(session.userToken, correlationId);
-          await updateWithdrawal(withdrawalId, {
-            circleTransactionId: correlationId,
-          });
+        resolvedTxId = correlationId;
+      }
+    } catch { /* challenge resolution failed */ }
 
-          if (TERMINAL_SUCCESS.has(txStatus.state)) {
-            await updateWithdrawal(withdrawalId, {
-              status: "finalized",
-              txHash: txStatus.txHash || undefined,
-              explorerUrl: explorerUrl(txStatus.txHash) || undefined,
-            });
-          } else if (TERMINAL_FAILURE.has(txStatus.state)) {
-            await updateWithdrawal(withdrawalId, {
-              status: "failed",
-              errorCode: "mint_tx_failed",
-              errorMessage: `Circle mint transaction: ${txStatus.state}`,
-              txHash: txStatus.txHash || undefined,
-            });
-          }
-        } catch {
-          // Transaction not yet available — challenge may still be processing
+    if (resolvedTxId) {
+      // CAS: mint_approval_pending → mint_submitted (CHECK CAS)
+      const casResult = await updateWithdrawal(withdrawalId, {
+        status: "mint_submitted", expectedStatus: "mint_approval_pending",
+        circleTransactionId: resolvedTxId,
+      });
+
+      if (!casResult.ok || !casResult.row) {
+        // CAS failed — check if another request already stored the tx ID
+        const { row: recheck } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
+        if (recheck?.circle_transaction_id) {
+          // Already stored — proceed to poll
+        } else {
+          // Recovery: force persist
+          await supabaseAdmin().from("paylabs_gateway_withdrawals")
+            .update({ circle_transaction_id: resolvedTxId, status: "mint_submitted", updated_at: new Date().toISOString() })
+            .eq("id", withdrawalId)
+            .eq("status", "mint_approval_pending");
+          await updateWithdrawal(withdrawalId, { status: "reconciliation_required", errorCode: "cas_recovery" });
+          return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required" }) });
         }
       }
-    } catch {
-      // Challenge resolution failed — leave status as mint_approval_pending
+
+      // Try to poll the transaction immediately
+      try {
+        const txStatus = await getTransactionStatus(session.userToken, resolvedTxId);
+        if (SUCCESS.has(txStatus.state)) {
+          const finCas = await updateWithdrawal(withdrawalId, {
+            status: "finalized", expectedStatus: "mint_submitted",
+            txHash: txStatus.txHash || undefined, explorerUrl: explorerUrl(txStatus.txHash) || undefined,
+          });
+          if (finCas.ok && finCas.row) {
+            return NextResponse.json({ ok: true, ...safeResponse(finCas.row) });
+          }
+        } else if (FAILURE.has(txStatus.state)) {
+          if (row.gateway_transfer_id) {
+            await updateWithdrawal(withdrawalId, {
+              status: "reconciliation_required", expectedStatus: "mint_submitted",
+              errorCode: "mint_tx_failed", errorMessage: `Circle tx: ${txStatus.state}`,
+            });
+          } else {
+            await updateWithdrawal(withdrawalId, {
+              status: "failed", expectedStatus: "mint_submitted",
+              errorCode: "mint_tx_failed", errorMessage: `Circle tx: ${txStatus.state}`,
+            });
+          }
+        }
+      } catch { /* poll failed — leave as mint_submitted */ }
     }
 
-    // 5. Return current status
     const { row: finalRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
     return NextResponse.json({ ok: true, ...safeResponse(finalRow || row) });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error("[ucw/withdraw/mint] Error:", msg.slice(0, 200));
+    console.error("[ucw/mint] Error:", msg.slice(0, 200));
     return NextResponse.json({ ok: false, error: "Mint resolution failed" }, { status: 500 });
   }
 }

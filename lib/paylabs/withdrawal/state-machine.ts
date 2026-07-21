@@ -14,13 +14,14 @@ const VALID_TRANSITIONS: Record<WithdrawalStatus, WithdrawalStatus[]> = {
   burn_signature_pending:    ["burn_signed", "failed", "expired"],
   burn_signed:               ["gateway_submitted", "failed"],
   gateway_submitted:         ["attestation_received", "reconciliation_required", "failed"],
-  attestation_received:      ["mint_approval_pending", "mint_submitted", "failed"],
+  attestation_received:      ["mint_submission_pending", "mint_approval_pending", "failed"],
+  mint_submission_pending:   ["mint_submitted", "reconciliation_required", "failed"],
   mint_approval_pending:     ["mint_submitted", "failed"],
   mint_submitted:            ["finalized", "reconciliation_required", "failed"],
-  finalized:                 [],  // terminal
-  failed:                    [],  // terminal
-  expired:                   [],  // terminal
-  reconciliation_required:   ["failed"], // can only be resolved to failed or manually to finalized after reconciliation
+  finalized:                 [],
+  failed:                    [],
+  expired:                   [],
+  reconciliation_required:   ["failed", "reconciliation_required"],
 };
 
 /**

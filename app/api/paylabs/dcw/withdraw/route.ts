@@ -300,8 +300,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
     }
 
-    // 17. Gas preflight
-    let mintIdempotencyKey = crypto.randomUUID();
+    // 17. Pre-persist mint idempotency key BEFORE calling Circle
+    const mintIdempotencyKey = crypto.randomUUID();
+    const casPre = await updateWithdrawal(withdrawalId, {
+      status: "mint_submission_pending",
+      expectedStatus: "attestation_received",
+      mintIdempotencyKey,
+    });
+    if (!casPre.ok || !casPre.row) {
+      console.error("[dcw/withdraw] CAS failed pre-persisting mint key:", casPre.error);
+      return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
+    }
+
+    // 18. Gas preflight
     let gasPreflightOk = false;
     let gasPreflightFee: string | undefined;
     try {
@@ -316,7 +327,7 @@ export async function POST(req: NextRequest) {
       gasPreflightOk = !!gasPreflightFee;
     } catch { /* proceed — Circle may sponsor gas */ }
 
-    // 18. Attempt mint — on failure → reconciliation_required
+    // 19. Attempt mint — on failure → reconciliation_required
     try {
       const client = getDcwClient();
       const mintTx = await client.createContractExecutionTransaction({
@@ -332,46 +343,46 @@ export async function POST(req: NextRequest) {
       if (!mintTxId) {
         const casNoTx = await updateWithdrawal(withdrawalId, {
           status: "reconciliation_required",
-          expectedStatus: "attestation_received",
-          mintIdempotencyKey,
+          expectedStatus: "mint_submission_pending",
           errorCode: "mint_no_tx_id",
           errorMessage: "Circle returned no transaction ID for mint",
-          gasPreflightOk,
-          gasPreflightFee,
+          gasPreflightOk, gasPreflightFee,
         });
-        if (!casNoTx.ok) console.error("[dcw/withdraw] CAS failed after mint no tx:", casNoTx.error);
+        if (!casNoTx.ok) console.error("[dcw/withdraw] CAS failed:", casNoTx.error);
         return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc), gateway_transfer_id: transferResult.transferId }) });
       }
 
-      // CAS: attestation_received → mint_submitted (CHECK CAS RESULT)
+      // CAS: mint_submission_pending → mint_submitted (CHECK CAS RESULT)
       const cas4 = await updateWithdrawal(withdrawalId, {
         status: "mint_submitted",
-        expectedStatus: "attestation_received",
-        mintIdempotencyKey,
+        expectedStatus: "mint_submission_pending",
         circleTransactionId: mintTxId,
-        gasPreflightOk,
-        gasPreflightFee,
+        gasPreflightOk, gasPreflightFee,
       });
       if (!cas4.ok || !cas4.row) {
-        console.error("[dcw/withdraw] CAS failed persisting mint tx:", cas4.error);
-        return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc), gateway_transfer_id: transferResult.transferId }) });
+        // CAS failed — recovery: check if tx ID was stored by another request
+        const { row: recheck } = await getWithdrawal(withdrawalId, "dcw", session.sub);
+        if (!recheck?.circle_transaction_id) {
+          await supabaseAdmin().from("paylabs_gateway_withdrawals")
+            .update({ circle_transaction_id: mintTxId, status: "mint_submitted", updated_at: new Date().toISOString() })
+            .eq("id", withdrawalId)
+            .eq("status", "mint_submission_pending");
+        }
+        await updateWithdrawal(withdrawalId, { status: "reconciliation_required", errorCode: "cas_recovery" });
+        return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
       }
 
-      // Return immediately — no polling
       return NextResponse.json({ ok: true, ...safeResponse(cas4.row) });
 
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      const casMintFail = await updateWithdrawal(withdrawalId, {
+      await updateWithdrawal(withdrawalId, {
         status: "reconciliation_required",
-        expectedStatus: "attestation_received",
-        mintIdempotencyKey,
+        expectedStatus: "mint_submission_pending",
         errorCode: "mint_submission_failed",
         errorMessage: msg.slice(0, 300),
-        gasPreflightOk,
-        gasPreflightFee,
+        gasPreflightOk, gasPreflightFee,
       });
-      if (!casMintFail.ok) console.error("[dcw/withdraw] CAS failed after mint error:", casMintFail.error);
       return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc), gateway_transfer_id: transferResult.transferId }) });
     }
   } catch (e: unknown) {

@@ -254,6 +254,7 @@ export async function findReconcilableWithdrawals(): Promise<WithdrawalRow[]> {
     .in("status", [
       "gateway_submitted",
       "attestation_received",
+      "mint_submission_pending",
       "mint_approval_pending",
       "mint_submitted",
       "reconciliation_required",

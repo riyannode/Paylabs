@@ -115,6 +115,7 @@ export type WithdrawalStatus =
   | "burn_signed"
   | "gateway_submitted"
   | "attestation_received"
+  | "mint_submission_pending"
   | "mint_approval_pending"
   | "mint_submitted"
   | "finalized"

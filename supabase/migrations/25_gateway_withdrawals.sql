@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS paylabs_gateway_withdrawals (
                           'burn_signed',
                           'gateway_submitted',
                           'attestation_received',
+                          'mint_submission_pending',
                           'mint_approval_pending',
                           'mint_submitted',
                           'finalized',
