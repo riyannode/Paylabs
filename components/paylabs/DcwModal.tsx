@@ -35,6 +35,33 @@ function asDecimal(value?: string | null): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function withdrawalStatusLabel(status: string | null) {
+  switch (status) {
+    case "prepared":
+      return "Preparing withdrawal…";
+    case "burn_signed":
+      return "Withdrawal authorized…";
+    case "gateway_submitted":
+      return "Submitted to Gateway…";
+    case "attestation_received":
+      return "Gateway attestation received…";
+    case "mint_submission_pending":
+      return "Submitting withdrawal transaction…";
+    case "mint_submitted":
+      return "Withdrawal transaction submitted…";
+    case "finalized":
+      return "Withdrawal complete.";
+    case "reconciliation_required":
+      return "Withdrawal requires reconciliation. Do not submit another withdrawal.";
+    case "failed":
+      return "Withdrawal failed.";
+    case "expired":
+      return "Withdrawal expired.";
+    default:
+      return status ? `Withdrawal status: ${status}` : "";
+  }
+}
+
 const CIRCLE_FAUCET_URL = "https://faucet.circle.com/";
 
 async function copyToClipboard(value: string) {
@@ -119,6 +146,18 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   const [depositAmount, setDepositAmount] = useState("");
   const [isDepositing, setIsDepositing] = useState(false);
   const [depositError, setDepositError] = useState<string | null>(null);
+
+  // Withdrawal state
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
+  const [withdrawError, setWithdrawError] = useState<string | null>(null);
+  const [withdrawStatus, setWithdrawStatus] = useState<string | null>(null);
+  const [withdrawTxHash, setWithdrawTxHash] = useState<string | null>(null);
+  const [withdrawExplorerUrl, setWithdrawExplorerUrl] = useState<string | null>(null);
+
+  const withdrawPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const withdrawPollInFlightRef = useRef(false);
+  const withdrawIdempotencyKeyRef = useRef<string | null>(null);
 
   const x402Balance = asDecimal(balance.gatewayUsdc);
   const plannedCostNum = asDecimal(plannedCost);
@@ -531,6 +570,17 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (withdrawPollRef.current) {
+        clearInterval(withdrawPollRef.current);
+        withdrawPollRef.current = null;
+      }
+
+      withdrawPollInFlightRef.current = false;
+    };
+  }, []);
+
   const handleDeposit = useCallback(async () => {
     if (depositInFlightRef.current) return;
 
@@ -657,6 +707,188 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
     }
   }, [depositAmount, refreshBalance]);
 
+  const stopWithdrawPolling = useCallback(() => {
+    if (withdrawPollRef.current) {
+      clearInterval(withdrawPollRef.current);
+      withdrawPollRef.current = null;
+    }
+
+    withdrawPollInFlightRef.current = false;
+  }, []);
+
+  const applyWithdrawalStatus = useCallback(
+    async (data: Record<string, unknown>): Promise<boolean> => {
+      const status = typeof data.status === "string" ? data.status : "unknown";
+      const txHash = typeof data.txHash === "string" ? data.txHash : null;
+      const explorerUrl =
+        typeof data.explorerUrl === "string" ? data.explorerUrl : null;
+
+      setWithdrawStatus(status);
+
+      if (txHash) setWithdrawTxHash(txHash);
+      if (explorerUrl) setWithdrawExplorerUrl(explorerUrl);
+
+      if (status === "finalized") {
+        stopWithdrawPolling();
+        setIsWithdrawing(false);
+        setWithdrawAmount("");
+        setWithdrawError(null);
+        withdrawIdempotencyKeyRef.current = null;
+        await refreshBalance();
+        return true;
+      }
+
+      if (status === "failed" || status === "expired") {
+        stopWithdrawPolling();
+        setIsWithdrawing(false);
+        setWithdrawError(
+          status === "expired"
+            ? "Withdrawal expired. You may submit a new withdrawal."
+            : "Withdrawal failed. Check the status before retrying."
+        );
+
+        // A fresh key is allowed after a confirmed terminal failure.
+        withdrawIdempotencyKeyRef.current = null;
+        return true;
+      }
+
+      if (status === "reconciliation_required") {
+        stopWithdrawPolling();
+        setIsWithdrawing(false);
+        setWithdrawError(
+          "Withdrawal requires reconciliation. Do not submit another withdrawal."
+        );
+
+        // Preserve the key because the financial outcome may still be ambiguous.
+        return true;
+      }
+
+      return false;
+    },
+    [refreshBalance, stopWithdrawPolling]
+  );
+
+  const startWithdrawPolling = useCallback(
+    (withdrawalId: string) => {
+      stopWithdrawPolling();
+
+      const pollOnce = async () => {
+        if (withdrawPollInFlightRef.current) return;
+        withdrawPollInFlightRef.current = true;
+
+        try {
+          const resp = await fetch(
+            `/api/paylabs/dcw/withdraw?withdrawalId=${encodeURIComponent(withdrawalId)}`,
+            {
+              method: "GET",
+              credentials: "include",
+              cache: "no-store",
+            }
+          );
+
+          const data = await resp.json().catch(() => ({}));
+
+          if (!resp.ok || !data.ok) {
+            throw new Error(data.error || "Unable to check withdrawal status");
+          }
+
+          await applyWithdrawalStatus(data);
+        } catch (e: unknown) {
+          setWithdrawError(
+            e instanceof Error
+              ? e.message
+              : "Unable to check withdrawal status"
+          );
+        } finally {
+          withdrawPollInFlightRef.current = false;
+        }
+      };
+
+      withdrawPollRef.current = setInterval(() => {
+        void pollOnce();
+      }, 3000);
+
+      void pollOnce();
+    },
+    [applyWithdrawalStatus, stopWithdrawPolling]
+  );
+
+  const handleWithdraw = useCallback(async () => {
+    if (isWithdrawing) return;
+
+    const amountText = withdrawAmount.trim();
+    const amount = Number(amountText);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setWithdrawError("Enter a valid amount");
+      return;
+    }
+
+    if (amount > x402Balance) {
+      setWithdrawError("Amount exceeds your available Gateway balance");
+      return;
+    }
+
+    const idempotencyKey =
+      withdrawIdempotencyKeyRef.current ?? crypto.randomUUID();
+
+    withdrawIdempotencyKeyRef.current = idempotencyKey;
+
+    setIsWithdrawing(true);
+    setWithdrawError(null);
+    setWithdrawStatus("prepared");
+    setWithdrawTxHash(null);
+    setWithdrawExplorerUrl(null);
+
+    try {
+      const resp = await fetch("/api/paylabs/dcw/withdraw", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          amount: amountText,
+          idempotencyKey,
+        }),
+      });
+
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data.ok) {
+        // Deterministic validation/auth failures did not start a withdrawal.
+        if (resp.status >= 400 && resp.status < 500) {
+          withdrawIdempotencyKeyRef.current = null;
+        }
+
+        throw new Error(data.error || "Withdrawal failed");
+      }
+
+      if (typeof data.withdrawalId !== "string") {
+        throw new Error("Withdrawal response did not include a withdrawal ID");
+      }
+
+      const terminal = await applyWithdrawalStatus(data);
+
+      if (!terminal) {
+        startWithdrawPolling(data.withdrawalId);
+      }
+    } catch (e: unknown) {
+      setIsWithdrawing(false);
+      setWithdrawError(
+        e instanceof Error ? e.message : "Withdrawal failed"
+      );
+
+      // Keep the idempotency key after ambiguous/network failures.
+      // Clicking again with the same amount safely replays the same request.
+    }
+  }, [
+    applyWithdrawalStatus,
+    isWithdrawing,
+    startWithdrawPolling,
+    withdrawAmount,
+    x402Balance,
+  ]);
+
 
 
   if (!open) return null;
@@ -782,7 +1014,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                 className={activeTab === "topup" ? "active" : ""}
                 onClick={() => setActiveTab("topup")}
               >
-                Deposit to Gateway
+                Gateway
               </button>
             </div>
 
@@ -867,7 +1099,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                 <div className="pl-deposit-panel-flat">
                   <div className="pl-deposit-title">Deposit to Gateway</div>
                   <p className="pl-deposit-helper">
-                    Move USDC from your PayLabs Wallet into Gateway Balance for automatic x402 payments.
+                    Move USDC into gateway balance for automatic x402 payments.
                   </p>
                   {balance.gatewayUsdc == null && (
                     <p style={{ color: "var(--warn, #f59e0b)", fontSize: 11, marginBottom: 8 }}>
@@ -912,6 +1144,96 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                     </p>
                   )}
 
+                </div>
+
+                {/* Withdraw from Gateway */}
+                <div className="pl-deposit-panel-flat" style={{ marginTop: 16 }}>
+                  <div className="pl-deposit-title">Withdraw from Gateway</div>
+
+                  <div className="pl-deposit-input-row" style={{ marginTop: 10 }}>
+                    <input
+                      className="pl-deposit-input"
+                      type="number"
+                      step="0.000001"
+                      min="0"
+                      placeholder="Amount USDC"
+                      value={withdrawAmount}
+                      onChange={(e) => {
+                        setWithdrawAmount(e.target.value);
+                        setWithdrawError(null);
+
+                        if (!isWithdrawing && withdrawStatus !== "reconciliation_required") {
+                          setWithdrawStatus(null);
+                          setWithdrawTxHash(null);
+                          setWithdrawExplorerUrl(null);
+                          withdrawIdempotencyKeyRef.current = null;
+                        }
+                      }}
+                      disabled={
+                        isWithdrawing || withdrawStatus === "reconciliation_required"
+                      }
+                    />
+
+                    <button
+                      type="button"
+                      className="pl-primary-v3 pl-deposit-button"
+                      onClick={handleWithdraw}
+                      disabled={
+                        isWithdrawing ||
+                        !withdrawAmount ||
+                        withdrawStatus === "reconciliation_required"
+                      }
+                    >
+                      {isWithdrawing ? "Withdrawing…" : "Withdraw"}
+                    </button>
+                  </div>
+
+                  {withdrawError && (
+                    <p
+                      style={{
+                        color: "var(--error, #ef4444)",
+                        fontSize: 11,
+                        marginTop: 6,
+                      }}
+                    >
+                      {withdrawError}
+                    </p>
+                  )}
+
+                  {withdrawStatus && (
+                    <p
+                      style={{
+                        color:
+                          withdrawStatus === "finalized"
+                            ? "var(--success, #22c55e)"
+                            : ["failed", "expired", "reconciliation_required"].includes(
+                                withdrawStatus
+                              )
+                              ? "var(--error, #ef4444)"
+                              : "var(--info, #3b82f6)",
+                        fontSize: 11,
+                        marginTop: 6,
+                      }}
+                    >
+                      {withdrawalStatusLabel(withdrawStatus)}
+                    </p>
+                  )}
+
+                  {withdrawTxHash && withdrawExplorerUrl && (
+                    <a
+                      href={withdrawExplorerUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: "inline-block",
+                        fontSize: 11,
+                        marginTop: 6,
+                        fontWeight: 700,
+                      }}
+                    >
+                      View transaction ↗️
+                    </a>
+                  )}
                 </div>
 
                 <div className="pl-faucet-card">
