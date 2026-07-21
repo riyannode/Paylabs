@@ -25,6 +25,8 @@ import {
   passesCryptoSourceGuard,
   isGenericCatchAllSource,
 } from "@/lib/paylabs/rsshub/topic-source-guards";
+import { filterByRelevance } from "@/lib/paylabs/sources/source-resolver";
+import type { SourceItem } from "@/lib/paylabs/sources/types";
 
 const SignalScoutSchema = z.object({
   ranked_sources: z.array(z.object({
@@ -211,11 +213,58 @@ function runDeterministicSignalScout(
     rsshub_feed_url: null,
     docs_url: null,
     rank: i + 1,
-    relevance_score: Math.min(entry.score / maxScore, 1),
+    relevance_score: Math.max(0, Math.min(entry.score / maxScore, 1)),
     reason: entry.score > 0
       ? `Keyword/entity match (score: ${entry.score})`
       : "Recency fallback",
   }));
+}
+
+function applyFinalCandidateRelevance<T extends {
+  feed_item_id: string;
+  title: string;
+  source_url: string;
+  domain: string | null;
+  summary: string;
+  author: string;
+  published_at: string | null;
+  route_path: string | null;
+  rank: number;
+  relevance_score: number;
+  reason: string;
+  source_kind: string;
+  provider: string;
+}>(
+  candidates: T[],
+  normalizedGoal: string,
+  entityTerms: string[],
+  primaryEntities: Array<{ text: string; canonical: string; type: string; required: boolean }>,
+  negativeEntities: string[],
+): T[] {
+  const candidateById = new Map(candidates.map((candidate) => [candidate.feed_item_id, candidate]));
+  const relevanceInput: SourceItem[] = candidates.map((candidate) => ({
+    feed_item_id: candidate.feed_item_id,
+    title: candidate.title,
+    url: candidate.source_url,
+    domain: candidate.domain,
+    summary: candidate.summary,
+    author: candidate.author,
+    published_at: candidate.published_at,
+    route_path: candidate.route_path,
+    trust_status: candidate.source_kind === "rsshub_live" ? "rsshub_live" : "unverified",
+    claim_status: "unclaimed",
+    rank: candidate.rank,
+    relevance_score: candidate.relevance_score,
+    source_kind: candidate.source_kind as SourceItem["source_kind"],
+    provider: candidate.provider as SourceItem["provider"],
+    reason: candidate.reason,
+  }));
+
+  return filterByRelevance(relevanceInput, normalizedGoal, entityTerms, primaryEntities, negativeEntities)
+    .map((source) => {
+      const original = candidateById.get(source.feed_item_id)!;
+      return { ...original, rank: source.rank, relevance_score: source.relevance_score, reason: source.reason || original.reason };
+    });
 }
 
 // ─── Live RSSHub Search ─────────────────────────────────────
@@ -394,12 +443,13 @@ export const signalScoutHandler: ServiceHandler = async (
         if (hasDomainSpecificTopics && isGenericCatchAllSource({ domain, routePath, url })) {
           continue;
         }
-        // Domain guard: reject non-topic sources from wrong domains for AI/crypto queries
+        // Soft gate: penalty for non-topic sources instead of hard reject
+        // Sources still pass but get lower relevance_score — entity matching in source-resolver is the real filter
         if (queryHasAiTopic && !passesAiSourceGuard({ domain, routePath, title, summary })) {
-          continue;
+          lr.relevance_score = Math.max(0, (lr.relevance_score ?? 0.5) - 0.2);
         }
         if (queryHasCryptoTopic && !passesCryptoSourceGuard({ domain, routePath, title, summary })) {
-          continue;
+          lr.relevance_score = Math.max(0, (lr.relevance_score ?? 0.5) - 0.2);
         }
         seenUrls.add(lr.source_url.toLowerCase());
         mergedLive.push(lr);
@@ -414,12 +464,15 @@ export const signalScoutHandler: ServiceHandler = async (
         const domain = (lr.domain || "").toLowerCase();
         const title = (lr.title || "").toLowerCase();
         const summary = (lr.summary || "").toLowerCase();
-        // Reject generic catch-all
+        // Reject generic catch-all (Wikipedia current-events) — keep this one
         if (isGenericCatchAllSource({ domain, routePath, url })) continue;
-        // Domain guard for AI queries
-        if (queryHasAiTopic && !passesAiSourceGuard({ domain, routePath, title, summary })) continue;
-        // Domain guard for crypto queries
-        if (queryHasCryptoTopic && !passesCryptoSourceGuard({ domain, routePath, title, summary })) continue;
+        // Soft gate: penalty instead of hard reject for non-topic sources
+        if (queryHasAiTopic && !passesAiSourceGuard({ domain, routePath, title, summary })) {
+          lr.relevance_score = Math.max(0, (lr.relevance_score ?? 0.5) - 0.2);
+        }
+        if (queryHasCryptoTopic && !passesCryptoSourceGuard({ domain, routePath, title, summary })) {
+          lr.relevance_score = Math.max(0, (lr.relevance_score ?? 0.5) - 0.2);
+        }
         mergedLive.push(lr);
       }
     } else {
@@ -427,8 +480,11 @@ export const signalScoutHandler: ServiceHandler = async (
     }
   }
 
-  // Re-rank merged candidates: sort by relevance_score descending, assign rank 1..N
+  // Re-rank merged candidates: clamp, sort by relevance_score descending, assign rank 1..N
   // Topic candidates get priority over non-topic candidates
+  for (const candidate of mergedLive) {
+    candidate.relevance_score = Math.max(0, Math.min(1, candidate.relevance_score));
+  }
   mergedLive.sort((a, b) => {
     // Topic candidates first
     if (a._isTopicCandidate && !b._isTopicCandidate) return -1;
@@ -437,6 +493,14 @@ export const signalScoutHandler: ServiceHandler = async (
     return 0;
   });
   mergedLive.forEach((c, i) => { c.rank = i + 1; });
+  const finalMergedLive = applyFinalCandidateRelevance(
+    mergedLive,
+    userGoalText,
+    entity_terms || [],
+    primary_entities || [],
+    negative_entities || [],
+  );
+  mergedLive.splice(0, mergedLive.length, ...finalMergedLive);
 
   // Determine source strategy
   const hasTopicResults = topicResult.candidates.length > 0;
@@ -666,7 +730,7 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
         rsshub_feed_url: r.rsshub_feed_url ?? null,
         docs_url: r.docs_url ?? null,
         rank: r.rank,
-        relevance_score: r.relevance_score,
+        relevance_score: Math.max(0, Math.min(1, r.relevance_score)),
         reason: r.reason,
       })),
       top_candidates: llmRanked.slice(0, 3).map((r) => r.feed_item_id),

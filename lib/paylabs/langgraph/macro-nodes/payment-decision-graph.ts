@@ -81,8 +81,10 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
   for (const card of sourceCards.slice(0, 10)) {
     const isLiveSource = card.source_kind === "rsshub_live" ||
       card.source_kind === "tavily_live" ||
+      card.source_kind === "jina_live" ||
       card.feed_item_id.startsWith("rsshub_live:") ||
-      card.feed_item_id.startsWith("tavily_live:");
+      card.feed_item_id.startsWith("tavily_live:") ||
+      card.feed_item_id.startsWith("jina_live:");
     if (isLiveSource && card.source_url) {
       liveSourceUrls.push(card.source_url);
     }
@@ -108,8 +110,10 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
     // These are synthetic IDs that don't exist in paylabs_feed_items.
     const isLiveSource = card.source_kind === "rsshub_live" ||
       card.source_kind === "tavily_live" ||
+      card.source_kind === "jina_live" ||
       card.feed_item_id.startsWith("rsshub_live:") ||
-      card.feed_item_id.startsWith("tavily_live:");
+      card.feed_item_id.startsWith("tavily_live:") ||
+      card.feed_item_id.startsWith("jina_live:");
 
     if (isLiveSource) {
       // Live sources: check claim resolver for verified creator
@@ -127,7 +131,9 @@ async function prepareCandidates(state: PaymentDecisionStateType) {
         publisher: card.publisher || "",
         creator_wallet: wallet,
         claim_status: status,
-        source_kind: card.source_kind || (card.feed_item_id.startsWith("rsshub_live:") ? "rsshub_live" : "tavily_live"),
+        source_kind: card.source_kind || (card.feed_item_id.startsWith("rsshub_live:")
+          ? "rsshub_live"
+          : card.feed_item_id.startsWith("jina_live:") ? "jina_live" : "tavily_live"),
         is_live: !resolvedClaim && status !== "verified",  // verified live sources are NOT treated as unclaimed live
       });
       continue;

@@ -20,8 +20,8 @@ export interface SourceItem {
   claim_status: string;
   rank: number;
   relevance_score: number;
-  source_kind?: "rsshub_live" | "tavily_live" | "db_feed_item";
-  provider?: "rsshub" | "tavily" | "supabase";
+  source_kind?: "rsshub_live" | "tavily_live" | "jina_live" | "db_feed_item";
+  provider?: "rsshub" | "tavily" | "jina" | "supabase";
   rsshub_feed_url?: string | null;
   docs_url?: string | null;
   reason?: string;
