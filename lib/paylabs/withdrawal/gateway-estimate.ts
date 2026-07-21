@@ -24,6 +24,47 @@ export interface EstimateResult {
   error?: string;
 }
 
+const BURN_INTENT_BYTES32_ADDRESS_FIELDS = [
+  "sourceContract",
+  "destinationContract",
+  "sourceToken",
+  "destinationToken",
+  "sourceDepositor",
+  "destinationRecipient",
+  "sourceSigner",
+  "destinationCaller",
+] as const;
+
+/**
+ * Normalize BurnIntent address-like bytes32 fields returned by Gateway.
+ * Gateway may return 20-byte EVM addresses for bytes32 EIP-712 fields;
+ * those must be left-padded to 32 bytes before hashing/signing.
+ */
+function normalizeBurnIntentAddresses(burnIntent: BurnIntent): BurnIntent {
+  const normalizeBytes32AddressField = (field: string, value: string): string => {
+    const normalized = value.toLowerCase();
+
+    if (/^0x[0-9a-f]{40}$/.test(normalized)) {
+      return `0x${normalized.slice(2).padStart(64, "0")}`;
+    }
+
+    if (/^0x[0-9a-f]{64}$/.test(normalized)) {
+      return normalized;
+    }
+
+    throw new Error(
+      `Gateway estimate returned invalid BurnIntent ${field}: expected 20-byte address or bytes32 hex`,
+    );
+  };
+
+  const spec = { ...burnIntent.spec };
+  for (const field of BURN_INTENT_BYTES32_ADDRESS_FIELDS) {
+    spec[field] = normalizeBytes32AddressField(field, spec[field]);
+  }
+
+  return { ...burnIntent, spec };
+}
+
 /**
  * Call Gateway POST /v1/estimate with a full TransferSpec.
  * Returns the canonical BurnIntent from Gateway (with fee + expiration filled).
@@ -71,12 +112,17 @@ export async function estimateGatewayWithdrawal(
       return { ok: false, error: "Gateway estimate returned no burnIntent" };
     }
 
+    // Gateway may return 20-byte addresses, but EIP-712 bytes32 fields require
+    // 32-byte padded hex. Normalize all address-like BurnIntent spec fields
+    // before any caller hashes, persists, or signs the BurnIntent.
+    const normalizedBurnIntent = normalizeBurnIntentAddresses(burnIntent);
+
     return {
       ok: true,
-      burnIntent,
+      burnIntent: normalizedBurnIntent,
       transferSpecHash,
-      gatewayFee: burnIntent.maxFee,
-      gatewayExpiration: Number(burnIntent.maxBlockHeight),
+      gatewayFee: normalizedBurnIntent.maxFee,
+      gatewayExpiration: Number(normalizedBurnIntent.maxBlockHeight),
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
