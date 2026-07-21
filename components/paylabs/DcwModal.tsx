@@ -158,6 +158,10 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   const withdrawPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const withdrawPollInFlightRef = useRef(false);
   const withdrawIdempotencyKeyRef = useRef<string | null>(null);
+  const withdrawSubmitInFlightRef = useRef(false);
+
+  const hasRetainedWithdrawalAttempt =
+    withdrawIdempotencyKeyRef.current !== null;
 
   const x402Balance = asDecimal(balance.gatewayUsdc);
   const plannedCostNum = asDecimal(plannedCost);
@@ -578,6 +582,7 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
       }
 
       withdrawPollInFlightRef.current = false;
+      withdrawSubmitInFlightRef.current = false;
     };
   }, []);
 
@@ -814,33 +819,34 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
   );
 
   const handleWithdraw = useCallback(async () => {
-    if (isWithdrawing) return;
-
-    const amountText = withdrawAmount.trim();
-    const amount = Number(amountText);
-
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setWithdrawError("Enter a valid amount");
-      return;
-    }
-
-    if (amount > x402Balance) {
-      setWithdrawError("Amount exceeds your available Gateway balance");
-      return;
-    }
-
-    const idempotencyKey =
-      withdrawIdempotencyKeyRef.current ?? crypto.randomUUID();
-
-    withdrawIdempotencyKeyRef.current = idempotencyKey;
-
-    setIsWithdrawing(true);
-    setWithdrawError(null);
-    setWithdrawStatus("prepared");
-    setWithdrawTxHash(null);
-    setWithdrawExplorerUrl(null);
+    if (withdrawSubmitInFlightRef.current || isWithdrawing) return;
+    withdrawSubmitInFlightRef.current = true;
 
     try {
+      const amountText = withdrawAmount.trim();
+      const amount = Number(amountText);
+
+      if (!Number.isFinite(amount) || amount <= 0) {
+        setWithdrawError("Enter a valid amount");
+        return;
+      }
+
+      if (amount > x402Balance) {
+        setWithdrawError("Amount exceeds your available Gateway balance");
+        return;
+      }
+
+      const idempotencyKey =
+        withdrawIdempotencyKeyRef.current ?? crypto.randomUUID();
+
+      withdrawIdempotencyKeyRef.current = idempotencyKey;
+
+      setIsWithdrawing(true);
+      setWithdrawError(null);
+      setWithdrawStatus("prepared");
+      setWithdrawTxHash(null);
+      setWithdrawExplorerUrl(null);
+
       const resp = await fetch("/api/paylabs/dcw/withdraw", {
         method: "POST",
         credentials: "include",
@@ -880,6 +886,8 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
 
       // Keep the idempotency key after ambiguous/network failures.
       // Clicking again with the same amount safely replays the same request.
+    } finally {
+      withdrawSubmitInFlightRef.current = false;
     }
   }, [
     applyWithdrawalStatus,
@@ -1166,11 +1174,12 @@ export default function DcwModal({ open, onClose, onWalletReady, onBalanceUpdate
                           setWithdrawStatus(null);
                           setWithdrawTxHash(null);
                           setWithdrawExplorerUrl(null);
-                          withdrawIdempotencyKeyRef.current = null;
                         }
                       }}
                       disabled={
-                        isWithdrawing || withdrawStatus === "reconciliation_required"
+                        isWithdrawing ||
+                        hasRetainedWithdrawalAttempt ||
+                        withdrawStatus === "reconciliation_required"
                       }
                     />
 
