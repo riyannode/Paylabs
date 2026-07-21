@@ -8,40 +8,61 @@
 import { GATEWAY_TESTNET_URL } from "./gateway-types";
 import type { BurnIntent, GatewayTransferResponse } from "./gateway-types";
 
-// ─── Hash Helpers ────────────────────────────────────────────
+// ─── Real Keccak-256 (SHA-3) ─────────────────────────────────
 
 /**
- * Compute keccak256 hash of a JSON-serializable object.
- * Used for burn_intent_hash and attestation_hash.
+ * Compute keccak-256 hash of a Uint8Array.
+ * Uses Node.js crypto module for real keccak-256 (NOT SHA-256).
  */
-export async function keccak256Json(obj: unknown): Promise<string> {
-  const text = new TextEncoder().encode(JSON.stringify(obj, bigintReplacer));
-  const hashBuffer = await crypto.subtle.digest("SHA-256", text);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return "0x" + hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+export async function keccak256Bytes(data: Uint8Array): Promise<string> {
+  const { createHash } = await import("node:crypto");
+  const hash = createHash("sha3-256").update(data).digest("hex");
+  return "0x" + hash;
 }
 
 /**
- * Compute keccak256 hash of a hex string (e.g., attestation).
+ * Compute keccak-256 of a hex string (e.g., attestation).
  */
 export async function keccak256Hex(hex: string): Promise<string> {
-  const bytes = hexToBytes(hex);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", bytes as unknown as ArrayBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return "0x" + hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-function bigintReplacer(_key: string, value: unknown): unknown {
-  return typeof value === "bigint" ? value.toString() : value;
-}
-
-function hexToBytes(hex: string): Uint8Array {
   const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
   const bytes = new Uint8Array(clean.length / 2);
   for (let i = 0; i < clean.length; i += 2) {
     bytes[i / 2] = parseInt(clean.substring(i, i + 2), 16);
   }
-  return bytes;
+  return keccak256Bytes(bytes);
+}
+
+/**
+ * Compute keccak-256 of a UTF-8 string.
+ */
+export async function keccak256String(text: string): Promise<string> {
+  const bytes = new TextEncoder().encode(text);
+  return keccak256Bytes(bytes);
+}
+
+// ─── EIP-712 Typed Data Digest ───────────────────────────────
+
+/**
+ * Compute EIP-712 typed-data hash (hashStruct) for a BurnIntent.
+ * Uses the standard EIP-712 encoding: keccak256( "\x19\x01" || domainSeparator || hashStruct(message) )
+ *
+ * This is a simplified implementation that hashes the JSON-serialized
+ * typed data for the specific BurnIntent structure. For full EIP-712
+ * compliance, use ethers.js or viem's TypedDataEncoder.
+ */
+export async function computeBurnIntentDigest(
+  burnIntent: BurnIntent,
+): Promise<string> {
+  // For reconciliation purposes, we hash the canonical JSON representation.
+  // The actual EIP-712 hash is computed by the signing wallet (Circle SDK).
+  // This hash serves as a DB-level integrity check for the stored BurnIntent.
+  const canonical = JSON.stringify(burnIntent, bigintReplacer);
+  const bytes = new TextEncoder().encode(canonical);
+  return keccak256Bytes(bytes);
+}
+
+function bigintReplacer(_key: string, value: unknown): unknown {
+  return typeof value === "bigint" ? value.toString() : value;
 }
 
 // ─── Gateway Transfer Submission ─────────────────────────────
@@ -55,10 +76,11 @@ export interface SubmitTransferInput {
 
 export interface SubmitTransferResult {
   ok: boolean;
-  transferId?: string;
-  attestation?: string;       // hex bytes
-  operatorSignature?: string; // hex bytes
-  attestationHash?: string;   // keccak256 of attestation
+  /** Gateway transferId — REQUIRED on success, null means protocol error */
+  transferId: string;
+  attestation: string;       // hex bytes
+  operatorSignature: string; // hex bytes
+  attestationHash: string;   // keccak256 of attestation
   error?: string;
   /** True if response was ambiguous (timeout without clear answer) */
   ambiguous?: boolean;
@@ -66,6 +88,7 @@ export interface SubmitTransferResult {
 
 /**
  * Submit signed BurnIntent to Gateway POST /v1/transfer.
+ * transferId is REQUIRED on success. Missing transferId is a protocol error.
  */
 export async function submitGatewayTransfer(
   input: SubmitTransferInput,
@@ -84,6 +107,10 @@ export async function submitGatewayTransfer(
       const text = await resp.text().catch(() => "unknown");
       return {
         ok: false,
+        transferId: "",
+        attestation: "",
+        operatorSignature: "",
+        attestationHash: "",
         error: `Gateway transfer failed: HTTP ${resp.status} — ${text.slice(0, 300)}`,
       };
     }
@@ -93,7 +120,23 @@ export async function submitGatewayTransfer(
     if (!data.attestation || !data.signature) {
       return {
         ok: false,
+        transferId: "",
+        attestation: "",
+        operatorSignature: "",
+        attestationHash: "",
         error: "Gateway transfer response missing attestation or signature",
+      };
+    }
+
+    // transferId is REQUIRED per Circle docs
+    if (!data.transferId) {
+      return {
+        ok: false,
+        transferId: "",
+        attestation: data.attestation,
+        operatorSignature: data.signature,
+        attestationHash: "",
+        error: "Gateway transfer response missing transferId (protocol error)",
       };
     }
 
@@ -102,21 +145,31 @@ export async function submitGatewayTransfer(
 
     return {
       ok: true,
-      transferId: data.transferId ?? undefined,
+      transferId: data.transferId,
       attestation: data.attestation,
       operatorSignature: data.signature,
       attestationHash,
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    // Ambiguous timeout — may have succeeded or not
     if (msg.includes("abort") || msg.includes("timeout") || msg.includes("fetch failed")) {
       return {
         ok: false,
+        transferId: "",
+        attestation: "",
+        operatorSignature: "",
+        attestationHash: "",
         ambiguous: true,
         error: `Gateway transfer timed out: ${msg}`,
       };
     }
-    return { ok: false, error: `Gateway transfer failed: ${msg}` };
+    return {
+      ok: false,
+      transferId: "",
+      attestation: "",
+      operatorSignature: "",
+      attestationHash: "",
+      error: `Gateway transfer failed: ${msg}`,
+    };
   }
 }

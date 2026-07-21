@@ -25,12 +25,21 @@ export interface CreateWithdrawalInput {
   gatewayExpiration: number | null;
 }
 
+export interface CreateWithdrawalResult {
+  ok: boolean;
+  /** true = new row inserted; false = existing row returned (idempotent) */
+  created: boolean;
+  row?: WithdrawalRow;
+  error?: string;
+}
+
 /**
- * Create a new withdrawal row. Fails on duplicate idempotency key.
+ * Create a new withdrawal row. On duplicate idempotency key, returns existing row
+ * with created=false. Callers MUST check created and return immediately if false.
  */
 export async function createWithdrawal(
   input: CreateWithdrawalInput,
-): Promise<{ ok: boolean; row?: WithdrawalRow; error?: string }> {
+): Promise<CreateWithdrawalResult> {
   const db = supabaseAdmin();
   const now = new Date().toISOString();
 
@@ -59,7 +68,6 @@ export async function createWithdrawal(
   if (error) {
     if (error.code === "23505") {
       // Unique constraint violation — idempotency key already exists
-      // Return existing row
       const { data: existing } = await db
         .from("paylabs_gateway_withdrawals")
         .select("*")
@@ -69,14 +77,14 @@ export async function createWithdrawal(
         .single();
 
       if (existing) {
-        return { ok: true, row: existing as WithdrawalRow };
+        return { ok: true, created: false, row: existing as WithdrawalRow };
       }
-      return { ok: false, error: "Idempotency key conflict but row not found" };
+      return { ok: false, created: false, error: "Idempotency key conflict but row not found" };
     }
-    return { ok: false, error: `Failed to create withdrawal: ${error.message}` };
+    return { ok: false, created: false, error: `Failed to create withdrawal: ${error.message}` };
   }
 
-  return { ok: true, row: data as WithdrawalRow };
+  return { ok: true, created: true, row: data as WithdrawalRow };
 }
 
 // ─── Read ────────────────────────────────────────────────────
@@ -108,34 +116,50 @@ export async function getWithdrawal(
 
 // ─── CAS Status Update ───────────────────────────────────────
 
+export interface CasUpdateResult {
+  ok: boolean;
+  /** The updated row, or null if CAS failed (no row matched) */
+  row?: WithdrawalRow;
+  error?: string;
+}
+
 /**
  * Compare-and-set status transition.
- * Only succeeds if the current status matches `expectedStatus`.
+ * Returns the updated row if CAS succeeded, or null if no row matched.
+ * Callers MUST check row is non-null — null means CAS failed.
  */
 export async function casUpdateStatus(
   withdrawalId: string,
   expectedStatus: WithdrawalStatus,
   nextStatus: WithdrawalStatus,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<CasUpdateResult> {
   const db = supabaseAdmin();
 
-  const { error } = await db
+  const { data, error } = await db
     .from("paylabs_gateway_withdrawals")
     .update({ status: nextStatus, updated_at: new Date().toISOString() })
     .eq("id", withdrawalId)
-    .eq("status", expectedStatus);
+    .eq("status", expectedStatus)
+    .select()
+    .maybeSingle();
 
   if (error) {
     return { ok: false, error: `CAS update failed: ${error.message}` };
   }
 
-  return { ok: true };
+  if (!data) {
+    // No row matched — CAS failed
+    return { ok: false, error: `CAS failed: expected status '${expectedStatus}' but no row matched` };
+  }
+
+  return { ok: true, row: data as WithdrawalRow };
 }
 
 // ─── Field Updates ───────────────────────────────────────────
 
 export interface UpdateWithdrawalFields {
   status?: WithdrawalStatus;
+  expectedStatus?: WithdrawalStatus; // CAS: only update if current status matches
   signingChallengeId?: string;
   gatewayTransferId?: string;
   attestationHash?: string;
@@ -152,15 +176,22 @@ export interface UpdateWithdrawalFields {
   safeMetadata?: Record<string, unknown>;
 }
 
+export interface UpdateWithdrawalResult {
+  ok: boolean;
+  /** The updated row, or null if CAS failed */
+  row?: WithdrawalRow;
+  error?: string;
+}
+
 /**
  * Update specific fields on a withdrawal row.
- * Uses CAS on status if status is provided.
+ * If expectedStatus is provided, uses CAS semantics (only updates if status matches).
+ * Returns the updated row — null means CAS failed.
  */
 export async function updateWithdrawal(
   withdrawalId: string,
   fields: UpdateWithdrawalFields,
-  expectedStatus?: WithdrawalStatus,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<UpdateWithdrawalResult> {
   const db = supabaseAdmin();
 
   const updates: Record<string, unknown> = {
@@ -188,32 +219,45 @@ export async function updateWithdrawal(
     .update(updates)
     .eq("id", withdrawalId);
 
-  if (expectedStatus) {
-    query = query.eq("status", expectedStatus);
+  // CAS: only update if current status matches
+  if (fields.expectedStatus) {
+    query = query.eq("status", fields.expectedStatus);
   }
 
-  const { error } = await query;
+  const { data, error } = await query.select().maybeSingle();
 
   if (error) {
     return { ok: false, error: `Update failed: ${error.message}` };
   }
 
-  return { ok: true };
+  if (!data) {
+    return { ok: false, error: "CAS failed: no row matched" };
+  }
+
+  return { ok: true, row: data as WithdrawalRow };
 }
 
 // ─── Reconciliation Queries ──────────────────────────────────
 
 /**
  * Find withdrawals that may need reconciliation.
+ * Covers: gateway_submitted, attestation_received, mint_approval_pending,
+ * mint_submitted, reconciliation_required.
  */
 export async function findReconcilableWithdrawals(): Promise<WithdrawalRow[]> {
   const db = supabaseAdmin();
-  const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString(); // 15 minutes ago
+  const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
 
   const { data, error } = await db
     .from("paylabs_gateway_withdrawals")
     .select("*")
-    .in("status", ["gateway_submitted", "mint_submitted"])
+    .in("status", [
+      "gateway_submitted",
+      "attestation_received",
+      "mint_approval_pending",
+      "mint_submitted",
+      "reconciliation_required",
+    ])
     .lt("updated_at", cutoff);
 
   if (error || !data) return [];

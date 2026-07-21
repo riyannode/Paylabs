@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import { getSession } from "@/lib/paylabs/ucw";
-import { submitGatewayTransfer, keccak256Json } from "@/lib/paylabs/withdrawal/gateway-transfer";
+import { submitGatewayTransfer } from "@/lib/paylabs/withdrawal/gateway-transfer";
 import { createGatewayMintChallenge } from "@/lib/paylabs/ucw";
 import { getWithdrawal, updateWithdrawal } from "@/lib/paylabs/withdrawal/ledger";
 
@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "signature required" }, { status: 400 });
     }
 
-    // Reject any additional fields that should not be sent
+    // Reject unexpected fields
     const allowedFields = new Set(["withdrawalId", "signature"]);
     for (const key of Object.keys(body)) {
       if (!allowedFields.has(key)) {
@@ -60,21 +60,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Withdrawal not found" }, { status: 404 });
     }
 
-    if (row.status !== "burn_signature_pending") {
-      return NextResponse.json({ ok: false, error: `Invalid status: ${row.status}. Expected: burn_signature_pending` }, { status: 400 });
+    // CAS: burn_signature_pending → burn_signed (only one concurrent request wins)
+    const casResult = await updateWithdrawal(withdrawalId, {
+      status: "burn_signed",
+      expectedStatus: "burn_signature_pending",
+    });
+    if (!casResult.ok || !casResult.row) {
+      return NextResponse.json({ ok: false, error: `CAS failed: expected status burn_signature_pending, current: ${row.status}` }, { status: 409 });
     }
 
     // 4. Load canonical BurnIntent from DB
     const burnIntent = row.burn_intent;
     if (!burnIntent || !burnIntent.spec) {
-      await updateWithdrawal(withdrawalId, { status: "failed", errorCode: "missing_burn_intent", errorMessage: "Canonical BurnIntent not found in DB" });
+      await updateWithdrawal(withdrawalId, { status: "failed", expectedStatus: "burn_signed", errorCode: "missing_burn_intent", errorMessage: "Canonical BurnIntent not found in DB" });
       return NextResponse.json({ ok: false, error: "Internal error: BurnIntent missing" }, { status: 500 });
     }
 
     // 5. Verify destination matches authenticated wallet
     const expectedRecipient = "0x" + session.walletAddress.toLowerCase().replace(/^0x/, "").padStart(64, "0");
     if (burnIntent.spec.destinationRecipient !== expectedRecipient) {
-      await updateWithdrawal(withdrawalId, { status: "failed", errorCode: "destination_mismatch", errorMessage: "Destination does not match wallet" });
+      await updateWithdrawal(withdrawalId, { status: "failed", expectedStatus: "burn_signed", errorCode: "destination_mismatch", errorMessage: "Destination does not match wallet" });
       return NextResponse.json({ ok: false, error: "Destination mismatch" }, { status: 403 });
     }
 
@@ -83,34 +88,61 @@ export async function POST(req: NextRequest) {
 
     if (!transferResult.ok) {
       if (transferResult.ambiguous) {
-        await updateWithdrawal(withdrawalId, { status: "reconciliation_required", errorCode: "gateway_timeout", errorMessage: transferResult.error });
+        await updateWithdrawal(withdrawalId, { status: "reconciliation_required", expectedStatus: "burn_signed", errorCode: "gateway_timeout", errorMessage: transferResult.error });
         return NextResponse.json({ ok: true, withdrawalId, status: "reconciliation_required" });
       }
-      await updateWithdrawal(withdrawalId, { status: "failed", errorCode: "gateway_transfer_failed", errorMessage: transferResult.error?.slice(0, 300) });
+      await updateWithdrawal(withdrawalId, { status: "failed", expectedStatus: "burn_signed", errorCode: "gateway_transfer_failed", errorMessage: transferResult.error?.slice(0, 300) });
       return NextResponse.json({ ok: false, error: transferResult.error }, { status: 502 });
     }
 
+    // CAS: burn_signed → gateway_submitted → attestation_received
+    await updateWithdrawal(withdrawalId, {
+      status: "gateway_submitted",
+      expectedStatus: "burn_signed",
+      gatewayTransferId: transferResult.transferId,
+    });
     await updateWithdrawal(withdrawalId, {
       status: "attestation_received",
-      gatewayTransferId: transferResult.transferId || undefined,
-      attestationHash: transferResult.attestationHash || undefined,
+      expectedStatus: "gateway_submitted",
+      attestationHash: transferResult.attestationHash,
     });
 
-    // 7. Create UCW mint challenge
+    // 7. Gas preflight — estimate fee with actual attestation before mint challenge
     const mintIdempotencyKey = randomUUID();
+    let gasPreflightOk = false;
+    let gasPreflightFee: string | undefined;
+    try {
+      const { estimateMintFee } = await import("@/lib/paylabs/ucw");
+      const feeEstimate = await estimateMintFee(
+        session.userToken,
+        session.walletId,
+        transferResult.attestation,
+        transferResult.operatorSignature,
+      );
+      gasPreflightFee = (feeEstimate.medium as any)?.networkFee;
+      gasPreflightOk = !!gasPreflightFee;
+    } catch {
+      // Fee estimation failed — proceed (Circle may sponsor gas)
+    }
+
+    // 8. Create UCW mint challenge — on failure, set reconciliation_required
     try {
       const { challengeId: mintChallengeId } = await createGatewayMintChallenge(
         session.userToken,
         session.walletId,
-        transferResult.attestation!,
-        transferResult.operatorSignature!,
+        transferResult.attestation,
+        transferResult.operatorSignature,
         mintIdempotencyKey,
       );
 
+      // CAS: attestation_received → mint_approval_pending
       await updateWithdrawal(withdrawalId, {
         status: "mint_approval_pending",
+        expectedStatus: "attestation_received",
         mintChallengeId,
         mintIdempotencyKey,
+        gasPreflightOk,
+        gasPreflightFee,
       });
 
       return NextResponse.json({
@@ -120,9 +152,16 @@ export async function POST(req: NextRequest) {
         mintChallengeId,
       });
     } catch (e: unknown) {
+      // Gateway attestation exists but mint challenge creation failed
       const msg = e instanceof Error ? e.message : String(e);
-      await updateWithdrawal(withdrawalId, { status: "failed", errorCode: "mint_challenge_failed", errorMessage: msg.slice(0, 300) });
-      return NextResponse.json({ ok: false, error: "Mint challenge creation failed" }, { status: 502 });
+      await updateWithdrawal(withdrawalId, {
+        status: "reconciliation_required",
+        expectedStatus: "attestation_received",
+        mintIdempotencyKey,
+        errorCode: "mint_challenge_failed",
+        errorMessage: msg.slice(0, 300),
+      });
+      return NextResponse.json({ ok: true, withdrawalId, status: "reconciliation_required" });
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

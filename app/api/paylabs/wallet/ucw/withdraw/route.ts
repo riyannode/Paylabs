@@ -19,18 +19,17 @@ import { checkGatewayBalance } from "@/lib/paylabs/x402/gateway-balance";
 import { buildTransferSpec } from "@/lib/paylabs/withdrawal/burn-intent";
 import { estimateGatewayWithdrawal } from "@/lib/paylabs/withdrawal/gateway-estimate";
 import { signTypedDataForGateway } from "@/lib/paylabs/ucw";
-import { keccak256Json } from "@/lib/paylabs/withdrawal/gateway-transfer";
+import { computeBurnIntentDigest } from "@/lib/paylabs/withdrawal/gateway-transfer";
 import { validateAmount, validateFeeCap } from "@/lib/paylabs/withdrawal/validate";
 import { createWithdrawal, getWithdrawal, updateWithdrawal } from "@/lib/paylabs/withdrawal/ledger";
 import { GATEWAY_EIP712_DOMAIN, GATEWAY_EIP712_TYPES } from "@/lib/paylabs/withdrawal/gateway-types";
 
-// ─── Auth Helper ─────────────────────────────────────────────
+// ─── Auth ────────────────────────────────────────────────────
 
 async function getUcwSession(req: NextRequest) {
   const sid = req.cookies.get("ucw_sid")?.value;
   if (!sid) return null;
-  const session = await getSession(sid);
-  return session;
+  return getSession(sid);
 }
 
 function safeResponse(row: any) {
@@ -127,10 +126,10 @@ export async function POST(req: NextRequest) {
     }
 
     // 8. Compute burn intent hash
-    const burnIntentHash = await keccak256Json(estimate.burnIntent);
+    const burnIntentHash = await computeBurnIntentDigest(estimate.burnIntent);
 
-    // 9. Store canonical BurnIntent
-    const { row, error: createError } = await createWithdrawal({
+    // 9. Store canonical BurnIntent — check for idempotent duplicate
+    const { created, row, error: createError } = await createWithdrawal({
       walletMode: "creator_ucw",
       ownerRef: walletId,
       walletId,
@@ -149,7 +148,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: createError || "Failed to create withdrawal" }, { status: 500 });
     }
 
-    // 10. Create signTypedData challenge via UCW SDK
+    // IDEMPOTENT DUPLICATE — return existing, DO NOT create new challenge
+    if (!created) {
+      return NextResponse.json({ ok: true, ...safeResponse(row) });
+    }
+
+    // 10. CAS: prepared → burn_signature_pending
+    const casResult = await updateWithdrawal(row.id, {
+      status: "burn_signature_pending",
+      expectedStatus: "prepared",
+    });
+    if (!casResult.ok || !casResult.row) {
+      return NextResponse.json({ ok: false, error: "Concurrent modification detected" }, { status: 409 });
+    }
+
+    // 11. Create signTypedData challenge via UCW SDK
     const typedData = {
       types: GATEWAY_EIP712_TYPES,
       domain: GATEWAY_EIP712_DOMAIN,
@@ -164,8 +177,8 @@ export async function POST(req: NextRequest) {
     );
 
     await updateWithdrawal(row.id, {
-      status: "burn_signature_pending",
       signingChallengeId: signChallengeId,
+      expectedStatus: "burn_signature_pending",
     });
 
     return NextResponse.json({

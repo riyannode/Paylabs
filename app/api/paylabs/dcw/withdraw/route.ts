@@ -1,9 +1,10 @@
 /**
- * POST /api/paylabs/dcw/withdraw — Initiate DCW Gateway withdrawal
+ * POST /api/paylabs/dcw/withdraw — Initiate DCW Gateway withdrawal (async)
  * GET  /api/paylabs/dcw/withdraw?withdrawalId=uuid — Check withdrawal status
  *
- * DCW withdrawal is fully server-side:
- *   estimate → sign → submit → mint → poll → finalize
+ * DCW withdrawal flow:
+ *   POST: estimate → sign → submit → mint → return immediately
+ *   GET:  poll status (frontend or reconciliation handles long-polling)
  *
  * REQUIRES valid DCW session cookie.
  */
@@ -13,21 +14,16 @@ import { createRequire } from "node:module";
 import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import { getSession } from "@/lib/paylabs/auth/session";
 import { checkGatewayBalance } from "@/lib/paylabs/x402/gateway-balance";
-import { usdcDecimalToAtomic } from "@/lib/paylabs/x402/usdc";
 import { buildTransferSpec } from "@/lib/paylabs/withdrawal/burn-intent";
 import { estimateGatewayWithdrawal } from "@/lib/paylabs/withdrawal/gateway-estimate";
 import { signGatewayBurnIntent } from "@/lib/paylabs/withdrawal/gateway-burn-signer";
-import { submitGatewayTransfer, keccak256Json } from "@/lib/paylabs/withdrawal/gateway-transfer";
+import { submitGatewayTransfer, computeBurnIntentDigest } from "@/lib/paylabs/withdrawal/gateway-transfer";
 import { validateAmount, validateFeeCap } from "@/lib/paylabs/withdrawal/validate";
 import { createWithdrawal, getWithdrawal, updateWithdrawal } from "@/lib/paylabs/withdrawal/ledger";
 import { explorerUrl } from "@/lib/paylabs/withdrawal/explorer";
 import { GATEWAY_MINTER_ADDRESS } from "@/lib/paylabs/withdrawal/gateway-types";
-import type { WithdrawalStatus } from "@/lib/paylabs/withdrawal/gateway-types";
 
 const _require = createRequire(import.meta.url);
-
-const TERMINAL_STATES = new Set(["COMPLETE", "CONFIRMED", "FAILED", "DENIED", "CANCELLED", "STUCK"]);
-const SUCCESS_STATES = new Set(["COMPLETE", "CONFIRMED"]);
 
 // ─── DCW Client ──────────────────────────────────────────────
 
@@ -40,29 +36,6 @@ function getDcwClient() {
   const mod = _require("@circle-fin/developer-controlled-wallets");
   _dcwClient = mod.initiateDeveloperControlledWalletsClient({ apiKey, entitySecret });
   return _dcwClient;
-}
-
-// ─── Tx Polling ──────────────────────────────────────────────
-
-async function pollDcwTx(txId: string, maxAttempts = 60, intervalMs = 5000): Promise<{
-  state: string;
-  txHash: string | null;
-}> {
-  const client = getDcwClient();
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      const resp = await client.getTransaction({ id: txId });
-      const tx = resp?.data?.transaction;
-      const state = tx?.state || "UNKNOWN";
-      if (TERMINAL_STATES.has(state)) {
-        return { state, txHash: tx?.txHash || null };
-      }
-    } catch {
-      // continue polling
-    }
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
-  return { state: "TIMEOUT", txHash: null };
 }
 
 // ─── Safe Response ───────────────────────────────────────────
@@ -107,7 +80,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// ─── POST: Initiate Withdrawal ───────────────────────────────
+// ─── POST: Initiate Withdrawal (async — returns after mint submission) ──
 
 export async function POST(req: NextRequest) {
   try {
@@ -176,11 +149,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 9. Compute burn intent hash
-    const burnIntentHash = await keccak256Json(estimate.burnIntent);
+    // 9. Compute burn intent hash (real keccak-256 of canonical JSON)
+    const burnIntentHash = await computeBurnIntentDigest(estimate.burnIntent);
 
-    // 10. Store canonical BurnIntent in ledger
-    const { row, error: createError } = await createWithdrawal({
+    // 10. Store canonical BurnIntent — check for idempotent duplicate
+    const { created, row, error: createError } = await createWithdrawal({
       walletMode: "dcw",
       ownerRef: session.sub,
       walletId,
@@ -199,21 +172,33 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: createError || "Failed to create withdrawal" }, { status: 500 });
     }
 
+    // IDEMPOTENT DUPLICATE — return existing withdrawal, DO NOT process further
+    if (!created) {
+      return NextResponse.json({ ok: true, ...safeResponse(row) });
+    }
+
     const withdrawalId = row.id;
 
-    // 11. Sign BurnIntent using dedicated Gateway signer (2-field domain)
+    // 11. CAS: prepared → burn_signed
+    const casResult = await updateWithdrawal(withdrawalId, {
+      status: "burn_signed",
+      expectedStatus: "prepared",
+    });
+    if (!casResult.ok || !casResult.row) {
+      return NextResponse.json({ ok: false, error: "Concurrent modification detected" }, { status: 409 });
+    }
+
+    // 12. Sign BurnIntent using dedicated Gateway signer
     let burnSignature: string;
     try {
       burnSignature = await signGatewayBurnIntent(walletId, estimate.burnIntent);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      await updateWithdrawal(withdrawalId, { status: "failed", errorCode: "signing_failed", errorMessage: msg.slice(0, 300) });
+      await updateWithdrawal(withdrawalId, { status: "failed", expectedStatus: "burn_signed", errorCode: "signing_failed", errorMessage: msg.slice(0, 300) });
       return NextResponse.json({ ok: false, error: "BurnIntent signing failed" }, { status: 502 });
     }
 
-    await updateWithdrawal(withdrawalId, { status: "burn_signed" });
-
-    // 12. Submit signed BurnIntent to Gateway
+    // 13. Submit signed BurnIntent to Gateway
     const transferResult = await submitGatewayTransfer({
       burnIntent: estimate.burnIntent,
       signature: burnSignature,
@@ -221,22 +206,29 @@ export async function POST(req: NextRequest) {
 
     if (!transferResult.ok) {
       if (transferResult.ambiguous) {
-        await updateWithdrawal(withdrawalId, { status: "reconciliation_required", errorCode: "gateway_timeout", errorMessage: transferResult.error });
-        return NextResponse.json({ ok: true, withdrawalId, status: "reconciliation_required" });
+        await updateWithdrawal(withdrawalId, { status: "reconciliation_required", expectedStatus: "burn_signed", errorCode: "gateway_timeout", errorMessage: transferResult.error });
+        return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
       }
-      await updateWithdrawal(withdrawalId, { status: "failed", errorCode: "gateway_transfer_failed", errorMessage: transferResult.error?.slice(0, 300) });
+      await updateWithdrawal(withdrawalId, { status: "failed", expectedStatus: "burn_signed", errorCode: "gateway_transfer_failed", errorMessage: transferResult.error?.slice(0, 300) });
       return NextResponse.json({ ok: false, error: transferResult.error }, { status: 502 });
     }
 
+    // CAS: burn_signed → gateway_submitted → attestation_received
+    await updateWithdrawal(withdrawalId, {
+      status: "gateway_submitted",
+      expectedStatus: "burn_signed",
+      gatewayTransferId: transferResult.transferId,
+    });
     await updateWithdrawal(withdrawalId, {
       status: "attestation_received",
-      gatewayTransferId: transferResult.transferId || undefined,
-      attestationHash: transferResult.attestationHash || undefined,
+      expectedStatus: "gateway_submitted",
+      attestationHash: transferResult.attestationHash,
     });
 
-    // 13. Estimate gatewayMint fee using actual attestation
+    // 14. Gas preflight — estimate fee with actual attestation before mint
     let mintIdempotencyKey = crypto.randomUUID();
-    let mediumFee: string | undefined;
+    let gasPreflightOk = false;
+    let gasPreflightFee: string | undefined;
     try {
       const client = getDcwClient();
       const feeEstimate = await client.estimateContractExecutionFee({
@@ -245,13 +237,13 @@ export async function POST(req: NextRequest) {
         abiFunctionSignature: "gatewayMint(bytes,bytes)",
         abiParameters: [transferResult.attestation, transferResult.operatorSignature],
       });
-      mediumFee = feeEstimate?.data?.medium?.networkFee;
+      gasPreflightFee = feeEstimate?.data?.medium?.networkFee;
+      gasPreflightOk = !!gasPreflightFee;
     } catch {
       // Fee estimation failed — proceed anyway (Circle may sponsor gas)
     }
 
-    // 14. Execute gatewayMint
-    let mintTxId: string | undefined;
+    // 15. Attempt mint — on failure, set reconciliation_required (NOT failed)
     try {
       const client = getDcwClient();
       const mintTx = await client.createContractExecutionTransaction({
@@ -262,49 +254,46 @@ export async function POST(req: NextRequest) {
         fee: { type: "level", config: { feeLevel: "MEDIUM" } },
         idempotencyKey: mintIdempotencyKey,
       });
-      mintTxId = mintTx?.data?.id;
+      const mintTxId = mintTx?.data?.id;
+
+      if (!mintTxId) {
+        // Mint submission returned no ID — reconciliation needed
+        await updateWithdrawal(withdrawalId, {
+          status: "reconciliation_required",
+          expectedStatus: "attestation_received",
+          mintIdempotencyKey,
+          errorCode: "mint_no_tx_id",
+          errorMessage: "Circle returned no transaction ID for mint",
+        });
+        return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc), gateway_transfer_id: transferResult.transferId }) });
+      }
+
+      // CAS: attestation_received → mint_submitted
+      await updateWithdrawal(withdrawalId, {
+        status: "mint_submitted",
+        expectedStatus: "attestation_received",
+        mintIdempotencyKey,
+        circleTransactionId: mintTxId,
+        gasPreflightOk,
+        gasPreflightFee,
+      });
+
+      // Return immediately — do NOT poll here
+      const { row: finalRow } = await getWithdrawal(withdrawalId, "dcw", session.sub);
+      return NextResponse.json({ ok: true, ...safeResponse(finalRow || row) });
+
     } catch (e: unknown) {
+      // Gateway attestation exists but mint creation failed → reconciliation, NOT failed
       const msg = e instanceof Error ? e.message : String(e);
-      await updateWithdrawal(withdrawalId, { status: "failed", errorCode: "mint_submission_failed", errorMessage: msg.slice(0, 300) });
-      return NextResponse.json({ ok: false, error: "Gateway mint submission failed" }, { status: 502 });
-    }
-
-    if (!mintTxId) {
-      await updateWithdrawal(withdrawalId, { status: "failed", errorCode: "mint_no_tx_id", errorMessage: "Circle returned no transaction ID for mint" });
-      return NextResponse.json({ ok: false, error: "Mint transaction failed" }, { status: 502 });
-    }
-
-    await updateWithdrawal(withdrawalId, {
-      status: "mint_submitted",
-      mintIdempotencyKey,
-      circleTransactionId: mintTxId,
-      gasPreflightOk: !!mediumFee,
-      gasPreflightFee: mediumFee,
-    });
-
-    // 15. Poll mint transaction
-    const txResult = await pollDcwTx(mintTxId);
-
-    if (SUCCESS_STATES.has(txResult.state)) {
       await updateWithdrawal(withdrawalId, {
-        status: "finalized",
-        txHash: txResult.txHash || undefined,
-        explorerUrl: explorerUrl(txResult.txHash) || undefined,
+        status: "reconciliation_required",
+        expectedStatus: "attestation_received",
+        mintIdempotencyKey,
+        errorCode: "mint_submission_failed",
+        errorMessage: msg.slice(0, 300),
       });
-    } else if (txResult.state === "TIMEOUT") {
-      await updateWithdrawal(withdrawalId, { status: "reconciliation_required", errorCode: "mint_poll_timeout" });
-    } else {
-      await updateWithdrawal(withdrawalId, {
-        status: "failed",
-        errorCode: "mint_tx_failed",
-        errorMessage: `Circle mint transaction: ${txResult.state}`,
-        txHash: txResult.txHash || undefined,
-      });
+      return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc), gateway_transfer_id: transferResult.transferId }) });
     }
-
-    // 16. Return safe response
-    const { row: finalRow } = await getWithdrawal(withdrawalId, "dcw", session.sub);
-    return NextResponse.json({ ok: true, ...safeResponse(finalRow || row) });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[dcw/withdraw] Error:", msg.slice(0, 200));
