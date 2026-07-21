@@ -25,8 +25,11 @@ type UiPhase =
   | "burn_signature_submitting"
   | "mint_approval_executing"
   | "mint_resolving"
+  | "resuming"
   | "approval_cancelled"
   | "reconnect_required";
+
+type ContinueMode = "fresh" | "resume";
 
 type WithdrawalResponse = {
   ok?: boolean;
@@ -83,8 +86,14 @@ function storageKey(walletAddress: string) {
   return `paylabs:ucw-withdrawal:${walletAddress.toLowerCase()}`;
 }
 
-function isTerminal(status?: string | null) {
-  return status === "finalized" || status === "failed" || status === "expired" || status === "reconciliation_required";
+type FinalTerminalStatus = "finalized" | "failed" | "expired";
+
+function isFinalTerminal(status?: string | null): status is FinalTerminalStatus {
+  return status === "finalized" || status === "failed" || status === "expired";
+}
+
+function stopsAutomaticProgress(status?: string | null) {
+  return isFinalTerminal(status) || status === "reconciliation_required";
 }
 
 function backendStatusLabel(status: string | null, phase: UiPhase) {
@@ -118,13 +127,14 @@ function backendStatusLabel(status: string | null, phase: UiPhase) {
     case "expired":
       return "Withdrawal expired.";
     case "reconciliation_required":
-      return "Withdrawal requires reconciliation. Do not submit another withdrawal.";
+      return "Withdrawal requires reconciliation. Retry recovery before creating another withdrawal.";
     default:
       if (phase === "preparing") return "Preparing withdrawal…";
       if (phase === "burn_approval_executing") return "Waiting for withdrawal approval…";
       if (phase === "burn_signature_submitting") return "Submitting withdrawal approval…";
       if (phase === "mint_approval_executing") return "Waiting for transaction approval…";
       if (phase === "mint_resolving") return "Finalizing withdrawal…";
+      if (phase === "resuming") return "Resuming withdrawal…";
       return "";
   }
 }
@@ -217,10 +227,18 @@ export default function CreatorWalletGatewayPanel({
   const key = useMemo(() => storageKey(walletAddress), [walletAddress]);
   const gatewayBalance = asDecimal(balance?.gatewayUsdc ?? "0");
   const statusMessage = error || backendStatusLabel(backendStatus, uiPhase);
-  const amountLocked = !!storedAttempt && !["finalized", "failed", "expired"].includes(backendStatus ?? "");
-  const submitBusy = submitInFlightRef.current || ["preparing", "burn_approval_executing", "burn_signature_submitting", "mint_approval_executing", "mint_resolving"].includes(uiPhase);
-  const terminalBlocked = backendStatus === "reconciliation_required" || backendStatus === "finalized";
-  const resumeAction = !!storedAttempt && !["finalized", "failed", "expired", "reconciliation_required"].includes(backendStatus ?? "") && uiPhase !== "preparing";
+  const amountLocked = !!storedAttempt && !isFinalTerminal(backendStatus);
+  const submitBusy = submitInFlightRef.current || ["preparing", "burn_approval_executing", "burn_signature_submitting", "mint_approval_executing", "mint_resolving", "resuming"].includes(uiPhase);
+  const isReconciliation = backendStatus === "reconciliation_required";
+  const terminalBlocked = isReconciliation || backendStatus === "finalized";
+  const resumeAction = !!storedAttempt && !isFinalTerminal(backendStatus);
+  const resumeLabel = isReconciliation
+    ? submitBusy
+      ? "Recovering…"
+      : "Retry recovery"
+    : submitBusy
+      ? "Resuming…"
+      : "Resume approval";
 
   const persistAttempt = useCallback((next: StoredUcwWithdrawal | null) => {
     storedAttemptRef.current = next;
@@ -344,29 +362,119 @@ export default function CreatorWalletGatewayPanel({
   }, [executeUcwChallenge]);
 
   const recoverSignChallenge = useCallback(async (attempt: StoredUcwWithdrawal) => {
-    if (!attempt.withdrawalId) return attempt.signChallengeId;
+    if (!attempt.withdrawalId) return null;
     const data = await postJson("/api/paylabs/wallet/ucw/withdraw", {
       withdrawalId: attempt.withdrawalId,
       action: "recover-sign-challenge",
     });
     await applyBackendResponse(data);
-    return data.signChallengeId ?? storedAttemptRef.current?.signChallengeId ?? null;
+    return data;
   }, [applyBackendResponse, postJson]);
 
-  const continueFlow = useCallback(async (source?: StoredUcwWithdrawal | null) => {
+  const recoverMintChallenge = useCallback(async (withdrawalId: string) => {
+    const data = await postJson("/api/paylabs/wallet/ucw/withdraw/mint", {
+      withdrawalId,
+      action: "recover-challenge",
+    });
+    await applyBackendResponse(data);
+    return data;
+  }, [applyBackendResponse, postJson]);
+
+  const resolveMintChallenge = useCallback(async (withdrawalId: string) => {
+    const data = await postJson("/api/paylabs/wallet/ucw/withdraw/mint", { withdrawalId });
+    await applyBackendResponse(data);
+    return data;
+  }, [applyBackendResponse, postJson]);
+
+  const continueFlow = useCallback(async (
+    source?: StoredUcwWithdrawal | null,
+    mode: ContinueMode = "resume",
+    depth = 0,
+  ) => {
     const attempt = source ?? storedAttemptRef.current;
-    if (!attempt?.withdrawalId) return;
+    if (!attempt?.withdrawalId || depth > 8) return;
 
     setError(null);
     const statusData = await getStatus(attempt.withdrawalId, attempt.backendStatus === "mint_submitted");
     await applyBackendResponse(statusData);
-    const status = statusData.status ?? attempt.backendStatus;
+    const currentStatus = statusData.status ?? attempt.backendStatus;
 
-    if (status === "burn_signature_pending") {
-      let signChallengeId = statusData.signChallengeId ?? attempt.signChallengeId;
-      if (!signChallengeId) {
-        signChallengeId = await recoverSignChallenge(attempt);
+    const handleStatus = async (data: WithdrawalResponse, status?: WithdrawalStatus | null, nextDepth = depth + 1): Promise<void> => {
+      if (!status || isFinalTerminal(status)) return;
+
+      if (status === "reconciliation_required") {
+        stopPolling();
+        if (mode !== "resume") return;
+        setUiPhase("mint_resolving");
+        const recovered = await recoverMintChallenge(attempt.withdrawalId!);
+        if (!recovered.status || recovered.status === "reconciliation_required") return;
+        return handleStatus(recovered, recovered.status, nextDepth + 1);
       }
+
+      if (status === "gateway_submitted" || status === "attestation_received" || status === "mint_submission_pending") {
+        setUiPhase("mint_resolving");
+        const recovered = await recoverMintChallenge(attempt.withdrawalId!);
+        if (!recovered.status || recovered.status === status) return;
+        return handleStatus(recovered, recovered.status, nextDepth + 1);
+      }
+
+      if (status === "mint_approval_pending") {
+        let mintData = data;
+        if (mode === "resume") {
+          setUiPhase("mint_resolving");
+          const resolved = await resolveMintChallenge(attempt.withdrawalId!);
+          if (resolved.status && resolved.status !== "mint_approval_pending") {
+            return handleStatus(resolved, resolved.status, nextDepth + 1);
+          }
+          mintData = resolved;
+        }
+
+        const latestAttempt = storedAttemptRef.current ?? attempt;
+        const mintChallengeId = mintData.mintChallengeId ?? latestAttempt.mintChallengeId;
+        if (!mintChallengeId) throw new Error("No mint challenge is available for this withdrawal.");
+
+        setUiPhase("mint_approval_executing");
+        try {
+          await executeOrReconnect(mintChallengeId, "gateway-mint");
+        } catch (e: unknown) {
+          const message = e instanceof Error ? e.message : "Creator Wallet approval was cancelled or failed.";
+          setError(message);
+          setUiPhase(message.includes("Reconnect") ? "reconnect_required" : "approval_cancelled");
+          return;
+        }
+
+        setUiPhase("mint_resolving");
+        const minted = await resolveMintChallenge(attempt.withdrawalId!);
+        if (minted.withdrawalId && minted.status === "mint_submitted") {
+          startPolling(minted.withdrawalId, minted.status);
+          return;
+        }
+        return handleStatus(minted, minted.status, nextDepth + 1);
+      }
+
+      if (status === "mint_submitted") {
+        startPolling(attempt.withdrawalId!, status);
+        return;
+      }
+
+      if (!stopsAutomaticProgress(status)) {
+        startPolling(attempt.withdrawalId!, status);
+      }
+    };
+
+    if (currentStatus === "burn_signature_pending") {
+      let signData = statusData;
+      if (mode === "resume") {
+        const recovered = await recoverSignChallenge(attempt);
+        if (!recovered) throw new Error("Unable to recover signing challenge for this withdrawal.");
+        signData = recovered;
+        if (recovered.status !== "burn_signature_pending") {
+          return handleStatus(recovered, recovered.status);
+        }
+      }
+
+      const latestAttempt = storedAttemptRef.current ?? attempt;
+      const signChallengeId = signData.signChallengeId ?? latestAttempt.signChallengeId;
       if (!signChallengeId) throw new Error("No signing challenge is available for this withdrawal.");
 
       setUiPhase("burn_approval_executing");
@@ -387,59 +495,11 @@ export default function CreatorWalletGatewayPanel({
         signature: approval.signature,
       });
       await applyBackendResponse(signed);
-      if (signed.status && !isTerminal(signed.status)) {
-        return continueFlow(storedAttemptRef.current);
-      }
-      return;
+      return handleStatus(signed, signed.status);
     }
 
-    if (status === "mint_submission_pending") {
-      setUiPhase("mint_resolving");
-      const recovered = await postJson("/api/paylabs/wallet/ucw/withdraw/mint", {
-        withdrawalId: attempt.withdrawalId,
-        action: "recover-challenge",
-      });
-      await applyBackendResponse(recovered);
-      if (recovered.status && !isTerminal(recovered.status)) {
-        return continueFlow(storedAttemptRef.current);
-      }
-      return;
-    }
-
-    if (status === "mint_approval_pending") {
-      const mintChallengeId = statusData.mintChallengeId ?? attempt.mintChallengeId;
-      if (!mintChallengeId) throw new Error("No mint challenge is available for this withdrawal.");
-
-      setUiPhase("mint_approval_executing");
-      try {
-        await executeOrReconnect(mintChallengeId, "gateway-mint");
-      } catch (e: unknown) {
-        const message = e instanceof Error ? e.message : "Creator Wallet approval was cancelled or failed.";
-        setError(message);
-        setUiPhase(message.includes("Reconnect") ? "reconnect_required" : "approval_cancelled");
-        return;
-      }
-
-      setUiPhase("mint_resolving");
-      const minted = await postJson("/api/paylabs/wallet/ucw/withdraw/mint", {
-        withdrawalId: attempt.withdrawalId,
-      });
-      await applyBackendResponse(minted);
-      if (minted.withdrawalId && !isTerminal(minted.status)) {
-        startPolling(minted.withdrawalId, minted.status);
-      }
-      return;
-    }
-
-    if (status === "mint_submitted") {
-      startPolling(attempt.withdrawalId, status);
-      return;
-    }
-
-    if (status && !isTerminal(status)) {
-      startPolling(attempt.withdrawalId, status);
-    }
-  }, [applyBackendResponse, executeOrReconnect, getStatus, postJson, recoverSignChallenge, startPolling]);
+    return handleStatus(statusData, currentStatus as WithdrawalStatus | null);
+  }, [applyBackendResponse, executeOrReconnect, getStatus, postJson, recoverMintChallenge, recoverSignChallenge, resolveMintChallenge, startPolling, stopPolling]);
 
   const handleWithdraw = useCallback(async () => {
     if (submitInFlightRef.current) return;
@@ -460,6 +520,7 @@ export default function CreatorWalletGatewayPanel({
         throw new Error("Amount exceeds your available Gateway balance");
       }
 
+      const resumingExistingAttempt = !!storedAttemptRef.current?.withdrawalId;
       const idempotencyKey = storedAttemptRef.current?.idempotencyKey ?? crypto.randomUUID();
       const attempt: StoredUcwWithdrawal = storedAttemptRef.current ?? {
         withdrawalId: null,
@@ -478,7 +539,7 @@ export default function CreatorWalletGatewayPanel({
       });
       await applyBackendResponse(data);
       if (!data.withdrawalId) throw new Error("Withdrawal response did not include a withdrawal ID");
-      await continueFlow(storedAttemptRef.current);
+      await continueFlow(storedAttemptRef.current, resumingExistingAttempt ? "resume" : "fresh");
     } catch (e: unknown) {
       const status = (e as Error & { status?: number }).status;
       if (status && status >= 400 && status < 500 && !storedAttemptRef.current?.withdrawalId) {
@@ -492,13 +553,17 @@ export default function CreatorWalletGatewayPanel({
   }, [amount, applyBackendResponse, balance?.gatewayUsdc, continueFlow, gatewayBalance, persistAttempt, postJson, uiPhase]);
 
   const handleResume = useCallback(async () => {
+    if (submitInFlightRef.current) return;
     const attempt = storedAttemptRef.current;
     if (!attempt?.withdrawalId) return;
     submitInFlightRef.current = true;
+    setUiPhase("resuming");
+    setError(null);
     try {
-      await continueFlow(attempt);
+      await continueFlow(attempt, "resume");
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Unable to resume withdrawal");
+      setUiPhase("idle");
     } finally {
       submitInFlightRef.current = false;
     }
@@ -611,8 +676,14 @@ export default function CreatorWalletGatewayPanel({
         )}
 
         {resumeAction && (
-          <button type="button" className="pl-eoa-fallback-v3" onClick={needsReconnectToSign ? onReconnect : handleResume} style={{ marginTop: 8 }}>
-            {needsReconnectToSign ? "Reconnect Creator Wallet" : "Resume approval"}
+          <button
+            type="button"
+            className="pl-eoa-fallback-v3"
+            onClick={needsReconnectToSign ? onReconnect : handleResume}
+            disabled={submitBusy}
+            style={{ marginTop: 8 }}
+          >
+            {needsReconnectToSign ? "Reconnect Creator Wallet" : resumeLabel}
           </button>
         )}
 
