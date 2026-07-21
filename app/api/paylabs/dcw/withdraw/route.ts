@@ -438,7 +438,10 @@ export async function POST(req: NextRequest) {
           gasPreflightOk, gasPreflightFee,
         });
         if (!casNoTx.ok) console.error("[dcw/withdraw] CAS failed:", casNoTx.error);
-        return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc), gateway_transfer_id: transferResult.transferId }) });
+        // Re-read from DB — no synthetic response
+        const { row: noTxRow } = await getWithdrawal(withdrawalId, "dcw", session.sub);
+        if (!noTxRow) return NextResponse.json({ ok: false, error: "Withdrawal not found after update" }, { status: 500 });
+        return NextResponse.json({ ok: true, ...safeResponse(noTxRow) });
       }
 
       // CAS: mint_submission_pending → mint_submitted (CHECK CAS RESULT)

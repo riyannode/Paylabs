@@ -299,8 +299,28 @@ async function reconcileWithdrawal(row: WithdrawalRow): Promise<void> {
               errorCode: result.reason, errorMessage: `Circle tx: ${txResult.state}, ${result.reason}`,
               txHash: txResult.txHash ?? undefined,
             });
+          } else if (result.kind === "reconciliation_required") {
+            // Persist reconciliation — retryDcwMint may not have persisted (cas_conflict, missing_transfer_or_key)
+            const { row: recheck } = await getWithdrawal(id, wallet_mode, row.owner_ref);
+            if (recheck && recheck.status !== "reconciliation_required") {
+              await updateWithdrawal(id, {
+                status: "reconciliation_required", expectedStatus: recheck.status,
+                errorCode: result.reason, errorMessage: `Reconciliation: ${result.reason}`,
+                txHash: txResult.txHash ?? undefined,
+              });
+            } else if (recheck && !recheck.error_code) {
+              await updateWithdrawal(id, {
+                errorCode: result.reason, errorMessage: `Reconciliation: ${result.reason}`,
+                txHash: txResult.txHash ?? undefined,
+              });
+            }
+          } else if (result.kind === "retried") {
+            // Verify row is mint_submitted after successful retry
+            const { row: recheck } = await getWithdrawal(id, wallet_mode, row.owner_ref);
+            if (recheck && recheck.status !== "mint_submitted") {
+              console.error(`[reconcile] Expected mint_submitted after retried, got ${recheck.status} for ${id}`);
+            }
           }
-          // result.kind === "reconciliation_required" or "retried" — already persisted by retryDcwMint
         } else {
           await updateWithdrawal(id, {
             status: "failed", expectedStatus: "mint_submitted",
@@ -315,48 +335,92 @@ async function reconcileWithdrawal(row: WithdrawalRow): Promise<void> {
     // Case 2: attestation_received / reconciliation_required / mint_submission_pending with transferId — retry mint
     if ((status === "attestation_received" || status === "reconciliation_required" || status === "mint_submission_pending") && gateway_transfer_id) {
       const transfer = await getGatewayTransferById(gateway_transfer_id);
-      if (transfer.ok && transfer.data) {
-        // P0-1: Normalize Gateway status to lowercase
-        const transferStatus = (transfer.data.status || "").toLowerCase();
-        // P0-3: Gateway confirmed/finalized → finalize from Gateway, don't retry
-        if (transferStatus === "confirmed" || transferStatus === "finalized") {
+      if (!transfer.ok || !transfer.data) {
+        // Gateway GET failed → reconciliation_required, never silently return
+        await updateWithdrawal(id, {
+          status: "reconciliation_required", expectedStatus: status,
+          errorCode: "gateway_get_failed", errorMessage: "Gateway GET failed during reconciliation",
+        });
+        return;
+      }
+
+      const transferStatus = (transfer.data.status || "").toLowerCase();
+
+      // confirmed/finalized → finalize using Gateway transactionHash
+      if (transferStatus === "confirmed" || transferStatus === "finalized") {
+        await updateWithdrawal(id, {
+          status: "finalized", expectedStatus: status,
+          txHash: transfer.data.transactionHash ?? undefined,
+          explorerUrl: explorerUrl(transfer.data.transactionHash) ?? undefined,
+        });
+        return;
+      }
+
+      // failed/expired → failed
+      if (transferStatus === "failed" || transferStatus === "expired") {
+        await updateWithdrawal(id, {
+          status: "failed", expectedStatus: status,
+          errorCode: `gateway_${transferStatus}`, errorMessage: `Gateway transfer ${transferStatus}`,
+        });
+        return;
+      }
+
+      // pending + attestation → retry mint
+      const hasAttestation = !!transfer.data.attestationPayload && !!transfer.data.attestationSignature;
+      if (transferStatus === "pending" && hasAttestation) {
+        const isNewKey = status === "reconciliation_required"
+          && row.error_code !== "mint_submission_failed"
+          && row.error_code !== "mint_no_tx_id"
+          && row.error_code !== "gateway_timeout"
+          && row.error_code !== "mint_submission_pending"
+          && row.error_code !== "cas_recovery";
+        const result = await retryDcwMint(row, isNewKey);
+        if (result.kind === "finalized") {
           await updateWithdrawal(id, {
             status: "finalized", expectedStatus: status,
-            txHash: transfer.data.transactionHash ?? undefined,
-            explorerUrl: explorerUrl(transfer.data.transactionHash) ?? undefined,
+            txHash: result.txHash ?? transfer.data.transactionHash ?? undefined,
+            explorerUrl: explorerUrl(result.txHash ?? transfer.data.transactionHash) ?? undefined,
           });
-          return;
-        }
-        // Only retry if transfer is pending with valid attestation
-        const hasAttestation = !!transfer.data.attestationPayload && !!transfer.data.attestationSignature;
-        if (transferStatus === "pending" && hasAttestation) {
-          // P0-2: Retry key logic — check error_code, not just status
-          // Only confirmed terminal failures create a NEW key.
-          // Ambiguous/no-response cases (mint_submission_failed, mint_no_tx_id,
-          // timeout, response lost, crash after request) reuse the SAME key.
-          const isNewKey = status === "reconciliation_required"
-            && row.error_code !== "mint_submission_failed"
-            && row.error_code !== "mint_no_tx_id"
-            && row.error_code !== "gateway_timeout"
-            && row.error_code !== "mint_submission_pending"
-            && row.error_code !== "cas_recovery";
-          const result = await retryDcwMint(row, isNewKey);
-          if (result.kind === "finalized") {
+        } else if (result.kind === "failed") {
+          await updateWithdrawal(id, {
+            status: "failed", expectedStatus: status,
+            errorCode: result.reason, errorMessage: `Gateway: ${result.reason}, Circle transfer: ${transferStatus}`,
+          });
+        } else if (result.kind === "reconciliation_required") {
+          const { row: recheck } = await getWithdrawal(id, wallet_mode, row.owner_ref);
+          if (recheck && recheck.status !== "reconciliation_required") {
             await updateWithdrawal(id, {
-              status: "finalized", expectedStatus: status,
-              txHash: result.txHash ?? transfer.data.transactionHash ?? undefined,
-              explorerUrl: explorerUrl(result.txHash ?? transfer.data.transactionHash) ?? undefined,
+              status: "reconciliation_required", expectedStatus: recheck.status,
+              errorCode: result.reason, errorMessage: `Reconciliation: ${result.reason}`,
             });
-          } else if (result.kind === "failed") {
+          } else if (recheck && !recheck.error_code) {
             await updateWithdrawal(id, {
-              status: "failed", expectedStatus: status,
-              errorCode: result.reason, errorMessage: `Gateway: ${result.reason}, Circle transfer: ${transferStatus}`,
+              errorCode: result.reason, errorMessage: `Reconciliation: ${result.reason}`,
             });
           }
-          // result.kind === "reconciliation_required" or "retried" — already persisted by retryDcwMint
-          return;
+        } else if (result.kind === "retried") {
+          const { row: recheck } = await getWithdrawal(id, wallet_mode, row.owner_ref);
+          if (recheck && recheck.status !== "mint_submitted") {
+            console.error(`[reconcile] Expected mint_submitted after retried, got ${recheck.status} for ${id}`);
+          }
         }
+        return;
       }
+
+      // pending without attestation → reconciliation_required
+      if (transferStatus === "pending") {
+        await updateWithdrawal(id, {
+          status: "reconciliation_required", expectedStatus: status,
+          errorCode: "missing_attestation", errorMessage: "Gateway pending without attestation",
+        });
+        return;
+      }
+
+      // Unknown/empty status → reconciliation_required
+      await updateWithdrawal(id, {
+        status: "reconciliation_required", expectedStatus: status,
+        errorCode: "gateway_unknown_status", errorMessage: `Gateway status: ${transferStatus || 'empty'}`,
+      });
       return;
     }
 

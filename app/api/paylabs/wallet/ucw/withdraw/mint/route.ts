@@ -184,37 +184,56 @@ export async function POST(req: NextRequest) {
       const { getGatewayTransferById } = await import("@/lib/paylabs/withdrawal/gateway-transfer");
       const gwTransfer = await getGatewayTransferById(row.gateway_transfer_id);
       if (!gwTransfer.ok || !gwTransfer.data) {
-        return NextResponse.json({ ok: false, error: "Gateway transfer recovery failed" }, { status: 502 });
+        // Gateway GET failed → persist reconciliation_required, return DB row
+        await updateWithdrawal(withdrawalId, {
+          status: "reconciliation_required", expectedStatus: row.status,
+          errorCode: "gateway_get_failed", errorMessage: "Gateway GET failed during recovery",
+        });
+        const { row: reconRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
+        return NextResponse.json({ ok: true, ...safeResponse(reconRow || row) });
       }
 
       const gwStatus = (gwTransfer.data.status || "").toLowerCase();
 
-      // Gateway failed/expired → do not call gatewayMint
+      // Gateway failed/expired → failed
       if (gwStatus === "failed" || gwStatus === "expired") {
         await updateWithdrawal(withdrawalId, {
           status: "failed", expectedStatus: row.status,
           errorCode: `gateway_${gwStatus}`, errorMessage: `Gateway transfer ${gwStatus}`,
         });
-        // Re-read and return from DB
         const { row: failRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
         return NextResponse.json({ ok: true, ...safeResponse(failRow || row) });
       }
 
       // Gateway confirmed/finalized → finalize from Gateway transactionHash
       if (gwStatus === "confirmed" || gwStatus === "finalized") {
-        const casFinal = await updateWithdrawal(withdrawalId, {
+        await updateWithdrawal(withdrawalId, {
           status: "finalized", expectedStatus: row.status,
           txHash: gwTransfer.data.transactionHash || undefined,
           explorerUrl: explorerUrl(gwTransfer.data.transactionHash) || undefined,
         });
-        // Re-read and return from DB
         const { row: finRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
         return NextResponse.json({ ok: true, ...safeResponse(finRow || row) });
       }
 
-      // Retrieve attestation payload/signature
-      if (!gwTransfer.data.attestationPayload || !gwTransfer.data.attestationSignature) {
-        return NextResponse.json({ ok: false, error: "Gateway attestation not available" }, { status: 502 });
+      // Gateway pending without complete attestation → reconciliation_required
+      if (gwStatus === "pending" && (!gwTransfer.data.attestationPayload || !gwTransfer.data.attestationSignature)) {
+        await updateWithdrawal(withdrawalId, {
+          status: "reconciliation_required", expectedStatus: row.status,
+          errorCode: "missing_attestation", errorMessage: "Gateway pending without attestation during recovery",
+        });
+        const { row: reconRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
+        return NextResponse.json({ ok: true, ...safeResponse(reconRow || row) });
+      }
+
+      // Unknown/empty Gateway status → reconciliation_required
+      if (gwStatus !== "pending") {
+        await updateWithdrawal(withdrawalId, {
+          status: "reconciliation_required", expectedStatus: row.status,
+          errorCode: "gateway_unknown_status", errorMessage: `Gateway status: ${gwStatus || 'empty'}`,
+        });
+        const { row: reconRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
+        return NextResponse.json({ ok: true, ...safeResponse(reconRow || row) });
       }
 
       // ─── Distinguish crash recovery vs terminal failure ────────
@@ -257,12 +276,15 @@ export async function POST(req: NextRequest) {
       }
 
       // Call createGatewayMintChallenge
+      // At this point: gwStatus === "pending" and attestation exists (checked above)
+      const attestationPayload = gwTransfer.data.attestationPayload!;
+      const attestationSignature = gwTransfer.data.attestationSignature!;
       const { createGatewayMintChallenge } = await import("@/lib/paylabs/ucw");
       let mintChallengeId: string;
       try {
         const challenge = await createGatewayMintChallenge(
           session.userToken, session.walletId,
-          gwTransfer.data.attestationPayload, gwTransfer.data.attestationSignature,
+          attestationPayload, attestationSignature,
           useKey,
         );
         mintChallengeId = challenge.challengeId;
