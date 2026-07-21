@@ -61,50 +61,48 @@ async function retryDcwMint(row: WithdrawalRow, newIdempotencyKey = false): Prom
 
   const { status: rawStatus, attestationPayload, attestationSignature, expirationBlock, transactionHash } = transfer.data;
 
-  // P0-1: Normalize Gateway status — API returns lowercase
+  // Normalize Gateway status — API returns lowercase
   const transferStatus = (rawStatus || "").toLowerCase();
 
-  // P0-3: Gateway confirmed/finalized = destination mint exists → finalize, don't retry
+  // Gateway confirmed/finalized = destination mint exists → finalize, don't retry
   if (transferStatus === "confirmed" || transferStatus === "finalized") {
     return { retried: false, gatewayFinalized: true, gatewayTxHash: transactionHash || undefined };
   }
 
-  // Don't retry if attestation is missing
-  if (!attestationPayload || !attestationSignature) return { retried: false };
-
-  // Don't retry if transfer is expired (attestation expired)
-  if (transferStatus === "expired") return { retried: false };
-
-  // Optional: check expirationBlock against current Arc destination block
-  // If attestation has expired on-chain, don't waste gas retrying
-  if (expirationBlock && expirationBlock > 0) {
-    // TODO: fetch current Arc block height if needed for strict validation
+  // Gateway failed/expired → do not call gatewayMint
+  if (transferStatus === "failed" || transferStatus === "expired") {
+    return { retried: false };
   }
 
-  // Determine idempotency key: same key for ambiguous, new key only for confirmed terminal failure
+  // Only retry if attestation is present and transfer is pending
+  if (!attestationPayload || !attestationSignature) return { retried: false };
+
+  // ─── Blocker 1: ALWAYS CAS gate through mint_submission_pending ────
+  // This is the exclusive entry point for ALL retries (ambiguous and terminal).
+  // Only ONE worker wins this CAS.
   const idempotencyKey = newIdempotencyKey
     ? crypto.randomUUID()
     : row.mint_idempotency_key;
 
-  // P0-4: Deliberate terminal retry — CAS status first to prevent concurrent workers
-  // Only ONE worker can win the CAS mint_submitted/reconciliation_required → mint_submission_pending
-  if (newIdempotencyKey) {
-    const casGate = await updateWithdrawal(row.id, {
-      status: "mint_submission_pending",
-      expectedStatus: row.status as any,
-      mintIdempotencyKey: idempotencyKey,
+  const casGate = await updateWithdrawal(row.id, {
+    status: "mint_submission_pending",
+    expectedStatus: row.status as any,
+    mintIdempotencyKey: idempotencyKey,
+    ...(newIdempotencyKey ? {
       safeMetadata: {
         ...((row.safe_metadata as Record<string, unknown>) || {}),
         retryAttempt: ((row.safe_metadata as any)?.retryAttempt || 0) + 1,
         previousTransactionId: row.circle_transaction_id || null,
       },
-    });
-    if (!casGate.ok) {
-      // Another worker already won the CAS — do not proceed
-      console.error("[retryDcwMint] CAS gate failed (another worker won):", casGate.error);
-      return { retried: false };
-    }
+    } : {}),
+  });
+  if (!casGate.ok) {
+    // Another worker already won the CAS — do not proceed
+    return { retried: false };
   }
+
+  // Track the current status for post-Circle fallback CAS (always mint_submission_pending after gate)
+  const currentStatus: WithdrawalStatus = "mint_submission_pending";
 
   try {
     const client = getDcwClient();
@@ -120,34 +118,29 @@ async function retryDcwMint(row: WithdrawalRow, newIdempotencyKey = false): Prom
     if (mintTxId) {
       const casResult = await updateWithdrawal(row.id, {
         status: "mint_submitted",
-        expectedStatus: "mint_submission_pending" as any,
+        expectedStatus: currentStatus,
         circleTransactionId: mintTxId,
         mintIdempotencyKey: idempotencyKey,
       });
       return { retried: casResult.ok };
     }
-    // No tx ID returned — ambiguous. Move to reconciliation_required with the NEW key preserved.
-    // Next reconciliation run will reuse this same key via Circle's idempotency dedup.
-    if (newIdempotencyKey) {
-      await updateWithdrawal(row.id, {
-        status: "reconciliation_required",
-        expectedStatus: "mint_submission_pending" as any,
-        errorCode: "mint_no_tx_id",
-        errorMessage: "Retry returned no transaction ID (ambiguous)",
-        mintIdempotencyKey: idempotencyKey,
-      });
-    }
+    // No tx ID returned — ambiguous. Move to reconciliation_required with key preserved.
+    await updateWithdrawal(row.id, {
+      status: "reconciliation_required",
+      expectedStatus: currentStatus,
+      errorCode: "mint_no_tx_id",
+      errorMessage: "Retry returned no transaction ID (ambiguous)",
+      mintIdempotencyKey: idempotencyKey,
+    });
   } catch {
-    // Request timed out or failed — ambiguous. Move to reconciliation_required with NEW key preserved.
-    if (newIdempotencyKey) {
-      await updateWithdrawal(row.id, {
-        status: "reconciliation_required",
-        expectedStatus: "mint_submission_pending" as any,
-        errorCode: "mint_submission_failed",
-        errorMessage: "Retry request failed (ambiguous)",
-        mintIdempotencyKey: idempotencyKey,
-      });
-    }
+    // Request timed out or failed — ambiguous. Move to reconciliation_required with key preserved.
+    await updateWithdrawal(row.id, {
+      status: "reconciliation_required",
+      expectedStatus: currentStatus,
+      errorCode: "mint_submission_failed",
+      errorMessage: "Retry request failed (ambiguous)",
+      mintIdempotencyKey: idempotencyKey,
+    });
   }
   return { retried: false };
 }
@@ -227,11 +220,33 @@ export async function monotonicRecoveryPersist(
   });
 
   if (casResult.ok && casResult.row) {
-    return { ok: true, row: casResult.row };
+    // Verify the CAS result actually reached nextStatus
+    if (casResult.row.status === nextStatus) {
+      return { ok: true, row: casResult.row };
+    }
+    // Status advanced beyond nextStatus — check if it's an allowed later status
+    // with the same external references (another recovery path won the race)
+    if (allowedCurrentStatuses.includes(casResult.row.status) || casResult.row.status === nextStatus) {
+      return { ok: true, row: casResult.row };
+    }
+    // Unexpected status — recovery failed to reach target
+    return { ok: false, row: casResult.row, error: `CAS succeeded but status is '${casResult.row.status}', expected '${nextStatus}'` };
   }
-  // CAS might have failed if status already advanced — re-read
+  // CAS failed — re-read to check if already at target or later allowed status
   const { row: afterRow } = await getWithdrawal(withdrawalId, walletMode, ownerRef);
-  return { ok: !!afterRow, row: afterRow || undefined, error: casResult.error };
+  if (afterRow && (afterRow.status === nextStatus || allowedCurrentStatuses.includes(afterRow.status))) {
+    // Verify references are present
+    const refsOk =
+      (fields.gatewayTransferId === undefined || afterRow.gateway_transfer_id === fields.gatewayTransferId) &&
+      (fields.attestationHash === undefined || afterRow.attestation_hash === fields.attestationHash) &&
+      (fields.mintChallengeId === undefined || afterRow.mint_challenge_id === fields.mintChallengeId) &&
+      (fields.mintIdempotencyKey === undefined || afterRow.mint_idempotency_key === fields.mintIdempotencyKey) &&
+      (fields.circleTransactionId === undefined || afterRow.circle_transaction_id === fields.circleTransactionId);
+    if (refsOk) {
+      return { ok: true, row: afterRow };
+    }
+  }
+  return { ok: false, row: afterRow || undefined, error: casResult.error };
 }
 
 // ─── Reconcile Single Withdrawal ─────────────────────────────

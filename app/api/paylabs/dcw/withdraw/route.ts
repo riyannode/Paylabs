@@ -329,12 +329,9 @@ export async function POST(req: NextRequest) {
       if (recoveryResult.ok && recoveryResult.row) {
         return NextResponse.json({ ok: true, ...safeResponse(recoveryResult.row) });
       }
-      // Recovery failed — mark for reconciliation with references in DB
-      const casReconcile = await updateWithdrawal(withdrawalId, {
-        status: "reconciliation_required", expectedStatus: "burn_signed", errorCode: "cas_recovery",
-        gatewayTransferId: transferResult.transferId, attestationHash: transferResult.attestationHash,
-      });
-      return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
+      // Recovery failed — re-read and return from DB
+      const { row: recheckRow } = await getWithdrawal(withdrawalId, "dcw", session.sub);
+      return NextResponse.json({ ok: true, ...safeResponse(recheckRow || { id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
     }
 
     // 16. CAS: gateway_submitted → attestation_received (CHECK CAS RESULT)
@@ -355,12 +352,9 @@ export async function POST(req: NextRequest) {
       if (recoveryResult.ok && recoveryResult.row) {
         return NextResponse.json({ ok: true, ...safeResponse(recoveryResult.row) });
       }
-      // Recovery failed — mark for reconciliation with attestation in DB
-      const casReconcile = await updateWithdrawal(withdrawalId, {
-        status: "reconciliation_required", expectedStatus: "gateway_submitted", errorCode: "cas_recovery",
-        attestationHash: transferResult.attestationHash,
-      });
-      return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
+      // Recovery failed — re-read and return from DB
+      const { row: recheckRow2 } = await getWithdrawal(withdrawalId, "dcw", session.sub);
+      return NextResponse.json({ ok: true, ...safeResponse(recheckRow2 || { id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
     }
 
     // 17. Pre-persist mint idempotency key BEFORE calling Circle
@@ -371,8 +365,9 @@ export async function POST(req: NextRequest) {
       mintIdempotencyKey,
     });
     if (!casPre.ok || !casPre.row) {
-      console.error("[dcw/withdraw] CAS failed pre-persisting mint key:", casPre.error);
-      return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
+      // Re-read and return from DB
+      const { row: preRow } = await getWithdrawal(withdrawalId, "dcw", session.sub);
+      return NextResponse.json({ ok: true, ...safeResponse(preRow || { id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
     }
 
     // 18. Gas preflight
@@ -438,14 +433,9 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ ok: true, ...safeResponse(recoveryResult.row) });
           }
         }
-        // Recovery failed or already advanced — mark for reconciliation
-        const casReconcile = await updateWithdrawal(withdrawalId, {
-          status: "reconciliation_required",
-          expectedStatus: "mint_submission_pending",
-          errorCode: "cas_recovery",
-          circleTransactionId: mintTxId,
-        });
-        return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
+        // Recovery failed — re-read and return from DB
+        const { row: cas4Row } = await getWithdrawal(withdrawalId, "dcw", session.sub);
+        return NextResponse.json({ ok: true, ...safeResponse(cas4Row || { id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
       }
 
       return NextResponse.json({ ok: true, ...safeResponse(cas4.row) });
@@ -459,7 +449,9 @@ export async function POST(req: NextRequest) {
         errorMessage: msg.slice(0, 300),
         gasPreflightOk, gasPreflightFee,
       });
-      return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc), gateway_transfer_id: transferResult.transferId }) });
+      // Re-read and return from DB
+      const { row: catchRow } = await getWithdrawal(withdrawalId, "dcw", session.sub);
+      return NextResponse.json({ ok: true, ...safeResponse(catchRow || { id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
