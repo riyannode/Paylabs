@@ -290,8 +290,21 @@ export async function POST(req: NextRequest) {
 
       if (currentRow.status === "reconciliation_required") {
         if (currentRow.circle_transaction_id) {
+          const previousTransactionId = currentRow.circle_transaction_id;
           try {
-            const txStatus = await getTransactionStatus(session.userToken, currentRow.circle_transaction_id);
+            const txStatus = await getTransactionStatus(session.userToken, previousTransactionId);
+            if (SUCCESS.has(txStatus.state)) {
+              const finalized = await updateWithdrawal(withdrawalId, {
+                status: "finalized",
+                expectedStatus: "reconciliation_required",
+                txHash: txStatus.txHash || undefined,
+                explorerUrl: explorerUrl(txStatus.txHash) || undefined,
+              });
+              if (!finalized.ok || !finalized.row) {
+                return refreshedRowResponse(req, withdrawalId, session.walletId, currentRow);
+              }
+              return refreshedStatusResponse(req, { ok: true, ...safeResponse(finalized.row) });
+            }
             if (!FAILURE.has(txStatus.state)) {
               return refreshedStatusResponse(req, { ok: true, ...safeResponse(currentRow) });
             }
@@ -300,15 +313,22 @@ export async function POST(req: NextRequest) {
           }
 
           const retryKey = crypto.randomUUID();
+          const existingMetadata = (currentRow.safe_metadata as Record<string, unknown>) || {};
+          const previousRetryAttempt =
+            typeof existingMetadata.retryAttempt === "number" ? existingMetadata.retryAttempt : 0;
           const casRetry = await updateWithdrawal(withdrawalId, {
             status: "mint_submission_pending",
             expectedStatus: "reconciliation_required",
             attestationHash,
             mintIdempotencyKey: retryKey,
+            mintChallengeId: null,
+            circleTransactionId: null,
+            txHash: null,
+            explorerUrl: null,
             safeMetadata: {
-              ...((currentRow.safe_metadata as Record<string, unknown>) || {}),
-              retryAttempt: ((currentRow.safe_metadata as any)?.retryAttempt || 0) + 1,
-              previousTransactionId: currentRow.circle_transaction_id,
+              ...existingMetadata,
+              retryAttempt: previousRetryAttempt + 1,
+              previousTransactionId,
             },
           });
           if (!casRetry.ok || !casRetry.row) {
