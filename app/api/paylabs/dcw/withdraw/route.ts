@@ -296,14 +296,16 @@ export async function POST(req: NextRequest) {
       if (transferResult.ambiguous) {
         const casAmb = await updateWithdrawal(withdrawalId, { status: "reconciliation_required", expectedStatus: "burn_signed", errorCode: "gateway_timeout", errorMessage: transferResult.error });
         if (!casAmb.ok) console.error("[dcw/withdraw] CAS failed after ambiguous:", casAmb.error);
-        return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
+        const { row: ambRow } = await getWithdrawal(withdrawalId, "dcw", session.sub);
+        return NextResponse.json({ ok: true, ...safeResponse(ambRow || { id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
       }
 
       // transferId missing with attestation = protocol error → reconciliation, NOT failed
       if (transferResult.attestation && !transferResult.transferId) {
         const casProto = await updateWithdrawal(withdrawalId, { status: "reconciliation_required", expectedStatus: "burn_signed", errorCode: "missing_transfer_id", errorMessage: "Gateway returned attestation but no transferId" });
         if (!casProto.ok) console.error("[dcw/withdraw] CAS failed after protocol error:", casProto.error);
-        return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
+        const { row: protoRow } = await getWithdrawal(withdrawalId, "dcw", session.sub);
+        return NextResponse.json({ ok: true, ...safeResponse(protoRow || { id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
       }
 
       const casFail = await updateWithdrawal(withdrawalId, { status: "failed", expectedStatus: "burn_signed", errorCode: "gateway_transfer_failed", errorMessage: transferResult.error?.slice(0, 300) });
@@ -325,6 +327,7 @@ export async function POST(req: NextRequest) {
         ["burn_signed"],
         { gatewayTransferId: transferResult.transferId, attestationHash: transferResult.attestationHash },
         "attestation_received",
+        ["attestation_received", "gateway_submitted"],
       );
       if (recoveryResult.ok && recoveryResult.row) {
         return NextResponse.json({ ok: true, ...safeResponse(recoveryResult.row) });
@@ -348,6 +351,7 @@ export async function POST(req: NextRequest) {
         ["gateway_submitted"],
         { attestationHash: transferResult.attestationHash },
         "attestation_received",
+        ["attestation_received"],
       );
       if (recoveryResult.ok && recoveryResult.row) {
         return NextResponse.json({ ok: true, ...safeResponse(recoveryResult.row) });
@@ -428,6 +432,7 @@ export async function POST(req: NextRequest) {
             ["mint_submission_pending"],
             { circleTransactionId: mintTxId, mintIdempotencyKey },
             "mint_submitted",
+            ["mint_submitted"],
           );
           if (recoveryResult.ok && recoveryResult.row) {
             return NextResponse.json({ ok: true, ...safeResponse(recoveryResult.row) });

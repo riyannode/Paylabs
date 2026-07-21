@@ -255,8 +255,9 @@ export async function POST(req: NextRequest) {
       }
 
       // CAS persist mintChallengeId → mint_approval_pending
+      const expectedStatus = currentRow.status;
       const casResult = await updateWithdrawal(withdrawalId, {
-        status: "mint_approval_pending", expectedStatus: row.status,
+        status: "mint_approval_pending", expectedStatus,
         mintChallengeId, mintIdempotencyKey: useKey,
       });
       if (!casResult.ok || !casResult.row) {
@@ -264,9 +265,10 @@ export async function POST(req: NextRequest) {
         const { monotonicRecoveryPersist } = await import("@/lib/paylabs/withdrawal/reconciliation");
         const recoveryResult = await monotonicRecoveryPersist(
           withdrawalId, "creator_ucw", session.walletId,
-          [row.status],
+          [currentRow.status],
           { mintChallengeId, mintIdempotencyKey: useKey },
           "mint_approval_pending",
+          ["mint_approval_pending"],
         );
         if (!recoveryResult.ok || !recoveryResult.row) {
           // Re-read and return actual DB state (Blocker 5)
@@ -323,6 +325,7 @@ export async function POST(req: NextRequest) {
             ["mint_approval_pending"],
             { circleTransactionId: resolvedTxId },
             "mint_submitted",
+            ["mint_submitted"],
           );
           if (!recoveryResult.ok || !recoveryResult.row) {
             // Re-read and return actual DB state

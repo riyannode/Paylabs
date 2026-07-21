@@ -107,6 +107,7 @@ export async function POST(req: NextRequest) {
           ["burn_signed"],
           { gatewayTransferId: transferResult.transferId, attestationHash: transferResult.attestationHash },
           "gateway_submitted",
+          ["gateway_submitted", "attestation_received"],
         );
         if (recoveryResult.ok && recoveryResult.row) {
           return NextResponse.json({ ok: true, withdrawalId, status: "gateway_submitted" });
@@ -132,6 +133,7 @@ export async function POST(req: NextRequest) {
           ["gateway_submitted"],
           { attestationHash: transferResult.attestationHash },
           "attestation_received",
+          ["attestation_received"],
         );
         if (recoveryResult.ok && recoveryResult.row) {
           return NextResponse.json({ ok: true, withdrawalId, status: "attestation_received" });
@@ -183,6 +185,7 @@ export async function POST(req: NextRequest) {
             ["mint_submission_pending"],
             { mintChallengeId, mintIdempotencyKey },
             "mint_approval_pending",
+            ["mint_approval_pending"],
           );
           if (recoveryResult.ok && recoveryResult.row) {
             return NextResponse.json({ ok: true, withdrawalId, status: "mint_approval_pending", mintChallengeId });
