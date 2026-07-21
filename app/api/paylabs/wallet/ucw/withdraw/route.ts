@@ -2,13 +2,6 @@
  * POST /api/paylabs/wallet/ucw/withdraw — Initiate UCW Gateway withdrawal
  * GET  /api/paylabs/wallet/ucw/withdraw?withdrawalId=uuid — Check withdrawal status
  *
- * UCW withdrawal flow (two-approval):
- *   POST: estimate → create sign challenge → return signChallengeId
- *   (browser executes sdk.execute(signChallengeId) → gets signature)
- *   POST /sign: receive signature → submit to Gateway → create mint challenge
- *   (browser executes sdk.execute(mintChallengeId) → mints tokens)
- *   POST /mint: resolve challenge → poll → finalize
- *
  * REQUIRES valid UCW session cookie (ucw_sid).
  */
 
@@ -95,29 +88,60 @@ export async function POST(req: NextRequest) {
     const walletId = session.walletId;
     const walletAddress = session.walletAddress.toLowerCase();
 
-    // 3. Check Gateway available balance
+    // 3. EARLY IDEMPOTENCY CHECK — before balance/estimate
+    {
+      const db = supabaseAdmin();
+      const { data: existing } = await db
+        .from("paylabs_gateway_withdrawals")
+        .select("*")
+        .eq("wallet_mode", "creator_ucw")
+        .eq("wallet_id", walletId)
+        .eq("idempotency_key", idempotencyKey)
+        .maybeSingle();
+
+      if (existing) {
+        // If existing row is burn_signature_pending with no challenge, recreate challenge
+        if (existing.status === "burn_signature_pending" && !existing.signing_challenge_id) {
+          const typedData = {
+            types: GATEWAY_EIP712_TYPES,
+            domain: GATEWAY_EIP712_DOMAIN,
+            primaryType: "BurnIntent",
+            message: existing.burn_intent,
+          };
+          try {
+            const { challengeId } = await signTypedDataForGateway(session.userToken, walletId, typedData);
+            await updateWithdrawal(existing.id, { signingChallengeId: challengeId, expectedStatus: "burn_signature_pending" });
+            return NextResponse.json({ ok: true, ...safeResponse({ ...existing, signing_challenge_id: challengeId, status: "burn_signature_pending" }) });
+          } catch {
+            // Challenge recreation failed — return existing as-is, frontend can retry
+            return NextResponse.json({ ok: true, ...safeResponse(existing) });
+          }
+        }
+        return NextResponse.json({ ok: true, ...safeResponse(existing) });
+      }
+    }
+
+    // 4. Check Gateway available balance
     const gwBalance = await checkGatewayBalance({ depositor: walletAddress });
     if (!gwBalance.ok || !gwBalance.balanceAtomic) {
       return NextResponse.json({ ok: false, error: gwBalance.error || "Gateway balance unavailable" }, { status: 502 });
     }
 
-    // 4. Validate amount
+    // 5. Validate amount
     const amountValidation = validateAmount({ amountUsdc, availableAtomic: gwBalance.balanceAtomic });
     if (!amountValidation.ok) {
       return NextResponse.json({ ok: false, error: amountValidation.error }, { status: 400 });
     }
     const amountAtomic = amountValidation.amountAtomic!;
 
-    // 5. Build TransferSpec
+    // 6. Build TransferSpec + estimate
     const spec = buildTransferSpec({ walletAddress, amountAtomic });
-
-    // 6. Gateway estimate
     const estimate = await estimateGatewayWithdrawal({ spec });
     if (!estimate.ok || !estimate.burnIntent) {
       return NextResponse.json({ ok: false, error: estimate.error || "Gateway estimate failed" }, { status: 502 });
     }
 
-    // 7. Fee cap validation
+    // 7. Fee cap
     if (estimate.gatewayFee) {
       const feeValidation = validateFeeCap({ estimatedFee: estimate.gatewayFee });
       if (!feeValidation.ok) {
@@ -125,10 +149,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 8. Compute burn intent hash
-    const burnIntentHash = await computeBurnIntentDigest(estimate.burnIntent);
-
-    // 9. Store canonical BurnIntent — check for idempotent duplicate
+    // 8. Store canonical BurnIntent
+    const burnIntentHash = computeBurnIntentDigest(estimate.burnIntent);
     const { created, row, error: createError } = await createWithdrawal({
       walletMode: "creator_ucw",
       ownerRef: walletId,
@@ -147,22 +169,17 @@ export async function POST(req: NextRequest) {
     if (createError || !row) {
       return NextResponse.json({ ok: false, error: createError || "Failed to create withdrawal" }, { status: 500 });
     }
-
-    // IDEMPOTENT DUPLICATE — return existing, DO NOT create new challenge
     if (!created) {
       return NextResponse.json({ ok: true, ...safeResponse(row) });
     }
 
-    // 10. CAS: prepared → burn_signature_pending
-    const casResult = await updateWithdrawal(row.id, {
-      status: "burn_signature_pending",
-      expectedStatus: "prepared",
-    });
-    if (!casResult.ok || !casResult.row) {
-      return NextResponse.json({ ok: false, error: "Concurrent modification detected" }, { status: 409 });
+    // 9. CAS: prepared → burn_signature_pending
+    const cas1 = await updateWithdrawal(row.id, { status: "burn_signature_pending", expectedStatus: "prepared" });
+    if (!cas1.ok || !cas1.row) {
+      return NextResponse.json({ ok: false, error: "Concurrent modification" }, { status: 409 });
     }
 
-    // 11. Create signTypedData challenge via UCW SDK
+    // 10. Create signTypedData challenge — on failure, CAS back to failed
     const typedData = {
       types: GATEWAY_EIP712_TYPES,
       domain: GATEWAY_EIP712_DOMAIN,
@@ -170,23 +187,30 @@ export async function POST(req: NextRequest) {
       message: estimate.burnIntent,
     };
 
-    const { challengeId: signChallengeId } = await signTypedDataForGateway(
-      session.userToken,
-      walletId,
-      typedData,
-    );
+    try {
+      const { challengeId: signChallengeId } = await signTypedDataForGateway(session.userToken, walletId, typedData);
 
-    await updateWithdrawal(row.id, {
-      signingChallengeId: signChallengeId,
-      expectedStatus: "burn_signature_pending",
-    });
+      const cas2 = await updateWithdrawal(row.id, {
+        signingChallengeId: signChallengeId,
+        expectedStatus: "burn_signature_pending",
+      });
+      if (!cas2.ok || !cas2.row) {
+        return NextResponse.json({ ok: false, error: "Concurrent modification" }, { status: 409 });
+      }
 
-    return NextResponse.json({
-      ok: true,
-      withdrawalId: row.id,
-      status: "burn_signature_pending",
-      signChallengeId,
-    });
+      return NextResponse.json({ ok: true, withdrawalId: row.id, status: "burn_signature_pending", signChallengeId });
+    } catch (e: unknown) {
+      // Challenge creation failed — CAS back to failed, allow retry
+      const msg = e instanceof Error ? e.message : String(e);
+      const casFail = await updateWithdrawal(row.id, {
+        status: "failed",
+        expectedStatus: "burn_signature_pending",
+        errorCode: "sign_challenge_failed",
+        errorMessage: msg.slice(0, 300),
+      });
+      if (!casFail.ok) console.error("[ucw/withdraw] CAS failed after challenge error:", casFail.error);
+      return NextResponse.json({ ok: false, error: "Signing challenge creation failed" }, { status: 502 });
+    }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[ucw/withdraw] Error:", msg.slice(0, 200));
