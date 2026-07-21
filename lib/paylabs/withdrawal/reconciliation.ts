@@ -12,10 +12,11 @@
 
 import { createRequire } from "node:module";
 import { findReconcilableWithdrawals, updateWithdrawal, getWithdrawal, casUpdateStatus } from "./ledger";
+import { supabaseAdmin } from "../db/server";
 import { getGatewayTransferById, computeBurnIntentDigest } from "./gateway-transfer";
 import { explorerUrl } from "./explorer";
 import { GATEWAY_MINTER_ADDRESS } from "./gateway-types";
-import type { WithdrawalRow } from "./gateway-types";
+import type { WithdrawalRow, WithdrawalStatus, WalletMode } from "./gateway-types";
 
 const _require = createRequire(import.meta.url);
 
@@ -58,19 +59,47 @@ async function retryDcwMint(row: WithdrawalRow, newIdempotencyKey = false): Prom
   const transfer = await getGatewayTransferById(row.gateway_transfer_id);
   if (!transfer.ok || !transfer.data) return false;
 
-  const { status: transferStatus, attestationPayload, attestationSignature, expirationBlock } = transfer.data;
+  const { status: rawStatus, attestationPayload, attestationSignature, expirationBlock } = transfer.data;
 
-  // Check Gateway transfer status — don't retry if already confirmed/finalized
-  if (transferStatus === "CONFIRMED" || transferStatus === "FINALIZED") return false;
-  // Don't retry if expired
-  if (transferStatus === "EXPIRED") return false;
+  // P0-1: Normalize Gateway status — API returns lowercase
+  const transferStatus = (rawStatus || "").toLowerCase();
+
   // Don't retry if attestation is missing
   if (!attestationPayload || !attestationSignature) return false;
 
-  // For confirmed terminal failure, use a new idempotency key
+  // Don't retry if transfer is confirmed/finalized (already settled on-chain)
+  if (transferStatus === "confirmed" || transferStatus === "finalized") return false;
+
+  // Don't retry if transfer is expired (attestation expired)
+  if (transferStatus === "expired") return false;
+
+  // Optional: check expirationBlock against current Arc destination block
+  // If attestation has expired on-chain, don't waste gas retrying
+  if (expirationBlock && expirationBlock > 0) {
+    // TODO: fetch current Arc block height if needed for strict validation
+  }
+
+  // Determine idempotency key: same key for ambiguous, new key only for confirmed terminal failure
   const idempotencyKey = newIdempotencyKey
     ? crypto.randomUUID()
     : row.mint_idempotency_key;
+
+  // P0-3: Pre-persist new retry key BEFORE calling Circle (CAS)
+  if (newIdempotencyKey) {
+    const casKey = await updateWithdrawal(row.id, {
+      mintIdempotencyKey: idempotencyKey,
+      expectedStatus: row.status as any,
+      safeMetadata: {
+        ...((row.safe_metadata as Record<string, unknown>) || {}),
+        retryAttempt: ((row.safe_metadata as any)?.retryAttempt || 0) + 1,
+        previousTransactionId: row.circle_transaction_id || null,
+      },
+    });
+    if (!casKey.ok) {
+      console.error("[retryDcwMint] CAS failed pre-persisting retry key:", casKey.error);
+      return false;
+    }
+  }
 
   try {
     const client = getDcwClient();
@@ -89,16 +118,73 @@ async function retryDcwMint(row: WithdrawalRow, newIdempotencyKey = false): Prom
         expectedStatus: row.status as any,
         circleTransactionId: mintTxId,
         mintIdempotencyKey: idempotencyKey,
-        safeMetadata: {
-          ...((row.safe_metadata as Record<string, unknown>) || {}),
-          retryAttempt: ((row.safe_metadata as any)?.retryAttempt || 0) + 1,
-          previousTransactionId: row.circle_transaction_id || null,
-        },
       });
       return casResult.ok;
     }
   } catch { /* retry failed */ }
   return false;
+}
+
+// ─── Monotonic Recovery Helper ─────────────────────────────────
+
+/**
+ * Guarded recovery: persists an external reference (gateway_transfer_id, attestation_hash,
+ * mint_challenge_id, etc.) with monotonic state transition.
+ * - Verifies wallet ownership
+ * - Permits only explicitly allowed current statuses
+ * - Persists the external reference
+ * - Performs a monotonic state transition (never regresses)
+ * - Returns and checks the updated row
+ */
+export async function monotonicRecoveryPersist(
+  withdrawalId: string,
+  walletMode: WalletMode,
+  ownerRef: string,
+  allowedCurrentStatuses: WithdrawalStatus[],
+  fields: { gatewayTransferId?: string; attestationHash?: string; mintChallengeId?: string; mintIdempotencyKey?: string; circleTransactionId?: string; },
+  nextStatus: WithdrawalStatus,
+): Promise<{ ok: boolean; row?: WithdrawalRow; error?: string }> {
+  // 1. Verify ownership
+  const { row, error: loadError } = await getWithdrawal(withdrawalId, walletMode, ownerRef);
+  if (loadError || !row) return { ok: false, error: "Withdrawal not found" };
+
+  // 2. Verify current status is in allowed set (prevents regression)
+  if (!allowedCurrentStatuses.includes(row.status)) {
+    return { ok: false, error: `Status '${row.status}' not in allowed recovery statuses` };
+  }
+
+  // 3. Persist external references (direct update, no status change)
+  const db = supabaseAdmin();
+  const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (fields.gatewayTransferId !== undefined) updatePayload.gateway_transfer_id = fields.gatewayTransferId;
+  if (fields.attestationHash !== undefined) updatePayload.attestation_hash = fields.attestationHash;
+  if (fields.mintChallengeId !== undefined) updatePayload.mint_challenge_id = fields.mintChallengeId;
+  if (fields.mintIdempotencyKey !== undefined) updatePayload.mint_idempotency_key = fields.mintIdempotencyKey;
+  if (fields.circleTransactionId !== undefined) updatePayload.circle_transaction_id = fields.circleTransactionId;
+
+  const { error: updateError } = await db
+    .from("paylabs_gateway_withdrawals")
+    .update(updatePayload)
+    .eq("id", withdrawalId)
+    .eq("wallet_mode", walletMode)
+    .eq("owner_ref", ownerRef)
+    .eq("status", row.status);
+
+  if (updateError) return { ok: false, error: `Recovery persist failed: ${updateError.message}` };
+
+  // 4. Monotonic state transition via CAS
+  const casResult = await updateWithdrawal(withdrawalId, {
+    status: nextStatus,
+    expectedStatus: row.status,
+  });
+
+  // 5. Return persisted row
+  if (casResult.ok && casResult.row) {
+    return { ok: true, row: casResult.row };
+  }
+  // CAS might have failed if status already advanced — re-read
+  const { row: afterRow } = await getWithdrawal(withdrawalId, walletMode, ownerRef);
+  return { ok: !!afterRow, row: afterRow || undefined, error: casResult.error };
 }
 
 // ─── Reconcile Single Withdrawal ─────────────────────────────
@@ -139,15 +225,24 @@ async function reconcileWithdrawal(row: WithdrawalRow): Promise<void> {
       return;
     }
 
-    // Case 2: attestation_received / reconciliation_required with transferId — retry mint
+    // Case 2: attestation_received / reconciliation_required / mint_submission_pending with transferId — retry mint
     if ((status === "attestation_received" || status === "reconciliation_required" || status === "mint_submission_pending") && gateway_transfer_id) {
       const transfer = await getGatewayTransferById(gateway_transfer_id);
       if (transfer.ok && transfer.data?.attestationPayload) {
-        const { status: transferStatus } = transfer.data;
+        // P0-1: Normalize Gateway status to lowercase
+        const transferStatus = (transfer.data.status || "").toLowerCase();
         // Don't retry if transfer is expired or confirmed/finalized
-        if (transferStatus !== "EXPIRED" && transferStatus !== "CONFIRMED" && transferStatus !== "FINALIZED") {
-          // Ambiguous retry: use same key. Confirmed failure: use new key.
-          const isNewKey = status === "reconciliation_required";
+        if (transferStatus !== "expired" && transferStatus !== "confirmed" && transferStatus !== "finalized") {
+          // P0-2: Retry key logic — check error_code, not just status
+          // Only confirmed terminal failures create a NEW key.
+          // Ambiguous/no-response cases (mint_submission_failed, mint_no_tx_id,
+          // timeout, response lost, crash after request) reuse the SAME key.
+          const isNewKey = status === "reconciliation_required"
+            && row.error_code !== "mint_submission_failed"
+            && row.error_code !== "mint_no_tx_id"
+            && row.error_code !== "gateway_timeout"
+            && row.error_code !== "mint_submission_pending"
+            && row.error_code !== "cas_recovery";
           const retried = await retryDcwMint(row, isNewKey);
           if (retried) return;
         }
@@ -170,13 +265,33 @@ async function reconcileWithdrawal(row: WithdrawalRow): Promise<void> {
   // ── UCW wallet-specific handling ──────────────────────────
   // UCW cannot be polled server-side (needs userToken from session)
   // Leave mint_approval_pending and mint_submitted for frontend resolution
-  // Only handle gateway timeout
+  // Only handle gateway timeout and challenge recovery
+
+  // Case: gateway_submitted without attestation — timeout
   if (status === "gateway_submitted") {
     await updateWithdrawal(id, {
       status: "reconciliation_required", expectedStatus: "gateway_submitted",
       errorCode: "gateway_timeout", errorMessage: "Gateway submission timed out",
     });
+    return;
   }
+
+  // P0-4b: UCW recovery for mint_submission_pending with persisted mintIdempotencyKey
+  // Runtime crashed after persisting key but before createGatewayMintChallenge succeeded.
+  // Re-use the SAME persisted key to call createGatewayMintChallenge.
+  if (status === "mint_submission_pending" && row.mint_idempotency_key && !row.mint_challenge_id) {
+    // Cannot recover without userToken — mark for frontend retry
+    // Frontend must re-call sign endpoint which will use the persisted key
+    return;
+  }
+
+  // P0-4b: UCW recovery for reconciliation_required with persisted mintIdempotencyKey but no mintChallengeId
+  if (status === "reconciliation_required" && row.mint_idempotency_key && !row.mint_challenge_id) {
+    // Cannot recover without userToken — leave for frontend resolution
+    // Frontend can re-trigger the mint flow using the persisted mintIdempotencyKey
+    return;
+  }
+
   // attestation_received without mint challenge → needs frontend
   // mint_approval_pending → needs frontend sdk.execute()
   // mint_submitted → needs frontend to call /mint endpoint

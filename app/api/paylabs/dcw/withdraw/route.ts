@@ -104,6 +104,28 @@ export async function GET(req: NextRequest) {
           return NextResponse.json({ ok: true, ...safeResponse(casResult.row) });
         }
       } else if (TERMINAL.has(txResult.state)) {
+        // P0-7: On Circle mint terminal failure, check Gateway transfer before hard failure
+        if (row.gateway_transfer_id) {
+          const gwTransfer = await getGatewayTransferById(row.gateway_transfer_id);
+          if (gwTransfer.ok && gwTransfer.data) {
+            const gwStatus = (gwTransfer.data.status || "").toLowerCase();
+            const hasAttestation = !!gwTransfer.data.attestationPayload && !!gwTransfer.data.attestationSignature;
+            // If attestation is still valid and transfer is not expired/confirmed/finalized → retryable
+            if (hasAttestation && gwStatus !== "expired" && gwStatus !== "confirmed" && gwStatus !== "finalized") {
+              const casRetry = await updateWithdrawal(withdrawalId, {
+                status: "reconciliation_required",
+                expectedStatus: "mint_submitted",
+                errorCode: "mint_tx_retryable",
+                errorMessage: `Circle tx: ${txResult.state}, Gateway: ${gwStatus}`,
+                txHash: txResult.txHash ?? undefined,
+              });
+              if (casRetry.ok && casRetry.row) {
+                return NextResponse.json({ ok: true, ...safeResponse(casRetry.row) });
+              }
+            }
+          }
+        }
+        // Definitively non-retryable or no attestation → hard failure
         await updateWithdrawal(withdrawalId, {
           status: "failed",
           expectedStatus: "mint_submitted",
@@ -360,15 +382,28 @@ export async function POST(req: NextRequest) {
         gasPreflightOk, gasPreflightFee,
       });
       if (!cas4.ok || !cas4.row) {
-        // CAS failed — recovery: check if tx ID was stored by another request
+        // CAS failed — P0-5: use monotonic recovery to persist tx ID and advance state
         const { row: recheck } = await getWithdrawal(withdrawalId, "dcw", session.sub);
         if (!recheck?.circle_transaction_id) {
-          await supabaseAdmin().from("paylabs_gateway_withdrawals")
-            .update({ circle_transaction_id: mintTxId, status: "mint_submitted", updated_at: new Date().toISOString() })
-            .eq("id", withdrawalId)
-            .eq("status", "mint_submission_pending");
+          // Try to persist via guarded monotonic recovery
+          const { monotonicRecoveryPersist } = await import("@/lib/paylabs/withdrawal/reconciliation");
+          const recoveryResult = await monotonicRecoveryPersist(
+            withdrawalId, "dcw", session.sub,
+            ["mint_submission_pending"],
+            { circleTransactionId: mintTxId, mintIdempotencyKey },
+            "mint_submitted",
+          );
+          if (recoveryResult.ok && recoveryResult.row) {
+            return NextResponse.json({ ok: true, ...safeResponse(recoveryResult.row) });
+          }
         }
-        await updateWithdrawal(withdrawalId, { status: "reconciliation_required", errorCode: "cas_recovery" });
+        // Recovery failed or already advanced — mark for reconciliation
+        const casReconcile = await updateWithdrawal(withdrawalId, {
+          status: "reconciliation_required",
+          expectedStatus: "mint_submission_pending",
+          errorCode: "cas_recovery",
+          circleTransactionId: mintTxId,
+        });
         return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required", wallet_address: walletAddress, amount_usdc: parseFloat(amountUsdc) }) });
       }
 

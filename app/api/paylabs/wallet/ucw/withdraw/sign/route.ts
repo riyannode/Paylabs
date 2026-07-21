@@ -98,18 +98,25 @@ export async function POST(req: NextRequest) {
       status: "gateway_submitted", expectedStatus: "burn_signed", gatewayTransferId: transferResult.transferId,
     });
     if (!cas2.ok || !cas2.row) {
-      // Re-read to check if another request already stored the reference
+      // CAS failed — P0-5/6: use monotonic recovery (never regress state)
       const { row: recheck } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-      if (recheck?.gateway_transfer_id) {
-        // Another request already stored it — proceed with existing data
-      } else {
-        // Recovery: force persist the transferId
-        await supabaseAdmin().from("paylabs_gateway_withdrawals")
-          .update({ gateway_transfer_id: transferResult.transferId, updated_at: new Date().toISOString() })
-          .eq("id", withdrawalId);
-        await updateWithdrawal(withdrawalId, { status: "reconciliation_required", errorCode: "cas_recovery" });
-        return NextResponse.json({ ok: true, withdrawalId, status: "reconciliation_required" });
+      if (!recheck?.gateway_transfer_id) {
+        const { monotonicRecoveryPersist } = await import("@/lib/paylabs/withdrawal/reconciliation");
+        const recoveryResult = await monotonicRecoveryPersist(
+          withdrawalId, "creator_ucw", session.walletId,
+          ["burn_signed"],
+          { gatewayTransferId: transferResult.transferId, attestationHash: transferResult.attestationHash },
+          "gateway_submitted",
+        );
+        if (recoveryResult.ok && recoveryResult.row) {
+          return NextResponse.json({ ok: true, withdrawalId, status: "gateway_submitted" });
+        }
       }
+      // Recovery failed or already advanced — mark for reconciliation
+      await updateWithdrawal(withdrawalId, {
+        status: "reconciliation_required", expectedStatus: "burn_signed", errorCode: "cas_recovery",
+      });
+      return NextResponse.json({ ok: true, withdrawalId, status: "reconciliation_required" });
     }
 
     // CAS: gateway_submitted → attestation_received (CHECK CAS)
@@ -119,19 +126,31 @@ export async function POST(req: NextRequest) {
     if (!cas3.ok || !cas3.row) {
       const { row: recheck } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
       if (!recheck?.attestation_hash) {
-        await supabaseAdmin().from("paylabs_gateway_withdrawals")
-          .update({ attestation_hash: transferResult.attestationHash, updated_at: new Date().toISOString() })
-          .eq("id", withdrawalId);
+        const { monotonicRecoveryPersist } = await import("@/lib/paylabs/withdrawal/reconciliation");
+        const recoveryResult = await monotonicRecoveryPersist(
+          withdrawalId, "creator_ucw", session.walletId,
+          ["gateway_submitted"],
+          { attestationHash: transferResult.attestationHash },
+          "attestation_received",
+        );
+        if (recoveryResult.ok && recoveryResult.row) {
+          return NextResponse.json({ ok: true, withdrawalId, status: "attestation_received" });
+        }
       }
-      await updateWithdrawal(withdrawalId, { status: "reconciliation_required", errorCode: "cas_recovery" });
+      await updateWithdrawal(withdrawalId, {
+        status: "reconciliation_required", expectedStatus: "gateway_submitted", errorCode: "cas_recovery",
+      });
       return NextResponse.json({ ok: true, withdrawalId, status: "reconciliation_required" });
     }
 
-    // Pre-persist mint idempotency key BEFORE calling Circle
+    // P0-4: Pre-persist mint idempotency key BEFORE calling Circle — check CAS result
     const mintIdempotencyKey = randomUUID();
-    await updateWithdrawal(withdrawalId, {
+    const casPre = await updateWithdrawal(withdrawalId, {
       status: "mint_submission_pending", expectedStatus: "attestation_received", mintIdempotencyKey,
     });
+    if (!casPre.ok || !casPre.row) {
+      return NextResponse.json({ ok: true, withdrawalId, status: "reconciliation_required" });
+    }
 
     // Gas preflight
     let gasPreflightOk = false;
@@ -155,14 +174,23 @@ export async function POST(req: NextRequest) {
         mintChallengeId, gasPreflightOk, gasPreflightFee,
       });
       if (!cas4.ok || !cas4.row) {
-        // Challenge was created but CAS failed — recovery
+        // Challenge was created but CAS failed — P0-5/6: monotonic recovery
         const { row: recheck } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
         if (!recheck?.mint_challenge_id) {
-          await supabaseAdmin().from("paylabs_gateway_withdrawals")
-            .update({ mint_challenge_id: mintChallengeId, updated_at: new Date().toISOString() })
-            .eq("id", withdrawalId);
+          const { monotonicRecoveryPersist } = await import("@/lib/paylabs/withdrawal/reconciliation");
+          const recoveryResult = await monotonicRecoveryPersist(
+            withdrawalId, "creator_ucw", session.walletId,
+            ["mint_submission_pending"],
+            { mintChallengeId, mintIdempotencyKey },
+            "mint_approval_pending",
+          );
+          if (recoveryResult.ok && recoveryResult.row) {
+            return NextResponse.json({ ok: true, withdrawalId, status: "mint_approval_pending", mintChallengeId });
+          }
         }
-        await updateWithdrawal(withdrawalId, { status: "reconciliation_required", errorCode: "cas_recovery" });
+        await updateWithdrawal(withdrawalId, {
+          status: "reconciliation_required", expectedStatus: "mint_submission_pending", errorCode: "cas_recovery",
+        });
         return NextResponse.json({ ok: true, withdrawalId, status: "reconciliation_required" });
       }
 

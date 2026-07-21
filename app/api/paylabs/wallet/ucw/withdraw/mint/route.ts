@@ -69,15 +69,30 @@ export async function GET(req: NextRequest) {
         } else if (FAILURE.has(txStatus.state)) {
           // Mint failed — check if attestation is still valid for retry
           if (row.gateway_transfer_id) {
-            // Retryable — go to reconciliation_required
-            const casRetry = await updateWithdrawal(withdrawalId, {
-              status: "reconciliation_required", expectedStatus: "mint_submitted",
+            // P0-7: Check Gateway transfer status before marking retryable
+            const { getGatewayTransferById } = await import("@/lib/paylabs/withdrawal/gateway-transfer");
+            const gwTransfer = await getGatewayTransferById(row.gateway_transfer_id);
+            if (gwTransfer.ok && gwTransfer.data) {
+              const gwStatus = (gwTransfer.data.status || "").toLowerCase();
+              const hasAttestation = !!gwTransfer.data.attestationPayload && !!gwTransfer.data.attestationSignature;
+              if (hasAttestation && gwStatus !== "expired" && gwStatus !== "confirmed" && gwStatus !== "finalized") {
+                // Retryable — go to reconciliation_required
+                const casRetry = await updateWithdrawal(withdrawalId, {
+                  status: "reconciliation_required", expectedStatus: "mint_submitted",
+                  errorCode: "mint_tx_retryable", errorMessage: `Circle tx: ${txStatus.state}, Gateway: ${gwStatus}`,
+                  txHash: txStatus.txHash || undefined,
+                });
+                if (casRetry.ok && casRetry.row) {
+                  return NextResponse.json({ ok: true, ...safeResponse(casRetry.row) });
+                }
+              }
+            }
+            // Non-retryable or no attestation — hard failure
+            await updateWithdrawal(withdrawalId, {
+              status: "failed", expectedStatus: "mint_submitted",
               errorCode: "mint_tx_failed", errorMessage: `Circle tx: ${txStatus.state}`,
               txHash: txStatus.txHash || undefined,
             });
-            if (casRetry.ok && casRetry.row) {
-              return NextResponse.json({ ok: true, ...safeResponse(casRetry.row) });
-            }
           } else {
             // No transfer to retry from — hard failure
             await updateWithdrawal(withdrawalId, {
@@ -142,18 +157,26 @@ export async function POST(req: NextRequest) {
       });
 
       if (!casResult.ok || !casResult.row) {
-        // CAS failed — check if another request already stored the tx ID
+        // CAS failed — P0-5/6: monotonic recovery (never regress state)
         const { row: recheck } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
         if (recheck?.circle_transaction_id) {
           // Already stored — proceed to poll
         } else {
-          // Recovery: force persist
-          await supabaseAdmin().from("paylabs_gateway_withdrawals")
-            .update({ circle_transaction_id: resolvedTxId, status: "mint_submitted", updated_at: new Date().toISOString() })
-            .eq("id", withdrawalId)
-            .eq("status", "mint_approval_pending");
-          await updateWithdrawal(withdrawalId, { status: "reconciliation_required", errorCode: "cas_recovery" });
-          return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required" }) });
+          const { monotonicRecoveryPersist } = await import("@/lib/paylabs/withdrawal/reconciliation");
+          const recoveryResult = await monotonicRecoveryPersist(
+            withdrawalId, "creator_ucw", session.walletId,
+            ["mint_approval_pending"],
+            { circleTransactionId: resolvedTxId },
+            "mint_submitted",
+          );
+          if (recoveryResult.ok && recoveryResult.row) {
+            // Proceed to poll with recovered state
+          } else {
+            await updateWithdrawal(withdrawalId, {
+              status: "reconciliation_required", expectedStatus: "mint_approval_pending", errorCode: "cas_recovery",
+            });
+            return NextResponse.json({ ok: true, ...safeResponse({ id: withdrawalId, status: "reconciliation_required" }) });
+          }
         }
       }
 
@@ -169,11 +192,30 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ ok: true, ...safeResponse(finCas.row) });
           }
         } else if (FAILURE.has(txStatus.state)) {
+          // P0-7: Check Gateway transfer status before marking retryable
           if (row.gateway_transfer_id) {
-            await updateWithdrawal(withdrawalId, {
-              status: "reconciliation_required", expectedStatus: "mint_submitted",
-              errorCode: "mint_tx_failed", errorMessage: `Circle tx: ${txStatus.state}`,
-            });
+            const { getGatewayTransferById } = await import("@/lib/paylabs/withdrawal/gateway-transfer");
+            const gwTransfer = await getGatewayTransferById(row.gateway_transfer_id);
+            if (gwTransfer.ok && gwTransfer.data) {
+              const gwStatus = (gwTransfer.data.status || "").toLowerCase();
+              const hasAttestation = !!gwTransfer.data.attestationPayload && !!gwTransfer.data.attestationSignature;
+              if (hasAttestation && gwStatus !== "expired" && gwStatus !== "confirmed" && gwStatus !== "finalized") {
+                await updateWithdrawal(withdrawalId, {
+                  status: "reconciliation_required", expectedStatus: "mint_submitted",
+                  errorCode: "mint_tx_retryable", errorMessage: `Circle tx: ${txStatus.state}, Gateway: ${gwStatus}`,
+                });
+              } else {
+                await updateWithdrawal(withdrawalId, {
+                  status: "failed", expectedStatus: "mint_submitted",
+                  errorCode: "mint_tx_failed", errorMessage: `Circle tx: ${txStatus.state}`,
+                });
+              }
+            } else {
+              await updateWithdrawal(withdrawalId, {
+                status: "failed", expectedStatus: "mint_submitted",
+                errorCode: "mint_tx_failed", errorMessage: `Circle tx: ${txStatus.state}`,
+              });
+            }
           } else {
             await updateWithdrawal(withdrawalId, {
               status: "failed", expectedStatus: "mint_submitted",

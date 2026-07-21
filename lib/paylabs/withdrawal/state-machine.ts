@@ -10,18 +10,18 @@ import type { WithdrawalStatus } from "./gateway-types";
 // ─── Valid Transitions ───────────────────────────────────────
 
 const VALID_TRANSITIONS: Record<WithdrawalStatus, WithdrawalStatus[]> = {
-  prepared:                  ["burn_signature_pending", "failed", "expired"],
+  prepared:                  ["burn_signed", "burn_signature_pending", "failed", "expired"],
   burn_signature_pending:    ["burn_signed", "failed", "expired"],
   burn_signed:               ["gateway_submitted", "failed"],
   gateway_submitted:         ["attestation_received", "reconciliation_required", "failed"],
   attestation_received:      ["mint_submission_pending", "mint_approval_pending", "failed"],
-  mint_submission_pending:   ["mint_submitted", "reconciliation_required", "failed"],
+  mint_submission_pending:   ["mint_submitted", "mint_approval_pending", "reconciliation_required", "failed"],
   mint_approval_pending:     ["mint_submitted", "failed"],
   mint_submitted:            ["finalized", "reconciliation_required", "failed"],
   finalized:                 [],
   failed:                    [],
   expired:                   [],
-  reconciliation_required:   ["failed", "reconciliation_required"],
+  reconciliation_required:   ["mint_submitted", "mint_submission_pending", "mint_approval_pending", "failed"],
 };
 
 /**
@@ -74,13 +74,18 @@ export const ACTIVE_STATUSES: WithdrawalStatus[] = [
   "burn_signed",
   "gateway_submitted",
   "attestation_received",
+  "mint_submission_pending",
   "mint_approval_pending",
   "mint_submitted",
+  "reconciliation_required",
 ];
 
 /** Statuses that need reconciliation */
 export const RECONCILIATION_STATUSES: WithdrawalStatus[] = [
   "gateway_submitted",
+  "attestation_received",
+  "mint_submission_pending",
+  "mint_approval_pending",
   "mint_submitted",
   "reconciliation_required",
 ];
