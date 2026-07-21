@@ -8,10 +8,36 @@ import { SocialLoginProvider } from "@circle-fin/w3s-pw-web-sdk/dist/src/types";
 // ── Session helpers (server-side, tokens never touch client) ──
 
 async function fetchSessionBalance(): Promise<PayLabsWalletBalance> {
-  const resp = await fetch("/api/paylabs/wallet/ucw?action=session-balance", { method: "POST", credentials: "include" });
-  if (!resp.ok) return { walletUsdc: "0", gatewayUsdc: null, source: "ucw" };
-  const data = (await resp.json()) as { usdc: string };
-  return { walletUsdc: data.usdc ?? "0", gatewayUsdc: null, source: "ucw" };
+  const response = await fetch("/api/paylabs/wallet/ucw?action=session-balance", {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    return {
+      walletUsdc: "0",
+      gatewayUsdc: null,
+      pendingBatchUsdc: "0",
+      gatewayError: "Balance unavailable",
+      source: "ucw",
+    };
+  }
+
+  const data = (await response.json()) as {
+    usdc?: string;
+    gatewayUsdc?: string | null;
+    pendingBatchUsdc?: string;
+    gatewayError?: string | null;
+  };
+
+  return {
+    walletUsdc: data.usdc ?? "0",
+    gatewayUsdc: data.gatewayUsdc ?? null,
+    pendingBatchUsdc: data.pendingBatchUsdc ?? "0",
+    gatewayError: data.gatewayError ?? null,
+    source: "ucw",
+  };
 }
 
 type SaveLoginData = {
@@ -22,6 +48,31 @@ type SaveLoginData = {
 };
 
 type UcwSdk = CircleW3SSdk;
+
+export type UcwChallengeKind =
+  | "burn-signature"
+  | "gateway-mint";
+
+export type UcwChallengeExecutionResult = {
+  raw: unknown;
+  signature?: string;
+};
+
+function extractSignatureUsingConfirmedSdkContract(result: unknown): string | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const data = (result as { data?: unknown }).data;
+  if (!data || typeof data !== "object") return undefined;
+  const signature = (data as { signature?: unknown }).signature;
+  return typeof signature === "string" ? signature : undefined;
+}
+
+function isCircleApprovalCancellation(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code =
+    (error as { code?: unknown; errorCode?: unknown }).code ??
+    (error as { errorCode?: unknown }).errorCode;
+  return String(code) === "155701";
+}
 
 function safeDiagnosticMessage(value: unknown): string {
   if (value instanceof Error) return value.message.slice(0, 300);
@@ -722,9 +773,91 @@ export function useCreatorUcwWallet() {
     setUcwBalance(balance);
   }, []);
 
+  const executeUcwChallenge = useCallback(
+    async (
+      challengeId: string,
+      kind: UcwChallengeKind,
+    ): Promise<UcwChallengeExecutionResult> => {
+      const sdk = ucwSdkRef.current;
+      const auth = ucwAuthRef.current;
+
+      if (!sdk || !auth) {
+        throw new Error(
+          "Creator Wallet must be reconnected before approving this withdrawal.",
+        );
+      }
+
+      if (auth.encryptionKey) {
+        sdk.setAuthentication({
+          userToken: auth.userToken,
+          encryptionKey: auth.encryptionKey,
+        });
+      }
+
+      sdk.setLocalizations(
+        kind === "burn-signature"
+          ? {
+              signatureRequest: {
+                title: "Approve withdrawal",
+                description: "Authorize withdrawal from your Gateway balance.",
+              },
+            }
+          : {
+              contractInteraction: {
+                title: "Approve withdrawal transaction",
+                subtitle: "Complete the Gateway withdrawal to your Creator Wallet.",
+              },
+            },
+      );
+
+      const result = await new Promise<unknown>((resolve, reject) => {
+        sdk.execute(challengeId, (error: unknown, value: unknown) => {
+          if (error) {
+            const message = isCircleApprovalCancellation(error)
+              ? "Approval was cancelled. Resume the existing withdrawal to continue."
+              : error instanceof Error
+                ? error.message
+                : typeof error === "object" && error && "message" in error
+                  ? String((error as { message?: unknown }).message)
+                  : "Creator Wallet approval was cancelled or failed.";
+
+            reject(new Error(message));
+            return;
+          }
+
+          resolve(value);
+        });
+      });
+
+      if (kind === "burn-signature") {
+        const signature = extractSignatureUsingConfirmedSdkContract(result);
+
+        if (
+          typeof signature !== "string" ||
+          !/^0x[0-9a-fA-F]+$/.test(signature)
+        ) {
+          throw new Error(
+            "Circle completed the approval but returned no valid signature.",
+          );
+        }
+
+        return {
+          raw: result,
+          signature,
+        };
+      }
+
+      return {
+        raw: result,
+      };
+    },
+    [],
+  );
+
   return {
     walletState,
     walletInfo,
+    ucwWalletId,
     ucwBalance,
     walletError,
     needsReconnectToSign,
@@ -741,5 +874,6 @@ export function useCreatorUcwWallet() {
     reconnect,
     disconnect,
     refreshBalance,
+    executeUcwChallenge,
   };
 }

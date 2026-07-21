@@ -11,7 +11,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/paylabs/db/server";
-import { getSession, getUserChallenge, getTransactionStatus } from "@/lib/paylabs/ucw";
+import { getSession, getUserChallenge, getTransactionStatus, refreshSession } from "@/lib/paylabs/ucw";
 import { getWithdrawal, updateWithdrawal } from "@/lib/paylabs/withdrawal/ledger";
 import type { WithdrawalRow, WithdrawalStatus } from "@/lib/paylabs/withdrawal/gateway-types";
 import { explorerUrl } from "@/lib/paylabs/withdrawal/explorer";
@@ -135,7 +135,10 @@ export async function GET(req: NextRequest) {
 
     // Re-read after potential update
     const { row: freshRow } = await getWithdrawal(withdrawalId, "creator_ucw", session.walletId);
-    return NextResponse.json({ ok: true, ...safeResponse(freshRow || row) });
+    await refreshSession(req.cookies.get("ucw_sid")!.value);
+    const response = NextResponse.json(safeResponse(freshRow || row));
+    response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
+    return response;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });

@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import CreatorWalletGatewayPanel from "./CreatorWalletGatewayPanel";
 import type { WalletState, WalletInfo, PayLabsWalletBalance } from "./wallet-types";
+import type { UcwChallengeExecutionResult, UcwChallengeKind } from "./useCreatorUcwWallet";
 
 type Props = {
   open: boolean;
@@ -29,6 +31,12 @@ type Props = {
   showEmailLogin?: boolean;
   onDisconnect?: () => void;
   finalizingCreatorWallet?: boolean;
+  walletId?: string | null;
+  onRefreshBalance?: () => Promise<void>;
+  executeUcwChallenge?: (
+    challengeId: string,
+    kind: UcwChallengeKind,
+  ) => Promise<UcwChallengeExecutionResult>;
 };
 
 function shortAddr(addr?: string | null) {
@@ -71,6 +79,9 @@ export default function UcwConnectModal({
   showEmailLogin = true,
   onDisconnect,
   finalizingCreatorWallet = false,
+  walletId,
+  onRefreshBalance,
+  executeUcwChallenge,
 }: Props) {
   const [showEmailInput, setShowEmailInput] = useState(defaultShowEmailInput);
   const [emailValue, setEmailValue] = useState("");
@@ -204,6 +215,17 @@ export default function UcwConnectModal({
               )}
             </div>
           </div>
+        ) : walletId && onRefreshBalance && onDisconnect && executeUcwChallenge ? (
+          <CreatorWalletGatewayPanel
+            walletId={walletId}
+            walletAddress={walletInfo.address}
+            balance={ucwBalance}
+            needsReconnectToSign={needsReconnectToSign}
+            onReconnect={onReconnect ?? (() => {})}
+            onRefreshBalance={onRefreshBalance}
+            onDisconnect={onDisconnect}
+            executeUcwChallenge={executeUcwChallenge}
+          />
         ) : (
           <div className="pl-wallet-content-v3">
             <div className="pl-connected-hero-v3">
@@ -211,49 +233,10 @@ export default function UcwConnectModal({
                 <span className="pl-connected-dot-v3">✓</span>
                 <span>{needsReconnectToSign ? "Creator Wallet found" : "Creator Wallet connected"}</span>
               </div>
-              <p className="muted" style={{ fontSize: 12, margin: "8px 0 0", textAlign: "center" }}>
-                Used for creator profile, source ownership, and monetization identity.
-              </p>
-              {needsReconnectToSign && (
-                <button className="pl-primary-v3" onClick={onReconnect} style={{ marginTop: 8 }}>
-                  {walletState === "connecting"
-                    ? "Preparing Creator Wallet login..."
-                    : ucwGoogleReady && authMethod === "google"
-                      ? "Continue Google reconnect"
-                      : "Reconnect Creator Wallet"}
-                </button>
-              )}
               {error && (
                 <div className="pl-wallet-error-v3" style={{ marginTop: 8 }}>
                   {error}
                 </div>
-              )}
-            </div>
-
-            <div className="pl-balance-tab">
-              <div className="pl-summary-card-v3">
-                <InfoRow icon={<WalletIcon />} label="Wallet" value={shortAddr(walletInfo.address)} copyValue={walletInfo.address} />
-                <InfoRow icon={<WalletIcon />} label="Type" value={walletTypeLabel(walletInfo.walletType)} />
-                <InfoRow icon={<CoinsIcon />} label="Network" value={walletInfo.network || "Arc Testnet"} />
-                {ucwBalance?.walletUsdc != null ? (
-                  <InfoRow icon={<CoinsIcon />} label="Wallet USDC" value={`${ucwBalance.walletUsdc} USDC`} />
-                ) : (
-                  <InfoRow icon={<CoinsIcon />} label="Wallet USDC" value="not available" />
-                )}
-              </div>
-
-              <button className="pl-primary-v3" onClick={onClose}>
-                Close
-              </button>
-              {onDisconnect && (
-                <button
-                  type="button"
-                  className="pl-eoa-fallback-v3"
-                  onClick={onDisconnect}
-                  style={{ marginTop: 8 }}
-                >
-                  Disconnect Creator Wallet
-                </button>
               )}
             </div>
           </div>
