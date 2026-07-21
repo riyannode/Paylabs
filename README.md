@@ -252,7 +252,7 @@ Watch PayLabs agents coordinate tasks, move between service desks, process payme
 
 <p align="center">
   <img
-    src="https://i.imgur.com/wiEN9cc.gif"
+    src="https://i.imgur.com/mofzKgY.gif"
     alt="PayLabs Agent Office runtime demo"
     width="900"
   />
