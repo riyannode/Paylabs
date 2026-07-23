@@ -51,9 +51,10 @@ Real micropayments flow through the agent runtime, with automatic USDC distribut
 | x402 service payment processed | **3,000+** |
 | Users / testers onboarded | **50+** |
 
-- **Live Production:** [https://paylabs.vercel.app/](https://paylabs.vercel.app/)
-- **Receipt**: [https://paylabs.vercel.app/explorer](https://paylabs.vercel.app/receipts) 
-- **Explorer** : [https://paylabs.vercel.app/explorer](https://paylabs.vercel.app/explorer) 
+- **Live Production:** [Live](https://paylabs.vercel.app/)
+- **Receipt**: [Receipt](https://paylabs.vercel.app/receipts) 
+- **Explorer** : [Explorer](https://paylabs.vercel.app/explorer) 
+- **Demo** : [Video Demo](https://youtu.be/I1CL6RTdjf4)
 
 **Circle Tools Usage:**
 ---
