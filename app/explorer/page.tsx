@@ -123,6 +123,87 @@ async function getTreasuryUnallocatedUsdc(): Promise<number> {
   );
 }
 
+type ExplorerTotals = {
+  totalSettledUsdc: number;
+  creatorPaidUsdc: number;
+  treasuryUnallocatedUsdc: number;
+};
+
+function explorerNumber(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
+ * Primary path:
+ * PostgreSQL calculates all monetary totals without PostgREST row limits.
+ *
+ * Fallback path:
+ * Preserve the existing Explorer behavior when the RPC migration has not
+ * been applied yet or Supabase temporarily rejects the RPC.
+ */
+async function getExplorerTotals(): Promise<ExplorerTotals> {
+  try {
+    // Use `any` here so the application does not depend on regenerated
+    // Supabase Database types immediately after adding the new RPC.
+    const db: any = supabaseAdmin();
+
+    const { data, error } = await db.rpc(
+      "get_paylabs_explorer_totals"
+    );
+
+    if (!error) {
+      const row = Array.isArray(data) ? data[0] : data;
+
+      if (row) {
+        return {
+          totalSettledUsdc: explorerNumber(
+            row.total_settled_usdc
+          ),
+          creatorPaidUsdc: explorerNumber(
+            row.creator_paid_usdc
+          ),
+          treasuryUnallocatedUsdc: explorerNumber(
+            row.treasury_unallocated_usdc
+          ),
+        };
+      }
+
+      console.warn(
+        "[explorer] totals RPC returned no row; using legacy fallback"
+      );
+    } else {
+      console.error(
+        "[explorer] totals RPC failed; using legacy fallback:",
+        error.message
+      );
+    }
+  } catch (error: unknown) {
+    console.error(
+      "[explorer] totals RPC exception; using legacy fallback:",
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+
+  // Safe deployment fallback. This keeps the current behavior intact if
+  // the application is deployed before the migration becomes available.
+  const [
+    totalSettledUsdc,
+    creatorPaidUsdc,
+    treasuryUnallocatedUsdc,
+  ] = await Promise.all([
+    safeSum("paylabs_receipts", "actual_settled_usdc"),
+    getCreatorPaidUsdc(),
+    getTreasuryUnallocatedUsdc(),
+  ]);
+
+  return {
+    totalSettledUsdc,
+    creatorPaidUsdc,
+    treasuryUnallocatedUsdc,
+  };
+}
+
 // ─── Preflight / Entry payments from discovery_runs ──────────
 
 async function getRecentPreflightPayments(limit = 50) {
@@ -294,10 +375,7 @@ export default async function DashboardPage() {
     servicePaymentCount,
     receiptCount,
     lastTxRow,
-    totalSettledUsdc,
-    // Payout ledger
-    creatorPaidUsdc,
-    treasuryUnallocatedUsdc,
+    explorerTotals,
   ] = await Promise.all([
     // x402 Service Payments
     getRecentX402Payments(25),
@@ -308,12 +386,15 @@ export default async function DashboardPage() {
     safeCount("paylabs_receipts"),
     // Last TX
     getLastTx(),
-    // Total settled USDC
-    safeSum("paylabs_receipts", "actual_settled_usdc"),
-    // Payout ledger aggregations
-    getCreatorPaidUsdc(),
-    getTreasuryUnallocatedUsdc(),
+    // Monetary totals only.
+    getExplorerTotals(),
   ]);
+
+  const {
+    totalSettledUsdc,
+    creatorPaidUsdc,
+    treasuryUnallocatedUsdc,
+  } = explorerTotals;
 
   // ─── Normalize and merge all payment rows ───
   const allRows: NormalizedPaymentRow[] = [
