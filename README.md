@@ -608,7 +608,7 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 If Brain/LLM fails afterward, the run fails safely as 504 brain_failed and cannot execute, but the 0.000001 USDC Route Check fee is not refunded.
 Accepted for now because the amount is minimal.
 
-- **Wallet:** Login email OTP in backend for UCW and DCW remains due to testing needs, and have so many UCW inline stale and dead code for chat page not clean up yet
+- **Wallet:** Login email OTP in backend for UCW and DCW remains due to testing needs, and have so many UCW inline stale and dead code not clean up yet
 
 ## Runtime Notes
 
