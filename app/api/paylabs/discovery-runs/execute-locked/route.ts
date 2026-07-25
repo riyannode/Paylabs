@@ -6,7 +6,7 @@
  *
  * Flow:
  *   1st request (no payment) → 402 + final entry payment challenge
- *   2nd request (with payment) → verify+settle → locked macro-node pipeline
+ *   2nd request (with payment) → settle → locked macro-node pipeline
  *
  * Gated behind PAYLABS_AUTO_TIER_PREFLIGHT_ENABLED feature flag.
  * Requires a completed route-preflight (agent_trace.auto_tier_preflight.status === "locked").
@@ -36,6 +36,7 @@ import { resolvePaylabsAppUrl, resolvePublicAppUrl } from "@/lib/paylabs/runtime
 import { randomUUID } from "node:crypto";
 import { isOfficeMacroAgentId } from "@/lib/paylabs/office/registry";
 import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
+import { attachPaymentResponseHeader } from "@/lib/paylabs/x402/seller-challenge";
 
 // ─── Local helpers (same as inline/route.ts) ─────────────────
 
@@ -361,6 +362,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Track settlement state for receipt attachment on all post-settlement responses
+  let settledPaymentResponse:
+    | { paymentResponseHeader?: string | null }
+    | null = null;
+
   try {
     // ── Parse body ──────────────────────────────────────────
     const body = await req.json().catch(() => ({}));
@@ -539,7 +545,7 @@ export async function POST(req: NextRequest) {
     // ── Import x402 primitives ──────────────────────────────
     const {
       buildCustomerEntryChallenge,
-      verifyAndSettleCustomerEntry,
+      settleCustomerEntryPayment,
       buildCustomerEntryPaymentData,
     } = await import("@/lib/paylabs/x402/customer-entry-payment");
 
@@ -595,15 +601,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── Verify + settle final entry payment ─────────────────
-    const entryResult = await verifyAndSettleCustomerEntry(
+    // ── Settle final entry payment ──────────────────────────
+    const entryResult = await settleCustomerEntryPayment(
       customerPaymentSignature,
       finalEntryPaymentUsdc,
     );
 
     // Fail closed if payment invalid
     if (!entryResult.ok || !entryResult.settled) {
-      const entryErrorMsg = entryResult.error || "Final entry payment verification failed";
+      const entryErrorMsg = entryResult.error || "Final entry payment settlement failed";
 
       await supabaseAdmin()
         .from("paylabs_discovery_runs")
@@ -642,11 +648,16 @@ export async function POST(req: NextRequest) {
         })
         .eq("id", discoveryRunId);
 
-      return NextResponse.json(
+      const response = NextResponse.json(
         { ok: false, error: "Final entry payment payer does not match claimed user wallet" },
         { status: 403 },
       );
+      attachPaymentResponseHeader(response.headers, entryResult);
+      return response;
     }
+
+    // Track settlement state for receipt attachment on all post-settlement responses
+    settledPaymentResponse = { paymentResponseHeader: entryResult.paymentResponseHeader };
 
     // ── Store final entry payment metadata (safe, no raw signatures) ──
     const finalPaymentMeta = {
@@ -1045,7 +1056,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Return response ─────────────────────────────────────
-    return NextResponse.json({
+    const successResponse = NextResponse.json({
       ok: result.status === "completed",
       final_answer: finalAnswer,
       discovery_run_id: discoveryRunId,
@@ -1162,13 +1173,19 @@ export async function POST(req: NextRequest) {
       error: result.error,
       visibility_error: visibilityError,
     });
+    attachPaymentResponseHeader(successResponse.headers, settledPaymentResponse);
+    return successResponse;
   } catch (e: unknown) {
     const rawMsg = e instanceof Error ? e.message : String(e);
     const safeMsg = rawMsg.length > 200 ? rawMsg.slice(0, 200) + "..." : rawMsg;
     console.error("[execute_locked] Error:", safeMsg);
-    return NextResponse.json(
+    const errorResponse = NextResponse.json(
       { ok: false, error: `Execute-locked failed: ${safeMsg}` },
       { status: 500 },
     );
+    if (settledPaymentResponse) {
+      attachPaymentResponseHeader(errorResponse.headers, settledPaymentResponse);
+    }
+    return errorResponse;
   }
 }

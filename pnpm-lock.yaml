@@ -41,6 +41,9 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.49.4
         version: 2.108.2
+      '@x402/core':
+        specifier: ^2.16.0
+        version: 2.16.0
       cheerio:
         specifier: ^1.0.0
         version: 1.2.0
@@ -2899,6 +2902,7 @@ packages:
 
   uuid@9.0.1:
     resolution: {integrity: sha512-b+1eJOlsR9K8HJpow9Ok3fiWOWSIcIzXodvv0rQjVoOVNpWMpxf1wZNpt4y9h10odCNrqnYp1OBzRktckBe3sA==}
+    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
   viem@2.52.2:

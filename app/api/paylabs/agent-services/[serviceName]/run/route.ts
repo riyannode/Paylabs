@@ -9,7 +9,7 @@
  *
  * - If service IS in PAYLABS_X402_ENABLED_SERVICE_NAMES:
  *   First request (no payment header): returns real HTTP 402 + PAYMENT-REQUIRED header.
- *   Retry with payment header: verify/settle via Circle x402-batching SDK.
+ *   Retry with payment header: settle via Circle x402-batching SDK.
  *   Handler runs ONLY after settlement succeeds.
  *   Safe payment metadata stored in response.
  *
@@ -32,7 +32,8 @@ import {
   buildPaymentRequirements,
   buildX402Challenge,
   encodeChallengeHeader,
-  verifyAndSettlePayment,
+  settlePayment,
+  attachPaymentResponseHeader,
 } from "@/lib/paylabs/x402/seller-challenge";
 import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
 import { phaseFromMacroNode, statusFromServiceName } from "@/lib/paylabs/office/event-mapper";
@@ -150,7 +151,7 @@ export async function POST(
     );
   }
 
-  // ── x402 path: challenge → verify → settle → handler ──
+  // ── x402 path: challenge → settle → handler ──
   return executeX402SellerPath(req, serviceNameTyped, config, buyerAgentName, discoveryRunId, payload);
 }
 
@@ -196,7 +197,7 @@ async function emitMacroPaymentOfficeEvent(args: {
  * Handle x402-enabled service edge:
  * 1. Check for payment header
  * 2. If missing: return 402 + PAYMENT-REQUIRED challenge
- * 3. If present: verify + settle via BatchFacilitatorClient
+ * 3. If present: settle via Circle Gateway
  * 4. Execute handler only after settlement
  * 5. Return result with safe payment metadata
  */
@@ -281,11 +282,11 @@ async function executeX402SellerPath(
     return response;
   }
 
-  // ── Payment header present: verify + settle ──
+  // ── Payment header present: settle ──
   const amountAtomic = computeAmountAtomic(config.priceUsdc);
   const requirements = buildRequirements(sellerAddress, amountAtomic);
 
-  const settleResult = await verifyAndSettlePayment(paymentHeader, requirements);
+  const settleResult = await settlePayment(paymentHeader, requirements);
 
   if (!settleResult.ok || !settleResult.settled) {
     // Emit x402.failed — moves agent to error station in Virtual Office
@@ -312,7 +313,7 @@ async function executeX402SellerPath(
     return NextResponse.json(
       {
         ok: false,
-        error: settleResult.error || "Payment verification/settlement failed",
+        error: settleResult.error || "Payment settlement failed",
         settled: false,
       },
       { status: 402 }
@@ -368,10 +369,17 @@ async function executeX402SellerPath(
 
   const handler = SERVICE_HANDLERS[serviceNameTyped];
   if (!handler) {
-    return NextResponse.json(
-      { ok: false, error: `No handler for service: ${serviceNameTyped}` },
+    const response = NextResponse.json(
+      {
+        ok: false,
+        error: `No handler for service: ${serviceNameTyped}`,
+        settled: true,
+        paymentMeta: settleResult.paymentMeta,
+      },
       { status: 500 }
     );
+    attachPaymentResponseHeader(response.headers, settleResult);
+    return response;
   }
 
   const handlerInput: ServiceHandlerInput = {
@@ -384,7 +392,7 @@ async function executeX402SellerPath(
   try {
     const result = await handler(handlerInput);
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       ok: result.ok,
       serviceName: result.serviceName,
       data: result.data,
@@ -394,9 +402,13 @@ async function executeX402SellerPath(
       error: result.error,
       paymentMeta: settleResult.paymentMeta,
     });
+
+    attachPaymentResponseHeader(response.headers, settleResult);
+
+    return response;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         ok: false,
         serviceName: serviceNameTyped,
@@ -407,6 +419,10 @@ async function executeX402SellerPath(
       },
       { status: 500 }
     );
+
+    attachPaymentResponseHeader(response.headers, settleResult);
+
+    return response;
   }
 }
 

@@ -3,7 +3,7 @@
  *
  * Dynamic x402 payout endpoint for creator/bot/service payments.
  * Builds challenge with payTo=creator/bot/service wallet and amountAtomic.
- * Verifies + settles via verifyAndSettlePayment.
+ * Settles via settlePayment.
  *
  * Rules:
  * - No raw payment headers in logs
@@ -17,7 +17,8 @@ import {
   buildPaymentRequirements,
   buildX402Challenge,
   encodeChallengeHeader,
-  verifyAndSettlePayment,
+  settlePayment,
+  attachPaymentResponseHeader,
 } from "@/lib/paylabs/x402/seller-challenge";
 
 type PayoutRequestBody = {
@@ -111,20 +112,20 @@ export async function POST(req: NextRequest) {
   }
 
   const requirements = buildPaymentRequirements(parsed.payTo, parsed.amountAtomic);
-  const settleResult = await verifyAndSettlePayment(paymentHeader, requirements);
+  const settleResult = await settlePayment(paymentHeader, requirements);
 
   if (!settleResult.ok || !settleResult.settled) {
     return NextResponse.json(
       {
         ok: false,
-        error: settleResult.error || "creator payout verification/settlement failed",
+        error: settleResult.error || "creator payout settlement failed",
         settled: false,
       },
       { status: 402 },
     );
   }
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     ok: true,
     settled: true,
     payout: true,
@@ -132,4 +133,8 @@ export async function POST(req: NextRequest) {
     amount_atomic: parsed.amountAtomic,
     paymentMeta: settleResult.paymentMeta,
   });
+
+  attachPaymentResponseHeader(response.headers, settleResult);
+
+  return response;
 }

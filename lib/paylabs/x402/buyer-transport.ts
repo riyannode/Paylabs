@@ -23,6 +23,7 @@
 
 import { createRequire } from "node:module";
 import { getAddress, type Address, type Hex } from "viem";
+import { decodePaymentResponseHeader } from "@x402/core/http";
 import { X402_VERSION } from "./seller-challenge";
 import { usdcDecimalToAtomic } from "./usdc";
 
@@ -44,6 +45,17 @@ function getBatchEvmSchemeClass() {
 }
 
 // ─── Types ───────────────────────────────────────────────────
+
+/**
+ * Decoded x402 PAYMENT-RESPONSE from seller.
+ */
+export interface DecodedPaymentResponse {
+  success: boolean;
+  transaction: string;
+  network: string;
+  payer?: string;
+  amount?: string;
+}
 
 /**
  * DCW signing interface — injected by caller.
@@ -106,6 +118,8 @@ export interface X402BuyerCallResult {
   status?: number;
   /** Seller response body (parsed JSON or text) */
   data?: unknown;
+  /** Decoded PAYMENT-RESPONSE from seller (if present) */
+  paymentResponse?: DecodedPaymentResponse | null;
   /** Payment metadata for audit (no raw signatures) */
   paymentMetadata?: {
     amountAtomic: string;
@@ -645,8 +659,77 @@ export async function callPaidSeller(
     status: retryResp.status,
     data: retryData,
     error: errorMsg,
+    paymentResponse: readPaymentResponse(retryResp),
     paymentMetadata: extractPaymentMetadata(gatewayReq, paymentPayload, retryData),
   };
+}
+
+// ─── Payment Response Decoder ───────────────────────────────
+
+/**
+ * Read and decode the x402 PAYMENT-RESPONSE header from a seller response.
+ * Checks both canonical and legacy header names.
+ * Returns null when header is absent, invalid, or fails decoding.
+ */
+function readPaymentResponse(
+  response: Response,
+): DecodedPaymentResponse | null {
+  const encoded =
+    response.headers.get("payment-response") ??
+    response.headers.get("x-payment-response");
+
+  if (!encoded) return null;
+
+  try {
+    const decoded = decodePaymentResponseHeader(encoded);
+
+    if (
+      decoded.success !== true ||
+      typeof decoded.transaction !== "string" ||
+      decoded.transaction.length === 0 ||
+      typeof decoded.network !== "string" ||
+      decoded.network.length === 0
+    ) {
+      console.warn(
+        "[buyer-transport] invalid PAYMENT-RESPONSE shape",
+        {
+          success: decoded.success,
+          hasTransaction:
+            typeof decoded.transaction === "string" &&
+            decoded.transaction.length > 0,
+          hasNetwork:
+            typeof decoded.network === "string" &&
+            decoded.network.length > 0,
+        },
+      );
+
+      return null;
+    }
+
+    return {
+      success: true,
+      transaction: decoded.transaction,
+      network: decoded.network,
+      ...(typeof decoded.payer === "string"
+        ? { payer: decoded.payer }
+        : {}),
+      ...(typeof decoded.amount === "string"
+        ? { amount: decoded.amount }
+        : {}),
+    };
+  } catch (error) {
+    console.warn(
+      "[buyer-transport] failed to decode PAYMENT-RESPONSE",
+      {
+        error:
+          error instanceof Error
+            ? error.message.slice(0, 120)
+            : String(error).slice(0, 120),
+      },
+    );
+
+    return null;
+  }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────

@@ -11,7 +11,7 @@
  *
  * Flow:
  *   1st request (no payment) → 402 + x402 challenge (0.000001 USDC)
- *   2nd request (with payment) → verify/settle → Brain preflight → locked tier
+ *   2nd request (with payment) → settle → Brain preflight → locked tier
  *
  * Does NOT:
  * - Run final internal orchestration
@@ -24,7 +24,7 @@
  *
  * Uses existing Circle x402 primitives:
  * - Challenge: buildCustomerEntryChallenge (seller-challenge.ts)
- * - Verify/Settle: verifyAndSettleCustomerEntry (customer-entry-payment.ts)
+ * - Settlement: settleCustomerEntryPayment (customer-entry-payment.ts)
  * - Explorer URLs: payment-links.ts (buildTxExplorerUrl, buildBatchResolverUrl, etc.)
  *
  * Safety:
@@ -36,6 +36,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import { isAutoTierPreflightEnabled } from "@/lib/paylabs/feature-flags";
 import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
+import { attachPaymentResponseHeader } from "@/lib/paylabs/x402/seller-challenge";
 
 export const maxDuration = 120;
 
@@ -47,6 +48,10 @@ export async function POST(req: NextRequest) {
       { status: 404 },
     );
   }
+
+  let settledPaymentResponse:
+    | { paymentResponseHeader?: string | null }
+    | null = null;
 
   try {
     // ── Parse body ──────────────────────────────────────────
@@ -112,7 +117,7 @@ export async function POST(req: NextRequest) {
     // ── Import x402 primitives ──────────────────────────────
     const {
       buildCustomerEntryChallenge,
-      verifyAndSettleCustomerEntry,
+      settleCustomerEntryPayment,
     } = await import("@/lib/paylabs/x402/customer-entry-payment");
 
     const { resolvePublicAppUrl } = await import(
@@ -255,15 +260,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── Verify + settle customer entry payment ──────────────
-    const entryResult = await verifyAndSettleCustomerEntry(
+    // ── Settle customer entry payment ───────────────────────
+    const entryResult = await settleCustomerEntryPayment(
       customerPaymentSignature,
       ROUTE_PREFLIGHT_ROUTING_FEE_USDC,
     );
 
     // Fail closed if payment is invalid
     if (!entryResult.ok || !entryResult.settled) {
-      const entryErrorMsg = entryResult.error || "Route preflight payment verification failed";
+      const entryErrorMsg = entryResult.error || "Route preflight payment settlement failed";
 
       // Merge existing agent_trace — preserve prior data
       const { data: traceOnPayFail } = await supabaseAdmin()
@@ -325,11 +330,16 @@ export async function POST(req: NextRequest) {
         })
         .eq("id", discoveryRunId);
 
-      return NextResponse.json(
+      const response = NextResponse.json(
         { ok: false, error: "Route preflight payment payer does not match claimed user wallet" },
         { status: 403 },
       );
+      attachPaymentResponseHeader(response.headers, entryResult);
+      return response;
     }
+
+    // Track settlement state for receipt attachment on all post-settlement responses
+    settledPaymentResponse = { paymentResponseHeader: entryResult.paymentResponseHeader };
 
     // ── Payment settled — run route-only Brain preflight ────
     const paymentMeta = buildRoutePreflightPaymentMeta(entryResult);
@@ -397,7 +407,7 @@ export async function POST(req: NextRequest) {
         })
         .eq("id", discoveryRunId);
 
-      return NextResponse.json(
+      const response = NextResponse.json(
         {
           ok: false,
           error: `Route preflight Brain planning failed: ${errMsg}`,
@@ -405,6 +415,8 @@ export async function POST(req: NextRequest) {
         },
         { status: 502 },
       );
+      attachPaymentResponseHeader(response.headers, settledPaymentResponse);
+      return response;
     }
 
     // ── Store safe preflight result in agent_trace ──────────
@@ -477,7 +489,7 @@ export async function POST(req: NextRequest) {
         message: "Execution plan could not be saved",
       });
 
-      return NextResponse.json(
+      const response = NextResponse.json(
         {
           ok: false,
           error: `Route preflight persist failed: ${lockPersistErr.message}`,
@@ -485,6 +497,8 @@ export async function POST(req: NextRequest) {
         },
         { status: 500 },
       );
+      attachPaymentResponseHeader(response.headers, settledPaymentResponse);
+      return response;
     }
 
     // Emit Brain planning completed — moves Brain back to idle in Virtual Office
@@ -500,19 +514,25 @@ export async function POST(req: NextRequest) {
     });
 
     // ── Return safe response ────────────────────────────────
-    const response = buildRoutePreflightResponse(
+    const responseBody = buildRoutePreflightResponse(
       discoveryRunId,
       preflightResult,
       paymentMeta,
     );
 
-    return NextResponse.json(response, { status: 200 });
+    const httpResponse = NextResponse.json(responseBody, { status: 200 });
+    attachPaymentResponseHeader(httpResponse.headers, settledPaymentResponse);
+    return httpResponse;
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : String(e);
     console.error("[route-preflight] unexpected error:", errMsg.slice(0, 300));
-    return NextResponse.json(
+    const response = NextResponse.json(
       { ok: false, error: `Route preflight failed: ${errMsg.slice(0, 200)}` },
       { status: 500 },
     );
+    if (settledPaymentResponse) {
+      attachPaymentResponseHeader(response.headers, settledPaymentResponse);
+    }
+    return response;
   }
 }

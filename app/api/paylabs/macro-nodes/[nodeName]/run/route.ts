@@ -6,7 +6,7 @@
  * Payment graph: Brain → macro-node → child services
  *
  * x402-ONLY (fail-closed):
- * - x402 enabled: 402 challenge → verify → settle → execute macro-node graph
+ * - x402 enabled: 402 challenge → settle → execute macro-node graph
  * - x402 disabled: returns 500 config_error. Macro-node NEVER executes without payment.
  *
  * After settlement, the macro-node LangGraph executes its child services.
@@ -25,7 +25,8 @@ import {
   buildPaymentRequirements,
   buildX402Challenge,
   encodeChallengeHeader,
-  verifyAndSettlePayment,
+  settlePayment,
+  attachPaymentResponseHeader,
 } from "@/lib/paylabs/x402/seller-challenge";
 import { isDelegatedRuntimeEnabled } from "@/lib/paylabs/feature-flags";
 import { TIER_SERVICE_PRESETS } from "@/lib/paylabs/delegated-runtime/quote-engine";
@@ -154,7 +155,7 @@ export async function POST(
 
   const requirements = buildPaymentRequirements(sellerAddress, amountAtomic);
 
-  const settleResult = await verifyAndSettlePayment(paymentHeader, requirements);
+  const settleResult = await settlePayment(paymentHeader, requirements);
 
   if (!settleResult.ok || !settleResult.settled) {
     return NextResponse.json(
@@ -175,7 +176,7 @@ export async function POST(
     userWallet: userWallet || "",
     userBudgetUsdc: userBudgetUsdc || 0,
     routeTier: routeTier as OrchestratorInput["routeTier"],
-  }, (settleResult.paymentMeta as Record<string, unknown>) ?? null, nodePayload);
+  }, (settleResult.paymentMeta as Record<string, unknown>) ?? null, nodePayload, settleResult.paymentResponseHeader ?? null);
 }
 
 // ─── Execute Macro-Node via LangGraph ────────────────────────
@@ -185,6 +186,7 @@ async function executeMacroNode(
   input: OrchestratorInput,
   paymentMeta: Record<string, unknown> | null,
   payload?: Record<string, unknown>,
+  paymentResponseHeader?: string | null,
 ) {
   const nodeConfig = getMacroNodeConfig(nodeName);
   const state = createOrchestratorState(input);
@@ -194,10 +196,21 @@ async function executeMacroNode(
     parentWalletId = resolveNodeBuyerWalletId(nodeConfig);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json(
-      { ok: false, error: msg },
+    const response = NextResponse.json(
+      {
+        ok: false,
+        nodeType: "macro_node",
+        nodeName,
+        settled: true,
+        paymentMeta,
+        error: msg,
+      },
       { status: 500 }
     );
+    attachPaymentResponseHeader(response.headers, {
+      paymentResponseHeader,
+    });
+    return response;
   }
 
   // Use tier-based service selection via tier-service-bundles
@@ -313,7 +326,7 @@ async function executeMacroNode(
       };
     }
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       ok: (result as Record<string, unknown>)?.ok !== false,
       nodeType: "macro_node",
       nodeName,
@@ -349,11 +362,15 @@ async function executeMacroNode(
         explorerUrl: e.explorerUrl ?? null,
       })),
     });
+    attachPaymentResponseHeader(response.headers, { paymentResponseHeader });
+    return response;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json(
+    const response = NextResponse.json(
       { ok: false, nodeType: "macro_node", nodeName, error: msg },
       { status: 500 }
     );
+    attachPaymentResponseHeader(response.headers, { paymentResponseHeader });
+    return response;
   }
 }

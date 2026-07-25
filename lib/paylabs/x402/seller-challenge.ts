@@ -5,10 +5,8 @@
  * Circle Gateway x402 payment requirements. The buyer uses this
  * challenge to create a signed payment payload via BatchEvmScheme.
  *
- * Calls settle() as the sole verification+payment path — no prior
- * verify() step. settle() validates signatures before committing
- * funds, which is Circle's preferred approach for latency-sensitive
- * production deployments (verify() is only useful for diagnostics).
+ * Calls settle() as the sole payment path — no prior verify() step.
+ * settle() validates signatures before committing funds.
  * Note: settlement failure blocks handler execution — the service
  * must not proceed and should return 402 to the buyer.
  *
@@ -21,6 +19,7 @@
  */
 
 import { createRequire } from "node:module";
+import { encodePaymentResponseHeader } from "@x402/core/http";
 import {
   buildBatchResolverUrl,
   buildSettlementUrl,
@@ -80,7 +79,7 @@ export type X402TransferStatus =
   | "completed"
   | "failed";
 
-export interface VerifyAndSettleResult {
+export interface SettlePaymentResult {
   ok: boolean;
   /** Gateway accepted/queued — NOT final onchain settlement */
   settled: boolean;
@@ -88,6 +87,11 @@ export interface VerifyAndSettleResult {
   gatewayAccepted?: boolean;
   /** Circle transfer status — null until polled from /v1/x402/transfers/{id} */
   transferStatus?: X402TransferStatus | null;
+  /**
+   * Canonical Base64-encoded x402 SettleResponse.
+   * This value is intended for the PAYMENT-RESPONSE HTTP header.
+   */
+  paymentResponseHeader?: string | null;
   /** Safe payment metadata (no raw signatures) */
   paymentMeta?: {
     amountAtomic: string;
@@ -116,6 +120,97 @@ export interface VerifyAndSettleResult {
   /** Payer address if verified */
   payer?: string;
   error?: string;
+}
+
+// ─── Payment Response Header Helpers ───────────────────────
+
+export type PaymentResponseCarrier = {
+  paymentResponseHeader?: string | null;
+};
+
+/**
+ * Attach the canonical x402 PAYMENT-RESPONSE header (and legacy
+ * X-PAYMENT-RESPONSE compatibility header) to a seller response.
+ */
+export function attachPaymentResponseHeader(
+  headers: Headers,
+  payment: PaymentResponseCarrier,
+): void {
+  const encoded = payment.paymentResponseHeader;
+  if (!encoded) return;
+
+  // Canonical x402 v2 header.
+  headers.set("PAYMENT-RESPONSE", encoded);
+
+  // Compatibility for clients still reading the legacy name.
+  headers.set("X-PAYMENT-RESPONSE", encoded);
+}
+
+// ─── Receipt Builder ────────────────────────────────────────
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+type EncodablePaymentResponse =
+  Parameters<typeof encodePaymentResponseHeader>[0];
+
+/**
+ * Build a canonical x402 PAYMENT-RESPONSE header from settlement data.
+ * Returns null when a valid transaction identifier cannot be resolved.
+ */
+function buildPaymentResponseHeader(
+  settleData: Record<string, unknown>,
+  requirements: X402ChallengeRequirements,
+  fallbackSettlementId: string | null,
+  fallbackTxHash: string | null,
+): string | null {
+  const payer =
+    typeof settleData.payer === "string" && settleData.payer.length > 0
+      ? settleData.payer
+      : undefined;
+
+  /*
+   * Circle Gateway may return a Gateway settlement or transfer identifier
+   * in `transaction`. Do not automatically treat it as an EVM tx hash.
+   */
+  const transaction =
+    typeof settleData.transaction === "string" &&
+    settleData.transaction.length > 0
+      ? settleData.transaction
+      : fallbackSettlementId ?? fallbackTxHash;
+
+  if (!transaction) {
+    console.error(
+      "[seller-challenge] successful settlement missing receipt transaction",
+      {
+        network: requirements.network,
+        hasPayer: Boolean(payer),
+        hasSettlementId: Boolean(fallbackSettlementId),
+        hasTxHash: Boolean(fallbackTxHash),
+      },
+    );
+
+    return null;
+  }
+
+  const paymentResponse = {
+    success: true,
+    transaction,
+    network: requirements.network,
+    ...(payer ? { payer } : {}),
+    ...(typeof settleData.amount === "string"
+      ? { amount: settleData.amount }
+      : {}),
+    ...(isRecord(settleData.extensions)
+      ? { extensions: settleData.extensions }
+      : {}),
+    ...(isRecord(settleData.extra)
+      ? { extra: settleData.extra }
+      : {}),
+  } as EncodablePaymentResponse;
+
+  return encodePaymentResponseHeader(paymentResponse);
 }
 
 // ─── Constants ────────────────────────────────────────────────
@@ -267,14 +362,16 @@ function extractSettlementId(value: unknown): string | null {
   return null;
 }
 
-// ─── Verify + Settle ──────────────────────────────────────────
+// ─── Settlement ─────────────────────────────────────────────────
 
 /**
- * Settle an x402 payment using BatchFacilitatorClient.
+ * Settle an x402 payment via Circle Gateway.
  *
- * Per Circle official docs: use settle() directly rather than calling
- * verify() then settle() in production. settle() verifies the signature
- * internally before locking funds.
+ * Paylabs calls facilitator.settle() directly.
+ * Circle Gateway validates the payment authorization during settlement.
+ * Paylabs does not call facilitator.verify() separately.
+ *
+ * settle() verifies the signature internally before locking funds.
  *
  * settle() success = Gateway accepted/queued, NOT final onchain settlement.
  * Onchain settlement happens later via batch submitBatch tx.
@@ -282,10 +379,10 @@ function extractSettlementId(value: unknown): string | null {
  * Fails closed: if settlement fails, returns ok:false.
  * Never exposes raw Gateway response — only safe metadata.
  */
-export async function verifyAndSettlePayment(
+export async function settlePayment(
   paymentSignatureBase64: string,
   requirements: X402ChallengeRequirements,
-): Promise<VerifyAndSettleResult> {
+): Promise<SettlePaymentResult> {
   const FacilitatorClient = getBatchFacilitatorClient();
   if (!FacilitatorClient) {
     return {
@@ -318,13 +415,9 @@ export async function verifyAndSettlePayment(
       "https://gateway-api-testnet.circle.com",
   });
 
-  // Circle Gateway's settle() endpoint is optimized for low latency and guarantees settlement.
-  // Circle recommends using settle() directly rather than verify() followed by settle()
-  // in production seller flows. verify() remains useful for diagnostics/custom preflight checks.
-  //
-  // IMPORTANT: this is not a "no verification" path.
-  // Handler execution is still gated on successful settlement. If settle() fails,
-  // the seller must return an error/402 and the agent/service handler must not run.
+  // Circle Gateway validates the payment authorization during settlement.
+  // Paylabs calls facilitator.settle() directly (not verify() + settle()).
+  // Handler execution is gated on successful settlement.
   try {
     const settleResult = await facilitator.settle(paymentPayload, requirements);
     const settleData = settleResult as Record<string, unknown>;
@@ -361,6 +454,13 @@ export async function verifyAndSettlePayment(
     const settlementUrl = buildSettlementUrl(settlementId);
     const batchResolverUrl = buildBatchResolverUrl(settlementId);
 
+    const paymentResponseHeader = buildPaymentResponseHeader(
+      settleData,
+      requirements,
+      settlementId,
+      txHash,
+    );
+
     // Safe log — booleans only, never raw payload or signature
     console.log("[x402-settle-proof]", {
       gatewayAccepted: true,
@@ -374,6 +474,7 @@ export async function verifyAndSettlePayment(
       settled: true,
       gatewayAccepted: true,
       transferStatus: null, // not onchain yet — polled later
+      paymentResponseHeader,
       paymentMeta: {
         amountAtomic: requirements.amount,
         payTo: requirements.payTo,
