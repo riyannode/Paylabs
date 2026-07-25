@@ -36,6 +36,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import { isAutoTierPreflightEnabled } from "@/lib/paylabs/feature-flags";
 import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
+import { attachPaymentResponseHeader } from "@/lib/paylabs/x402/seller-challenge";
 
 export const maxDuration = 120;
 
@@ -325,11 +326,16 @@ export async function POST(req: NextRequest) {
         })
         .eq("id", discoveryRunId);
 
-      return NextResponse.json(
+      const response = NextResponse.json(
         { ok: false, error: "Route preflight payment payer does not match claimed user wallet" },
         { status: 403 },
       );
+      attachPaymentResponseHeader(response.headers, entryResult);
+      return response;
     }
+
+    // Track settlement state for receipt attachment on all post-settlement responses
+    const settledPaymentResponse = { paymentResponseHeader: entryResult.paymentResponseHeader };
 
     // ── Payment settled — run route-only Brain preflight ────
     const paymentMeta = buildRoutePreflightPaymentMeta(entryResult);
@@ -397,7 +403,7 @@ export async function POST(req: NextRequest) {
         })
         .eq("id", discoveryRunId);
 
-      return NextResponse.json(
+      const response = NextResponse.json(
         {
           ok: false,
           error: `Route preflight Brain planning failed: ${errMsg}`,
@@ -405,6 +411,8 @@ export async function POST(req: NextRequest) {
         },
         { status: 502 },
       );
+      attachPaymentResponseHeader(response.headers, settledPaymentResponse);
+      return response;
     }
 
     // ── Store safe preflight result in agent_trace ──────────
@@ -477,7 +485,7 @@ export async function POST(req: NextRequest) {
         message: "Execution plan could not be saved",
       });
 
-      return NextResponse.json(
+      const response = NextResponse.json(
         {
           ok: false,
           error: `Route preflight persist failed: ${lockPersistErr.message}`,
@@ -485,6 +493,8 @@ export async function POST(req: NextRequest) {
         },
         { status: 500 },
       );
+      attachPaymentResponseHeader(response.headers, settledPaymentResponse);
+      return response;
     }
 
     // Emit Brain planning completed — moves Brain back to idle in Virtual Office
@@ -500,13 +510,15 @@ export async function POST(req: NextRequest) {
     });
 
     // ── Return safe response ────────────────────────────────
-    const response = buildRoutePreflightResponse(
+    const responseBody = buildRoutePreflightResponse(
       discoveryRunId,
       preflightResult,
       paymentMeta,
     );
 
-    return NextResponse.json(response, { status: 200 });
+    const httpResponse = NextResponse.json(responseBody, { status: 200 });
+    attachPaymentResponseHeader(httpResponse.headers, settledPaymentResponse);
+    return httpResponse;
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : String(e);
     console.error("[route-preflight] unexpected error:", errMsg.slice(0, 300));

@@ -26,6 +26,7 @@ import {
   buildX402Challenge,
   encodeChallengeHeader,
   verifyAndSettlePayment,
+  attachPaymentResponseHeader,
 } from "@/lib/paylabs/x402/seller-challenge";
 import { isDelegatedRuntimeEnabled } from "@/lib/paylabs/feature-flags";
 
@@ -125,7 +126,7 @@ export async function POST(req: NextRequest) {
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200);
     console.error("[brain/run] runBrainPlannerGraph failed after x402 settle", { error: errMsg });
-    return NextResponse.json({
+    const response = NextResponse.json({
       ok: false,
       nodeType: "brain",
       mode: "x402",
@@ -133,12 +134,14 @@ export async function POST(req: NextRequest) {
       error: `Brain LLM failed after payment: ${errMsg}`,
       paymentMeta: settleResult.paymentMeta,
     });
+    attachPaymentResponseHeader(response.headers, settleResult);
+    return response;
   }
 
   // ── Build safe response from Brain planner output ──
   const bp = brainResult.brainPlanning;
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     ok: brainResult.ok,
     nodeType: "brain",
     mode: "x402",
@@ -174,4 +177,8 @@ export async function POST(req: NextRequest) {
     data: { userGoal, routeTier, userBudgetUsdc, discoveryRunId },
     paymentMeta: settleResult.paymentMeta,
   });
+
+  attachPaymentResponseHeader(response.headers, settleResult);
+
+  return response;
 }

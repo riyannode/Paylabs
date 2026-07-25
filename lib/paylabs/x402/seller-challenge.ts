@@ -21,6 +21,7 @@
  */
 
 import { createRequire } from "node:module";
+import { encodePaymentResponseHeader } from "@x402/core/http";
 import {
   buildBatchResolverUrl,
   buildSettlementUrl,
@@ -88,6 +89,11 @@ export interface VerifyAndSettleResult {
   gatewayAccepted?: boolean;
   /** Circle transfer status — null until polled from /v1/x402/transfers/{id} */
   transferStatus?: X402TransferStatus | null;
+  /**
+   * Canonical Base64-encoded x402 SettleResponse.
+   * This value is intended for the PAYMENT-RESPONSE HTTP header.
+   */
+  paymentResponseHeader?: string | null;
   /** Safe payment metadata (no raw signatures) */
   paymentMeta?: {
     amountAtomic: string;
@@ -116,6 +122,97 @@ export interface VerifyAndSettleResult {
   /** Payer address if verified */
   payer?: string;
   error?: string;
+}
+
+// ─── Payment Response Header Helpers ───────────────────────
+
+export type PaymentResponseCarrier = {
+  paymentResponseHeader?: string | null;
+};
+
+/**
+ * Attach the canonical x402 PAYMENT-RESPONSE header (and legacy
+ * X-PAYMENT-RESPONSE compatibility header) to a seller response.
+ */
+export function attachPaymentResponseHeader(
+  headers: Headers,
+  payment: PaymentResponseCarrier,
+): void {
+  const encoded = payment.paymentResponseHeader;
+  if (!encoded) return;
+
+  // Canonical x402 v2 header.
+  headers.set("PAYMENT-RESPONSE", encoded);
+
+  // Compatibility for clients still reading the legacy name.
+  headers.set("X-PAYMENT-RESPONSE", encoded);
+}
+
+// ─── Receipt Builder ────────────────────────────────────────
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+type EncodablePaymentResponse =
+  Parameters<typeof encodePaymentResponseHeader>[0];
+
+/**
+ * Build a canonical x402 PAYMENT-RESPONSE header from settlement data.
+ * Returns null when a valid transaction identifier cannot be resolved.
+ */
+function buildPaymentResponseHeader(
+  settleData: Record<string, unknown>,
+  requirements: X402ChallengeRequirements,
+  fallbackSettlementId: string | null,
+  fallbackTxHash: string | null,
+): string | null {
+  const payer =
+    typeof settleData.payer === "string" && settleData.payer.length > 0
+      ? settleData.payer
+      : undefined;
+
+  /*
+   * Circle Gateway may return a Gateway settlement or transfer identifier
+   * in `transaction`. Do not automatically treat it as an EVM tx hash.
+   */
+  const transaction =
+    typeof settleData.transaction === "string" &&
+    settleData.transaction.length > 0
+      ? settleData.transaction
+      : fallbackSettlementId ?? fallbackTxHash;
+
+  if (!transaction) {
+    console.error(
+      "[seller-challenge] successful settlement missing receipt transaction",
+      {
+        network: requirements.network,
+        hasPayer: Boolean(payer),
+        hasSettlementId: Boolean(fallbackSettlementId),
+        hasTxHash: Boolean(fallbackTxHash),
+      },
+    );
+
+    return null;
+  }
+
+  const paymentResponse = {
+    success: true,
+    transaction,
+    network: requirements.network,
+    ...(payer ? { payer } : {}),
+    ...(typeof settleData.amount === "string"
+      ? { amount: settleData.amount }
+      : {}),
+    ...(isRecord(settleData.extensions)
+      ? { extensions: settleData.extensions }
+      : {}),
+    ...(isRecord(settleData.extra)
+      ? { extra: settleData.extra }
+      : {}),
+  } as EncodablePaymentResponse;
+
+  return encodePaymentResponseHeader(paymentResponse);
 }
 
 // ─── Constants ────────────────────────────────────────────────
@@ -361,6 +458,13 @@ export async function verifyAndSettlePayment(
     const settlementUrl = buildSettlementUrl(settlementId);
     const batchResolverUrl = buildBatchResolverUrl(settlementId);
 
+    const paymentResponseHeader = buildPaymentResponseHeader(
+      settleData,
+      requirements,
+      settlementId,
+      txHash,
+    );
+
     // Safe log — booleans only, never raw payload or signature
     console.log("[x402-settle-proof]", {
       gatewayAccepted: true,
@@ -374,6 +478,7 @@ export async function verifyAndSettlePayment(
       settled: true,
       gatewayAccepted: true,
       transferStatus: null, // not onchain yet — polled later
+      paymentResponseHeader,
       paymentMeta: {
         amountAtomic: requirements.amount,
         payTo: requirements.payTo,

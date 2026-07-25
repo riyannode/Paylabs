@@ -26,6 +26,7 @@ import {
   buildX402Challenge,
   encodeChallengeHeader,
   verifyAndSettlePayment,
+  attachPaymentResponseHeader,
 } from "@/lib/paylabs/x402/seller-challenge";
 import { isDelegatedRuntimeEnabled } from "@/lib/paylabs/feature-flags";
 import { TIER_SERVICE_PRESETS } from "@/lib/paylabs/delegated-runtime/quote-engine";
@@ -175,7 +176,7 @@ export async function POST(
     userWallet: userWallet || "",
     userBudgetUsdc: userBudgetUsdc || 0,
     routeTier: routeTier as OrchestratorInput["routeTier"],
-  }, (settleResult.paymentMeta as Record<string, unknown>) ?? null, nodePayload);
+  }, (settleResult.paymentMeta as Record<string, unknown>) ?? null, nodePayload, settleResult.paymentResponseHeader ?? null);
 }
 
 // ─── Execute Macro-Node via LangGraph ────────────────────────
@@ -185,6 +186,7 @@ async function executeMacroNode(
   input: OrchestratorInput,
   paymentMeta: Record<string, unknown> | null,
   payload?: Record<string, unknown>,
+  paymentResponseHeader?: string | null,
 ) {
   const nodeConfig = getMacroNodeConfig(nodeName);
   const state = createOrchestratorState(input);
@@ -313,7 +315,7 @@ async function executeMacroNode(
       };
     }
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       ok: (result as Record<string, unknown>)?.ok !== false,
       nodeType: "macro_node",
       nodeName,
@@ -349,11 +351,15 @@ async function executeMacroNode(
         explorerUrl: e.explorerUrl ?? null,
       })),
     });
+    attachPaymentResponseHeader(response.headers, { paymentResponseHeader });
+    return response;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json(
+    const response = NextResponse.json(
       { ok: false, nodeType: "macro_node", nodeName, error: msg },
       { status: 500 }
     );
+    attachPaymentResponseHeader(response.headers, { paymentResponseHeader });
+    return response;
   }
 }

@@ -46,6 +46,11 @@ export interface CustomerEntryPaymentResult {
   gatewayAccepted?: boolean;
   /** Circle transfer status — null until polled */
   transferStatus?: import("./seller-challenge").X402TransferStatus | null;
+  /**
+   * Canonical Base64-encoded x402 SettleResponse.
+   * This value is intended for the PAYMENT-RESPONSE HTTP header.
+   */
+  paymentResponseHeader?: string | null;
   /** Safe payment metadata (no raw signatures, no EIP-712 data) */
   paymentMeta?: {
     amountAtomic: string;
@@ -139,6 +144,7 @@ export async function verifyAndSettleCustomerEntry(
     settled: result.settled,
     gatewayAccepted: result.gatewayAccepted,
     transferStatus: result.transferStatus,
+    paymentResponseHeader: result.paymentResponseHeader,
     paymentMeta: result.paymentMeta,
     payer: result.payer,
     error: result.error,

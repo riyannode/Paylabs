@@ -18,6 +18,7 @@ import {
   buildX402Challenge,
   encodeChallengeHeader,
   verifyAndSettlePayment,
+  attachPaymentResponseHeader,
 } from "@/lib/paylabs/x402/seller-challenge";
 
 type PayoutRequestBody = {
@@ -124,7 +125,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     ok: true,
     settled: true,
     payout: true,
@@ -132,4 +133,8 @@ export async function POST(req: NextRequest) {
     amount_atomic: parsed.amountAtomic,
     paymentMeta: settleResult.paymentMeta,
   });
+
+  attachPaymentResponseHeader(response.headers, settleResult);
+
+  return response;
 }

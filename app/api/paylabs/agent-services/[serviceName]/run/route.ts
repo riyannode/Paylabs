@@ -33,6 +33,7 @@ import {
   buildX402Challenge,
   encodeChallengeHeader,
   verifyAndSettlePayment,
+  attachPaymentResponseHeader,
 } from "@/lib/paylabs/x402/seller-challenge";
 import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
 import { phaseFromMacroNode, statusFromServiceName } from "@/lib/paylabs/office/event-mapper";
@@ -384,7 +385,7 @@ async function executeX402SellerPath(
   try {
     const result = await handler(handlerInput);
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       ok: result.ok,
       serviceName: result.serviceName,
       data: result.data,
@@ -394,9 +395,13 @@ async function executeX402SellerPath(
       error: result.error,
       paymentMeta: settleResult.paymentMeta,
     });
+
+    attachPaymentResponseHeader(response.headers, settleResult);
+
+    return response;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         ok: false,
         serviceName: serviceNameTyped,
@@ -407,6 +412,10 @@ async function executeX402SellerPath(
       },
       { status: 500 }
     );
+
+    attachPaymentResponseHeader(response.headers, settleResult);
+
+    return response;
   }
 }
 
