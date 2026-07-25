@@ -5,10 +5,8 @@
  * Circle Gateway x402 payment requirements. The buyer uses this
  * challenge to create a signed payment payload via BatchEvmScheme.
  *
- * Calls settle() as the sole verification+payment path — no prior
- * verify() step. settle() validates signatures before committing
- * funds, which is Circle's preferred approach for latency-sensitive
- * production deployments (verify() is only useful for diagnostics).
+ * Calls settle() as the sole payment path — no prior verify() step.
+ * settle() validates signatures before committing funds.
  * Note: settlement failure blocks handler execution — the service
  * must not proceed and should return 402 to the buyer.
  *
@@ -81,7 +79,7 @@ export type X402TransferStatus =
   | "completed"
   | "failed";
 
-export interface VerifyAndSettleResult {
+export interface SettlePaymentResult {
   ok: boolean;
   /** Gateway accepted/queued — NOT final onchain settlement */
   settled: boolean;
@@ -364,14 +362,16 @@ function extractSettlementId(value: unknown): string | null {
   return null;
 }
 
-// ─── Verify + Settle ──────────────────────────────────────────
+// ─── Settlement ─────────────────────────────────────────────────
 
 /**
- * Settle an x402 payment using BatchFacilitatorClient.
+ * Settle an x402 payment via Circle Gateway.
  *
- * Per Circle official docs: use settle() directly rather than calling
- * verify() then settle() in production. settle() verifies the signature
- * internally before locking funds.
+ * Paylabs calls facilitator.settle() directly.
+ * Circle Gateway validates the payment authorization during settlement.
+ * Paylabs does not call facilitator.verify() separately.
+ *
+ * settle() verifies the signature internally before locking funds.
  *
  * settle() success = Gateway accepted/queued, NOT final onchain settlement.
  * Onchain settlement happens later via batch submitBatch tx.
@@ -379,10 +379,10 @@ function extractSettlementId(value: unknown): string | null {
  * Fails closed: if settlement fails, returns ok:false.
  * Never exposes raw Gateway response — only safe metadata.
  */
-export async function verifyAndSettlePayment(
+export async function settlePayment(
   paymentSignatureBase64: string,
   requirements: X402ChallengeRequirements,
-): Promise<VerifyAndSettleResult> {
+): Promise<SettlePaymentResult> {
   const FacilitatorClient = getBatchFacilitatorClient();
   if (!FacilitatorClient) {
     return {
@@ -415,13 +415,9 @@ export async function verifyAndSettlePayment(
       "https://gateway-api-testnet.circle.com",
   });
 
-  // Circle Gateway's settle() endpoint is optimized for low latency and guarantees settlement.
-  // Circle recommends using settle() directly rather than verify() followed by settle()
-  // in production seller flows. verify() remains useful for diagnostics/custom preflight checks.
-  //
-  // IMPORTANT: this is not a "no verification" path.
-  // Handler execution is still gated on successful settlement. If settle() fails,
-  // the seller must return an error/402 and the agent/service handler must not run.
+  // Circle Gateway validates the payment authorization during settlement.
+  // Paylabs calls facilitator.settle() directly (not verify() + settle()).
+  // Handler execution is gated on successful settlement.
   try {
     const settleResult = await facilitator.settle(paymentPayload, requirements);
     const settleData = settleResult as Record<string, unknown>;

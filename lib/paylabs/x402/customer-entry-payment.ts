@@ -8,7 +8,7 @@
  *   1. Backend computes quote → returns x402 challenge (HTTP 402)
  *   2. DCW wallet signs x402 challenge (frontend SDK)
  *   3. DCW retries with PAYMENT-SIGNATURE header
- *   4. Backend verifies + settles via BatchFacilitatorClient
+ *   4. Backend submits the payment payload to Circle Gateway for settlement
  *   5. Only after settlement → run internal delegated runtime
  *
  * Client-side signing requirement:
@@ -32,7 +32,7 @@ import {
   buildPaymentRequirements,
   buildX402Challenge,
   encodeChallengeHeader,
-  verifyAndSettlePayment,
+  settlePayment,
   X402_VERSION,
 } from "./seller-challenge";
 
@@ -119,16 +119,15 @@ export function buildCustomerEntryChallenge(
   return { challenge, headerValue };
 }
 
-// ─── Verify + Settle Customer Entry Payment ───────────────────
+// ─── Settle Customer Entry Payment ─────────────────────────────
 
 /**
- * Verify and settle the customer's x402 entry payment.
- * Uses the same BatchFacilitatorClient as internal edges.
+ * Submit and settle the customer's x402 entry payment through Circle Gateway.
  *
  * @param paymentSignatureBase64 - Base64-encoded payment payload from PAYMENT-SIGNATURE header
  * @param plannedCostUsdc - Expected cost (for amount validation)
  */
-export async function verifyAndSettleCustomerEntry(
+export async function settleCustomerEntryPayment(
   paymentSignatureBase64: string,
   plannedCostUsdc: number
 ): Promise<CustomerEntryPaymentResult> {
@@ -137,7 +136,7 @@ export async function verifyAndSettleCustomerEntry(
 
   const requirements = buildPaymentRequirements(sellerAddress, amountAtomic);
 
-  const result = await verifyAndSettlePayment(paymentSignatureBase64, requirements);
+  const result = await settlePayment(paymentSignatureBase64, requirements);
 
   return {
     ok: result.ok,

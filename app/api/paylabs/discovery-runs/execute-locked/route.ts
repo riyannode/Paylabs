@@ -6,7 +6,7 @@
  *
  * Flow:
  *   1st request (no payment) → 402 + final entry payment challenge
- *   2nd request (with payment) → verify+settle → locked macro-node pipeline
+ *   2nd request (with payment) → settle → locked macro-node pipeline
  *
  * Gated behind PAYLABS_AUTO_TIER_PREFLIGHT_ENABLED feature flag.
  * Requires a completed route-preflight (agent_trace.auto_tier_preflight.status === "locked").
@@ -545,7 +545,7 @@ export async function POST(req: NextRequest) {
     // ── Import x402 primitives ──────────────────────────────
     const {
       buildCustomerEntryChallenge,
-      verifyAndSettleCustomerEntry,
+      settleCustomerEntryPayment,
       buildCustomerEntryPaymentData,
     } = await import("@/lib/paylabs/x402/customer-entry-payment");
 
@@ -601,15 +601,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── Verify + settle final entry payment ─────────────────
-    const entryResult = await verifyAndSettleCustomerEntry(
+    // ── Settle final entry payment ──────────────────────────
+    const entryResult = await settleCustomerEntryPayment(
       customerPaymentSignature,
       finalEntryPaymentUsdc,
     );
 
     // Fail closed if payment invalid
     if (!entryResult.ok || !entryResult.settled) {
-      const entryErrorMsg = entryResult.error || "Final entry payment verification failed";
+      const entryErrorMsg = entryResult.error || "Final entry payment settlement failed";
 
       await supabaseAdmin()
         .from("paylabs_discovery_runs")

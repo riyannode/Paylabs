@@ -25,7 +25,7 @@ import {
   buildPaymentRequirements,
   buildX402Challenge,
   encodeChallengeHeader,
-  verifyAndSettlePayment,
+  settlePayment,
   attachPaymentResponseHeader,
 } from "@/lib/paylabs/x402/seller-challenge";
 import { isDelegatedRuntimeEnabled } from "@/lib/paylabs/feature-flags";
@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
 
   const requirements = buildPaymentRequirements(sellerAddress, amountAtomic);
 
-  const settleResult = await verifyAndSettlePayment(paymentHeader, requirements);
+  const settleResult = await settlePayment(paymentHeader, requirements);
 
   if (!settleResult.ok || !settleResult.settled) {
     return NextResponse.json(
