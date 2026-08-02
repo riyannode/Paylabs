@@ -247,7 +247,11 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
           };
         })
         .filter((s) => /^https?:\/\//.test(s.url))
-        .sort((a, b) => a.rank - b.rank)
+        .sort((a, b) => {
+          const rankA = a.rank > 0 ? a.rank : Number.MAX_SAFE_INTEGER;
+          const rankB = b.rank > 0 ? b.rank : Number.MAX_SAFE_INTEGER;
+          return rankA - rankB;
+        })
         .slice(0, 5)
     : [];
 

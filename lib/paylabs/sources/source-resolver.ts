@@ -24,6 +24,9 @@ import {
   isGenericCatchAllSource,
 } from "@/lib/paylabs/rsshub/topic-source-guards";
 
+const CANDIDATE_SCAN_LIMIT = 20;
+const FINAL_SOURCE_LIMIT = 5;
+
 // ─── Topic-aware source validation ────────────────────────
 
 /** Check if a topic query has insufficient sources — frontend must NOT show ✅ */
@@ -250,6 +253,7 @@ function filterByRelevance(
   negativeEntities?: string[],
   lockedPhrases?: string[],
   topics?: string[],
+  intentType?: string,
 ): SourceItem[] {
   if (sources.length === 0) return sources;
 
@@ -294,7 +298,7 @@ function filterByRelevance(
 
     const sharedRelevance = validateCandidateRelevance(
       { title: src.title, summary: src.summary, domain: src.domain, source_url: src.url, relevance_score: src.relevance_score },
-      { primaryEntities, secondaryEntities, lockedPhrases, negativeEntities, entityTerms, topics },
+      { primaryEntities, secondaryEntities, lockedPhrases, negativeEntities, entityTerms, topics, intentType },
     );
     if (!sharedRelevance.accepted) return false;
 
@@ -342,6 +346,13 @@ function filterByRelevance(
       if (!hasKeyword) return false;
     }
 
+    src.relevance_score = sharedRelevance.score;
+    src.matched_primary_entities = sharedRelevance.matchedPrimaryEntities;
+    src.matched_secondary_entities = sharedRelevance.matchedSecondaryEntities;
+    src.matched_locked_phrases = sharedRelevance.matchedLockedPhrases;
+    src.selection_reason = sharedRelevance.matchedPrimaryEntities.length > 0
+      ? `Matched ${sharedRelevance.matchedPrimaryEntities.join(", ")}`
+      : "Matched query terms";
     return true;
   });
 
@@ -357,14 +368,14 @@ function filterByRelevance(
 export async function resolveSources(
   input: SourceResolverInput
 ): Promise<SourceResolverOutput> {
-  const maxSources = Math.min(input.maxSources ?? 5, 5);
+  const maxSources = Math.min(input.maxSources ?? FINAL_SOURCE_LIMIT, FINAL_SOURCE_LIMIT);
 
   try {
-    const rawSources = await enrichRankedCandidates(input.rankedCandidates, maxSources);
+    const rawSources = await enrichRankedCandidates(input.rankedCandidates, CANDIDATE_SCAN_LIMIT);
     // Apply relevance filter: reject sources that don't match the query
     // Pass entity_terms so short meaningful tokens (x402, ai, usdc) are used in matching
     const rawEntityCount = (input.entityTerms || []).length;
-    const sources = filterByRelevance(
+    const validatedSources = filterByRelevance(
       rawSources,
       input.normalizedGoal,
       input.entityTerms,
@@ -373,7 +384,20 @@ export async function resolveSources(
       input.negativeEntities,
       input.lockedPhrases,
       input.topics,
+      input.intentType,
     );
+    const requiredEntities = (input.primaryEntities || []).filter((entity) => entity.required).map((entity) => entity.canonical);
+    const rankedValidated = [...validatedSources].sort((a, b) => b.relevance_score - a.relevance_score);
+    const selected: SourceItem[] = [];
+    for (const entity of requiredEntities) {
+      const candidate = rankedValidated.find((source) => (source.matched_primary_entities || []).includes(entity));
+      if (candidate && !selected.includes(candidate)) selected.push(candidate);
+    }
+    for (const source of rankedValidated) {
+      if (selected.length >= FINAL_SOURCE_LIMIT) break;
+      if (!selected.includes(source)) selected.push(source);
+    }
+    const sources = selected.slice(0, maxSources).map((source, index) => ({ ...source, rank: index + 1 }));
     const sanitizedEntityCount = sanitizeEntityTerms(input.entityTerms || []).length;
     const sourceConfidence = computeSourceConfidence(sources);
     // Safe diagnostic: entity term counts (no raw secrets)

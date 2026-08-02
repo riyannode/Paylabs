@@ -458,20 +458,13 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
         // Non-topic candidates need entity match OR keyword score
         return item.entityHit || item.local_score >= MIN_SCORE;
       })
-      .sort((a, b) => {
-        // Topic candidates first, then by score
-        if (a._isTopicCandidate && !b._isTopicCandidate) return -1;
-        if (!a._isTopicCandidate && b._isTopicCandidate) return 1;
-        return b.local_score - a.local_score;
-      })
+      .sort((a, b) => b.local_score - a.local_score)
       .map((item, i) => ({
         ...item,
         rank: i + 1,
-        relevance_score: item._isTopicCandidate
-          ? Math.max(item.relevance_score, 0.35) // topic candidates get minimum 0.35
-          : item.local_score > 0
-            ? Math.min(item.local_score / 30, 1)
-            : item.relevance_score,
+        relevance_score: item.local_score > 0
+          ? Math.min(item.local_score / 30, 1)
+          : item.relevance_score,
       }));
 
     // Only return if rescored has results; otherwise fall through to Tavily fallback

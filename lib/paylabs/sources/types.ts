@@ -25,6 +25,10 @@ export interface SourceItem {
   rsshub_feed_url?: string | null;
   docs_url?: string | null;
   reason?: string;
+  matched_primary_entities?: string[];
+  matched_secondary_entities?: string[];
+  matched_locked_phrases?: string[];
+  selection_reason?: string;
 }
 
 // ─── Source Context ────────────────────────────────────────

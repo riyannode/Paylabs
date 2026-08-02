@@ -69,6 +69,16 @@ const MEANINGFUL_SHORT_TOKENS = new Set([
 
 const ENTITY_ALIASES: Record<string, { canonical: string; type: string }> = {
   // Multi-word phrases (order matters — longer phrases first for matching)
+  "unified balance kit": { canonical: "Unified Balance Kit", type: "product" },
+  "circle paymaster": { canonical: "Circle Paymaster", type: "product" },
+  "circle agent stack": { canonical: "Circle Agent Stack", type: "product" },
+  "user controlled wallets": { canonical: "UCW", type: "product" },
+  "user-controlled wallets": { canonical: "UCW", type: "product" },
+  "developer-controlled wallets": { canonical: "DCW", type: "product" },
+  "unified balance": { canonical: "Unified Balance", type: "product" },
+  "agent stack": { canonical: "Circle Agent Stack", type: "product" },
+  "circle contracts": { canonical: "Circle Contracts", type: "product" },
+  "circle wallets": { canonical: "Circle Wallets", type: "product" },
   "circle gateway": { canonical: "Circle Gateway", type: "product" },
   "coinbase x402": { canonical: "Coinbase x402", type: "protocol" },
   "openai codex": { canonical: "OpenAI Codex", type: "product" },

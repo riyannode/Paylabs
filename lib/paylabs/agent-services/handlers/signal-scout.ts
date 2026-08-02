@@ -428,9 +428,6 @@ export const signalScoutHandler: ServiceHandler = async (
   // Re-rank merged candidates: sort by relevance_score descending, assign rank 1..N
   // Topic candidates get priority over non-topic candidates
   mergedLive.sort((a, b) => {
-    // Topic candidates first
-    if (a._isTopicCandidate && !b._isTopicCandidate) return -1;
-    if (!a._isTopicCandidate && b._isTopicCandidate) return 1;
     if (b.relevance_score !== a.relevance_score) return b.relevance_score - a.relevance_score;
     return 0;
   });

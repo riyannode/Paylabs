@@ -68,6 +68,7 @@ export function scoreCandidateRelevance(
     negativeEntities?: string[];
     entityTerms?: string[];
     topics?: string[];
+    intentType?: string;
   }
 ): RelevanceResult {
   const title = candidate.title || "";
@@ -77,7 +78,11 @@ export function scoreCandidateRelevance(
     .filter((entity) => matchesRequiredEntity(body, entity))
     .map((entity) => entity.canonical);
   const required = (context.primaryEntities || []).filter((entity) => entity.required);
-  if (required.some((entity) => !matchedPrimaryEntities.includes(entity.canonical))) {
+  const matchedRequiredEntities = required.filter((entity) => matchedPrimaryEntities.includes(entity.canonical));
+  if (required.length === 1 && matchedRequiredEntities.length === 0) {
+    return { accepted: false, score: 0, matchedPrimaryEntities, matchedSecondaryEntities: [], matchedLockedPhrases: [], matchedNegativeEntities: [], rejectionReason: "missing_required_entity" };
+  }
+  if (required.length > 1 && matchedRequiredEntities.length === 0) {
     return { accepted: false, score: 0, matchedPrimaryEntities, matchedSecondaryEntities: [], matchedLockedPhrases: [], matchedNegativeEntities: [], rejectionReason: "missing_required_entity" };
   }
 
@@ -96,9 +101,22 @@ export function scoreCandidateRelevance(
   const secondaryScore = matchedSecondaryEntities.length * 10;
   const termScore = (context.entityTerms || []).filter((term) => matchesExactPhrase(body, term)).length * 10;
   const topicScore = (context.topics || []).filter((topic) => matchesExactPhrase(body, topic)).length * 3;
-  const score = titleScore + summaryScore + lockedScore + secondaryScore + termScore + topicScore + (candidate.relevance_score || 0);
+  const intentPhrases: Record<string, string[]> = {
+    definition: ["overview", "introduction", "what is", "documentation", "explained"],
+    explanation: ["overview", "introduction", "what is", "documentation", "explained"],
+    implementation: ["quickstart", "integration", "sdk", "api", "install", "configure", "example"],
+    comparison: ["comparison", "versus", "vs", "difference"],
+    troubleshooting: ["error", "issue", "troubleshoot", "fix", "failed", "failure"],
+  };
+  const intent = (context.intentType || "").toLowerCase();
+  const intentMatches = (intentPhrases[intent] || []).filter((phrase) => matchesExactPhrase(title, phrase));
+  const intentSummaryMatches = (intentPhrases[intent] || []).filter((phrase) => matchesExactPhrase(summary, phrase));
+  const score = titleScore + summaryScore + lockedScore + secondaryScore + termScore + topicScore + intentMatches.length * 10 + intentSummaryMatches.length * 5 + (candidate.relevance_score || 0);
   if (score <= 0) return { accepted: false, score, matchedPrimaryEntities, matchedSecondaryEntities, matchedLockedPhrases, matchedNegativeEntities, rejectionReason: "zero_or_negative_score" };
-  if (!required.length && !matchedLockedPhrases.length && !matchedPrimaryEntities.length && !matchedSecondaryEntities.length && !termScore) {
+  const meaningfulSecondaryMatches = (context.secondaryEntities || [])
+    .filter((entity) => entity.type !== "topic")
+    .filter((entity) => matchedSecondaryEntities.includes(entity.canonical));
+  if (!required.length && !matchedLockedPhrases.length && !matchedPrimaryEntities.length && !meaningfulSecondaryMatches.length && !termScore) {
     return { accepted: false, score, matchedPrimaryEntities, matchedSecondaryEntities, matchedLockedPhrases, matchedNegativeEntities, rejectionReason: "topic_only_match" };
   }
   return { accepted: true, score, matchedPrimaryEntities, matchedSecondaryEntities, matchedLockedPhrases, matchedNegativeEntities };
