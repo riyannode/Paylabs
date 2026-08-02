@@ -27,7 +27,12 @@ export type RelevanceResult = {
 };
 
 export function normalizeSearchText(value: string): string {
-  return value.toLowerCase().normalize("NFKC").replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
+  return value
+    .toLowerCase()
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N}\p{M}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
 }
 
 export function normalizeEntity(value: string): string {
@@ -119,6 +124,7 @@ export function scoreCandidateRelevance(
   const matchedLockedPhrases = (context.lockedPhrases || []).filter((phrase) => matchesExactPhrase(body, phrase));
 
   const titleScore = (context.primaryEntities || []).reduce((sum, entity) => sum + (matchesRequiredEntity(title, entity) ? 60 : 0), 0);
+  const metadataScore = (context.primaryEntities || []).reduce((sum, entity) => sum + (matchesRequiredEntity(metadata, entity) ? 20 : 0), 0);
   const summaryScore = (context.primaryEntities || []).reduce((sum, entity) => sum + (!matchesRequiredEntity(title, entity) && matchesRequiredEntity(summary, entity) ? 45 : 0), 0);
   const lockedScore = matchedLockedPhrases.reduce((sum, phrase) => sum + (matchesExactPhrase(title, phrase) ? 50 : 35), 0);
   const secondaryScore = matchedSecondaryEntities.length * 10;
@@ -134,7 +140,7 @@ export function scoreCandidateRelevance(
   const intent = (context.intentType || "").toLowerCase();
   const intentMatches = (intentPhrases[intent] || []).filter((phrase) => matchesExactPhrase(title, phrase));
   const intentSummaryMatches = (intentPhrases[intent] || []).filter((phrase) => matchesExactPhrase(summary, phrase));
-  const score = titleScore + summaryScore + lockedScore + secondaryScore + termScore + topicScore + intentMatches.length * 10 + intentSummaryMatches.length * 5 + (candidate.relevance_score || 0);
+  const score = titleScore + metadataScore + summaryScore + lockedScore + secondaryScore + termScore + topicScore + intentMatches.length * 10 + intentSummaryMatches.length * 5 + (candidate.relevance_score || 0);
   if (score <= 0) return { accepted: false, score, matchedPrimaryEntities, matchedSecondaryEntities, matchedLockedPhrases, matchedNegativeEntities, rejectionReason: "zero_or_negative_score" };
   const meaningfulSecondaryMatches = (context.secondaryEntities || [])
     .filter((entity) => entity.type !== "topic")

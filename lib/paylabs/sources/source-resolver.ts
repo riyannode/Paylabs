@@ -295,6 +295,8 @@ function filterByRelevance(
     const routePath = (src.route_path || "").toLowerCase();
     const url = (src.url || "").toLowerCase();
     const reason = (src.reason || "").toLowerCase();
+    const author = (src.author || "").toLowerCase();
+    const publisher = (src.publisher || "").toLowerCase();
     const urlMetadata = (() => {
       try {
         const parsed = new URL(src.url);
@@ -304,7 +306,7 @@ function filterByRelevance(
       }
     })();
     // Include safe URL metadata, excluding query-string values.
-    const combined = `${title} ${summary} ${domain} ${routePath} ${urlMetadata} ${reason}`;
+    const combined = `${title} ${summary} ${domain} ${routePath} ${urlMetadata} ${author} ${publisher} ${reason}`;
 
     const sharedRelevance = validateCandidateRelevance(
       {
