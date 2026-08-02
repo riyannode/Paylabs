@@ -14,6 +14,7 @@ export interface SourceItem {
   domain: string | null;
   summary: string;
   author: string;
+  publisher?: string;
   published_at: string | null;
   route_path: string | null;
   trust_status: string;

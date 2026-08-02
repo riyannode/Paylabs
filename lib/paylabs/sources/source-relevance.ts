@@ -59,6 +59,16 @@ export function matchesRequiredEntity(text: string, entity: StructuredEntity): b
   return matchesControlledAlias(text, entity) || closeTokenMatch(text, entity.canonical);
 }
 
+function searchableUrlMetadata(value?: string): string {
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    return `${url.hostname} ${url.pathname}`;
+  } catch {
+    return value;
+  }
+}
+
 export function scoreCandidateRelevance(
   candidate: RelevanceCandidate,
   context: {
@@ -73,17 +83,32 @@ export function scoreCandidateRelevance(
 ): RelevanceResult {
   const title = candidate.title || "";
   const summary = candidate.summary || "";
-  const body = `${title} ${summary}`;
+  const metadata = [
+    candidate.domain,
+    searchableUrlMetadata(candidate.source_url),
+    candidate.route_path,
+    candidate.author,
+    candidate.publisher,
+  ].filter(Boolean).join(" ");
+  const body = `${title} ${summary} ${metadata}`;
   const matchedPrimaryEntities = (context.primaryEntities || [])
     .filter((entity) => matchesRequiredEntity(body, entity))
     .map((entity) => entity.canonical);
+  const matchedSecondaryEntityObjects = (context.secondaryEntities || [])
+    .filter((entity) => matchesRequiredEntity(body, entity));
+  const matchedSecondaryEntities = matchedSecondaryEntityObjects.map((entity) => entity.canonical);
   const required = (context.primaryEntities || []).filter((entity) => entity.required);
+  const requiredSecondaryEntities = (context.secondaryEntities || [])
+    .filter((entity) => entity.required && entity.type !== "topic");
   const matchedRequiredEntities = required.filter((entity) => matchedPrimaryEntities.includes(entity.canonical));
   if (required.length === 1 && matchedRequiredEntities.length === 0) {
     return { accepted: false, score: 0, matchedPrimaryEntities, matchedSecondaryEntities: [], matchedLockedPhrases: [], matchedNegativeEntities: [], rejectionReason: "missing_required_entity" };
   }
   if (required.length > 1 && matchedRequiredEntities.length === 0) {
     return { accepted: false, score: 0, matchedPrimaryEntities, matchedSecondaryEntities: [], matchedLockedPhrases: [], matchedNegativeEntities: [], rejectionReason: "missing_required_entity" };
+  }
+  if (requiredSecondaryEntities.some((entity) => !matchedSecondaryEntities.includes(entity.canonical))) {
+    return { accepted: false, score: 0, matchedPrimaryEntities, matchedSecondaryEntities, matchedLockedPhrases: [], matchedNegativeEntities: [], rejectionReason: "missing_required_entity" };
   }
 
   const matchedNegativeEntities = (context.negativeEntities || []).filter((entity) => matchesExactPhrase(body, entity));
@@ -92,9 +117,7 @@ export function scoreCandidateRelevance(
   }
 
   const matchedLockedPhrases = (context.lockedPhrases || []).filter((phrase) => matchesExactPhrase(body, phrase));
-  const matchedSecondaryEntities = (context.secondaryEntities || [])
-    .filter((entity) => matchesRequiredEntity(body, entity))
-    .map((entity) => entity.canonical);
+
   const titleScore = (context.primaryEntities || []).reduce((sum, entity) => sum + (matchesRequiredEntity(title, entity) ? 60 : 0), 0);
   const summaryScore = (context.primaryEntities || []).reduce((sum, entity) => sum + (!matchesRequiredEntity(title, entity) && matchesRequiredEntity(summary, entity) ? 45 : 0), 0);
   const lockedScore = matchedLockedPhrases.reduce((sum, phrase) => sum + (matchesExactPhrase(title, phrase) ? 50 : 35), 0);

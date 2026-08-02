@@ -107,6 +107,7 @@ async function enrichRankedCandidates(
       domain,
       summary: String(ext.summary || "").slice(0, 500),
       author: String(ext.author || ""),
+      publisher: String(ext.publisher || ""),
       published_at: ext.published_at ? String(ext.published_at) : null,
       route_path: typeof ext.route_path === "string" ? ext.route_path : null,
       trust_status: ext.source_kind === "rsshub_live" ? "rsshub_live" : "web_fallback",
@@ -158,6 +159,7 @@ async function enrichRankedCandidates(
           domain,
           summary: String(item.summary || "").slice(0, 500),
           author: String(item.author_name || item.publisher || ""),
+          publisher: String(item.publisher || ""),
           published_at: (item.published_at as string) ?? null,
           route_path: routePath,
           trust_status: String(item.trust_status || "unverified"),
@@ -293,11 +295,28 @@ function filterByRelevance(
     const routePath = (src.route_path || "").toLowerCase();
     const url = (src.url || "").toLowerCase();
     const reason = (src.reason || "").toLowerCase();
-    // Include reason in combined text so topic_route:ai/openai helps entity matching
-    const combined = `${title} ${summary} ${domain} ${routePath} ${url} ${reason}`;
+    const urlMetadata = (() => {
+      try {
+        const parsed = new URL(src.url);
+        return `${parsed.hostname} ${parsed.pathname}`.toLowerCase();
+      } catch {
+        return src.url.toLowerCase();
+      }
+    })();
+    // Include safe URL metadata, excluding query-string values.
+    const combined = `${title} ${summary} ${domain} ${routePath} ${urlMetadata} ${reason}`;
 
     const sharedRelevance = validateCandidateRelevance(
-      { title: src.title, summary: src.summary, domain: src.domain, source_url: src.url, relevance_score: src.relevance_score },
+      {
+        title: src.title,
+        summary: src.summary,
+        domain: src.domain,
+        source_url: src.url,
+        route_path: src.route_path,
+        author: src.author,
+        publisher: src.publisher,
+        relevance_score: src.relevance_score,
+      },
       { primaryEntities, secondaryEntities, lockedPhrases, negativeEntities, entityTerms, topics, intentType },
     );
     if (!sharedRelevance.accepted) return false;
