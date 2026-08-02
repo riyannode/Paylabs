@@ -391,6 +391,8 @@ export async function executeLockedMacroNodePipeline(
         let primaryEntities: Array<{ text: string; canonical: string; type: string; required: boolean }> = [];
         let secondaryEntities: Array<{ text: string; canonical: string; type: string; required: boolean }> = [];
         let negativeEntities: string[] = [];
+        let lockedPhrases: string[] = [];
+        let topics: string[] = [];
 
         if (entityTerms.length === 0) {
           const childEvals = dData.serviceEvaluations as Array<{
@@ -424,6 +426,8 @@ export async function executeLockedMacroNodePipeline(
               primaryEntities = (qbEval.output.primary_entities as typeof primaryEntities) || [];
               secondaryEntities = (qbEval.output.secondary_entities as typeof secondaryEntities) || [];
               negativeEntities = (qbEval.output.negative_entities as string[]) || [];
+              lockedPhrases = (qbEval.output.locked_phrases as string[]) || [];
+              topics = (qbEval.output.topics as string[]) || [];
             }
           }
         }
@@ -435,6 +439,8 @@ export async function executeLockedMacroNodePipeline(
           primaryEntities,
           secondaryEntities,
           negativeEntities,
+          lockedPhrases,
+          topics,
         });
         if (resolverResult.ok) {
           sourceContext = resolverResult.sourceContext;

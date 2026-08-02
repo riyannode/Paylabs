@@ -78,6 +78,11 @@ const signalScoutNode = createServiceNode(
     entity_terms: (state as DiscoveryPlannerStateType).entityTerms || [],
     negative_filters: (state as DiscoveryPlannerStateType).negativeFilters || [],
     source_preferences: (state as DiscoveryPlannerStateType).sourcePreferences || [],
+    primary_entities: (state as DiscoveryPlannerStateType).primaryEntities || [],
+    secondary_entities: (state as DiscoveryPlannerStateType).secondaryEntities || [],
+    locked_phrases: (state as DiscoveryPlannerStateType).lockedPhrases || [],
+    negative_entities: (state as DiscoveryPlannerStateType).negativeEntities || [],
+    topics: (state as DiscoveryPlannerStateType).topics || [],
     routeTier: state.routeTier,
   }),
   { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: false, skipIfNotSelected: true }
@@ -93,6 +98,11 @@ const signalScoutBasicsNode = createServiceNode(
     entity_terms: (state as DiscoveryPlannerStateType).entityTerms || [],
     negative_filters: (state as DiscoveryPlannerStateType).negativeFilters || [],
     source_preferences: (state as DiscoveryPlannerStateType).sourcePreferences || [],
+    primary_entities: (state as DiscoveryPlannerStateType).primaryEntities || [],
+    secondary_entities: (state as DiscoveryPlannerStateType).secondaryEntities || [],
+    locked_phrases: (state as DiscoveryPlannerStateType).lockedPhrases || [],
+    negative_entities: (state as DiscoveryPlannerStateType).negativeEntities || [],
+    topics: (state as DiscoveryPlannerStateType).topics || [],
     routeTier: state.routeTier,
   }),
   { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: false, skipIfNotSelected: true }
@@ -140,6 +150,7 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
     return {
       expandedQueries: [] as string[],
       entityTerms: [] as string[],
+      primaryEntities: [], secondaryEntities: [], lockedPhrases: [], negativeEntities: [], topics: [],
       progressSummaries: ["Query builder returned no output — using empty queries"],
     };
   }
@@ -149,13 +160,23 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
     entity_terms?: string[];
     negative_filters?: string[];
     source_preferences?: string[];
+    primary_entities?: DiscoveryPlannerStateType["primaryEntities"];
+    secondary_entities?: DiscoveryPlannerStateType["secondaryEntities"];
+    locked_phrases?: string[];
+    negative_entities?: string[];
+    topics?: string[];
   };
 
   return {
-    expandedQueries: data.expanded_queries || [],
-    entityTerms: data.entity_terms || [],
-    negativeFilters: data.negative_filters || [],
-    sourcePreferences: data.source_preferences || [],
+    expandedQueries: data.expanded_queries ?? [],
+    entityTerms: data.entity_terms ?? [],
+    negativeFilters: data.negative_filters ?? [],
+    sourcePreferences: data.source_preferences ?? [],
+    primaryEntities: data.primary_entities ?? [],
+    secondaryEntities: data.secondary_entities ?? [],
+    lockedPhrases: data.locked_phrases ?? [],
+    negativeEntities: data.negative_entities ?? [],
+    topics: data.topics ?? [],
   };
 }
 

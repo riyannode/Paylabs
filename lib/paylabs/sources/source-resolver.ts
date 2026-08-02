@@ -16,6 +16,7 @@ import type {
   SourceResolverOutput,
 } from "./types";
 import { sanitizeEntityTerms, hasBoundaryTerm } from "./source-term-matching";
+import { validateCandidateRelevance } from "./source-relevance";
 import { detectTopics } from "@/lib/paylabs/rsshub/topic-routes";
 import {
   passesAiSourceGuard,
@@ -245,7 +246,10 @@ function filterByRelevance(
   normalizedGoal: string,
   entityTerms?: string[],
   primaryEntities?: Array<{ text: string; canonical: string; type: string; required: boolean }>,
+  secondaryEntities?: Array<{ text: string; canonical: string; type: string; required: boolean }>,
   negativeEntities?: string[],
+  lockedPhrases?: string[],
+  topics?: string[],
 ): SourceItem[] {
   if (sources.length === 0) return sources;
 
@@ -288,6 +292,12 @@ function filterByRelevance(
     // Include reason in combined text so topic_route:ai/openai helps entity matching
     const combined = `${title} ${summary} ${domain} ${routePath} ${url} ${reason}`;
 
+    const sharedRelevance = validateCandidateRelevance(
+      { title: src.title, summary: src.summary, domain: src.domain, source_url: src.url, relevance_score: src.relevance_score },
+      { primaryEntities, secondaryEntities, lockedPhrases, negativeEntities, entityTerms, topics },
+    );
+    if (!sharedRelevance.accepted) return false;
+
     // Phase 3A: Negative entity filter — reject sources matching noise patterns
     if (negativePatterns.length > 0) {
       const isNegative = negativePatterns.some((ne) => combined.includes(ne));
@@ -314,9 +324,7 @@ function filterByRelevance(
       if (!hasEntity) return false;
     }
 
-    // Phase 3A: Primary entity boost — if primary entities defined, prefer sources matching them
-    // This is a soft filter: sources matching primary entities pass, others pass too but rank lower
-    // (ranking happens downstream — this is just the relevance gate)
+    // Shared relevance validation above is the hard final gate.
 
     // GitHub intent: must be from github.com (or subdomain) or have repo-related content
     if (isGitHubIntent) {
@@ -349,7 +357,7 @@ function filterByRelevance(
 export async function resolveSources(
   input: SourceResolverInput
 ): Promise<SourceResolverOutput> {
-  const maxSources = input.maxSources ?? 10;
+  const maxSources = Math.min(input.maxSources ?? 5, 5);
 
   try {
     const rawSources = await enrichRankedCandidates(input.rankedCandidates, maxSources);
@@ -361,7 +369,10 @@ export async function resolveSources(
       input.normalizedGoal,
       input.entityTerms,
       input.primaryEntities,
+      input.secondaryEntities,
       input.negativeEntities,
+      input.lockedPhrases,
+      input.topics,
     );
     const sanitizedEntityCount = sanitizeEntityTerms(input.entityTerms || []).length;
     const sourceConfidence = computeSourceConfidence(sources);

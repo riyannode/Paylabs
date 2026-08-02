@@ -75,6 +75,8 @@ export interface SourceResolverInput {
   secondaryEntities?: Array<{ text: string; canonical: string; type: string; required: boolean }>;
   /** Negative entities — noise to filter out (e.g. "price prediction", "trading signal") */
   negativeEntities?: string[];
+  lockedPhrases?: string[];
+  topics?: string[];
 }
 
 // ─── Source Resolver Output ────────────────────────────────

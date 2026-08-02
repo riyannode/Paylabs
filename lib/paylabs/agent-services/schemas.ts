@@ -79,6 +79,7 @@ export const SignalScoutInput = z.object({
     required: z.boolean(),
   })).optional(),
   negative_entities: z.array(z.string()).optional(),
+  topics: z.array(z.string()).optional(),
 });
 type SignalScoutInput = z.infer<typeof SignalScoutInput>;
 

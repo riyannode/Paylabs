@@ -38,6 +38,13 @@ function replaceReducer<T>(_existing: T[], update: T[]): T[] {
   return [...update];
 }
 
+export type StructuredEntity = {
+  text: string;
+  canonical: string;
+  type: string;
+  required: boolean;
+};
+
 // ─── Discovery Planner State ────────────────────────────────
 
 export const DiscoveryPlannerState = Annotation.Root({
@@ -78,9 +85,14 @@ export const DiscoveryPlannerState = Annotation.Root({
     default: () => [],
   }),
   entityTerms: Annotation<string[]>({
-    reducer: concatReducer<string>,
+    reducer: replaceReducer<string>,
     default: () => [],
   }),
+  primaryEntities: Annotation<StructuredEntity[]>({ reducer: replaceReducer<StructuredEntity>, default: () => [] }),
+  secondaryEntities: Annotation<StructuredEntity[]>({ reducer: replaceReducer<StructuredEntity>, default: () => [] }),
+  lockedPhrases: Annotation<string[]>({ reducer: replaceReducer<string>, default: () => [] }),
+  negativeEntities: Annotation<string[]>({ reducer: replaceReducer<string>, default: () => [] }),
+  topics: Annotation<string[]>({ reducer: replaceReducer<string>, default: () => [] }),
 
   // Signal Scout output
   rankedCandidates: Annotation<Array<{
@@ -111,11 +123,11 @@ export const DiscoveryPlannerState = Annotation.Root({
 
   // Filters and preferences (from query_builder)
   negativeFilters: Annotation<string[]>({
-    reducer: concatReducer<string>,
+    reducer: replaceReducer<string>,
     default: () => [],
   }),
   sourcePreferences: Annotation<string[]>({
-    reducer: concatReducer<string>,
+    reducer: replaceReducer<string>,
     default: () => [],
   }),
 

@@ -247,6 +247,8 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
           };
         })
         .filter((s) => /^https?:\/\//.test(s.url))
+        .sort((a, b) => a.rank - b.rank)
+        .slice(0, 5)
     : [];
 
   // Extract entry payment link fields (safe URLs only, never settlement UUID)

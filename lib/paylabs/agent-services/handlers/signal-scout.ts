@@ -196,7 +196,7 @@ function runDeterministicSignalScout(
   // Normalize scores to 0-1 range
   const maxScore = Math.max(scored[0]?.score || 1, 1);
 
-  return scored.slice(0, limit).map((entry, i) => ({
+  return scored.filter((entry) => entry.score > 0).slice(0, limit).map((entry, i) => ({
     feed_item_id: String(entry.item.id || ""),
     title: String(entry.item.title || ""),
     publisher: String(entry.item.publisher || ""),
@@ -212,9 +212,7 @@ function runDeterministicSignalScout(
     docs_url: null,
     rank: i + 1,
     relevance_score: Math.min(entry.score / maxScore, 1),
-    reason: entry.score > 0
-      ? `Keyword/entity match (score: ${entry.score})`
-      : "Recency fallback",
+    reason: `Keyword/entity match (score: ${entry.score})`,
   }));
 }
 

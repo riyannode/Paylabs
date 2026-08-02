@@ -29,6 +29,7 @@ import {
   passesCryptoSourceGuard,
   isGenericCatchAllSource,
 } from "@/lib/paylabs/rsshub/topic-source-guards";
+import { scoreCandidateRelevance } from "@/lib/paylabs/sources/source-relevance";
 
 // ─── Stopwords — generic words that should never count as relevance signals ──
 const STOPWORDS = new Set([
@@ -438,8 +439,15 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
         if ((queryHasAiTopic || queryHasCryptoTopic) && isGenericCatchAllSource({ domain, routePath, url })) {
           return false;
         }
-        // Topic candidates already passed topic-level acceptance — keep them
-        if (item._isTopicCandidate) return true;
+        const shared = scoreCandidateRelevance(item, {
+          primaryEntities: primary_entities || [],
+          secondaryEntities: secondary_entities || [],
+          lockedPhrases: (input.payload as { locked_phrases?: string[] }).locked_phrases || [],
+          negativeEntities: negativeEnts,
+          entityTerms: entity_terms || [],
+        });
+        // Topic origin is not an acceptance bypass: it still needs entity relevance.
+        if (!shared.accepted) return false;
         // Non-topic candidates: apply domain guard for AI/crypto queries
         if (queryHasAiTopic && !passesAiSourceGuard({ domain, routePath, title, summary })) {
           return false;

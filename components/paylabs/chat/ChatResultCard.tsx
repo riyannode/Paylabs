@@ -57,10 +57,10 @@ export function ChatResultCard({ result, onReset }: { result: SafeRunResult; onR
       )}
       {result.sourcesUsed.length > 0 && (
         <div className="pl-source-links-row">
-          {result.sourcesUsed.slice(0, 3).map((s, i) => (
+          {result.sourcesUsed.slice(0, 5).map((s, i) => (
             <a key={s.url} href={s.url} target="_blank" rel="noopener noreferrer" title={s.title}>
-              Link {i + 1}
-              <span className="pl-source-link-meta">{s.title || s.domain || ""}</span>
+              <span>{s.title || `Source ${i + 1}`}</span>
+              <span className="pl-source-link-meta">{s.domain || ""}</span>
             </a>
           ))}
         </div>
