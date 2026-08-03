@@ -89,3 +89,11 @@ export function isDelegatedInlineExecutionEnabled(): boolean {
 export function isAutoTierPreflightEnabled(): boolean {
   return process.env.PAYLABS_AUTO_TIER_PREFLIGHT_ENABLED === "true";
 }
+
+/**
+ * Feature flag for post-retrieval grounded answer synthesis.
+ * Default: false so the existing Brain-answer behavior remains unchanged.
+ */
+export function isGroundedAnswerEnabled(): boolean {
+  return process.env.PAYLABS_GROUNDED_ANSWER_ENABLED === "true";
+}

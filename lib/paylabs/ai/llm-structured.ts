@@ -26,6 +26,10 @@ export interface GenerateStructuredJsonInput {
   systemPrompt: string;
   userPrompt: string;
   schema: z.ZodType<unknown>;
+  /** Optional single-attempt override for bounded post-processing calls. */
+  maxAttempts?: number;
+  /** Disable repair calls when the caller has a hard outer deadline. */
+  allowRepair?: boolean;
 }
 
 export interface GenerateStructuredJsonOk<T> {
@@ -220,6 +224,7 @@ export async function generateStructuredJson<T>(
 ): Promise<GenerateStructuredJsonResult<T>> {
   const { agentName, routeTier, systemPrompt, userPrompt, schema } = input;
   const required = isLlmRequired();
+  const allowRepair = input.allowRepair !== false;
 
   const model = getTutorModel(agentName);
   const modelConfig = getTutorModelConfig(agentName);
@@ -238,6 +243,7 @@ export async function generateStructuredJson<T>(
   // brain_planner defaults to 3 (critical path — paid request, must retry internally)
   const defaultMax = agentName === "brain_planner" ? 3 : 1;
   const rawMaxAttempts = Number(
+    input.maxAttempts ??
     process.env[`PAYLABS_LLM_MAX_ATTEMPTS_${modelConfig.agentKey}`] ??
     process.env.PAYLABS_LLM_MAX_ATTEMPTS_DEFAULT ??
     process.env.PAYLABS_LLM_MAX_ATTEMPTS ??
@@ -365,7 +371,7 @@ export async function generateStructuredJson<T>(
         }
 
         // ── No-JSON repair: ask model to reformat raw output as JSON ──
-        if (attempt === 0) {
+        if (allowRepair && attempt === 0) {
           try {
             // Extract raw text content for repair prompt (safe — no secrets)
             const rawMsg = result as unknown as Record<string, unknown>;
@@ -488,7 +494,7 @@ export async function generateStructuredJson<T>(
         };
 
         // ── Repair attempt: ask model to fix the JSON for the failing paths ──
-        if (attempt === 0) {
+        if (allowRepair && attempt === 0) {
           try {
             const repairSystemPrompt = "You must return valid JSON matching the schema exactly. Fix the validation errors below. Return ONLY the corrected JSON object. No markdown. No commentary. No extra keys.";
             const repairUserPrompt = `The previous JSON response failed Zod validation.\n\nReceived keys: ${JSON.stringify(receivedKeys)}\nExpected keys: ${JSON.stringify(expectedKeys)}\nValidation errors: ${parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join("; ")}\n\nReturn the corrected JSON matching the schema exactly. Do not omit any required fields. Do not add fields outside the schema.`;

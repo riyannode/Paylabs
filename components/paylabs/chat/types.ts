@@ -33,6 +33,10 @@ export type SafeRunResult = {
   userVisibleReasoning: string | null;
   brainRationale: string | null;
   sourceFinalAnswer: string | null;
+  sourceAvailabilityNote: string | null;
+  groundingStatus: "grounded" | "partially_grounded" | "insufficient_evidence" | "synthesis_failed" | null;
+  groundingSourceIds: string[];
+  groundingCitationValidationOk: boolean | null;
   lockedNodes: string[];
   lockedServices: string[];
   tierDecisionReason: string | null;

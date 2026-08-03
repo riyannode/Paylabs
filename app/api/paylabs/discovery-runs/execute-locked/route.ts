@@ -21,7 +21,7 @@ export const maxDuration = 300;
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/paylabs/db/server";
-import { isAutoTierPreflightEnabled } from "@/lib/paylabs/feature-flags";
+import { isAutoTierPreflightEnabled, isGroundedAnswerEnabled } from "@/lib/paylabs/feature-flags";
 import type { DelegatedRouteTier, ExecutionPlan } from "@/lib/paylabs/delegated-runtime/types";
 import type { OrchestratorOutput, PaymentGraphEdge } from "@/lib/paylabs/delegated-runtime/types";
 import { TIER_PHASE_MAP } from "@/lib/paylabs/delegated-runtime/state";
@@ -37,6 +37,8 @@ import { randomUUID } from "node:crypto";
 import { isOfficeMacroAgentId } from "@/lib/paylabs/office/registry";
 import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
 import { attachPaymentResponseHeader } from "@/lib/paylabs/x402/seller-challenge";
+import { getTutorModelConfig } from "@/lib/paylabs/ai/llm";
+import type { GroundedSynthesisResult } from "@/lib/paylabs/sources/source-grounded-synthesis";
 
 // ─── Local helpers (same as inline/route.ts) ─────────────────
 
@@ -956,12 +958,24 @@ export async function POST(req: NextRequest) {
       exitOutput.source_retrieval_mode = result.sourceContext.retrieval_mode;
     }
 
-    // Final answer
+    // ── Final answer: optional post-retrieval grounded synthesis ──
+    const groundedEnabled = isGroundedAnswerEnabled();
     let finalAnswer: string | null = null;
+    let sourceAvailabilityNote: string | null = null;
+    let groundingResult: GroundedSynthesisResult | null = null;
+    let groundingSourceIds: string[] = [];
+    let groundingProvider: string | null = null;
+    let groundingModel: string | null = null;
+    let groundingLatencyMs: number | null = null;
+
     try {
       const { buildSourceGroundedFinalAnswer } = await import("@/lib/paylabs/sources/source-final-answer");
+      const {
+        buildGroundingEvidence,
+        synthesizeGroundedAnswer,
+      } = await import("@/lib/paylabs/sources/source-grounded-synthesis");
       const sourcesUsed = exitOutput.sources_used || [];
-      finalAnswer = buildSourceGroundedFinalAnswer({
+      sourceAvailabilityNote = buildSourceGroundedFinalAnswer({
         goal: resolvedGoal,
         sourcesUsed,
         sourceConfidence: exitOutput.source_confidence || 0,
@@ -969,72 +983,102 @@ export async function POST(req: NextRequest) {
           ? (sourcesUsed.some((s: { source_kind?: string }) => s.source_kind === "rsshub_live") ? "rsshub_live" : "db_fallback")
           : "none"),
       });
+
+      if (groundedEnabled) {
+        groundingSourceIds = buildGroundingEvidence(sourcesUsed).map((source) => source.sourceId);
+        const startedAt = Date.now();
+        groundingResult = await synthesizeGroundedAnswer({
+          goal: resolvedGoal,
+          brainDraft: (safeBrainPlanning?.assistant_response as string | null | undefined) ?? null,
+          sources: sourcesUsed,
+          intentType: null,
+        });
+        groundingLatencyMs = groundingSourceIds.length > 0 ? Date.now() - startedAt : null;
+        if (groundingSourceIds.length > 0) {
+          const modelConfig = getTutorModelConfig("brain_planner");
+          groundingProvider = modelConfig.apiKeyPresent ? modelConfig.provider : null;
+          groundingModel = modelConfig.apiKeyPresent ? modelConfig.model : null;
+        }
+        finalAnswer = groundingResult.answer;
+      } else {
+        // Feature flag off: preserve the existing availability-note behavior.
+        finalAnswer = sourceAvailabilityNote;
+      }
     } catch (e: unknown) {
-      console.error("[execute_locked] final_answer build failed", {
+      console.error("[execute_locked] final answer synthesis failed", {
+        groundedEnabled,
+        error: e instanceof Error ? e.message.slice(0, 160) : String(e).slice(0, 160),
+      });
+      if (groundedEnabled) {
+        finalAnswer = "PayLabs found relevant sources but could not complete evidence verification for this answer.";
+        groundingResult = {
+          status: "synthesis_failed",
+          answer: finalAnswer,
+          citations: [],
+          unsupportedClaims: [],
+          usedSourceIds: [],
+          errorSafe: "Grounded answer post-processing failed.",
+          unknownCitationIds: [],
+        };
+      }
+    }
+
+    const groundingDiagnostics = groundedEnabled
+      ? {
+          version: "grounded_answer_v1" as const,
+          status: groundingResult?.status ?? "synthesis_failed",
+          source_ids_available: groundingSourceIds,
+          source_ids_used: groundingResult?.usedSourceIds ?? [],
+          unsupported_claim_count: groundingResult?.unsupportedClaims.length ?? 0,
+          citation_validation_ok: groundingResult?.status !== "synthesis_failed",
+          unknown_citation_ids: groundingResult?.unknownCitationIds ?? [],
+          synthesis_provider: groundingProvider,
+          synthesis_model: groundingModel,
+          synthesis_latency_ms: groundingLatencyMs,
+          error_safe: groundingResult?.errorSafe ?? null,
+        }
+      : null;
+
+    // Persist source context, availability note, and the actual final answer.
+    // Grounding is post-processing only; payment graph/status/receipts are not touched here.
+    try {
+      const { data: existingRun } = await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .select("agent_trace")
+        .eq("id", discoveryRunId)
+        .single();
+      const trace = (existingRun?.agent_trace as Record<string, unknown>) || {};
+      const sourceContextTrace = {
+        source_count: exitOutput.source_count || 0,
+        source_confidence: exitOutput.source_confidence || 0,
+        retrieval_mode: exitOutput.source_retrieval_mode || "rsshub_live_empty",
+        sources_used: (exitOutput.sources_used || []).slice(0, 20).map((s) => ({
+          title: s.title,
+          url: s.url,
+          domain: s.domain,
+          rank: s.rank,
+          source_kind: s.source_kind,
+          provider: s.provider,
+        })),
+      };
+      await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .update({
+          final_answer: finalAnswer,
+          agent_trace: {
+            ...trace,
+            source_context: sourceContextTrace,
+            source_availability_note: sourceAvailabilityNote,
+            final_answer: finalAnswer,
+            ...(groundingDiagnostics ? { grounding: groundingDiagnostics } : {}),
+            exit_output: exitOutput,
+          },
+        })
+        .eq("id", discoveryRunId);
+    } catch (e: unknown) {
+      console.error("[execute_locked] final answer persistence failed", {
         error: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
       });
-    }
-
-    // Store source context + final_answer
-    if (exitOutput.source_retrieval_mode || (exitOutput.sources_used && exitOutput.sources_used.length > 0)) {
-      try {
-        const { data: existingRun } = await supabaseAdmin()
-          .from("paylabs_discovery_runs")
-          .select("agent_trace")
-          .eq("id", discoveryRunId)
-          .single();
-        const trace = (existingRun?.agent_trace as Record<string, unknown>) || {};
-
-        await supabaseAdmin()
-          .from("paylabs_discovery_runs")
-          .update({
-            agent_trace: {
-              ...trace,
-              source_context: {
-                source_count: exitOutput.source_count || 0,
-                source_confidence: exitOutput.source_confidence || 0,
-                retrieval_mode: exitOutput.source_retrieval_mode || "rsshub_live_empty",
-                sources_used: (exitOutput.sources_used || []).slice(0, 20).map((s) => ({
-                  title: s.title,
-                  url: s.url,
-                  domain: s.domain,
-                  rank: s.rank,
-                  source_kind: s.source_kind,
-                  provider: s.provider,
-                })),
-              },
-              final_answer: finalAnswer,
-              exit_output: exitOutput,
-            },
-          })
-          .eq("id", discoveryRunId);
-      } catch (e: unknown) {
-        console.error("[execute_locked] source snapshot store failed", {
-          error: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
-        });
-      }
-    }
-
-    // Persist exit_output unconditionally — recovery path reads agentTrace.exit_output
-    if (!exitOutput.source_retrieval_mode && !(exitOutput.sources_used && exitOutput.sources_used.length > 0)) {
-      try {
-        const { data: traceRow } = await supabaseAdmin()
-          .from("paylabs_discovery_runs")
-          .select("agent_trace")
-          .eq("id", discoveryRunId)
-          .single();
-        const mergedTrace = (traceRow?.agent_trace as Record<string, unknown>) || {};
-        await supabaseAdmin()
-          .from("paylabs_discovery_runs")
-          .update({
-            agent_trace: { ...mergedTrace, exit_output: exitOutput },
-          })
-          .eq("id", discoveryRunId);
-      } catch (e: unknown) {
-        console.error("[execute_locked] exit_output persist failed", {
-          error: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
-        });
-      }
     }
 
     // ── Write visibility ────────────────────────────────────
@@ -1059,6 +1103,14 @@ export async function POST(req: NextRequest) {
     const successResponse = NextResponse.json({
       ok: result.status === "completed",
       final_answer: finalAnswer,
+      source_availability_note: sourceAvailabilityNote,
+      ...(groundedEnabled && groundingDiagnostics
+        ? {
+            grounding_status: groundingDiagnostics.status,
+            grounding_source_ids: groundingDiagnostics.source_ids_used,
+            grounding_citation_validation_ok: groundingDiagnostics.citation_validation_ok,
+          }
+        : {}),
       discovery_run_id: discoveryRunId,
       status: result.status,
       requested_route_tier: "auto",

@@ -21,7 +21,7 @@ import { getSession } from "@/lib/paylabs/auth/session";
 import { createDcwSigner } from "@/lib/paylabs/x402/dcw-signer-adapter";
 import { callPaidSeller } from "@/lib/paylabs/x402/buyer-transport";
 import { resolvePaylabsAppUrl } from "@/lib/paylabs/runtime/resolve-app-url";
-import { isAutoTierPreflightEnabled } from "@/lib/paylabs/feature-flags";
+import { isAutoTierPreflightEnabled, isGroundedAnswerEnabled } from "@/lib/paylabs/feature-flags";
 
 // ─── Allowlisted internal seller URLs ────────────────────────
 function getAllowedSellerUrl(path: string): string | null {
@@ -312,11 +312,26 @@ export async function POST(req: NextRequest) {
           const finalEntryUsdc = Number(pf?.final_entry_payment_usdc) || 0;
           const userCostUsdc = routingFeeUsdc + finalEntryUsdc;
 
+          const recoveredFinalAnswer = run.final_answer || sourceSnapshot.final_answer || agentTrace.final_answer || null;
+          const grounding = agentTrace.grounding as Record<string, unknown> | undefined;
+          const groundedRecoveryEnabled = isGroundedAnswerEnabled();
+          const recoveredAnswer = groundedRecoveryEnabled
+            ? (grounding ? recoveredFinalAnswer : "PayLabs found relevant sources but could not complete evidence verification for this answer.")
+            : recoveredFinalAnswer;
+
           return {
             ok: true,
             status: "completed",
             discovery_run_id: run.id,
-            final_answer: run.final_answer || sourceSnapshot.final_answer || agentTrace.final_answer || null,
+            final_answer: recoveredAnswer,
+            source_availability_note: (agentTrace.source_availability_note as string) || null,
+            ...(groundedRecoveryEnabled
+              ? {
+                  grounding_status: (grounding?.status as string) || "synthesis_failed",
+                  grounding_source_ids: (grounding?.source_ids_used as string[]) || [],
+                  grounding_citation_validation_ok: grounding?.citation_validation_ok === true,
+                }
+              : {}),
             brain_planning: agentTrace.brain_planning || null,
             _brain_diag: agentTrace._brain_diag || null,
             effective_route_tier: run.effective_route_tier || run.route_tier,

@@ -181,9 +181,19 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (data?.final_answer as string) ??
     (exitOutput?.final_answer as string) ??
     null;
+  const rawGroundingStatus = data?.grounding_status;
+  const groundingStatus =
+    rawGroundingStatus === "grounded" ||
+    rawGroundingStatus === "partially_grounded" ||
+    rawGroundingStatus === "insufficient_evidence" ||
+    rawGroundingStatus === "synthesis_failed"
+      ? rawGroundingStatus
+      : null;
+  const sourceAvailabilityNote =
+    (data?.source_availability_note as string) ??
+    ((data?.agent_trace as Record<string, unknown>)?.source_availability_note as string) ??
+    null;
 
-  // Prioritize Brain LLM answer over deterministic source-grounded answer.
-  // brainAssistantResponse is a natural LLM answer; rawFinalAnswer is a deterministic source list.
   const isNoSourceFallback = /no sufficiently relevant sources found|no relevant sources found|no matching live rsshub sources|no sufficiently relevant live sources were found|did not attach source links/i.test(rawFinalAnswer || "");
   const brainAssistantResponse =
     (brainPlanning?.assistant_response as string) ??
@@ -199,8 +209,17 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
   const isGenericBrainAnswer = !!brainAssistantResponse && GENERIC_ANSWER_RE.test(brainAssistantResponse) && brainAssistantResponse.length < 200;
 
   const NO_SOURCE_FALLBACK_MSG = "No sufficiently relevant live sources were found for this query. The route completed with basic discovery, but PayLabs did not attach source links because no source passed the relevance gate.";
+  const SYNTHESIS_FAILED_MSG = "PayLabs found relevant sources but could not complete evidence verification for this answer.";
+
+  // When grounding metadata exists, it is authoritative for presentation. In
+  // particular, insufficient_evidence and synthesis_failed must never fall
+  // through to the raw Brain draft.
+  const groundedResponse = groundingStatus
+    ? (rawFinalAnswer?.trim() || (groundingStatus === "synthesis_failed" ? SYNTHESIS_FAILED_MSG : NO_SOURCE_FALLBACK_MSG))
+    : null;
 
   const assistantResponse =
+    groundedResponse ??
     (brainAssistantResponse && !isGenericBrainAnswer ? brainAssistantResponse : null) ??
     (rawFinalAnswer && !isNoSourceFallback ? rawFinalAnswer : null) ??
     (isNoSourceFallback || isGenericBrainAnswer ? NO_SOURCE_FALLBACK_MSG : null) ??
@@ -279,7 +298,16 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     assistantResponse,
     userVisibleReasoning,
     brainRationale,
-    sourceFinalAnswer: rawFinalAnswer,
+    sourceFinalAnswer: sourceAvailabilityNote ?? rawFinalAnswer,
+    sourceAvailabilityNote,
+    groundingStatus,
+    groundingSourceIds: Array.isArray(data?.grounding_source_ids)
+      ? (data.grounding_source_ids as unknown[]).filter((id): id is string => typeof id === "string")
+      : [],
+    groundingCitationValidationOk:
+      typeof data?.grounding_citation_validation_ok === "boolean"
+        ? data.grounding_citation_validation_ok
+        : null,
     lockedNodes: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_macro_nodes as string[]) ?? [],
     lockedServices: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_services as string[]) ?? [],
     tierDecisionReason: (brainPlanning?.tier_decision_reason as string) ?? null,
