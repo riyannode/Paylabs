@@ -71,6 +71,45 @@ export type EvidenceChunk = {
   };
 };
 
+
+// ─── Chunk Relevance ───────────────────────────────────────
+
+/**
+ * Relevance result for a single evidence chunk.
+ * Combines deterministic lexical signals with optional semantic similarity.
+ */
+export type ChunkRelevance = {
+  /** Unique chunk identifier */
+  chunkId: string;
+  /** Final composed score (0..1, higher = more relevant) */
+  score: number;
+
+  /** Canonical entity names this chunk supports */
+  entitySupport: string[];
+  /** Requested aspects this chunk covers */
+  aspectSupport: string[];
+  /** Locked phrases matched in this chunk */
+  lockedPhraseSupport: string[];
+
+  /** Deterministic lexical score component (0..1) */
+  lexicalScore: number;
+  /** Semantic similarity score (0..1) or null if unavailable */
+  semanticScore: number | null;
+  /** Source quality score (0..1) */
+  qualityScore: number;
+
+  /** If rejected, the reason; null if accepted */
+  rejectionReason: string | null;
+};
+
+/**
+ * An evidence chunk paired with its relevance ranking.
+ */
+export type RankedEvidenceChunk = {
+  chunk: EvidenceChunk;
+  relevance: ChunkRelevance;
+};
+
 /** Default configuration constants */
 export const CONTENT_FETCH_DEFAULTS = {
   maxBytes: 200_000,
