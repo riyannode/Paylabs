@@ -164,6 +164,83 @@ export type EvidenceGradingResult = {
   deterministicRejectCount: number;
 };
 
+// ─── Evidence Coverage ────────────────────────────────────
+
+/**
+ * Evidence coverage across graded chunks.
+ * Computed ONLY from trusted grade-level support (not raw relevance).
+ */
+export type EvidenceCoverage = {
+  /** Required primary entities from retrievalContext */
+  requiredEntities: string[];
+  /** Entities covered by trusted graded evidence */
+  coveredEntities: string[];
+  /** Required entities with no trusted coverage */
+  missingEntities: string[];
+
+  /** Required aspects from retrievalContext */
+  requiredAspects: string[];
+  /** Aspects covered by trusted graded evidence */
+  coveredAspects: string[];
+  /** Required aspects with no trusted coverage */
+  missingAspects: string[];
+
+  /** Whether this is a comparison-style query */
+  comparisonLike: boolean;
+
+  /** Per-entity × aspect coverage matrix (only when comparisonLike=true) */
+  entityAspectCoverage: Array<{
+    entity: string;
+    coveredAspects: string[];
+    missingAspects: string[];
+  }>;
+};
+
+/**
+ * One bounded retry round for missing evidence coverage.
+ */
+export type EvidenceRetryRound = {
+  /** Round number (1-indexed) */
+  round: number;
+  /** Targeted queries generated for this round */
+  queries: string[];
+  /** Raw Tavily candidates returned */
+  candidateCount: number;
+  /** Candidates that passed canonical resolver */
+  resolvedSourceCount: number;
+  /** Sources that were NEW (not in previous rounds) */
+  newSourceCount: number;
+  /** Coverage snapshot before this round */
+  coverageBefore: EvidenceCoverage;
+  /** Coverage snapshot after this round */
+  coverageAfter: EvidenceCoverage;
+};
+
+/**
+ * Complete result of the bounded evidence retrieval pipeline.
+ * Internal runtime structure — not persisted or exposed publicly.
+ */
+export type EvidenceRetrievalResult = {
+  /** All graded chunks across all rounds */
+  gradedChunks: GradedEvidenceChunk[];
+  /** All resolver-approved sources across all rounds */
+  resolvedSources: import("../sources/types").SourceItem[];
+  /** Final coverage snapshot */
+  coverage: EvidenceCoverage;
+  /** Retry rounds executed */
+  retryRounds: EvidenceRetryRound[];
+  /** Targeted queries that were generated */
+  retryQueries: string[];
+  /** Why the pipeline stopped */
+  stoppedReason:
+    | "coverage_complete"
+    | "retry_limit"
+    | "no_new_sources"
+    | "provider_unavailable"
+    | "deadline"
+    | "no_retrieval_context";
+};
+
 /** Default configuration constants */
 export const CONTENT_FETCH_DEFAULTS = {
   maxBytes: 200_000,

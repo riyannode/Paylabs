@@ -87,6 +87,8 @@ export interface LockedOrchestrationParams {
 export interface LockedOrchestrationResult {
   output: OrchestratorOutput;
   _lockedPlan: ExecutionPlan;
+  /** Internal RAG evidence result — not exposed publicly */
+  _ragEvidence?: import("../rag/types").EvidenceRetrievalResult;
 }
 
 // ─── Reconstruct ExecutionPlan from preflight trace ──────────
@@ -351,6 +353,7 @@ export async function executeLockedMacroNodePipeline(
   // ── Source context resolution (mirrors inline/route.ts lines 545-616) ──
   let sourceContext: import("../sources/types").SourceContext | undefined;
   let serviceRetrievalMode: string | undefined;
+  let retrievalContextForEvidence: import("../sources/types").RetrievalContext | undefined;
   const discoveryMacroResult = macroNodeResults["discovery_planner"];
 
   if (discoveryMacroResult) {
@@ -383,6 +386,9 @@ export async function executeLockedMacroNodePipeline(
         // Use canonical retrievalContext from Discovery Planner output.
         // This is the single source of truth for retrieval parameters.
         const retrievalContext = dData.retrievalContext as import("../sources/types").RetrievalContext | undefined;
+
+        // Capture for evidence retrieval (used after source resolution)
+        retrievalContextForEvidence = retrievalContext;
 
         // Backward compat: extract from serviceEvaluations if retrievalContext missing
         if (!retrievalContext) {
@@ -558,6 +564,9 @@ export async function executeLockedMacroNodePipeline(
       const normalizedGoal2 = rc2?.normalizedGoal
         || (brainData ? String(brainData.normalized_goal || "") : "");
 
+      // Capture for evidence retrieval (used after source resolution)
+      if (rc2) retrievalContextForEvidence = rc2;
+
       sourceContext = {
         sources_used: [],
         source_selection_summary: "No matching live RSSHub sources found.",
@@ -665,6 +674,36 @@ export async function executeLockedMacroNodePipeline(
     }
   }
 
+  // ── Evidence retrieval with coverage retry (internal RAG, gated by feature flag) ──
+  let ragEvidence: import("../rag/types").EvidenceRetrievalResult | undefined;
+  try {
+    const { isGroundedAnswerEnabled } = await import("../feature-flags");
+    if (isGroundedAnswerEnabled() && retrievalContextForEvidence && sourceContext) {
+      const { runEvidenceRetrievalWithCoverage } = await import("../rag/evidence-retrieval");
+      ragEvidence = await runEvidenceRetrievalWithCoverage({
+        retrievalContext: retrievalContextForEvidence,
+        initialSources: sourceContext.sources_used || [],
+        delegatedRouteTier: lockedTier,
+      });
+
+      // Safe diagnostic — no raw chunks, no article text
+      console.log(JSON.stringify({
+        log: "[locked_orchestration] evidence_retrieval",
+        stopped_reason: ragEvidence.stoppedReason,
+        total_chunks: ragEvidence.gradedChunks.length,
+        total_sources: ragEvidence.resolvedSources.length,
+        retry_rounds: ragEvidence.retryRounds.length,
+        coverage_entities: `${ragEvidence.coverage.coveredEntities.length}/${ragEvidence.coverage.requiredEntities.length}`,
+        coverage_aspects: `${ragEvidence.coverage.coveredAspects.length}/${ragEvidence.coverage.requiredAspects.length}`,
+      }));
+    }
+  } catch (err: unknown) {
+    // Evidence retrieval failure must not fail the paid run
+    console.warn("[locked_orchestration] evidence retrieval failed", {
+      error: err instanceof Error ? err.message.slice(0, 150) : String(err).slice(0, 150),
+    });
+  }
+
   // ── Build output ──
   const output = buildOutput(
     discoveryRunId,
@@ -680,5 +719,5 @@ export async function executeLockedMacroNodePipeline(
     lockedPlan,
   );
 
-  return { output, _lockedPlan: lockedPlan };
+  return { output, _lockedPlan: lockedPlan, _ragEvidence: ragEvidence };
 }

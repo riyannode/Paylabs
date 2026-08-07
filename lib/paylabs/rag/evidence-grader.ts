@@ -212,17 +212,6 @@ const BatchGradingSchema = z.object({
 type LlmChunkGrade = z.infer<typeof ChunkGradeSchema>;
 
 /**
- * Normalize a route tier string to a valid RouteTier for generateStructuredJson.
- * Falls back to "normal" for any unrecognized value.
- */
-function normalizeRouteTier(tier: string | undefined): RouteTier {
-  if (tier === "normal" || tier === "advanced" || tier === "premium") {
-    return tier;
-  }
-  return "normal";
-}
-
-/**
  * Build the user prompt for a batch of chunks.
  */
 function buildBatchPrompt(
@@ -270,13 +259,11 @@ async function gradeBatch(
   retrievalContext: RetrievalContext,
   batch: RankedEvidenceChunk[],
   agentName: string,
-  routeTier: string,
+  routeTier: RouteTier,
 ): Promise<Map<string, LlmChunkGrade>> {
-  const effectiveRouteTier = normalizeRouteTier(routeTier);
-
   const result = await generateStructuredJson({
     agentName,
-    routeTier: effectiveRouteTier,
+    routeTier,
     systemPrompt: GRADING_SYSTEM_PROMPT,
     userPrompt: buildBatchPrompt(retrievalContext, batch),
     schema: BatchGradingSchema,
@@ -425,7 +412,7 @@ function selectLlmCandidates(
 export async function gradeEvidenceChunks(params: {
   retrievalContext: RetrievalContext;
   rankedChunks: RankedEvidenceChunk[];
-  routeTier?: string;
+  routeTier?: RouteTier;
 }): Promise<EvidenceGradingResult> {
   const { retrievalContext, rankedChunks, routeTier } = params;
   const agentName = "source_verifier";
@@ -514,7 +501,7 @@ export async function gradeEvidenceChunks(params: {
           retrievalContext,
           batchItems,
           agentName,
-          routeTier ?? "normal",
+          routeTier ?? ("normal" as RouteTier),
         );
         llmCalls++;
 
