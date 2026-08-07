@@ -27,11 +27,12 @@ import { chunkEvidenceDocuments } from "./chunker";
 import { rankEvidenceChunks } from "./hybrid-ranker";
 import { gradeEvidenceChunks } from "./evidence-grader";
 import { ASPECT_DEFINITIONS } from "../sources/crypto-entity-registry";
+import { canonicalizeUrl } from "../sources/source-resolver";
 
 // ─── Configuration ─────────────────────────────────────────
 
 const RETRIEVAL_CONFIG = {
-  /** Maximum retry rounds for missing coverage */
+  /** Maximum retry rounds for missing coverage (includes ALL additional rounds) */
   maxRetryRounds: 2,
   /** Maximum targeted queries per retry round */
   maxQueriesPerRound: 3,
@@ -89,7 +90,7 @@ export function computeEvidenceCoverage(
   // Per-entity × aspect tracking for comparison queries
   const entityAspectMap = new Map<string, { covered: Set<string>; all: Set<string> }>();
 
-  // Count trusted evidence chunks (item 9)
+  // Count trusted evidence chunks
   let trustedEvidenceCount = 0;
 
   for (const gc of gradedChunks) {
@@ -175,7 +176,7 @@ function isCoverageComplete(
   coverage: EvidenceCoverage,
   retrievalContext: RetrievalContext,
 ): boolean {
-  // Zero trusted evidence → coverage not complete (item 9)
+  // Zero trusted evidence → coverage not complete
   if (coverage.trustedEvidenceCount === 0) return false;
 
   if (coverage.missingEntities.length > 0) return false;
@@ -343,11 +344,10 @@ type TavilyRetryResult = {
 
 /**
  * Fetch targeted Tavily candidates for a retry round.
- * Returns structured result with provider availability distinction (item 7).
- * Uses canonicalized URL dedupe (item 2).
- * Uses targeted entityTerms from query itself (item 1).
- * Propagates delegated routeTier (item 5).
- * Uses detected topicCategory (item 6).
+ * Returns structured result with provider availability distinction.
+ * Uses targeted entityTerms from query itself.
+ * Propagates delegated routeTier.
+ * Uses detected topicCategory.
  */
 async function fetchRetryTavilyCandidates(
   queries: string[],
@@ -370,24 +370,21 @@ async function fetchRetryTavilyCandidates(
     const allCandidates: TavilyRetryCandidate[] = [];
     let hadSuccessfulSearch = false;
 
-    // Use canonicalizeUrl for dedupe (item 2)
-    const { canonicalizeUrl } = await import("../sources/source-resolver");
-
     for (const query of queries) {
       try {
-        // Build targeted entityTerms from the query itself (item 1)
+        // Build targeted entityTerms from the query itself
         // Do NOT prepend generic retrievalContext.entityTerms — that defeats targeting
         const queryTerms = query
           .split(/\s+/)
           .filter((t) => t.length > 2);
 
-        // Detect topic category from the targeted query (item 6)
+        // Detect topic category from the targeted query
         const { category, subcategory } = detectRetryTopicCategory(
           query,
           queryTerms,
         );
 
-        // Propagate external delegated tier (item 5)
+        // Propagate external delegated tier
         // Do NOT pass internal tier values to Tavily
         const isExternalAdvanced = delegatedRouteTier === "advanced";
 
@@ -401,7 +398,7 @@ async function fetchRetryTavilyCandidates(
         });
 
         if (result.error_class === "tavily_disabled") {
-          // Provider unavailable
+          // Provider unavailable for this query
           continue;
         }
 
@@ -443,13 +440,12 @@ async function fetchRetryTavilyCandidates(
 
 /**
  * Dedupe candidates by canonical URL against already-processed URLs.
- * Uses canonicalizeUrl for proper tracking-param/fragment stripping (item 2).
+ * Uses canonicalizeUrl for proper tracking-param/fragment stripping.
  */
 function dedupeCandidates(
   candidates: TavilyRetryCandidate[],
   existingUrls: Set<string>,
 ): TavilyRetryCandidate[] {
-  const { canonicalizeUrl } = require("../sources/source-resolver") as typeof import("../sources/source-resolver");
   const seen = new Set(existingUrls);
   const deduped: TavilyRetryCandidate[] = [];
 
@@ -463,28 +459,6 @@ function dedupeCandidates(
   return deduped;
 }
 
-/**
- * Canonicalize a source URL for tracking.
- */
-function canonicalSourceUrl(url: string | undefined): string {
-  // Use a simple inline canonicalizer for Set tracking
-  // canonicalizeUrl from source-resolver is used for candidate dedupe
-  // This is for processedUrls Set which needs a fast inline version
-  if (!url) return "";
-  try {
-    const u = new URL(url);
-    const TRACKING_PARAMS = new Set(["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "ref", "source", "fbclid", "gclid"]);
-    for (const key of TRACKING_PARAMS) {
-      u.searchParams.delete(key);
-    }
-    u.hash = "";
-    const path = u.pathname.replace(/\/+$/, "") || "/";
-    return `${u.protocol}//${u.hostname.toLowerCase()}${path}${u.search}`;
-  } catch {
-    return url.trim().toLowerCase();
-  }
-}
-
 // ─── Main Orchestrator ─────────────────────────────────────
 
 /**
@@ -493,7 +467,8 @@ function canonicalSourceUrl(url: string | undefined): string {
  * First pass:
  *   initial canonical SourceItem[] → documents → chunks → rank → grade → coverage
  *
- * Then bounded retry rounds for missing coverage using targeted Tavily queries.
+ * Then bounded retry rounds (max 2) for missing coverage using targeted Tavily queries.
+ * Zero-evidence unconstrained queries use a fallback query within the same retry loop.
  *
  * Returns EvidenceRetrievalResult with all graded evidence and coverage metadata.
  */
@@ -531,12 +506,25 @@ export async function runEvidenceRetrievalWithCoverage(params: {
   const internalRouteTier = toInternalTier(delegatedRouteTier);
 
   const deadline = Date.now() + RETRIEVAL_CONFIG.retrievalDeadlineMs;
-  const allGradedChunks: GradedEvidenceChunk[] = [];
-  const allResolvedSources: SourceItem[] = [...initialSources];
 
-  // Use canonical URL for processedUrls tracking (item 2)
+  // ── Hard-enforce source cap from initial input (item 5) ──
+  // Canonical-dedupe initial sources first, then limit to maxTotalSources
+  const seenCanonicalUrls = new Set<string>();
+  const dedupedInitialSources: SourceItem[] = [];
+  for (const s of initialSources) {
+    const canon = canonicalizeUrl(s.url || "");
+    if (!canon || seenCanonicalUrls.has(canon)) continue;
+    seenCanonicalUrls.add(canon);
+    if (dedupedInitialSources.length >= RETRIEVAL_CONFIG.maxTotalSources) break;
+    dedupedInitialSources.push(s);
+  }
+
+  const allGradedChunks: GradedEvidenceChunk[] = [];
+  const allResolvedSources: SourceItem[] = [...dedupedInitialSources];
+
+  // Use canonical URL for processedUrls tracking
   const processedUrls = new Set(
-    initialSources.map((s) => canonicalSourceUrl(s.url)),
+    dedupedInitialSources.map((s) => canonicalizeUrl(s.url || "")),
   );
 
   const retryRounds: EvidenceRetryRound[] = [];
@@ -544,21 +532,17 @@ export async function runEvidenceRetrievalWithCoverage(params: {
   let stoppedReason: EvidenceRetrievalResult["stoppedReason"] = "deadline";
 
   // ── First pass: initial sources → documents → chunks → rank → grade ──
-  // Deadline check before content fetch (item 4)
   if (Date.now() < deadline) {
     try {
-      const documents = await buildEvidenceDocuments(initialSources);
-      // Deadline check before chunking (item 4)
+      const documents = await buildEvidenceDocuments(dedupedInitialSources);
       if (Date.now() >= deadline) {
         stoppedReason = "deadline";
       } else {
         const chunks = await chunkEvidenceDocuments(documents);
-        // Deadline check before ranking (item 4)
         if (Date.now() >= deadline) {
           stoppedReason = "deadline";
         } else {
           const rankedChunks = await rankEvidenceChunks(retrievalContext, chunks);
-          // Deadline check before grading (item 4)
           if (Date.now() >= deadline) {
             stoppedReason = "deadline";
           } else {
@@ -582,8 +566,10 @@ export async function runEvidenceRetrievalWithCoverage(params: {
   let coverage = computeEvidenceCoverage(allGradedChunks, retrievalContext);
 
   if (isCoverageComplete(coverage, retrievalContext)) {
+    // Enforce final chunk cap
+    const finalChunks = allGradedChunks.slice(0, RETRIEVAL_CONFIG.maxTotalGradedChunks);
     return {
-      gradedChunks: allGradedChunks,
+      gradedChunks: finalChunks,
       resolvedSources: allResolvedSources,
       coverage,
       retryRounds,
@@ -592,140 +578,7 @@ export async function runEvidenceRetrievalWithCoverage(params: {
     };
   }
 
-  // Item 9: For unconstrained queries with zero trusted evidence, generate one bounded retry
-  if (
-    coverage.trustedEvidenceCount === 0 &&
-    coverage.requiredEntities.length === 0 &&
-    coverage.requiredAspects.length === 0
-  ) {
-    const fallbackQuery = generateZeroEvidenceFallbackQuery(retrievalContext.originalGoal);
-    retryQueries.push(fallbackQuery);
-
-    // Process this one fallback query as a single round
-    const coverageBefore = { ...coverage };
-    try {
-      const retryResult = await fetchRetryTavilyCandidates(
-        [fallbackQuery],
-        retrievalContext,
-        "evidence_zero_evidence_fallback",
-        delegatedRouteTier,
-      );
-
-      if (retryResult.providerAvailable && retryResult.hadSuccessfulSearch && retryResult.candidates.length > 0) {
-        // Dedupe
-        const { canonicalizeUrl } = await import("../sources/source-resolver");
-        const seen = new Set(processedUrls);
-        const newCandidates: TavilyRetryCandidate[] = [];
-        for (const c of retryResult.candidates) {
-          const url = canonicalizeUrl(c.source_url || "");
-          if (!url || seen.has(url)) continue;
-          seen.add(url);
-          newCandidates.push(c);
-        }
-
-        if (newCandidates.length > 0) {
-          // Pass through canonical resolver
-          const { resolveSources } = await import("../sources/source-resolver");
-          const resolverResult = await resolveSources({
-            rankedCandidates: newCandidates.map((c) => ({
-              feed_item_id: c.feed_item_id,
-              rank: c.rank,
-              relevance_score: c.relevance_score,
-              source_kind: "tavily_live" as const,
-              provider: "tavily" as const,
-              source_url: c.source_url,
-              title: c.title,
-              domain: c.domain,
-              summary: c.summary,
-              author: c.author,
-              published_at: c.published_at,
-              route_path: c.route_path,
-              reason: c.reason,
-            })),
-            retrievalContext,
-            normalizedGoal: retrievalContext.normalizedGoal,
-            entityTerms: retrievalContext.entityTerms,
-            primaryEntities: retrievalContext.primaryEntities,
-            secondaryEntities: retrievalContext.secondaryEntities,
-            negativeEntities: retrievalContext.negativeEntities,
-            lockedPhrases: retrievalContext.lockedPhrases,
-            topics: retrievalContext.topics,
-            requestedAspects: retrievalContext.requestedAspects,
-            maxSources: Math.min(
-              RETRIEVAL_CONFIG.maxTotalSources - allResolvedSources.length,
-              3,
-            ),
-          });
-
-          if (resolverResult.ok && resolverResult.sourceContext.source_count > 0) {
-            const newSources = resolverResult.sourceContext.sources_used;
-
-            // Track URLs with canonical form
-            for (const s of newSources) {
-              const url = canonicalSourceUrl(s.url);
-              if (url) processedUrls.add(url);
-            }
-
-            // Content fetch → chunk → rank → grade
-            if (Date.now() < deadline) {
-              try {
-                const documents = await buildEvidenceDocuments(newSources);
-                if (Date.now() < deadline) {
-                  const chunks = await chunkEvidenceDocuments(documents);
-                  if (Date.now() < deadline) {
-                    const rankedChunks = await rankEvidenceChunks(retrievalContext, chunks);
-                    if (Date.now() < deadline) {
-                      const gradingResult = await gradeEvidenceChunks({
-                        retrievalContext,
-                        rankedChunks,
-                        routeTier: internalRouteTier,
-                      });
-                      // Enforce chunk cap before merging (item 3)
-                      const remainingChunkBudget = RETRIEVAL_CONFIG.maxTotalGradedChunks - allGradedChunks.length;
-                      const chunksToAdd = gradingResult.chunks.slice(0, Math.max(0, remainingChunkBudget));
-                      allGradedChunks.push(...chunksToAdd);
-                      allResolvedSources.push(...newSources);
-                    }
-                  }
-                }
-              } catch {
-                // Fetch/chunk/rank/grade failed — continue
-              }
-            }
-
-            coverage = computeEvidenceCoverage(allGradedChunks, retrievalContext);
-
-            retryRounds.push({
-              round: 1,
-              queries: [fallbackQuery],
-              candidateCount: retryResult.candidates.length,
-              resolvedSourceCount: newSources.length,
-              newSourceCount: newSources.length,
-              coverageBefore,
-              coverageAfter: { ...coverage },
-            });
-          }
-        }
-      }
-    } catch {
-      // Fallback query failed — continue
-    }
-
-    // Re-evaluate after fallback
-    if (isCoverageComplete(coverage, retrievalContext)) {
-      stoppedReason = "coverage_complete";
-      return {
-        gradedChunks: allGradedChunks,
-        resolvedSources: allResolvedSources,
-        coverage,
-        retryRounds,
-        retryQueries,
-        stoppedReason: "coverage_complete",
-      };
-    }
-  }
-
-  // ── Bounded retry rounds ──
+  // ── Unified retry loop (max 2 rounds, includes zero-evidence fallback) ──
   for (let round = 1; round <= RETRIEVAL_CONFIG.maxRetryRounds; round++) {
     // Budget checks
     if (Date.now() >= deadline) {
@@ -741,12 +594,24 @@ export async function runEvidenceRetrievalWithCoverage(params: {
       break;
     }
 
-    // Generate targeted queries
-    const queries = generateTargetedRetryQueries(
-      coverage,
-      retrievalContext.originalGoal,
-      RETRIEVAL_CONFIG.maxQueriesPerRound,
-    );
+    // Generate queries: zero-evidence fallback OR targeted retry
+    const isZeroEvidenceUnconstrained =
+      coverage.trustedEvidenceCount === 0 &&
+      coverage.requiredEntities.length === 0 &&
+      coverage.requiredAspects.length === 0;
+
+    let queries: string[];
+    if (isZeroEvidenceUnconstrained) {
+      // Zero trusted evidence + no constraints → one originalGoal-derived fallback query
+      queries = [generateZeroEvidenceFallbackQuery(retrievalContext.originalGoal)];
+    } else {
+      queries = generateTargetedRetryQueries(
+        coverage,
+        retrievalContext.originalGoal,
+        RETRIEVAL_CONFIG.maxQueriesPerRound,
+      );
+    }
+
     retryQueries.push(...queries);
 
     if (queries.length === 0) {
@@ -756,13 +621,13 @@ export async function runEvidenceRetrievalWithCoverage(params: {
 
     const coverageBefore = { ...coverage };
 
-    // Deadline check before Tavily request (item 4)
+    // Deadline check before Tavily request
     if (Date.now() >= deadline) {
       stoppedReason = "deadline";
       break;
     }
 
-    // Fetch Tavily candidates (item 5: pass delegated tier, item 6: topic detected internally)
+    // Fetch Tavily candidates
     const retryResult = await fetchRetryTavilyCandidates(
       queries,
       retrievalContext,
@@ -770,31 +635,33 @@ export async function runEvidenceRetrievalWithCoverage(params: {
       delegatedRouteTier,
     );
 
-    // Item 7: distinguish provider unavailable from no results
+    // Distinguish provider unavailable from no results
     if (!retryResult.providerAvailable) {
       stoppedReason = "provider_unavailable";
       break;
     }
     if (retryResult.candidates.length === 0) {
-      stoppedReason = retryResult.hadSuccessfulSearch ? "no_new_sources" : "no_new_sources";
+      // Provider was reachable but search returned no candidates
+      stoppedReason = "no_new_sources";
       break;
     }
 
-    // Deadline check before dedupe (item 4)
+    // Deadline check before dedupe
     if (Date.now() >= deadline) {
       stoppedReason = "deadline";
       break;
     }
 
-    // Dedupe against existing sources using canonical URLs (item 2)
+    // Dedupe against existing sources using canonical URLs
     const newCandidates = dedupeCandidates(retryResult.candidates, processedUrls);
 
     if (newCandidates.length === 0) {
+      // All candidates were duplicates of already-processed sources
       stoppedReason = "no_new_sources";
       break;
     }
 
-    // Deadline check before resolver (item 4)
+    // Deadline check before resolver
     if (Date.now() >= deadline) {
       stoppedReason = "deadline";
       break;
@@ -805,7 +672,7 @@ export async function runEvidenceRetrievalWithCoverage(params: {
     try {
       const { resolveSources } = await import("../sources/source-resolver");
 
-      // Enforce source budget (item 3)
+      // Enforce source budget
       const remainingSourceBudget = RETRIEVAL_CONFIG.maxTotalSources - allResolvedSources.length;
       if (remainingSourceBudget <= 0) {
         stoppedReason = "retry_limit";
@@ -847,13 +714,13 @@ export async function runEvidenceRetrievalWithCoverage(params: {
       // Resolver failed — continue with what we have
     }
 
-    // Track new URLs with canonical form (item 2)
+    // Track new URLs with canonical form
     for (const s of newSources) {
-      const url = canonicalSourceUrl(s.url);
+      const url = canonicalizeUrl(s.url || "");
       if (url) processedUrls.add(url);
     }
 
-    // Deadline check before content fetch (item 4)
+    // Deadline check before content fetch
     if (Date.now() >= deadline) {
       stoppedReason = "deadline";
       break;
@@ -863,19 +730,16 @@ export async function runEvidenceRetrievalWithCoverage(params: {
     let newGradedChunks: GradedEvidenceChunk[] = [];
     try {
       const documents = await buildEvidenceDocuments(newSources);
-      // Deadline check before chunking (item 4)
       if (Date.now() >= deadline) {
         stoppedReason = "deadline";
         break;
       }
       const chunks = await chunkEvidenceDocuments(documents);
-      // Deadline check before ranking (item 4)
       if (Date.now() >= deadline) {
         stoppedReason = "deadline";
         break;
       }
       const rankedChunks = await rankEvidenceChunks(retrievalContext, chunks);
-      // Deadline check before grading (item 4)
       if (Date.now() >= deadline) {
         stoppedReason = "deadline";
         break;
@@ -892,7 +756,7 @@ export async function runEvidenceRetrievalWithCoverage(params: {
       // Fetch/chunk/rank/grade failed for this round — continue
     }
 
-    // Enforce chunk cap before merging (item 3)
+    // Enforce chunk cap before merging
     const remainingChunkBudget = RETRIEVAL_CONFIG.maxTotalGradedChunks - allGradedChunks.length;
     if (remainingChunkBudget <= 0) {
       stoppedReason = "retry_limit";
@@ -911,14 +775,20 @@ export async function runEvidenceRetrievalWithCoverage(params: {
     // Recompute coverage
     coverage = computeEvidenceCoverage(allGradedChunks, retrievalContext);
 
+    // Compute newSourceCount using canonical URLs
+    const initialCanonicalSet = new Set(
+      dedupedInitialSources.map((s) => canonicalizeUrl(s.url || "")),
+    );
+    const newCanonicalSources = newSources.filter(
+      (s) => !initialCanonicalSet.has(canonicalizeUrl(s.url || "")),
+    );
+
     retryRounds.push({
       round,
       queries,
       candidateCount: retryResult.candidates.length,
       resolvedSourceCount: newSources.length,
-      newSourceCount: newSources.filter(
-        (s) => !initialSources.some((is) => is.url === s.url),
-      ).length,
+      newSourceCount: newCanonicalSources.length,
       coverageBefore,
       coverageAfter: { ...coverage },
     });
@@ -929,9 +799,13 @@ export async function runEvidenceRetrievalWithCoverage(params: {
     }
   }
 
+  // Final hard cap enforcement on output
+  const finalGradedChunks = allGradedChunks.slice(0, RETRIEVAL_CONFIG.maxTotalGradedChunks);
+  const finalResolvedSources = allResolvedSources.slice(0, RETRIEVAL_CONFIG.maxTotalSources);
+
   return {
-    gradedChunks: allGradedChunks,
-    resolvedSources: allResolvedSources,
+    gradedChunks: finalGradedChunks,
+    resolvedSources: finalResolvedSources,
     coverage,
     retryRounds,
     retryQueries,
