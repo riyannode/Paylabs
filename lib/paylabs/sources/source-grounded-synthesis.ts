@@ -29,6 +29,11 @@ export type GroundedSynthesisInput = {
   brainDraft: string | null;
   sources: SourceItem[];
   intentType?: string | null;
+  /** Deterministic coverage ceiling from resolver */
+  coverageCeiling?: {
+    missingPrimaryEntities: string[];
+    missingAspects: string[];
+  };
 };
 
 export type GroundedSynthesisResult = {
@@ -251,13 +256,36 @@ function validateModelOutput(
 export function validateGroundedSynthesisOutput(
   output: unknown,
   sources: SourceItem[],
+  coverageCeiling?: {
+    missingPrimaryEntities: string[];
+    missingAspects: string[];
+  },
 ): GroundedSynthesisResult {
   const evidence = buildGroundingEvidence(sources);
   const parsed = ModelSynthesisSchema.safeParse(output);
   if (!parsed.success) {
     return failedResult("Generated answer did not match the grounded synthesis schema.");
   }
-  return validateModelOutput(parsed.data as ModelSynthesisOutput, evidence);
+  const baseResult = validateModelOutput(parsed.data as ModelSynthesisOutput, evidence);
+  // Enforce deterministic coverage ceiling
+  if (coverageCeiling) {
+    const { missingPrimaryEntities, missingAspects } = coverageCeiling;
+    if (missingPrimaryEntities.length > 0) {
+      return {
+        ...baseResult,
+        status: "insufficient_evidence",
+        answer: INSUFFICIENT_EVIDENCE_ANSWER,
+        errorSafe: "Deterministic ceiling: required entities not covered by sources.",
+      };
+    }
+    if (missingAspects.length > 0 && baseResult.status === "grounded") {
+      return {
+        ...baseResult,
+        status: "partially_grounded",
+      };
+    }
+  }
+  return baseResult;
 }
 
 function failedResult(errorSafe: string, unknownCitationIds: string[] = []): GroundedSynthesisResult {
@@ -344,7 +372,28 @@ export async function synthesizeGroundedAnswer(
       return failedResult(result.error);
     }
 
-    return validateModelOutput(result.data, evidence);
+    const baseResult = validateModelOutput(result.data, evidence);
+    // Enforce deterministic coverage ceiling
+    if (input.coverageCeiling) {
+      const { missingPrimaryEntities, missingAspects } = input.coverageCeiling;
+      if (missingPrimaryEntities.length > 0) {
+        // Required entities missing → force insufficient_evidence
+        return {
+          ...baseResult,
+          status: "insufficient_evidence",
+          answer: INSUFFICIENT_EVIDENCE_ANSWER,
+          errorSafe: "Deterministic ceiling: required entities not covered by sources.",
+        };
+      }
+      if (missingAspects.length > 0 && baseResult.status === "grounded") {
+        // Aspects missing → downgrade to partially_grounded at most
+        return {
+          ...baseResult,
+          status: "partially_grounded",
+        };
+      }
+    }
+    return baseResult;
   } catch (error: unknown) {
     return failedResult(error instanceof Error ? error.message : String(error));
   } finally {

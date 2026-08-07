@@ -58,7 +58,9 @@ export interface SourceContext {
   /** Aspect (requestedAspects) coverage across the selected source set */
   aspect_coverage?: { covered: string[]; missing: string[] };
   /** Overall evidence status derived from coverage + confidence */
-  evidence_status?: "strong" | "moderate" | "weak" | "insufficient";
+  evidence_status?: 'grounded' | 'partially_grounded' | 'insufficient_evidence' | 'synthesis_failed';
+  /** Source quality rating based on confidence */
+  source_quality?: 'high' | 'medium' | 'low';
   /** Per-source rejection reasons collected during resolution */
   rejection_reasons?: string[];
 }

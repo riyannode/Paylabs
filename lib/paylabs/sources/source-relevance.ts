@@ -1,3 +1,5 @@
+import { ASPECT_DEFINITIONS } from "./crypto-entity-registry";
+
 export type StructuredEntity = {
   text: string;
   canonical: string;
@@ -157,50 +159,13 @@ export function validateCandidateRelevance(candidate: RelevanceCandidate, contex
   return scoreCandidateRelevance(candidate, context);
 }
 
-// ─── Intent filter helper ────────────────────────────────────
-
-const INTENT_PHRASES: Record<string, string[]> = {
-  definition: ["overview", "introduction", "what is", "documentation", "explained"],
-  explanation: ["overview", "introduction", "what is", "documentation", "explained"],
-  implementation: ["quickstart", "integration", "sdk", "api", "install", "configure", "example"],
-  comparison: ["comparison", "versus", "vs", "difference"],
-  troubleshooting: ["error", "issue", "troubleshoot", "fix", "failed", "failure"],
-};
-
-/**
- * Check whether a candidate's text content aligns with the requested intent type.
- * Returns true when intentType is empty/undefined (no intent constraint) or
- * when at least one intent keyword appears in the title or summary.
- */
-export function passesIntentFilter(
-  candidate: { title?: string; summary?: string },
-  intentType?: string,
-): boolean {
-  if (!intentType) return true;
-  const phrases = INTENT_PHRASES[intentType.toLowerCase()];
-  if (!phrases || phrases.length === 0) return true;
-  const title = candidate.title || "";
-  const summary = candidate.summary || "";
-  const text = `${title} ${summary}`;
-  return phrases.some((phrase) => matchesExactPhrase(text, phrase));
-}
 
 // ─── Aspect coverage helper ──────────────────────────────────
-
-/** Aspect keyword map: requested aspect → keywords that indicate coverage */
-const ASPECT_KEYWORDS: Record<string, string[]> = {
-  pricing: ["pricing", "price", "cost", "fee", "tariff", "billing"],
-  "api-reference": ["api", "endpoint", "reference", "documentation", "schema"],
-  "getting-started": ["quickstart", "getting started", "install", "setup", "tutorial", "hello world"],
-  tutorial: ["tutorial", "walkthrough", "guide", "step by step", "how to"],
-  comparison: ["comparison", "versus", "vs", "differ", "alternative"],
-  security: ["security", "auth", "authentication", "permission", "access control", "encryption"],
-  performance: ["performance", "latency", "throughput", "benchmark", "optimization"],
-  "troubleshooting": ["error", "issue", "troubleshoot", "fix", "debug", "failed", "failure"],
-};
+// Uses ASPECT_DEFINITIONS from crypto-entity-registry for boundary-aware matching
 
 /**
  * Compute which requested aspects are covered by a set of source texts.
+ * Uses ASPECT_DEFINITIONS.signalTerms for boundary-aware phrase matching.
  * Returns { covered, missing } listing the aspects.
  */
 export function computeAspectCoverage(
@@ -212,8 +177,18 @@ export function computeAspectCoverage(
   const covered: string[] = [];
   const missing: string[] = [];
   for (const aspect of requestedAspects) {
-    const keywords = ASPECT_KEYWORDS[aspect.toLowerCase()] || [aspect.toLowerCase()];
-    const isCovered = keywords.some((kw) => matchesExactPhrase(combined, kw));
+    const def = ASPECT_DEFINITIONS[aspect];
+    if (!def) {
+      // Unknown aspect — treat as covered if exact phrase found
+      if (matchesExactPhrase(combined, aspect.replace(/_/g, " "))) {
+        covered.push(aspect);
+      } else {
+        missing.push(aspect);
+      }
+      continue;
+    }
+    // Use the definition's signal terms for boundary-aware matching
+    const isCovered = def.signalTerms.some((term) => matchesExactPhrase(combined, term));
     if (isCovered) covered.push(aspect);
     else missing.push(aspect);
   }

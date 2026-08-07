@@ -33,8 +33,6 @@ export const PROTOCOL_ALIASES: Record<string, ProtocolAliasEntry> = {
       "aave v2",
       "aave v3",
       "aave v4",
-      "aavegotchi",
-      "aaVE",
     ],
     category: "lending",
     description: "Decentralized non-codial lending/borrowing protocol with flash loans",
@@ -63,7 +61,6 @@ export const PROTOCOL_ALIASES: Record<string, ProtocolAliasEntry> = {
       "maker",
       "mkr",
       "dai",
-      "sky",
       "sky protocol",
       "sky ecosystem",
       "sky money",
@@ -94,7 +91,6 @@ export const PROTOCOL_ALIASES: Record<string, ProtocolAliasEntry> = {
   curveFinance: {
     canonical: "Curve Finance",
     aliases: [
-      "curve",
       "curve finance",
       "curve dex",
       "curve pools",
@@ -795,10 +791,24 @@ export function extractRequestedAspects(
   text: string,
   options?: { minConfidence?: number }
 ): RequestedAspect[] {
-  const lower = text.toLowerCase();
   const minConfidence = options?.minConfidence ?? 0.3;
   const results: RequestedAspect[] = [];
   const seen = new Set<string>();
+
+  function boundaryMatch(term: string): boolean {
+    const normalized = text.toLowerCase().normalize("NFKC").replace(/[^\p{L}\p{N}\p{M}]+/gu, " ").trim();
+    const termNorm = term.toLowerCase().trim();
+    if (!termNorm) return false;
+    // For short tokens (<=3 chars), require word boundaries
+    if (termNorm.length <= 3) {
+      const escaped = termNorm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(normalized);
+    }
+    // For longer terms, use phrase matching with surrounding spaces
+    const haystack = ` ${normalized} `;
+    const needle = ` ${termNorm} `;
+    return haystack.includes(needle);
+  }
 
   for (const [key, def] of Object.entries(ASPECT_DEFINITIONS)) {
     if (seen.has(key)) continue;
@@ -807,8 +817,7 @@ export function extractRequestedAspects(
     let matchedTerm = "";
 
     for (const term of def.signalTerms) {
-      const termLower = term.toLowerCase();
-      if (lower.includes(termLower)) {
+      if (boundaryMatch(term)) {
         matchCount++;
         matchedTerm = term;
       }

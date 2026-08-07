@@ -16,7 +16,7 @@ import type {
   SourceResolverOutput,
 } from "./types";
 import { sanitizeEntityTerms, hasBoundaryTerm } from "./source-term-matching";
-import { validateCandidateRelevance, passesIntentFilter, computeAspectCoverage } from "./source-relevance";
+import { validateCandidateRelevance, computeAspectCoverage } from "./source-relevance";
 import { detectTopics } from "@/lib/paylabs/rsshub/topic-routes";
 import {
   passesAiSourceGuard,
@@ -96,25 +96,24 @@ function validateEntityCoverage(
 // ─── Evidence status computation ───────────────────────────
 
 /**
- * Derive evidence_status from source confidence + entity/aspect coverage.
+ * Derive evidence_status from deterministic entity/aspect coverage.
  *
- * - strong:     confidence >= 0.5 AND all required entities covered
- * - moderate:   confidence >= 0.3 OR at least half of entities covered
- * - weak:       at least 1 source exists but below moderate threshold
- * - insufficient: no sources or confidence == 0
+ * - grounded:             all entities covered AND all aspects covered
+ * - partially_grounded:   all entities covered, some aspects missing
+ * - insufficient_evidence: any required entity missing, or no sources
  */
 function computeEvidenceStatus(
-  sourceConfidence: number,
   entityCoverage: { covered: string[]; missing: string[] },
   aspectCoverage: { covered: string[]; missing: string[] },
   sourceCount: number,
-): "strong" | "moderate" | "weak" | "insufficient" {
-  if (sourceCount === 0 || sourceConfidence === 0) return "insufficient";
-  const totalRequired = entityCoverage.covered.length + entityCoverage.missing.length;
-  const entityRatio = totalRequired > 0 ? entityCoverage.covered.length / totalRequired : 1;
-  if (sourceConfidence >= 0.5 && entityRatio >= 1) return "strong";
-  if (sourceConfidence >= 0.3 || entityRatio >= 0.5) return "moderate";
-  return "weak";
+): "grounded" | "partially_grounded" | "insufficient_evidence" {
+  if (sourceCount === 0) return "insufficient_evidence";
+  // Any required primary entity missing → insufficient
+  if (entityCoverage.missing.length > 0) return "insufficient_evidence";
+  // All entities covered, some aspects missing → partial
+  if (aspectCoverage.missing.length > 0) return "partially_grounded";
+  // All entities + aspects covered → grounded
+  return "grounded";
 }
 
 // ─── Topic-aware source validation ────────────────────────
@@ -506,13 +505,55 @@ export async function resolveSources(
       }
     }
 
+    // Coverage-aware source selection
     const requiredEntities = (input.primaryEntities || []).filter((entity) => entity.required).map((entity) => entity.canonical);
     const rankedValidated = [...validatedSources].sort((a, b) => b.relevance_score - a.relevance_score);
     const selected: SourceItem[] = [];
+    
+    // Phase A: ensure each required primary entity is represented
     for (const entity of requiredEntities) {
       const candidate = rankedValidated.find((source) => (source.matched_primary_entities || []).includes(entity));
       if (candidate && !selected.includes(candidate)) selected.push(candidate);
     }
+    
+    // Phase B: close remaining aspect gaps before filling by score
+    if (input.requestedAspects && input.requestedAspects.length > 0) {
+      const missingAspects = new Set(input.requestedAspects);
+      // Remove aspects already covered by selected sources
+      for (const src of selected) {
+        const text = `${src.title || ''} ${src.summary || ''}`.toLowerCase();
+        for (const aspect of missingAspects) {
+          // Simple keyword check — full validation happens in computeAspectCoverage
+          if (text.includes(aspect.replace(/_/g, ' '))) missingAspects.delete(aspect);
+        }
+      }
+      // Select candidates that close the most missing aspects
+      while (missingAspects.size > 0 && selected.length < FINAL_SOURCE_LIMIT) {
+        let bestCandidate: SourceItem | null = null;
+        let bestCoverage = 0;
+        for (const src of rankedValidated) {
+          if (selected.includes(src)) continue;
+          const text = `${src.title || ''} ${src.summary || ''}`.toLowerCase();
+          let coverage = 0;
+          for (const aspect of missingAspects) {
+            if (text.includes(aspect.replace(/_/g, ' '))) coverage++;
+          }
+          if (coverage > bestCoverage) {
+            bestCoverage = coverage;
+            bestCandidate = src;
+          }
+        }
+        if (!bestCandidate || bestCoverage === 0) break;
+        selected.push(bestCandidate);
+        // Update missing aspects
+        const text = `${bestCandidate.title || ''} ${bestCandidate.summary || ''}`.toLowerCase();
+        for (const aspect of [...missingAspects]) {
+          if (text.includes(aspect.replace(/_/g, ' '))) missingAspects.delete(aspect);
+        }
+      }
+    }
+    
+    // Phase C: fill remaining slots by relevance score
     for (const source of rankedValidated) {
       if (selected.length >= FINAL_SOURCE_LIMIT) break;
       if (!selected.includes(source)) selected.push(source);
@@ -520,15 +561,24 @@ export async function resolveSources(
 
     // Canonical dedup: remove duplicate URLs, keep highest-scoring
     const dedupedSources = deduplicateByCanonicalUrl(selected.slice(0, maxSources));
-    const sources = dedupedSources.map((source, index) => ({ ...source, rank: index + 1 }));
+    let sources = dedupedSources.map((source, index) => ({ ...source, rank: index + 1 }));
 
-    // Intent filter: reject sources that don't match requested intent
-    if (input.intentType) {
-      for (const src of sources) {
-        if (!passesIntentFilter({ title: src.title, summary: src.summary }, input.intentType)) {
-          rejectionReasons.push(`${src.url}: intent_mismatch`);
+    // Intent-aware source filtering for fundamentals/comparison/explanation/risk queries
+    const nonPriceIntents = new Set(['definition', 'explanation', 'comparison', 'troubleshooting', 'protocol comparison', 'implementation', 'risk analysis']);
+    if (input.intentType && nonPriceIntents.has(input.intentType.toLowerCase())) {
+      sources = sources.filter((src) => {
+        const title = (src.title || '').toLowerCase();
+        const summary = (src.summary || '').toLowerCase();
+        const combined = `${title} ${summary}`;
+        // Hard reject clear price/market noise for non-price queries
+        const pricePagePatterns = ['live price', 'price chart', 'market cap', 'daily price', 'etf inflow', 'etf outflow', 'etf flows', 'etf update', 'crypto market today', 'today\'s market', 'breaking news', 'market update'];
+        if (pricePagePatterns.some(p => combined.includes(p))) {
+          rejectionReasons.push(`${src.url}: intent_mismatch (price page for non-price query)`);
+          return false;
         }
-      }
+        // Do NOT reject protocol documentation that lacks 'comparison'/'versus' words
+        return true;
+      });
     }
 
     const sanitizedEntityCount = sanitizeEntityTerms(input.entityTerms || []).length;
@@ -546,8 +596,9 @@ export async function resolveSources(
       }
     }
 
-    // Evidence status computation
-    const evidenceStatus = computeEvidenceStatus(sourceConfidence, entityCoverage, aspectCoverage, sources.length);
+    // Evidence status computation (deterministic, coverage-based)
+    const evidenceStatus = computeEvidenceStatus(entityCoverage, aspectCoverage, sources.length);
+    const sourceQuality = sourceConfidence >= 0.5 ? 'high' : sourceConfidence >= 0.3 ? 'medium' : 'low';
 
     // Safe diagnostic: entity term counts (no raw secrets)
     const entityDiagnostic = rawEntityCount > 0
@@ -573,6 +624,7 @@ export async function resolveSources(
         entity_coverage: entityCoverage,
         aspect_coverage: aspectCoverage,
         evidence_status: evidenceStatus,
+        source_quality: sourceQuality,
         rejection_reasons: rejectionReasons.length > 0 ? rejectionReasons : undefined,
       },
       error: null,

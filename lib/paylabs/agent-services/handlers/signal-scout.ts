@@ -25,6 +25,7 @@ import {
   passesCryptoSourceGuard,
   isGenericCatchAllSource,
 } from "@/lib/paylabs/rsshub/topic-source-guards";
+import { matchesExactPhrase } from "@/lib/paylabs/sources/source-relevance";
 
 const SignalScoutSchema = z.object({
   ranked_sources: z.array(z.object({
@@ -455,7 +456,7 @@ export const signalScoutHandler: ServiceHandler = async (
       const url = (item.source_url || "").toLowerCase();
       const combined = `${title} ${summary} ${url}`;
       for (const entity of requiredPrimaryEntities) {
-        if (combined.includes(entity)) coveredEntities.add(entity);
+        if (matchesExactPhrase(combined, entity)) coveredEntities.add(entity);
       }
     }
     const missingEntities = requiredPrimaryEntities.filter(

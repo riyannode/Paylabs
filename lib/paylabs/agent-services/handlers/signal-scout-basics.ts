@@ -29,7 +29,7 @@ import {
   passesCryptoSourceGuard,
   isGenericCatchAllSource,
 } from "@/lib/paylabs/rsshub/topic-source-guards";
-import { scoreCandidateRelevance } from "@/lib/paylabs/sources/source-relevance";
+import { scoreCandidateRelevance, matchesExactPhrase } from "@/lib/paylabs/sources/source-relevance";
 
 // ─── Stopwords — generic words that should never count as relevance signals ──
 const STOPWORDS = new Set([
@@ -481,7 +481,7 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
         const url = (item.source_url || "").toLowerCase();
         const combined = `${title} ${summary} ${url}`;
         for (const entity of requiredPrimaryEntities) {
-          if (combined.includes(entity)) coveredEntities.add(entity);
+          if (matchesExactPhrase(combined, entity)) coveredEntities.add(entity);
         }
       }
       const missingEntities = requiredPrimaryEntities.filter(
