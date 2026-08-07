@@ -155,6 +155,9 @@ export const DiscoveryPlannerState = Annotation.Root({
 
   // Retrieval mode from signal scout output
   retrievalMode: Annotation<string | undefined>,
+
+  // Canonical retrieval context (built by processQueryResult)
+  retrievalContext: Annotation<import("../../sources/types").RetrievalContext | undefined>,
 });
 
 export type DiscoveryPlannerStateType = typeof DiscoveryPlannerState.State;

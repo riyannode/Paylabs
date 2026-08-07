@@ -379,22 +379,25 @@ export async function executeLockedMacroNodePipeline(
     if (rankedCandidates.length > 0) {
       try {
         const { resolveSources } = await import("../sources/source-resolver");
-        const normalizedGoal = brainData
-          ? String(brainData.normalized_goal || "")
-          : "";
 
-        let entityTerms =
-          (dData.entityTerms as string[]) ||
-          (dData.entity_terms as string[]) ||
-          [];
-        // Phase 3A: extract structured fields from QB output
-        let primaryEntities: Array<{ text: string; canonical: string; type: string; required: boolean }> = [];
-        let secondaryEntities: Array<{ text: string; canonical: string; type: string; required: boolean }> = [];
-        let negativeEntities: string[] = [];
-        let lockedPhrases: string[] = [];
-        let topics: string[] = [];
+        // Use canonical retrievalContext from Discovery Planner output.
+        // This is the single source of truth for retrieval parameters.
+        const retrievalContext = dData.retrievalContext as import("../sources/types").RetrievalContext | undefined;
 
-        if (entityTerms.length === 0) {
+        // Fallback: extract from serviceEvaluations if retrievalContext missing
+        // (backward compat for old discovery planner results)
+        let normalizedGoal = retrievalContext?.normalizedGoal
+          || (brainData ? String(brainData.normalized_goal || "") : "");
+        let entityTerms = retrievalContext?.entityTerms
+          || (dData.entityTerms as string[]) || (dData.entity_terms as string[]) || [];
+        let primaryEntities = retrievalContext?.primaryEntities || [];
+        let secondaryEntities = retrievalContext?.secondaryEntities || [];
+        let negativeEntities = retrievalContext?.negativeEntities || [];
+        let lockedPhrases = retrievalContext?.lockedPhrases || [];
+        let topics = retrievalContext?.topics || [];
+        let requestedAspects = retrievalContext?.requestedAspects || [];
+
+        if (!retrievalContext && entityTerms.length === 0) {
           const childEvals = dData.serviceEvaluations as Array<{
             serviceName: string;
             output?: Record<string, unknown>;
@@ -412,8 +415,7 @@ export async function executeLockedMacroNodePipeline(
           }
         }
 
-        // Extract structured fields from QB output (always, even if entityTerms was found directly)
-        {
+        if (!retrievalContext) {
           const childEvals = dData.serviceEvaluations as Array<{
             serviceName: string;
             output?: Record<string, unknown>;
@@ -428,6 +430,7 @@ export async function executeLockedMacroNodePipeline(
               negativeEntities = (qbEval.output.negative_entities as string[]) || [];
               lockedPhrases = (qbEval.output.locked_phrases as string[]) || [];
               topics = (qbEval.output.topics as string[]) || [];
+              requestedAspects = (qbEval.output.requested_aspects as string[]) || [];
             }
           }
         }
@@ -441,6 +444,7 @@ export async function executeLockedMacroNodePipeline(
           negativeEntities,
           lockedPhrases,
           topics,
+          requestedAspects,
         });
         if (resolverResult.ok) {
           sourceContext = resolverResult.sourceContext;
@@ -543,14 +547,15 @@ export async function executeLockedMacroNodePipeline(
     } else if (serviceRetrievalMode) {
       // No ranked candidates — RSSHub returned 0.
       // Still try Tavily fallback for AI/Crypto topics.
-      const normalizedGoal = brainData
-        ? String(brainData.normalized_goal || "")
-        : "";
-      let entityTerms =
-        (dData.entityTerms as string[]) ||
-        (dData.entity_terms as string[]) ||
-        [];
-      if (entityTerms.length === 0) {
+      // Use canonical retrievalContext if available
+      const retrievalCtx2 = dData.retrievalContext as import("../sources/types").RetrievalContext | undefined;
+      const normalizedGoal = retrievalCtx2?.normalizedGoal
+        || (brainData ? String(brainData.normalized_goal || "") : "");
+      let entityTerms = retrievalCtx2?.entityTerms
+        || (dData.entityTerms as string[])
+        || (dData.entity_terms as string[])
+        || [];
+      if (!retrievalCtx2 && entityTerms.length === 0) {
         const childEvals = dData.serviceEvaluations as Array<{
           serviceName: string;
           output?: Record<string, unknown>;

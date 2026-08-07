@@ -171,17 +171,44 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
     requested_aspects?: string[];
   };
 
+  const expandedQueries = data.expanded_queries ?? [];
+  const entityTerms = data.entity_terms ?? [];
+  const negativeFilters = data.negative_filters ?? [];
+  const sourcePreferences = data.source_preferences ?? [];
+  const primaryEntities = data.primary_entities ?? [];
+  const secondaryEntities = data.secondary_entities ?? [];
+  const lockedPhrases = data.locked_phrases ?? [];
+  const negativeEntities = data.negative_entities ?? [];
+  const topics = data.topics ?? [];
+  const requestedAspects = data.requested_aspects ?? [];
+
   return {
-    expandedQueries: data.expanded_queries ?? [],
-    entityTerms: data.entity_terms ?? [],
-    negativeFilters: data.negative_filters ?? [],
-    sourcePreferences: data.source_preferences ?? [],
-    primaryEntities: data.primary_entities ?? [],
-    secondaryEntities: data.secondary_entities ?? [],
-    lockedPhrases: data.locked_phrases ?? [],
-    negativeEntities: data.negative_entities ?? [],
-    topics: data.topics ?? [],
-    requestedAspects: data.requested_aspects ?? [],
+    expandedQueries,
+    entityTerms,
+    negativeFilters,
+    sourcePreferences,
+    primaryEntities,
+    secondaryEntities,
+    lockedPhrases,
+    negativeEntities,
+    topics,
+    requestedAspects,
+    // Canonical retrieval context — single source of truth for downstream
+    retrievalContext: {
+      originalGoal: state.userGoal,
+      normalizedGoal: (state as DiscoveryPlannerStateType).normalizedGoal || state.userGoal,
+      intentType: (state as DiscoveryPlannerStateType).intentType || "unknown",
+      primaryEntities,
+      secondaryEntities,
+      lockedPhrases,
+      negativeEntities,
+      topics,
+      requestedAspects,
+      entityTerms,
+      expandedQueries,
+      negativeFilters,
+      sourcePreferences,
+    },
   };
 }
 
@@ -340,6 +367,7 @@ export interface RunDiscoveryPlannerGraphOutput {
   expandedQueries?: string[];
   negativeFilters?: string[];
   sourcePreferences?: string[];
+  retrievalContext?: import("../../sources/types").RetrievalContext;
   error: string | null;
 }
 
@@ -469,6 +497,7 @@ export async function runDiscoveryPlannerGraph(
       expandedQueries: result.expandedQueries || [],
       negativeFilters: result.negativeFilters || [],
       sourcePreferences: result.sourcePreferences || [],
+      retrievalContext: result.retrievalContext,
       error: result.error || null,
     };
   } catch (e: unknown) {

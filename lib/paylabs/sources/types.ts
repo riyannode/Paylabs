@@ -65,6 +65,54 @@ export interface SourceContext {
   rejection_reasons?: string[];
 }
 
+
+// ─── Retrieval Context ──────────────────────────────────────
+// Canonical retrieval context flowing from Query Builder through
+// Discovery Planner into locked orchestration and source resolution.
+// Authority rules:
+//   originalGoal — exact user request, authoritative for entities/aspects/scope
+//   normalizedGoal — Intent Planner normalized representation for search/retrieval
+//   Brain normalized_goal / query variants — auxiliary search expansion only
+
+type StructuredEntity = {
+  text: string;
+  canonical: string;
+  type: string;
+  required: boolean;
+};
+
+export type RetrievalContext = {
+  /** Exact original user request. Authoritative for entities, aspects, scope. */
+  originalGoal: string;
+  /** Intent Planner normalized representation. Useful for search/retrieval. */
+  normalizedGoal: string;
+  /** Intent type hint from Intent Planner. */
+  intentType: string;
+
+  /** Required primary entities from Query Builder. */
+  primaryEntities: StructuredEntity[];
+  /** Contextual secondary entities from Query Builder. */
+  secondaryEntities: StructuredEntity[];
+
+  /** Multi-word phrases locked from user goal. */
+  lockedPhrases: string[];
+  /** Noise patterns to filter out. */
+  negativeEntities: string[];
+  /** Topic tags for domain-specific filtering. */
+  topics: string[];
+  /** Aspects the user wants covered. */
+  requestedAspects: string[];
+
+  /** Flat entity terms for keyword matching. */
+  entityTerms: string[];
+  /** Expanded search queries. */
+  expandedQueries: string[];
+  /** Negative keyword filters. */
+  negativeFilters: string[];
+  /** Source type preferences. */
+  sourcePreferences: string[];
+};
+
 // ─── Source Resolver Input ─────────────────────────────────
 export interface SourceResolverInput {
   /** Ranked candidates from signal_scout (feed_item_id + rank + relevance_score) */
