@@ -83,6 +83,7 @@ const signalScoutNode = createServiceNode(
     locked_phrases: (state as DiscoveryPlannerStateType).lockedPhrases || [],
     negative_entities: (state as DiscoveryPlannerStateType).negativeEntities || [],
     topics: (state as DiscoveryPlannerStateType).topics || [],
+    requestedAspects: (state as DiscoveryPlannerStateType).requestedAspects || [],
     routeTier: state.routeTier,
   }),
   { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: false, skipIfNotSelected: true }
@@ -152,6 +153,7 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
       expandedQueries: [] as string[],
       entityTerms: [] as string[],
       primaryEntities: [], secondaryEntities: [], lockedPhrases: [], negativeEntities: [], topics: [],
+      requestedAspects: [] as string[],
       progressSummaries: ["Query builder returned no output — using empty queries"],
     };
   }
@@ -166,6 +168,7 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
     locked_phrases?: string[];
     negative_entities?: string[];
     topics?: string[];
+    requested_aspects?: string[];
   };
 
   return {
@@ -178,6 +181,7 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
     lockedPhrases: data.locked_phrases ?? [],
     negativeEntities: data.negative_entities ?? [],
     topics: data.topics ?? [],
+    requestedAspects: data.requested_aspects ?? [],
   };
 }
 

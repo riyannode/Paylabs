@@ -19,7 +19,7 @@ import { z } from "zod";
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 import { shouldRunServiceAsDeterministic } from "../execution-mode";
-import { extractRequestedAspects, PROTOCOL_ALIASES } from "../../sources/crypto-entity-registry";
+import { extractRequestedAspects, PROTOCOL_ALIASES, CONTEXTUAL_SHORT_TOKENS, resolveContextualEntity } from "../../sources/crypto-entity-registry";
 
 // ─── Schemas ───────────────────────────────────────────────
 
@@ -431,26 +431,45 @@ function runDeterministicQueryBuilder(
   // ── Step 2b: Named crypto protocol resolution from shared registry ──
   // Named protocols explicitly written by the user become required structured entities
   // with canonical names. Uses the same PROTOCOL_ALIASES as source-resolver.
+  // Contextual tokens (comp, uni, mkr, crv, bal) are skipped here and resolved
+  // through resolveContextualEntity() to avoid false positives.
   const protocolKeys = Object.keys(PROTOCOL_ALIASES);
-  for (const phrase of lockedPhrases) {
-    const phraseLower = phrase.toLowerCase().trim();
-    // Check if this phrase matches a protocol alias (exact or multi-word)
+  const contextualTokenSet = new Set(Object.keys(CONTEXTUAL_SHORT_TOKENS));
+
+  // Helper: resolve a phrase against PROTOCOL_ALIASES, skipping contextual tokens
+  function resolveProtocolFromAlias(phraseText: string): { canonical: string; isDirectMatch: boolean } | null {
+    const phraseLower = phraseText.toLowerCase().trim();
+    // If this is a contextual token, skip direct alias resolution — use resolveContextualEntity instead
+    if (contextualTokenSet.has(phraseLower)) {
+      const ctxResult = resolveContextualEntity(phraseText, normalizedGoal);
+      if (ctxResult) {
+        return { canonical: ctxResult.canonical, isDirectMatch: false };
+      }
+      return null; // contextual token without matching context → no entity
+    }
+    // Direct alias match for unambiguous tokens (e.g. "Aave", "Compound Finance", "Uniswap")
     for (const pk of protocolKeys) {
       const entry = PROTOCOL_ALIASES[pk];
       const matchedAlias = entry.aliases.find(
         (a) => a.toLowerCase() === phraseLower
       );
       if (matchedAlias) {
-        // Already in primary entities? Skip.
-        if (!primaryEntities.some((pe) => pe.canonical === entry.canonical)) {
-          primaryEntities.push({
-            text: phrase,
-            canonical: entry.canonical,
-            type: "protocol",
-            required: true,
-          });
-        }
-        break;
+        return { canonical: entry.canonical, isDirectMatch: true };
+      }
+    }
+    return null;
+  }
+
+  for (const phrase of lockedPhrases) {
+    const resolved = resolveProtocolFromAlias(phrase);
+    if (resolved) {
+      if (!primaryEntities.some((pe) => pe.canonical === resolved.canonical)) {
+        primaryEntities.push({
+          text: phrase,
+          canonical: resolved.canonical,
+          type: "protocol",
+          required: true,
+        });
       }
     }
   }
@@ -461,21 +480,17 @@ function runDeterministicQueryBuilder(
     const w = words[i];
     const wl = cleanToken(w);
     if (!wl) continue;
-    for (const pk of protocolKeys) {
-      const entry = PROTOCOL_ALIASES[pk];
-      const matchedAlias = entry.aliases.find(
-        (a) => a.toLowerCase() === wl
-      );
-      if (matchedAlias) {
-        if (!primaryEntities.some((pe) => pe.canonical === entry.canonical)) {
-          primaryEntities.push({
-            text: w,
-            canonical: entry.canonical,
-            type: "protocol",
-            required: hasBoundaryMatch(goalLower, wl),
-          });
-        }
-        break;
+    // Skip if already covered by a locked phrase
+    if (primaryEntities.some((pe) => pe.text.toLowerCase() === wl)) continue;
+    const resolved = resolveProtocolFromAlias(w);
+    if (resolved) {
+      if (!primaryEntities.some((pe) => pe.canonical === resolved.canonical)) {
+        primaryEntities.push({
+          text: w,
+          canonical: resolved.canonical,
+          type: "protocol",
+          required: resolved.isDirectMatch ? hasBoundaryMatch(goalLower, wl) : true,
+        });
       }
     }
   }

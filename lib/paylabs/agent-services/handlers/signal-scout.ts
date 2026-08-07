@@ -25,7 +25,7 @@ import {
   passesCryptoSourceGuard,
   isGenericCatchAllSource,
 } from "@/lib/paylabs/rsshub/topic-source-guards";
-import { matchesExactPhrase } from "@/lib/paylabs/sources/source-relevance";
+import { matchesExactPhrase, computeAspectCoverage } from "@/lib/paylabs/sources/source-relevance";
 
 const SignalScoutSchema = z.object({
   ranked_sources: z.array(z.object({
@@ -293,7 +293,7 @@ async function runLiveSearch(
 export const signalScoutHandler: ServiceHandler = async (
   input: ServiceHandlerInput
 ): Promise<ServiceHandlerOutput> => {
-  const { expanded_queries, entity_terms, negative_filters, source_preferences, routeTier, primary_entities, secondary_entities, negative_entities } = input.payload as {
+  const { expanded_queries, entity_terms, negative_filters, source_preferences, routeTier, primary_entities, secondary_entities, negative_entities, requestedAspects } = input.payload as {
     expanded_queries: string[];
     entity_terms: string[];
     negative_filters?: string[];
@@ -302,6 +302,7 @@ export const signalScoutHandler: ServiceHandler = async (
     primary_entities?: Array<{ text: string; canonical: string; type: string; required: boolean }>;
     secondary_entities?: Array<{ text: string; canonical: string; type: string; required: boolean }>;
     negative_entities?: string[];
+    requestedAspects?: string[];
   };
 
   // Phase 3A: extract primary entity canonicals for scoring weight
@@ -462,9 +463,16 @@ export const signalScoutHandler: ServiceHandler = async (
     const missingEntities = requiredPrimaryEntities.filter(
       (e) => !coveredEntities.has(e)
     );
-    // If all required entities covered, return immediately
-    // If entities missing, fall through to DB fallback for additional sources
-    if (missingEntities.length === 0) {
+
+    // Check aspect coverage using shared computeAspectCoverage
+    const mergedTexts = mergedLive.map((r) => `${r.title || ""} ${r.summary || ""}`);
+    const aspectCoverage = computeAspectCoverage(mergedTexts, requestedAspects || []);
+    const missingAspectKeys = aspectCoverage.missing;
+
+    // Return live RSSHub immediately ONLY when:
+    //   - all required entities covered AND
+    //   - all requested aspects covered
+    if (missingEntities.length === 0 && missingAspectKeys.length === 0) {
       return {
         ok: true,
         serviceName: "signal_scout",
@@ -483,14 +491,19 @@ export const signalScoutHandler: ServiceHandler = async (
         error: null,
       };
     }
-    // Entities missing: log and fall through to DB fallback
+    // Entities or aspects missing: log and fall through to DB fallback
     console.log(JSON.stringify({
-      log: "[signal_scout] entity_coverage_gap",
+      log: "[signal_scout] coverage_gap",
       merged_count: mergedLive.length,
       required_entities: requiredPrimaryEntities,
       covered_entities: [...coveredEntities],
       missing_entities: missingEntities,
-      fallback_reason: "DB fallback triggered due to entity coverage gap",
+      requested_aspects: requestedAspects || [],
+      covered_aspects: aspectCoverage.covered,
+      missing_aspects: missingAspectKeys,
+      fallback_reason: missingEntities.length > 0
+        ? "DB fallback triggered due to entity coverage gap"
+        : "DB fallback triggered due to aspect coverage gap",
     }));
   }
 

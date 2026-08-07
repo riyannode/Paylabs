@@ -1059,14 +1059,9 @@ export function resolveContextualEntity(
   const contextualOptions = CONTEXTUAL_SHORT_TOKENS[lower];
   if (contextualOptions && contextualOptions.length > 0) {
     if (!surroundingText) {
-      // No context — return first option with warning
-      return {
-        canonical: contextualOptions[0].canonical,
-        entityType: contextualOptions[0].entityType,
-        resolutionSource: "contextual",
-        matchedTerm: term,
-        disambiguation: contextualOptions[0].disambiguation,
-      };
+      // No context — fail closed. Bare ambiguous tokens must not resolve
+      // to an entity without contextual signal.
+      return null;
     }
 
     // Examine surrounding text for contextual signals
