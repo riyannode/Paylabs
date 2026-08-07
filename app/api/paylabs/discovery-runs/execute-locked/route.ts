@@ -991,7 +991,11 @@ export async function POST(req: NextRequest) {
           goal: resolvedGoal,
           brainDraft: (safeBrainPlanning?.assistant_response as string | null | undefined) ?? null,
           sources: sourcesUsed,
-          intentType: null,
+          intentType: null,  // intentType is not on SourceContext; null acceptable per spec
+          coverageCeiling: {
+            missingPrimaryEntities: result.sourceContext?.entity_coverage?.missing ?? [],
+            missingAspects: result.sourceContext?.aspect_coverage?.missing ?? [],
+          },
         });
         groundingLatencyMs = groundingSourceIds.length > 0 ? Date.now() - startedAt : null;
         if (groundingSourceIds.length > 0) {

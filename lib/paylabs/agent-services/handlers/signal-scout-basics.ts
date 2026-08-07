@@ -29,7 +29,7 @@ import {
   passesCryptoSourceGuard,
   isGenericCatchAllSource,
 } from "@/lib/paylabs/rsshub/topic-source-guards";
-import { scoreCandidateRelevance, matchesExactPhrase } from "@/lib/paylabs/sources/source-relevance";
+import { scoreCandidateRelevance, matchesExactPhrase, computeAspectCoverage } from "@/lib/paylabs/sources/source-relevance";
 
 // ─── Stopwords — generic words that should never count as relevance signals ──
 const STOPWORDS = new Set([
@@ -329,6 +329,7 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
   // Phase 3A: extract primary entity canonicals for scoring weight
   const primaryEntityCanons = (primary_entities || []).map((e) => e.canonical);
   const negativeEnts = negative_entities || [];
+  const requestedAspects: string[] = (input.payload as { requestedAspects?: string[] }).requestedAspects || [];
 
   // ── Step 1: RSSHub live search (always live-only, never DB fallback) ──
   const liveEnabled = process.env.PAYLABS_RSSHUB_LIVE_ENABLED !== "false";
@@ -487,9 +488,16 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
       const missingEntities = requiredPrimaryEntities.filter(
         (e) => !coveredEntities.has(e)
       );
-      // If all required entities covered, return immediately
-      // If entities missing, fall through to Tavily to try to fill gaps
-      if (missingEntities.length === 0) {
+
+      // Check aspect coverage using shared computeAspectCoverage
+      const rescoredTexts = rescored.map((r) => `${r.title || ""} ${r.summary || ""}`);
+      const aspectCoverage = computeAspectCoverage(rescoredTexts, requestedAspects);
+      const missingAspectKeys = aspectCoverage.missing;
+
+      // Return immediately only when:
+      //   - all required entities covered AND
+      //   - all requested aspects covered
+      if (missingEntities.length === 0 && missingAspectKeys.length === 0) {
         return {
           ok: true,
           serviceName: "signal_scout_basics",
@@ -513,14 +521,19 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
           error: null,
         };
       }
-      // Entities missing: log and fall through to Tavily fallback
+      // Entities or aspects missing: log and fall through to Tavily fallback
       console.log(JSON.stringify({
-        log: "[signal_scout_basics] entity_coverage_gap",
+        log: "[signal_scout_basics] coverage_gap",
         rescored_count: rescored.length,
         required_entities: requiredPrimaryEntities,
         covered_entities: [...coveredEntities],
         missing_entities: missingEntities,
-        fallback_reason: "Tavily fallback triggered due to entity coverage gap",
+        requested_aspects: requestedAspects,
+        covered_aspects: aspectCoverage.covered,
+        missing_aspects: missingAspectKeys,
+        fallback_reason: missingEntities.length > 0
+          ? "Tavily fallback triggered due to entity coverage gap"
+          : "Tavily fallback triggered due to aspect coverage gap",
       }));
     }
     // rescored.length === 0 or entities missing: fall through to Tavily fallback below

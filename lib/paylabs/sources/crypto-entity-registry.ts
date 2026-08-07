@@ -866,28 +866,6 @@ interface AliasLookupEntry {
  */
 export const ALL_ALIASES: Map<string, AliasLookupEntry> = new Map();
 
-// Populate from PROTOCOL_ALIASES
-for (const [key, entry] of Object.entries(PROTOCOL_ALIASES)) {
-  for (const alias of entry.aliases) {
-    ALL_ALIASES.set(alias.toLowerCase(), {
-      canonical: entry.canonical,
-      entityType: "protocol",
-      registryKey: key,
-    });
-  }
-}
-
-// Populate from CRYPTO_CONCEPT_ENTITIES
-for (const [key, entry] of Object.entries(CRYPTO_CONCEPT_ENTITIES)) {
-  for (const alias of entry.aliases) {
-    ALL_ALIASES.set(alias.toLowerCase(), {
-      canonical: entry.canonical,
-      entityType: "concept",
-      registryKey: key,
-    });
-  }
-}
-
 // ─── Contextual Short Tokens ──────────────────────────────
 // Ambiguous short tokens that need context to resolve
 
@@ -1002,7 +980,39 @@ export const CONTEXTUAL_SHORT_TOKENS: Record<
   ],
 };
 
-// ─── Resolve Contextual Entity ────────────────────────────
+// ─── ALL_ALIASES Population (after CONTEXTUAL_SHORT_TOKENS declaration) ───
+// Exclude keys that appear in CONTEXTUAL_SHORT_TOKENS — those need
+// contextual disambiguation in resolveContextualEntity(), not unconditional
+// alias resolution.
+const contextualKeys = new Set(Object.keys(CONTEXTUAL_SHORT_TOKENS));
+
+// Populate from PROTOCOL_ALIASES
+for (const [key, entry] of Object.entries(PROTOCOL_ALIASES)) {
+  for (const alias of entry.aliases) {
+    const aliasLower = alias.toLowerCase();
+    if (contextualKeys.has(aliasLower)) continue;
+    ALL_ALIASES.set(aliasLower, {
+      canonical: entry.canonical,
+      entityType: "protocol",
+      registryKey: key,
+    });
+  }
+}
+
+// Populate from CRYPTO_CONCEPT_ENTITIES
+for (const [key, entry] of Object.entries(CRYPTO_CONCEPT_ENTITIES)) {
+  for (const alias of entry.aliases) {
+    const aliasLower = alias.toLowerCase();
+    if (contextualKeys.has(aliasLower)) continue;
+    ALL_ALIASES.set(aliasLower, {
+      canonical: entry.canonical,
+      entityType: "concept",
+      registryKey: key,
+    });
+  }
+}
+
+// ─── Resolve Contextual Entity
 // Deterministic entity resolution with context awareness
 
 export interface ResolvedEntity {
@@ -1087,14 +1097,10 @@ export function resolveContextualEntity(
       }
     }
 
-    // No contextual signal found — return first option as best guess
-    return {
-      canonical: contextualOptions[0].canonical,
-      entityType: contextualOptions[0].entityType,
-      resolutionSource: "contextual",
-      matchedTerm: term,
-      disambiguation: contextualOptions[0].disambiguation,
-    };
+    // No contextual signal found — fail closed.
+    // Return null rather than guessing, so bare ambiguous tokens
+    // (e.g. "comp" without DeFi context) do not resolve to an entity.
+    return null;
   }
 
   // 3. No match

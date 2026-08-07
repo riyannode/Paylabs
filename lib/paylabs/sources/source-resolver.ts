@@ -16,7 +16,8 @@ import type {
   SourceResolverOutput,
 } from "./types";
 import { sanitizeEntityTerms, hasBoundaryTerm } from "./source-term-matching";
-import { validateCandidateRelevance, computeAspectCoverage } from "./source-relevance";
+import { validateCandidateRelevance, computeAspectCoverage, getMatchedAspectsForText, matchesExactPhrase } from "./source-relevance";
+import { ASPECT_DEFINITIONS } from "./crypto-entity-registry";
 import { detectTopics } from "@/lib/paylabs/rsshub/topic-routes";
 import {
   passesAiSourceGuard,
@@ -521,11 +522,9 @@ export async function resolveSources(
       const missingAspects = new Set(input.requestedAspects);
       // Remove aspects already covered by selected sources
       for (const src of selected) {
-        const text = `${src.title || ''} ${src.summary || ''}`.toLowerCase();
-        for (const aspect of missingAspects) {
-          // Simple keyword check — full validation happens in computeAspectCoverage
-          if (text.includes(aspect.replace(/_/g, ' '))) missingAspects.delete(aspect);
-        }
+        const text = `${src.title || ''} ${src.summary || ''}`;
+        const matched = getMatchedAspectsForText(text, [...missingAspects]);
+        for (const aspect of matched) missingAspects.delete(aspect);
       }
       // Select candidates that close the most missing aspects
       while (missingAspects.size > 0 && selected.length < FINAL_SOURCE_LIMIT) {
@@ -533,11 +532,9 @@ export async function resolveSources(
         let bestCoverage = 0;
         for (const src of rankedValidated) {
           if (selected.includes(src)) continue;
-          const text = `${src.title || ''} ${src.summary || ''}`.toLowerCase();
-          let coverage = 0;
-          for (const aspect of missingAspects) {
-            if (text.includes(aspect.replace(/_/g, ' '))) coverage++;
-          }
+          const text = `${src.title || ''} ${src.summary || ''}`;
+          const matched = getMatchedAspectsForText(text, [...missingAspects]);
+          const coverage = matched.length;
           if (coverage > bestCoverage) {
             bestCoverage = coverage;
             bestCandidate = src;
@@ -546,10 +543,9 @@ export async function resolveSources(
         if (!bestCandidate || bestCoverage === 0) break;
         selected.push(bestCandidate);
         // Update missing aspects
-        const text = `${bestCandidate.title || ''} ${bestCandidate.summary || ''}`.toLowerCase();
-        for (const aspect of [...missingAspects]) {
-          if (text.includes(aspect.replace(/_/g, ' '))) missingAspects.delete(aspect);
-        }
+        const bestText = `${bestCandidate.title || ''} ${bestCandidate.summary || ''}`;
+        const bestMatched = getMatchedAspectsForText(bestText, [...missingAspects]);
+        for (const aspect of bestMatched) missingAspects.delete(aspect);
       }
     }
     
@@ -565,18 +561,76 @@ export async function resolveSources(
 
     // Intent-aware source filtering for fundamentals/comparison/explanation/risk queries
     const nonPriceIntents = new Set(['definition', 'explanation', 'comparison', 'troubleshooting', 'protocol comparison', 'implementation', 'risk analysis']);
-    if (input.intentType && nonPriceIntents.has(input.intentType.toLowerCase())) {
+    // Intents where news/market noise should be rejected but docs/research/technical explainers are welcome
+    const technicalIntents = new Set(['definition', 'explanation', 'comparison', 'protocol comparison', 'risk analysis']);
+    // Intents where current-event news IS acceptable (incident, regulation, exploit)
+    const newsFriendlyIntents = new Set(['latest', 'current', 'incident', 'regulation', 'market conditions', 'etf', 'adoption', 'price', 'exploit', 'hack', 'attack', 'vulnerability']);
+    const intentLower = (input.intentType || '').toLowerCase();
+    if (input.intentType && nonPriceIntents.has(intentLower)) {
       sources = sources.filter((src) => {
         const title = (src.title || '').toLowerCase();
         const summary = (src.summary || '').toLowerCase();
         const combined = `${title} ${summary}`;
+        const domain = (src.domain || '').toLowerCase();
+        const routePath = (src.route_path || '').toLowerCase();
+
         // Hard reject clear price/market noise for non-price queries
         const pricePagePatterns = ['live price', 'price chart', 'market cap', 'daily price', 'etf inflow', 'etf outflow', 'etf flows', 'etf update', 'crypto market today', 'today\'s market', 'breaking news', 'market update'];
         if (pricePagePatterns.some(p => combined.includes(p))) {
           rejectionReasons.push(`${src.url}: intent_mismatch (price page for non-price query)`);
           return false;
         }
-        // Do NOT reject protocol documentation that lacks 'comparison'/'versus' words
+
+        // Reject generic macro/political/treasury news that only mentions required entities
+        // but does not substantively match any requested aspect or technical concept
+        const genericNoisePatterns = [
+          'treasury holding', 'treasury buys', 'treasury purchase',
+          'political', 'election', 'regulation announcement',
+          'sec filing', 'sec approval', 'sec rejects',
+          'ai-threat', 'ai threat', 'quantum threat',
+          'institutional adoption', 'institutional invest',
+          'whale alert', 'whale moves', 'large transfer',
+          'market sentiment', 'fear and greed', 'bull bear',
+          'altcoin season', 'crypto winter', 'crypto summer',
+        ];
+        const isGenericNoise = genericNoisePatterns.some(p => combined.includes(p));
+        if (isGenericNoise) {
+          // Allow if it also matches a requested aspect signal term
+          const hasAspectMatch = (input.requestedAspects || []).some((aspect) => {
+            const def = ASPECT_DEFINITIONS[aspect];
+            if (!def) return combined.includes(aspect.replace(/_/g, ' '));
+            return def.signalTerms.some((term) => matchesExactPhrase(combined, term));
+          });
+          if (!hasAspectMatch) {
+            rejectionReasons.push(`${src.url}: intent_mismatch (generic noise for technical query)`);
+            return false;
+          }
+        }
+
+        // For technical intents: require at least one aspect or technical concept match
+        // Official docs/research/technical explainers pass without needing "comparison" words
+        if (technicalIntents.has(intentLower)) {
+          const isTechnicalSource = /docs|documentation|whitepaper|research|paper|technical|explainer|guide|tutorial|reference|spec|specification|developer/i.test(combined)
+            || /docs|whitepaper|research|technical|explainer|guide|reference/i.test(domain)
+            || /docs|whitepaper|research|technical|explainer/i.test(routePath);
+          if (isTechnicalSource) return true; // docs/research always pass
+
+          // For non-technical sources: require aspect or entity+concept match
+          const hasAspectMatch = (input.requestedAspects || []).some((aspect) => {
+            const def = ASPECT_DEFINITIONS[aspect];
+            if (!def) return combined.includes(aspect.replace(/_/g, ' '));
+            return def.signalTerms.some((term) => matchesExactPhrase(combined, term));
+          });
+          // Must have entity match AND at least one aspect/concept signal
+          const hasEntityMatch = (input.primaryEntities || []).some((e) =>
+            matchesExactPhrase(combined, e.canonical) || combined.includes(e.canonical.toLowerCase())
+          );
+          if (!hasEntityMatch || !hasAspectMatch) {
+            rejectionReasons.push(`${src.url}: intent_mismatch (missing aspect/concept match for technical query)`);
+            return false;
+          }
+        }
+
         return true;
       });
     }

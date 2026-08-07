@@ -19,7 +19,7 @@ import { z } from "zod";
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 import { shouldRunServiceAsDeterministic } from "../execution-mode";
-import { extractRequestedAspects } from "../../sources/crypto-entity-registry";
+import { extractRequestedAspects, PROTOCOL_ALIASES } from "../../sources/crypto-entity-registry";
 
 // ─── Schemas ───────────────────────────────────────────────
 
@@ -426,6 +426,58 @@ function runDeterministicQueryBuilder(
       type: classified.type,
       required: true,
     });
+  }
+
+  // ── Step 2b: Named crypto protocol resolution from shared registry ──
+  // Named protocols explicitly written by the user become required structured entities
+  // with canonical names. Uses the same PROTOCOL_ALIASES as source-resolver.
+  const protocolKeys = Object.keys(PROTOCOL_ALIASES);
+  for (const phrase of lockedPhrases) {
+    const phraseLower = phrase.toLowerCase().trim();
+    // Check if this phrase matches a protocol alias (exact or multi-word)
+    for (const pk of protocolKeys) {
+      const entry = PROTOCOL_ALIASES[pk];
+      const matchedAlias = entry.aliases.find(
+        (a) => a.toLowerCase() === phraseLower
+      );
+      if (matchedAlias) {
+        // Already in primary entities? Skip.
+        if (!primaryEntities.some((pe) => pe.canonical === entry.canonical)) {
+          primaryEntities.push({
+            text: phrase,
+            canonical: entry.canonical,
+            type: "protocol",
+            required: true,
+          });
+        }
+        break;
+      }
+    }
+  }
+  // Also scan individual words for single-token protocol aliases
+  // (e.g. "Aave" written as a standalone word not caught by phrase locking)
+  for (let i = 0; i < words.length; i++) {
+    if (phraseWordIndices.has(i)) continue;
+    const w = words[i];
+    const wl = cleanToken(w);
+    if (!wl) continue;
+    for (const pk of protocolKeys) {
+      const entry = PROTOCOL_ALIASES[pk];
+      const matchedAlias = entry.aliases.find(
+        (a) => a.toLowerCase() === wl
+      );
+      if (matchedAlias) {
+        if (!primaryEntities.some((pe) => pe.canonical === entry.canonical)) {
+          primaryEntities.push({
+            text: w,
+            canonical: entry.canonical,
+            type: "protocol",
+            required: hasBoundaryMatch(goalLower, wl),
+          });
+        }
+        break;
+      }
+    }
   }
 
   // ── Step 3: Quoted phrases (required, not already in locked phrases) ──

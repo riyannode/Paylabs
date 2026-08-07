@@ -168,6 +168,38 @@ export function validateCandidateRelevance(candidate: RelevanceCandidate, contex
  * Uses ASPECT_DEFINITIONS.signalTerms for boundary-aware phrase matching.
  * Returns { covered, missing } listing the aspects.
  */
+/**
+ * Check which requested aspects are matched by a single text.
+ * Uses ASPECT_DEFINITIONS.signalTerms for boundary-aware phrase matching.
+ * Returns the list of matched aspect keys.
+ *
+ * This is the single shared implementation for:
+ * - source-resolver Phase B candidate selection
+ * - signal-scout fallback gap detection
+ * - final coverage validation
+ */
+export function getMatchedAspectsForText(
+  text: string,
+  requestedAspects: string[],
+): string[] {
+  if (!requestedAspects.length) return [];
+  const matched: string[] = [];
+  for (const aspect of requestedAspects) {
+    const def = ASPECT_DEFINITIONS[aspect];
+    if (!def) {
+      // Unknown aspect — exact phrase check only
+      if (matchesExactPhrase(text, aspect.replace(/_/g, " "))) {
+        matched.push(aspect);
+      }
+      continue;
+    }
+    // Use the definition's signal terms for boundary-aware matching
+    const isMatched = def.signalTerms.some((term) => matchesExactPhrase(text, term));
+    if (isMatched) matched.push(aspect);
+  }
+  return matched;
+}
+
 export function computeAspectCoverage(
   sourceTexts: string[],
   requestedAspects: string[],
