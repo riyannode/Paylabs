@@ -423,6 +423,9 @@ export async function executeLockedMacroNodePipeline(
         }
 
         const rc = dData.retrievalContext as import("../sources/types").RetrievalContext | undefined;
+        // After canonical rc is resolved, capture for evidence retrieval (item 8)
+        // This ensures fallback runs also get the correct retrieval context
+        if (rc) retrievalContextForEvidence = rc;
         const resolvedNormalizedGoal = rc?.normalizedGoal
           || (brainData ? String(brainData.normalized_goal || "") : "");
 

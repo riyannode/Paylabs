@@ -188,6 +188,9 @@ export type EvidenceCoverage = {
   /** Whether this is a comparison-style query */
   comparisonLike: boolean;
 
+  /** Number of trusted relevant evidence chunks (relevant=true AND supportStrength >= threshold) */
+  trustedEvidenceCount: number;
+
   /** Per-entity × aspect coverage matrix (only when comparisonLike=true) */
   entityAspectCoverage: Array<{
     entity: string;
