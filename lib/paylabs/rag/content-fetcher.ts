@@ -7,8 +7,9 @@
  * Security requirements:
  * - HTTP/HTTPS only
  * - Block localhost, loopback, RFC1918, cloud metadata, multicast
- * - Resolve DNS and validate ALL resolved addresses before fetch
+ * - Resolve DNS using dns.lookup with {all:true} and validate ALL addresses
  * - Re-validate on every redirect hop
+ * - Fail closed on DNS resolution errors
  * - Bounded timeout, response bytes, redirects
  * - Validate content type
  * - No auth, no cookies, no JS execution
@@ -21,62 +22,110 @@ import { CONTENT_FETCH_DEFAULTS } from "./types";
 
 // ─── SSRF Protection ───────────────────────────────────────
 
-/** Comprehensive check if an IP address is in a blocked range */
+/** Parse an IPv4 address string into a 32-bit integer */
+function ipv4ToInt(ip: string): number | null {
+  const parts = ip.split(".");
+  if (parts.length !== 4) return null;
+  let result = 0;
+  for (const part of parts) {
+    const n = parseInt(part, 10);
+    if (isNaN(n) || n < 0 || n > 255) return null;
+    result = (result << 8) + n;
+  }
+  // Convert to unsigned 32-bit
+  return result >>> 0;
+}
+
+/** Check if an IPv4 integer is in a blocked CIDR range (as integer + prefix length) */
+function ipv4InCidr(ipInt: number, networkInt: number, prefixLen: number): boolean {
+  const mask = (~0 << (32 - prefixLen)) >>> 0;
+  return (ipInt & mask) === (networkInt & mask);
+}
+
+/** Comprehensive check if an IP address string is in a blocked range */
 function isPrivateOrBlockedIp(ip: string): boolean {
-  // IPv4 private/reserved ranges
-  if (/^0\./.test(ip)) return true;                       // 0.0.0.0/8
-  if (/^10\./.test(ip)) return true;                      // 10.0.0.0/8
-  if (/^100\.(6[4-9]|[7-9]\d|1[0-2][0-7])\./.test(ip)) return true; // 100.64.0.0/10
-  if (/^127\./.test(ip)) return true;                     // 127.0.0.0/8
-  if (/^169\.254\./.test(ip)) return true;                // 169.254.0.0/16 (link-local + cloud metadata)
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) return true; // 172.16.0.0/12
-  if (/^192\.168\./.test(ip)) return true;                // 192.168.0.0/16
-  if (/^(192\.0\.0\.|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.)/.test(ip)) return true; // doc/test nets
-  if (/^(22[4-9]|23[0-9])\./.test(ip)) return true;      // 224.0.0.0/4 (multicast)
-  if (/^240\./.test(ip)) return true;                     // 240.0.0.0/4 (reserved)
+  // ── IPv4 ranges (check as integer for deterministic matching) ──
+  const ipInt = ipv4ToInt(ip);
+  if (ipInt !== null) {
+    // 0.0.0.0/8
+    if (ipv4InCidr(ipInt, ipv4ToInt("0.0.0.0")!, 8)) return true;
+    // 10.0.0.0/8
+    if (ipv4InCidr(ipInt, ipv4ToInt("10.0.0.0")!, 8)) return true;
+    // 100.64.0.0/10
+    if (ipv4InCidr(ipInt, ipv4ToInt("100.64.0.0")!, 10)) return true;
+    // 127.0.0.0/8
+    if (ipv4InCidr(ipInt, ipv4ToInt("127.0.0.0")!, 8)) return true;
+    // 169.254.0.0/16 (link-local + cloud metadata)
+    if (ipv4InCidr(ipInt, ipv4ToInt("169.254.0.0")!, 16)) return true;
+    // 172.16.0.0/12
+    if (ipv4InCidr(ipInt, ipv4ToInt("172.16.0.0")!, 12)) return true;
+    // 192.168.0.0/16
+    if (ipv4InCidr(ipInt, ipv4ToInt("192.168.0.0")!, 16)) return true;
+    // 192.0.0.0/24 (IANA special)
+    if (ipv4InCidr(ipInt, ipv4ToInt("192.0.0.0")!, 24)) return true;
+    // 192.0.2.0/24 (documentation)
+    if (ipv4InCidr(ipInt, ipv4ToInt("192.0.2.0")!, 24)) return true;
+    // 198.51.100.0/24 (documentation)
+    if (ipv4InCidr(ipInt, ipv4ToInt("198.51.100.0")!, 24)) return true;
+    // 203.0.113.0/24 (documentation)
+    if (ipv4InCidr(ipInt, ipv4ToInt("203.0.113.0")!, 24)) return true;
+    // 224.0.0.0/4 (multicast)
+    if (ipv4InCidr(ipInt, ipv4ToInt("224.0.0.0")!, 4)) return true;
+    // 240.0.0.0/4 (reserved)
+    if (ipv4InCidr(ipInt, ipv4ToInt("240.0.0.0")!, 4)) return true;
+    return false;
+  }
 
-  // IPv6 ranges
-  if (ip === "::1" || ip === "::" || ip === "::0") return true;
-  if (/^::ffff:(0\.|10\.|127\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/i.test(ip)) return true; // IPv4-mapped private
-  if (/^fc00:/i.test(ip) || /^fd[0-9a-f]{2}:/i.test(ip)) return true; // fc00::/7 (ULA)
-  if (/^fe80:/i.test(ip)) return true;                    // fe80::/10 (link-local)
-  if (ip === "0000:0000:0000:0000:0000:0000:0000:0001") return true; // IPv6 loopback
-  if (/^2001:db8:/i.test(ip)) return true;                // 2001:db8::/32 (doc)
+  // ── IPv6 ranges ──
+  const ipLower = ip.toLowerCase();
 
-  // Cloud metadata endpoint
-  if (ip === "169.254.169.254") return true;
+  // Loopback
+  if (ipLower === "::1" || ipLower === "::0" || ipLower === "::") return true;
+
+  // IPv4-mapped: ::ffff:x.x.x.x — extract the embedded IPv4 and re-check
+  const v4Mapped = ipLower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (v4Mapped) return isPrivateOrBlockedIp(v4Mapped[1]);
+
+  // IPv4-compatible: ::x.x.x.x (deprecated but block anyway)
+  const v4Compat = ipLower.match(/^::(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (v4Compat) return isPrivateOrBlockedIp(v4Compat[1]);
+
+  // fc00::/7 (ULA)
+  if (ipLower.startsWith("fc") || ipLower.startsWith("fd")) return true;
+
+  // fe80::/10 (link-local)
+  if (ipLower.startsWith("fe8") || ipLower.startsWith("fe9") ||
+      ipLower.startsWith("fea") || ipLower.startsWith("feb")) return true;
+
+  // 2001:db8::/32 (documentation)
+  if (ipLower.startsWith("2001:db8")) return true;
+
+  // All-zeros prefix (non-routable)
+  if (/^0{1,4}(:0{1,4}){7}$/i.test(ipLower)) return true;
 
   return false;
 }
 
 /**
- * Resolve a hostname and validate ALL returned addresses.
- * Returns error if ANY address is unsafe.
+ * Resolve a hostname using dns.lookup with {all:true, verbatim:true}
+ * and validate ALL returned addresses.
+ *
+ * Fail closed: any DNS error or ANY unsafe address → reject.
+ * Uses verbatim:true to get literal DNS results without OS sorting.
  */
 async function resolveAndValidateHost(hostname: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    const addresses = await dns.resolve4(hostname, { all: true });
+    const addresses = await dns.lookup(hostname, { all: true, verbatim: true });
     for (const addr of addresses) {
-      if (isPrivateOrBlockedIp(addr.address)) {
-        return { ok: false, error: `DNS resolution returned private/blocked IP: ${addr.address}` };
+      const ip = addr.address;
+      if (isPrivateOrBlockedIp(ip)) {
+        return { ok: false, error: `DNS resolved to blocked address: ${ip}` };
       }
     }
     return { ok: true };
   } catch {
-    // If DNS resolution fails entirely, also try IPv6
-    try {
-      const addresses6 = await dns.resolve6(hostname, { all: true });
-      for (const addr of addresses6) {
-        if (isPrivateOrBlockedIp(addr.address)) {
-          return { ok: false, error: `DNS resolution returned private/blocked IPv6: ${addr.address}` };
-        }
-      }
-      return { ok: true };
-    } catch {
-      // DNS resolution failed for both — could be valid hostname we can't resolve
-      // Allow the fetch to proceed (it will fail naturally if unreachable)
-      return { ok: true };
-    }
+    // Fail closed: DNS resolution error → do not proceed
+    return { ok: false, error: `DNS resolution failed for ${hostname}` };
   }
 }
 
@@ -95,11 +144,13 @@ function validateUrlStructure(url: string): { ok: boolean; error?: string } {
 
   const hostname = parsed.hostname.toLowerCase();
 
-  // Block literal IPs
-  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
+  // Block literal IPs directly
+  const ipInt = ipv4ToInt(hostname);
+  if (ipInt !== null) {
     if (isPrivateOrBlockedIp(hostname)) {
       return { ok: false, error: "Literal private IP blocked" };
     }
+    return { ok: true }; // Public IP literal — no DNS needed
   }
 
   // Block localhost hostname
@@ -107,7 +158,7 @@ function validateUrlStructure(url: string): { ok: boolean; error?: string } {
     return { ok: false, error: "Localhost blocked" };
   }
 
-  // Block cloud metadata IP
+  // Block cloud metadata hostname
   if (hostname === "169.254.169.254") {
     return { ok: false, error: "Cloud metadata blocked" };
   }
@@ -126,11 +177,15 @@ async function validateUrlFull(url: string): Promise<{ ok: boolean; error?: stri
   const hostname = parsed.hostname.toLowerCase();
 
   // Skip DNS for literal IPs (already validated structurally)
-  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
-    return resolveAndValidateHost(hostname);
+  const ipInt = ipv4ToInt(hostname);
+  if (ipInt !== null) {
+    return isPrivateOrBlockedIp(hostname)
+      ? { ok: false, error: "Blocked literal IP" }
+      : { ok: true };
   }
 
-  return { ok: true };
+  // DNS validation for hostnames — fail closed
+  return resolveAndValidateHost(hostname);
 }
 
 // ─── Content Extraction ────────────────────────────────────
@@ -180,7 +235,8 @@ export type ContentFetchResult = {
 
 /**
  * Fetch bounded readable content from a URL.
- * Applies SSRF protection with DNS resolution, bounded timeout, and HTML text extraction.
+ * Applies SSRF protection with dns.lookup validation, bounded timeout, and HTML text extraction.
+ * Fail closed: any DNS error blocks the request.
  */
 export async function fetchBoundedContent(
   url: string,
@@ -222,7 +278,7 @@ export async function fetchBoundedContent(
           return { ok: false, text: "", canonicalUrl: url, contentType: null, error: "Invalid redirect URL" };
         }
 
-        // Re-validate redirect destination with DNS resolution
+        // Re-validate redirect destination with full DNS check
         const redirectValidation = await validateUrlFull(currentUrl);
         if (!redirectValidation.ok) {
           return { ok: false, text: "", canonicalUrl: url, contentType: null, error: `Redirect blocked: ${redirectValidation.error}` };

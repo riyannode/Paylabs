@@ -578,7 +578,7 @@ export async function resolveSources(
     // Intents where current-event news IS acceptable (incident, regulation, exploit)
     const newsFriendlyIntents = new Set(['latest', 'current', 'incident', 'regulation', 'market conditions', 'etf', 'adoption', 'price', 'exploit', 'hack', 'attack', 'vulnerability']);
     const intentLower = (intentType || '').toLowerCase();
-    if (input.intentType && nonPriceIntents.has(intentLower)) {
+    if (intentType && nonPriceIntents.has(intentLower)) {
       sources = sources.filter((src) => {
         const title = (src.title || '').toLowerCase();
         const summary = (src.summary || '').toLowerCase();
