@@ -5,10 +5,16 @@
  * This is NOT a new PayLab agent or service.
  * This creates NO x402/payment edge.
  *
- * Flow: ranked chunks → deterministic prefilter → LLM grader → graded chunks
+ * Flow: ranked chunks → deterministic prefilter → bounded LLM grade/fallback → truthful GradedEvidenceChunk[]
  *
  * The grader may REJECT or REDUCE support but NEVER INVENT support.
  * Entity/aspect coverage remains deterministic and authoritative.
+ *
+ * Invariants enforced:
+ *  - Every returned chunk has gradingMode ∈ {deterministic_reject, llm, deterministic_fallback}
+ *  - gradingMode="llm" ONLY if an actual valid LLM grade was received for that chunk
+ *  - Post-intersection: LLM cannot claim relevant=true when required support is empty
+ *  - Bounded grading deadline; exceeded candidates become deterministic_fallback
  */
 
 import { z } from "zod";
@@ -22,6 +28,7 @@ import type {
   EvidenceGradingResult,
 } from "./types";
 import { generateStructuredJson } from "../ai/llm-structured";
+import type { RouteTier } from "@/lib/paylabs/route-tier";
 
 // ─── Configuration ─────────────────────────────────────────
 
@@ -123,6 +130,56 @@ function deterministicReject(
   return null; // proceed to LLM grading
 }
 
+// ─── Deterministic Fallback for Non-Selected Chunks ────────
+
+/**
+ * Conservative deterministic fallback for chunks not selected for LLM grading
+ * or whose LLM grade was missing/failed. Uses deterministic support authority —
+ * relevant=true ONLY if deterministic rules allow it.
+ */
+function deterministicFallback(
+  ranked: RankedEvidenceChunk,
+  retrievalContext: RetrievalContext,
+): EvidenceGrade {
+  const { relevance } = ranked;
+  const hasRequestedAspects = retrievalContext.requestedAspects.length > 0;
+  const hasEntitySupport = relevance.entitySupport.length > 0;
+  const hasAspectSupport = relevance.aspectSupport.length > 0;
+
+  // If aspects are requested but this chunk has none → not relevant
+  if (hasRequestedAspects && !hasAspectSupport) {
+    return {
+      relevant: false,
+      entitySupport: relevance.entitySupport,
+      aspectSupport: [],
+      supportStrength: Math.min(relevance.score, 0.5),
+      rejectionReason: "entity_only_no_requested_aspect",
+      gradingMode: "deterministic_fallback",
+    };
+  }
+
+  // No entity or aspect support at all → weak
+  if (!hasEntitySupport && !hasAspectSupport) {
+    return {
+      relevant: false,
+      entitySupport: [],
+      aspectSupport: [],
+      supportStrength: Math.min(relevance.score, 0.5),
+      rejectionReason: "does_not_answer_query",
+      gradingMode: "deterministic_fallback",
+    };
+  }
+
+  return {
+    relevant: true,
+    entitySupport: relevance.entitySupport,
+    aspectSupport: relevance.aspectSupport,
+    supportStrength: Math.min(relevance.score, 0.5),
+    rejectionReason: null,
+    gradingMode: "deterministic_fallback",
+  };
+}
+
 // ─── LLM Grader ────────────────────────────────────────────
 
 const GRADING_SYSTEM_PROMPT = `You are an evidence relevance grader for PayLabs.
@@ -153,6 +210,17 @@ const BatchGradingSchema = z.object({
 }).strict();
 
 type LlmChunkGrade = z.infer<typeof ChunkGradeSchema>;
+
+/**
+ * Normalize a route tier string to a valid RouteTier for generateStructuredJson.
+ * Falls back to "normal" for any unrecognized value.
+ */
+function normalizeRouteTier(tier: string | undefined): RouteTier {
+  if (tier === "normal" || tier === "advanced" || tier === "premium") {
+    return tier;
+  }
+  return "normal";
+}
 
 /**
  * Build the user prompt for a batch of chunks.
@@ -195,15 +263,20 @@ function buildBatchPrompt(
 /**
  * Grade a batch of chunks via LLM.
  * Returns grades keyed by chunk_id.
+ * Only includes grades for chunk IDs that were in the submitted batch
+ * (unknown/duplicate chunk IDs from LLM response are ignored).
  */
 async function gradeBatch(
   retrievalContext: RetrievalContext,
   batch: RankedEvidenceChunk[],
   agentName: string,
+  routeTier: string,
 ): Promise<Map<string, LlmChunkGrade>> {
+  const effectiveRouteTier = normalizeRouteTier(routeTier);
+
   const result = await generateStructuredJson({
     agentName,
-    routeTier: "normal",
+    routeTier: effectiveRouteTier,
     systemPrompt: GRADING_SYSTEM_PROMPT,
     userPrompt: buildBatchPrompt(retrievalContext, batch),
     schema: BatchGradingSchema,
@@ -215,11 +288,18 @@ async function gradeBatch(
     return new Map();
   }
 
+  // Validate: only include grades for chunk IDs that were in the submitted batch
+  const batchIds = new Set(batch.map((item) => item.chunk.id));
   const data = result.data as z.infer<typeof BatchGradingSchema>;
   const grades = new Map<string, LlmChunkGrade>();
+
   for (const grade of data.grades) {
-    grades.set(grade.chunk_id, grade);
+    if (batchIds.has(grade.chunk_id)) {
+      grades.set(grade.chunk_id, grade);
+    }
+    // Unknown chunk IDs silently ignored — never grade a chunk not in the batch
   }
+
   return grades;
 }
 
@@ -242,6 +322,48 @@ function intersectSupport(
   const aspectSupport = llmAspectSupport.filter((a) => detAspectSet.has(a));
 
   return { entitySupport, aspectSupport };
+}
+
+// ─── Post-Intersection Consistency ─────────────────────────
+
+/**
+ * Enforce post-intersection consistency.
+ * After intersection, if the LLM claims relevant=true but required trusted support is empty,
+ * override to relevant=false. The LLM may REMOVE support — once removed, relevance must
+ * reflect that removal.
+ */
+function enforcePostIntersectionConsistency(
+  grade: EvidenceGrade,
+  retrievalContext: RetrievalContext,
+): EvidenceGrade {
+  if (!grade.relevant) return grade;
+
+  const hasRequiredEntities = retrievalContext.primaryEntities.some((e) => e.required);
+  const hasRequestedAspects = retrievalContext.requestedAspects.length > 0;
+
+  // If required primary entities exist but final trusted entitySupport is empty
+  if (hasRequiredEntities && grade.entitySupport.length === 0) {
+    return {
+      ...grade,
+      relevant: false,
+      supportStrength: Math.min(grade.supportStrength, 0.3),
+      rejectionReason: "does_not_answer_query",
+    };
+  }
+
+  // If requestedAspects exist and final trusted aspectSupport is empty
+  if (hasRequestedAspects && grade.aspectSupport.length === 0) {
+    return {
+      ...grade,
+      relevant: false,
+      supportStrength: Math.min(grade.supportStrength, 0.3),
+      rejectionReason: grade.entitySupport.length > 0
+        ? "entity_only_no_requested_aspect"
+        : "does_not_answer_query",
+    };
+  }
+
+  return grade;
 }
 
 // ─── Source Diversity Selection ─────────────────────────────
@@ -292,28 +414,32 @@ function selectLlmCandidates(
 // ─── Main Grading Function ─────────────────────────────────
 
 /**
- * Grade evidence chunks using deterministic prefilter + optional LLM grading.
+ * Grade evidence chunks using deterministic prefilter + bounded LLM grading.
  *
- * Every input chunk receives a grade. The grader may reject or reduce support
- * but never invent new entity/aspect coverage.
+ * Every input chunk receives a truthful grade:
+ *  1. deterministic_reject — deterministic prefilter rules
+ *  2. llm — actual valid LLM grade received and applied
+ *  3. deterministic_fallback — not selected for LLM, LLM unavailable,
+ *     batch failed, grade missing, or deadline reached
  */
 export async function gradeEvidenceChunks(params: {
   retrievalContext: RetrievalContext;
   rankedChunks: RankedEvidenceChunk[];
   routeTier?: string;
 }): Promise<EvidenceGradingResult> {
-  const { retrievalContext, rankedChunks } = params;
+  const { retrievalContext, rankedChunks, routeTier } = params;
   const agentName = "source_verifier";
 
   let llmCalls = 0;
-  let llmAvailable = true;
   let gradedCount = 0;
   let deterministicRejectCount = 0;
 
   const results: GradedEvidenceChunk[] = [];
+  const candidateIndices: number[] = [];
+  const llmGradedIds = new Set<string>();
 
+  // ── Phase 1: Deterministic prefilter ──────────────────────
   for (const ranked of rankedChunks) {
-    // Phase 1: Deterministic prefilter
     const detGrade = deterministicReject(ranked, retrievalContext);
     if (detGrade) {
       results.push({
@@ -322,67 +448,92 @@ export async function gradeEvidenceChunks(params: {
         grade: detGrade,
       });
       deterministicRejectCount++;
-      continue;
+    } else {
+      // Not rejected — mark as candidate. Will be finalized in Phase 2/3.
+      results.push({
+        chunk: ranked.chunk,
+        relevance: ranked.relevance,
+        grade: {
+          relevant: false,
+          entitySupport: ranked.relevance.entitySupport,
+          aspectSupport: ranked.relevance.aspectSupport,
+          supportStrength: ranked.relevance.score,
+          rejectionReason: null,
+          gradingMode: "deterministic_fallback", // default until LLM grades or fallback applied
+        },
+      });
+      candidateIndices.push(results.length - 1);
     }
-    // Mark as candidate for LLM grading — will be batched below
-    results.push({
-      chunk: ranked.chunk,
-      relevance: ranked.relevance,
-      grade: {
-        relevant: true, // provisional — will be overridden by LLM
-        entitySupport: ranked.relevance.entitySupport,
-        aspectSupport: ranked.relevance.aspectSupport,
-        supportStrength: ranked.relevance.score,
-        rejectionReason: null,
-        gradingMode: "llm",
-      },
-    });
   }
 
-  // Phase 2: LLM grading for non-rejected candidates
-  const candidates = results
-    .map((r, i) => ({ r, i }))
-    .filter(({ r }) => r.grade.gradingMode === "llm");
+  // ── Phase 2: Bounded LLM grading ─────────────────────────
+  let llmAvailable = false;
 
-  if (candidates.length > 0) {
-    // Select with source diversity
+  if (candidateIndices.length > 0) {
+    const deadline = Date.now() + GRADING_CONFIG.gradingTimeoutMs;
+
+    // Select with source diversity (max 12)
     const selectedCandidates = selectLlmCandidates(
-      candidates.map(({ r }) => ({
-        chunk: r.chunk,
-        relevance: r.relevance,
+      candidateIndices.map((i) => ({
+        chunk: results[i].chunk,
+        relevance: results[i].relevance,
       })),
       GRADING_CONFIG.maxLlmCandidates,
     );
-
-    // Batch and grade
     const selectedIds = new Set(selectedCandidates.map((c) => c.chunk.id));
-    const batchable = candidates.filter(({ r }) => selectedIds.has(r.chunk.id));
+
+    // Finalize non-selected plausible chunks with deterministic fallback
+    for (const idx of candidateIndices) {
+      if (!selectedIds.has(results[idx].chunk.id)) {
+        results[idx].grade = deterministicFallback(
+          { chunk: results[idx].chunk, relevance: results[idx].relevance },
+          retrievalContext,
+        );
+      }
+    }
+
+    // Batch LLM grading for selected candidates only
+    const batchable = candidateIndices.filter((idx) =>
+      selectedIds.has(results[idx].chunk.id),
+    );
 
     for (let b = 0; b < batchable.length; b += GRADING_CONFIG.batchSize) {
+      // Budget guard
       if (llmCalls >= GRADING_CONFIG.maxLlmCalls) break;
+      // Deadline guard — stop starting new batches
+      if (Date.now() >= deadline) break;
 
       const batch = batchable.slice(b, b + GRADING_CONFIG.batchSize);
-      const batchItems = batch.map(({ r }) => ({
-        chunk: r.chunk,
-        relevance: r.relevance,
+      const batchItems = batch.map((i) => ({
+        chunk: results[i].chunk,
+        relevance: results[i].relevance,
       }));
 
       try {
-        const batchGrades = await gradeBatch(retrievalContext, batchItems, agentName);
+        const batchGrades = await gradeBatch(
+          retrievalContext,
+          batchItems,
+          agentName,
+          routeTier ?? "normal",
+        );
         llmCalls++;
 
-        for (const { r, i } of batch) {
-          const llmGrade = batchGrades.get(r.chunk.id);
+        if (batchGrades.size > 0) {
+          llmAvailable = true;
+        }
+
+        for (const idx of batch) {
+          const llmGrade = batchGrades.get(results[idx].chunk.id);
           if (llmGrade) {
             // Intersect support: LLM can reduce, never invent
             const { entitySupport, aspectSupport } = intersectSupport(
               llmGrade.entity_support,
               llmGrade.aspect_support,
-              r.relevance.entitySupport,
-              r.relevance.aspectSupport,
+              results[idx].relevance.entitySupport,
+              results[idx].relevance.aspectSupport,
             );
 
-            results[i].grade = {
+            let grade: EvidenceGrade = {
               relevant: llmGrade.relevant,
               entitySupport,
               aspectSupport,
@@ -390,37 +541,41 @@ export async function gradeEvidenceChunks(params: {
               rejectionReason: llmGrade.rejection_reason,
               gradingMode: "llm",
             };
+
+            // Post-intersection consistency: LLM may not claim relevant=true
+            // when required support was removed by intersection
+            grade = enforcePostIntersectionConsistency(
+              grade,
+              retrievalContext,
+            );
+
+            results[idx].grade = grade;
+            llmGradedIds.add(results[idx].chunk.id);
             gradedCount++;
-          } else {
-            // LLM didn't return grade for this chunk — fallback
-            results[i].grade = {
-              relevant: true,
-              entitySupport: r.relevance.entitySupport,
-              aspectSupport: r.relevance.aspectSupport,
-              supportStrength: Math.min(r.relevance.score, 0.5),
-              rejectionReason: null,
-              gradingMode: "deterministic_fallback",
-            };
           }
+          // If LLM didn't return a grade for this chunk, it stays at
+          // deterministic_fallback default — finalized in Phase 3
         }
       } catch {
-        // LLM batch failed — mark all in batch as fallback
-        llmAvailable = false;
-        for (const { r, i } of batch) {
-          results[i].grade = {
-            relevant: true,
-            entitySupport: r.relevance.entitySupport,
-            aspectSupport: r.relevance.aspectSupport,
-            supportStrength: Math.min(r.relevance.score, 0.5),
-            rejectionReason: null,
-            gradingMode: "deterministic_fallback",
-          };
-        }
+        // LLM batch failed — all in batch stay at deterministic_fallback default
       }
     }
   }
 
-  // Phase 3: Sort — relevant first, then supportStrength, then hybrid score
+  // ── Phase 3: Finalize any candidate not LLM-graded ────────
+  // Covers: non-selected, deadline-exceeded, max-calls-exceeded,
+  //         LLM-failed, grade-missing. No chunk remains with a
+  //         provisional/stale grade.
+  for (const idx of candidateIndices) {
+    if (!llmGradedIds.has(results[idx].chunk.id)) {
+      results[idx].grade = deterministicFallback(
+        { chunk: results[idx].chunk, relevance: results[idx].relevance },
+        retrievalContext,
+      );
+    }
+  }
+
+  // ── Phase 4: Sort — relevant first, then supportStrength, then hybrid score ──
   results.sort((a, b) => {
     if (a.grade.relevant !== b.grade.relevant) return a.grade.relevant ? -1 : 1;
     if (a.grade.supportStrength !== b.grade.supportStrength) return b.grade.supportStrength - a.grade.supportStrength;
