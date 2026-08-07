@@ -5,9 +5,8 @@
  * with optional semantic similarity. This is NOT a new PayLab agent.
  * This creates NO x402/payment edge.
  *
- * Scoring formula (conceptual):
- *   final = entityScore + aspectScore + lockedPhraseScore + lexicalScore
- *         + boundedSemanticScore + qualityScore - penalties
+ * Scoring formula (active-weight normalized):
+ *   final = weightedSum / activeWeightSum - penalties, clamped 0..1
  *
  * Deterministic signals are authoritative. Semantic similarity supplements.
  */
@@ -17,10 +16,8 @@ import type { RetrievalContext } from "../sources/types";
 
 // ─── Reuse Existing Canonical Helpers ───────────────────────
 
-// Dynamic import to avoid circular deps; these are stable pure functions
 let _matchesExactPhrase: ((text: string, phrase: string) => boolean) | null = null;
 let _getMatchedAspectsForText: ((text: string, aspects: string[]) => string[]) | null = null;
-let _ASPECT_DEFINITIONS: Record<string, { signalTerms: string[] }> | null = null;
 
 async function getMatchesExactPhrase() {
   if (!_matchesExactPhrase) {
@@ -38,20 +35,12 @@ async function getMatchedAspectsForText() {
   return _getMatchedAspectsForText!;
 }
 
-async function getAspectDefinitions() {
-  if (!_ASPECT_DEFINITIONS) {
-    const mod = await import("../sources/crypto-entity-registry");
-    _ASPECT_DEFINITIONS = mod.ASPECT_DEFINITIONS;
-  }
-  return _ASPECT_DEFINITIONS!;
-}
-
 // ─── Score Weights ─────────────────────────────────────────
 
 /**
- * Weighting constants for score composition.
- * All component scores are normalized to 0..1 before weighting.
- * Required entity support and aspect support dominate over semantic similarity.
+ * Weighting constants for active-weight normalization.
+ * Only ACTIVE dimensions contribute to the score.
+ * Absent constraints are excluded, not rewarded.
  */
 const WEIGHTS = {
   /** Required primary entity matched (strongest signal) */
@@ -60,11 +49,11 @@ const WEIGHTS = {
   aspect: 0.20,
   /** Locked phrase matched */
   lockedPhrase: 0.10,
-  /** Lexical query term overlap */
+  /** Lexical query term overlap (always active) */
   lexical: 0.15,
   /** Semantic similarity (supplement only, max 0.4 of its weight) */
   semantic: 0.10,
-  /** Source quality (title length, content depth, domain reputation) */
+  /** Source quality (always active) */
   quality: 0.15,
 } as const;
 
@@ -100,24 +89,20 @@ const HIGH_QUALITY_DOMAINS = new Set([
 function computeQualityScore(chunk: EvidenceChunk): number {
   let score = 0.5; // baseline
 
-  // Title length: substantive titles are better
   const titleLen = (chunk.metadata.title || "").length;
   if (titleLen > 40) score += 0.15;
   if (titleLen > 80) score += 0.10;
 
-  // Content depth: longer text = more substance
   const textLen = chunk.text.length;
   if (textLen > 200) score += 0.10;
   if (textLen > 500) score += 0.10;
   if (textLen > 1500) score += 0.05;
 
-  // Domain quality
   const domain = (chunk.metadata.domain || "").toLowerCase();
   if (HIGH_QUALITY_DOMAINS.has(domain) || domain.startsWith("docs.")) {
     score += 0.15;
   }
 
-  // Published date recency (if available)
   if (chunk.metadata.publishedAt) {
     const age = Date.now() - new Date(chunk.metadata.publishedAt).getTime();
     const days = age / (1000 * 60 * 60 * 24);
@@ -142,77 +127,162 @@ function isGenericBoilerplate(text: string): boolean {
   return BOILERPLATE_PATTERNS.some((p) => p.test(text));
 }
 
-// ─── Lexical Query Overlap ─────────────────────────────────
+// ─── Stopwords ─────────────────────────────────────────────
 
+const STOPWORDS = new Set([
+  "what", "how", "why", "who", "when", "where",
+  "are", "is", "the", "a", "an", "to", "for", "of",
+  "and", "or", "in", "on", "with", "from", "by", "at", "it",
+  "this", "that", "these", "those", "be", "was", "were", "been",
+  "has", "have", "had", "do", "does", "did", "will", "would",
+  "could", "should", "may", "might", "can", "shall",
+  "not", "no", "but", "if", "so", "than", "too", "very",
+  "just", "about", "into", "over", "after", "before",
+  "vs", "versus", "compare", "comparison",
+]);
+
+// ─── Lexical Query Overlap (Boundary-Aware) ────────────────
+
+/**
+ * Tokenize a string into normalized lowercase tokens, filtering stopwords.
+ */
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\p{M}]+/gu, " ")
+    .split(/\s+/)
+    .filter((t) => t.length > 1 && !STOPWORDS.has(t));
+}
+
+/**
+ * Check if a token appears as a whole word in text (boundary-aware).
+ * "uni" won't match "university", "sol" won't match "solution".
+ */
+function hasBoundaryToken(textLower: string, token: string): boolean {
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[\\s,;:!?\\.\\(\\)])${escaped}([\\s,;:!?\\.\\(\\)]|$)`, "i").test(textLower);
+}
+
+/**
+ * Compute lexical overlap between chunk text and the query.
+ * Uses boundary-aware matching to prevent ambiguous short token inflation.
+ * Does NOT create entitySupport — that remains deterministic.
+ */
 function computeLexicalOverlap(
   chunkText: string,
+  originalGoal: string,
   normalizedGoal: string,
   entityTerms: string[],
 ): number {
   const textLower = chunkText.toLowerCase();
-  const goalWords = normalizedGoal
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => w.length > 2);
 
-  if (goalWords.length === 0) return 0;
+  // Tokenize both original and normalized goals, deduplicate
+  const goalTokens = [
+    ...new Set([
+      ...tokenize(originalGoal),
+      ...tokenize(normalizedGoal),
+    ]),
+  ];
+
+  if (goalTokens.length === 0) return 0;
 
   let matched = 0;
-  for (const word of goalWords) {
-    if (textLower.includes(word)) matched++;
+  for (const token of goalTokens) {
+    // Boundary-aware: short tokens (< 4 chars) must match as whole words
+    if (token.length < 4) {
+      if (hasBoundaryToken(textLower, token)) matched++;
+    } else {
+      // Longer tokens: standard includes is fine
+      if (textLower.includes(token)) matched++;
+    }
   }
 
-  // Also check entity terms
-  for (const term of entityTerms) {
-    if (textLower.includes(term.toLowerCase())) matched++;
+  // Entity terms: boundary-aware matching
+  const dedupedTerms = [...new Set(entityTerms.map((t) => t.toLowerCase()))];
+  for (const term of dedupedTerms) {
+    if (term.length < 4) {
+      if (hasBoundaryToken(textLower, term)) matched++;
+    } else {
+      if (textLower.includes(term)) matched++;
+    }
   }
 
-  // Normalize: cap at 1.0
-  return Math.min(matched / Math.max(goalWords.length, 1), 1.0);
+  // Normalize by total unique query terms
+  const totalTerms = goalTokens.length + dedupedTerms.length;
+  return Math.min(matched / Math.max(totalTerms, 1), 1.0);
 }
 
 // ─── Semantic Similarity (Optional) ────────────────────────
 
 /**
+ * Resolve embedding configuration from environment.
+ * Priority:
+ *   A. Explicit embedding config (PAYLABS_EMBEDDING_*)
+ *   B. True OpenAI credentials only (PAYLABS_OPENAI_API_KEY / OPENAI_API_KEY)
+ *
+ * NEVER uses PAYLABS_LLM_API_KEY_DEFAULT unless provider is confirmed OpenAI.
+ */
+function resolveEmbeddingConfig(): {
+  apiKey: string | undefined;
+  baseUrl: string | undefined;
+  model: string;
+} | null {
+  // A. Explicit embedding config
+  const explicitKey =
+    process.env.PAYLABS_EMBEDDING_API_KEY ||
+    undefined;
+  const explicitBase = process.env.PAYLABS_EMBEDDING_BASE_URL || undefined;
+  const explicitModel = process.env.PAYLABS_EMBEDDING_MODEL || "text-embedding-3-small";
+
+  if (explicitKey) {
+    return { apiKey: explicitKey, baseUrl: explicitBase, model: explicitModel };
+  }
+
+  // B. True OpenAI-only credentials (not generic LLM provider keys)
+  const openaiKey =
+    process.env.PAYLABS_OPENAI_API_KEY ||
+    process.env.OPENAI_API_KEY;
+
+  if (openaiKey) {
+    return { apiKey: openaiKey, baseUrl: undefined, model: explicitModel };
+  }
+
+  // No valid embedding config
+  return null;
+}
+
+/**
  * Compute semantic similarity using OpenAI embeddings.
  * Ephemeral per-run only. No vectors persisted.
  * Returns null if embeddings unavailable or fail.
+ *
+ * Uses embedQuery() for query and embedDocuments() for chunks.
  */
 async function computeSemanticSimilarity(
   queryText: string,
   chunkTexts: string[],
 ): Promise<(number | null)[]> {
+  const config = resolveEmbeddingConfig();
+  if (!config?.apiKey) {
+    return chunkTexts.map(() => null);
+  }
+
   try {
     const { OpenAIEmbeddings } = await import("@langchain/openai");
 
-    // Resolve API key from existing config
-    const apiKey =
-      process.env.PAYLABS_LLM_API_KEY_DEFAULT ||
-      process.env.PAYLABS_OPENAI_API_KEY ||
-      process.env.OPENAI_API_KEY;
-
-    if (!apiKey) {
-      // No API key — degrade gracefully
-      return chunkTexts.map(() => null);
-    }
-
     const embeddings = new OpenAIEmbeddings({
-      modelName: "text-embedding-3-small",
-      apiKey,
-      // Use existing base URL if configured (for proxies)
-      ...(process.env.PAYLABS_LLM_BASE_URL ? { baseUrl: process.env.PAYLABS_LLM_BASE_URL } : {}),
+      modelName: config.model,
+      apiKey: config.apiKey,
+      ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
     });
 
-    // Embed query + all chunks in one batch
-    const allTexts = [queryText, ...chunkTexts];
-    const vectors = await embeddings.embedDocuments(allTexts);
+    // Embed query with embedQuery, chunks with embedDocuments
+    const queryVector = await embeddings.embedQuery(queryText);
+    const chunkVectors = await embeddings.embedDocuments(chunkTexts);
 
-    if (vectors.length !== allTexts.length) {
+    if (chunkVectors.length !== chunkTexts.length) {
       return chunkTexts.map(() => null);
     }
-
-    const queryVector = vectors[0];
-    const chunkVectors = vectors.slice(1);
 
     return chunkVectors.map((cv) => cosineSimilarity(queryVector, cv));
   } catch {
@@ -241,11 +311,12 @@ function cosineSimilarity(a: number[], b: number[]): number {
 /**
  * Rank evidence chunks using hybrid lexical + semantic relevance.
  *
+ * Uses active-weight normalization: only dimensions that actually exist
+ * in the query contribute to the score. Absent constraints are excluded,
+ * not rewarded with perfect scores.
+ *
  * Input: RetrievalContext + EvidenceChunk[]
  * Output: RankedEvidenceChunk[] (sorted by score descending)
- *
- * Deterministic signals are authoritative.
- * Semantic similarity supplements but never creates entity/aspect support.
  */
 export async function rankEvidenceChunks(
   retrievalContext: RetrievalContext,
@@ -258,7 +329,6 @@ export async function rankEvidenceChunks(
   const matchesExactPhrase = await getMatchesExactPhrase();
   const getMatchedAspects = await getMatchedAspectsForText();
 
-  // Build query text for lexical and semantic matching
   const queryText = retrievalContext.originalGoal;
   const normalizedGoal = retrievalContext.normalizedGoal;
   const requiredEntities = retrievalContext.primaryEntities.filter((e) => e.required);
@@ -266,10 +336,14 @@ export async function rankEvidenceChunks(
   const lockedPhrases = retrievalContext.lockedPhrases;
   const entityTerms = retrievalContext.entityTerms;
 
+  // Pre-compute which dimensions are active (have actual constraints)
+  const hasRequiredEntities = requiredEntities.length > 0;
+  const hasRequestedAspects = requestedAspects.length > 0;
+  const hasLockedPhrases = lockedPhrases.length > 0;
+
   // ── Phase 1: Deterministic support extraction ──
   const relevances: ChunkRelevance[] = chunks.map((chunk) => {
     const text = `${chunk.metadata.title} ${chunk.text}`;
-    const textLower = text.toLowerCase();
 
     // Entity support (boundary-aware, from canonical matching)
     const entitySupport: string[] = [];
@@ -278,91 +352,92 @@ export async function rankEvidenceChunks(
         entitySupport.push(entity.canonical);
       }
     }
-    // Secondary entities
-    const secondaryEntitySupport: string[] = [];
-    for (const entity of retrievalContext.secondaryEntities) {
-      if (matchesExactPhrase(text, entity.canonical) || matchesExactPhrase(text, entity.text)) {
-        secondaryEntitySupport.push(entity.canonical);
-      }
-    }
 
     // Aspect support (uses ASPECT_DEFINITIONS signal terms)
     const aspectSupport = getMatchedAspects(text, requestedAspects);
 
     // Locked phrase support
     const lockedPhraseSupport = lockedPhrases.filter(
-      (phrase) => matchesExactPhrase(text, phrase),
+      (phrase: string) => matchesExactPhrase(text, phrase),
     );
 
-    // ── Reject: no required entity when required entities exist ──
-    const hasRequiredEntity = requiredEntities.length === 0 ||
-      requiredEntities.some((e) => entitySupport.includes(e.canonical));
+    // ── Rejection: no required entity when required entities exist ──
+    const hasRequiredEntity = !hasRequiredEntities ||
+      requiredEntities.some((e: { canonical: string }) => entitySupport.includes(e.canonical));
 
     let rejectionReason: string | null = null;
-    if (requiredEntities.length > 0 && !hasRequiredEntity) {
+    if (hasRequiredEntities && !hasRequiredEntity) {
       rejectionReason = "missing_required_entity";
     }
 
-    // ── Compute component scores ──
+    // ── Component scores (0..1 each) ──
+    const requiredEntityScore = hasRequiredEntities
+      ? (hasRequiredEntity
+        ? entitySupport.filter((e: string) => requiredEntities.some((re: { canonical: string }) => re.canonical === e)).length / requiredEntities.length
+        : 0)
+      : 0; // INACTIVE → 0, not 1.0
 
-    // Required entity score (0..1)
-    const requiredEntityScore = requiredEntities.length === 0
-      ? 1.0 // no required entities → neutral
-      : hasRequiredEntity
-        ? entitySupport.filter((e) => requiredEntities.some((re) => re.canonical === e)).length / requiredEntities.length
-        : 0;
+    const aspectScore = hasRequestedAspects
+      ? aspectSupport.length / requestedAspects.length
+      : 0; // INACTIVE → 0
 
-    // Aspect score (0..1)
-    const aspectScore = requestedAspects.length === 0
-      ? 1.0
-      : aspectSupport.length / requestedAspects.length;
+    const lockedPhraseScore = hasLockedPhrases
+      ? lockedPhraseSupport.length / lockedPhrases.length
+      : 0; // INACTIVE → 0
 
-    // Locked phrase score (0..1)
-    const lockedPhraseScore = lockedPhrases.length === 0
-      ? 1.0
-      : lockedPhraseSupport.length / lockedPhrases.length;
+    // Lexical overlap (always active)
+    const lexicalScore = computeLexicalOverlap(text, queryText, normalizedGoal, entityTerms);
 
-    // Lexical overlap (0..1)
-    const lexicalScore = computeLexicalOverlap(text, normalizedGoal, entityTerms);
-
-    // Quality score (0..1)
+    // Quality score (always active)
     const qualityScore = computeQualityScore(chunk);
+
+    // ── Active-weight normalization ──
+    // Build active weight sum from dimensions that actually have constraints
+    let activeWeightSum = WEIGHTS.lexical + WEIGHTS.quality; // always active
+    let weightedSum =
+      WEIGHTS.lexical * lexicalScore +
+      WEIGHTS.quality * qualityScore;
+
+    if (hasRequiredEntities) {
+      activeWeightSum += WEIGHTS.requiredEntity;
+      weightedSum += WEIGHTS.requiredEntity * requiredEntityScore;
+    }
+    if (hasRequestedAspects) {
+      activeWeightSum += WEIGHTS.aspect;
+      weightedSum += WEIGHTS.aspect * aspectScore;
+    }
+    if (hasLockedPhrases) {
+      activeWeightSum += WEIGHTS.lockedPhrase;
+      weightedSum += WEIGHTS.lockedPhrase * lockedPhraseScore;
+    }
+
+    // Normalize: weightedSum / activeWeightSum gives 0..1
+    const normalizedScore = activeWeightSum > 0
+      ? weightedSum / activeWeightSum
+      : 0;
 
     // ── Penalties ──
     let penalty = 0;
 
-    // No required entity match
-    if (requiredEntities.length > 0 && !hasRequiredEntity) {
+    if (hasRequiredEntities && !hasRequiredEntity) {
       penalty += PENALTY.noRequiredEntity;
     }
 
-    // Entity-only with no aspect (for technical/comparison intents)
-    if (entitySupport.length > 0 && aspectSupport.length === 0 && requestedAspects.length > 0) {
+    if (entitySupport.length > 0 && aspectSupport.length === 0 && hasRequestedAspects) {
       penalty += PENALTY.entityOnlyNoAspect;
     }
 
-    // Short chunk
     if (chunk.text.length < 100) {
       penalty += PENALTY.shortChunk;
     }
 
-    // Generic boilerplate
     if (isGenericBoilerplate(text)) {
       penalty += PENALTY.genericBoilerplate;
     }
 
-    // Granularity penalty
     penalty += GRANULARITY_PENALTY[chunk.metadata.evidenceGranularity] || 0;
 
-    // ── Compose final score ──
-    const finalScore = Math.max(0, Math.min(1,
-      WEIGHTS.requiredEntity * requiredEntityScore +
-      WEIGHTS.aspect * aspectScore +
-      WEIGHTS.lockedPhrase * lockedPhraseScore +
-      WEIGHTS.lexical * lexicalScore +
-      WEIGHTS.quality * qualityScore -
-      penalty
-    ));
+    const finalScore = Math.max(0, Math.min(1, normalizedScore - penalty));
 
     return {
       chunkId: chunk.id,
@@ -379,7 +454,6 @@ export async function rankEvidenceChunks(
 
   // ── Phase 2: Optional semantic similarity ──
   if (enableSemantic) {
-    // Only embed chunks that passed lexical prefilter (score > 0.1)
     const embeddable = relevances
       .map((r, i) => ({ r, i }))
       .filter(({ r }) => r.score > 0.1 && !r.rejectionReason)
@@ -395,7 +469,6 @@ export async function rankEvidenceChunks(
         const semScore = semanticScores[j];
         if (semScore !== null) {
           const idx = embeddable[j].i;
-          // Bounded: semantic contributes at most 0.4 of its weight
           const boundedSemantic = Math.max(0, Math.min(1, semScore)) * 0.4;
           relevances[idx].semanticScore = semScore;
           relevances[idx].score = Math.max(0, Math.min(1,
@@ -412,7 +485,6 @@ export async function rankEvidenceChunks(
     relevance: relevances[i],
   }));
 
-  // Sort by score descending
   ranked.sort((a, b) => b.relevance.score - a.relevance.score);
 
   // Populate chunk metadata support fields
