@@ -89,6 +89,8 @@ export interface LockedOrchestrationResult {
   _lockedPlan: ExecutionPlan;
   /** Internal RAG evidence result — not exposed publicly */
   _ragEvidence?: import("../rag/types").EvidenceRetrievalResult;
+  /** Internal RAG evidence pack — coverage-aware selection for synthesis */
+  _ragEvidencePack?: import("../rag/types").EvidencePack;
 }
 
 // ─── Reconstruct ExecutionPlan from preflight trace ──────────
@@ -707,6 +709,22 @@ export async function executeLockedMacroNodePipeline(
     });
   }
 
+  // ── Evidence pack (deterministic, internal RAG) ──
+  let ragEvidencePack: import("../rag/types").EvidencePack | undefined;
+  if (ragEvidence) {
+    try {
+      const { buildEvidencePack } = await import("../rag/evidence-pack");
+      ragEvidencePack = buildEvidencePack({
+        retrievalContext: retrievalContextForEvidence!,
+        evidenceRetrieval: ragEvidence,
+      });
+    } catch (err: unknown) {
+      console.warn("[locked_orchestration] evidence pack build failed", {
+        error: err instanceof Error ? err.message.slice(0, 150) : String(err).slice(0, 150),
+      });
+    }
+  }
+
   // ── Build output ──
   const output = buildOutput(
     discoveryRunId,
@@ -722,5 +740,5 @@ export async function executeLockedMacroNodePipeline(
     lockedPlan,
   );
 
-  return { output, _lockedPlan: lockedPlan, _ragEvidence: ragEvidence };
+  return { output, _lockedPlan: lockedPlan, _ragEvidence: ragEvidence, _ragEvidencePack: ragEvidencePack };
 }

@@ -244,6 +244,86 @@ export type EvidenceRetrievalResult = {
     | "no_retrieval_context";
 };
 
+// ─── Evidence Pack ─────────────────────────────────────────
+
+/**
+ * A single chunk selected into the deterministic EvidencePack.
+ * Preserves full provenance and grading metadata.
+ */
+export type EvidencePackChunk = {
+  chunkId: string;
+  sourceId: string;
+
+  text: string;
+
+  title: string;
+  url: string;
+  canonicalUrl: string;
+  domain: string | null;
+  publishedAt: string | null;
+  evidenceGranularity: EvidenceGranularity;
+
+  entitySupport: string[];
+  aspectSupport: string[];
+  lockedPhraseSupport: string[];
+
+  supportStrength: number;
+  hybridScore: number;
+  qualityScore: number;
+  gradingMode:
+    | "llm"
+    | "deterministic_fallback";
+
+  selectionReasons: string[];
+};
+
+/** Pack status — derived from packCoverage, not retrievalCoverage. */
+export type EvidencePackStatus =
+  | "grounded"
+  | "partially_grounded"
+  | "insufficient_evidence";
+
+/**
+ * Deterministic, coverage-aware evidence pack.
+ *
+ * Built from EvidenceRetrievalResult via buildEvidencePack().
+ * NO LLM calls, NO embeddings, NO network calls.
+ * Internal only — not exposed to frontend or public API.
+ */
+export type EvidencePack = {
+  chunks: EvidencePackChunk[];
+
+  /**
+   * EXACT canonical resolver-approved source set represented by chunks.
+   * No source may appear here unless at least one packed chunk uses it.
+   */
+  sources: import("../sources/types").SourceItem[];
+
+  /**
+   * Coverage from the complete retrieval result before packing.
+   */
+  retrievalCoverage: EvidenceCoverage;
+
+  /**
+   * Coverage recomputed ONLY from chunks actually present in this pack.
+   * This is authoritative for future synthesis.
+   */
+  packCoverage: EvidenceCoverage;
+
+  status: EvidencePackStatus;
+
+  totalChars: number;
+
+  selectionDiagnostics: {
+    candidateChunkCount: number;
+    selectedChunkCount: number;
+    selectedSourceCount: number;
+    droppedForBudget: number;
+    droppedForRedundancy: number;
+    droppedForPerSourceLimit: number;
+  };
+};
+
 /** Default configuration constants */
 export const CONTENT_FETCH_DEFAULTS = {
   maxBytes: 200_000,
