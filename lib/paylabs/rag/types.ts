@@ -110,6 +110,60 @@ export type RankedEvidenceChunk = {
   relevance: ChunkRelevance;
 };
 
+
+// ─── Evidence Grading ──────────────────────────────────────
+
+/**
+ * LLM-verified relevance grade for a single evidence chunk.
+ * The grader may reduce or remove support but NEVER invent new support.
+ */
+export type EvidenceGrade = {
+  /** Whether the chunk substantively helps answer the query */
+  relevant: boolean;
+  /** Entity support — intersectioned with deterministic entitySupport */
+  entitySupport: string[];
+  /** Aspect support — intersectioned with deterministic aspectSupport */
+  aspectSupport: string[];
+  /** Normalized support strength (0..1) */
+  supportStrength: number;
+  /** If rejected, the specific reason */
+  rejectionReason:
+    | "does_not_answer_query"
+    | "entity_only_no_requested_aspect"
+    | "weak_or_indirect_support"
+    | "metadata_only"
+    | "duplicate_or_redundant"
+    | "insufficient_content"
+    | null;
+  /** How this grade was produced */
+  gradingMode: "llm" | "deterministic_reject" | "deterministic_fallback";
+};
+
+/**
+ * An evidence chunk with both relevance ranking and LLM grading.
+ */
+export type GradedEvidenceChunk = {
+  chunk: EvidenceChunk;
+  relevance: ChunkRelevance;
+  grade: EvidenceGrade;
+};
+
+/**
+ * Result of the evidence grading pipeline.
+ */
+export type EvidenceGradingResult = {
+  /** All chunks with grades applied */
+  chunks: GradedEvidenceChunk[];
+  /** Number of LLM calls made */
+  llmCalls: number;
+  /** Whether LLM was available */
+  llmAvailable: boolean;
+  /** Number of chunks graded by LLM */
+  gradedCount: number;
+  /** Number of chunks deterministically rejected */
+  deterministicRejectCount: number;
+};
+
 /** Default configuration constants */
 export const CONTENT_FETCH_DEFAULTS = {
   maxBytes: 200_000,
