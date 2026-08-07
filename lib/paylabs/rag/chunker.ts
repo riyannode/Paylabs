@@ -8,7 +8,7 @@
  * This is NOT a new agent. Internal helper for the grounding pipeline.
  */
 
-import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
+import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import type { EvidenceDocument, EvidenceChunk } from "./types";
 
 // ─── Hard Caps ─────────────────────────────────────────────

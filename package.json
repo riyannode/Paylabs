@@ -37,7 +37,8 @@
     "tailwind-merge": "^3.3.0",
     "viem": "^2.21.54",
     "zod": "^3.24.1",
-    "zod-to-json-schema": "^3.25.2"
+    "zod-to-json-schema": "^3.25.2",
+    "@langchain/textsplitters": "^1.0.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.0",

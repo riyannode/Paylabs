@@ -481,21 +481,33 @@ export async function resolveSources(
 ): Promise<SourceResolverOutput> {
   const maxSources = Math.min(input.maxSources ?? FINAL_SOURCE_LIMIT, FINAL_SOURCE_LIMIT);
 
+  // Prefer canonical retrievalContext fields over individual parameters
+  const rc = input.retrievalContext;
+  const normalizedGoal = rc?.normalizedGoal ?? input.normalizedGoal;
+  const intentType = rc?.intentType ?? input.intentType;
+  const entityTerms = rc?.entityTerms ?? input.entityTerms ?? [];
+  const primaryEntities = rc?.primaryEntities ?? input.primaryEntities ?? [];
+  const secondaryEntities = rc?.secondaryEntities ?? input.secondaryEntities ?? [];
+  const negativeEntities = rc?.negativeEntities ?? input.negativeEntities ?? [];
+  const lockedPhrases = rc?.lockedPhrases ?? input.lockedPhrases ?? [];
+  const topics = rc?.topics ?? input.topics ?? [];
+  const requestedAspects = rc?.requestedAspects ?? input.requestedAspects ?? [];
+
   try {
     const rawSources = await enrichRankedCandidates(input.rankedCandidates, CANDIDATE_SCAN_LIMIT);
     // Apply relevance filter: reject sources that don't match the query
     // Pass entity_terms so short meaningful tokens (x402, ai, usdc) are used in matching
-    const rawEntityCount = (input.entityTerms || []).length;
+    const rawEntityCount = entityTerms.length;
     const validatedSources = filterByRelevance(
       rawSources,
-      input.normalizedGoal,
-      input.entityTerms,
-      input.primaryEntities,
-      input.secondaryEntities,
-      input.negativeEntities,
-      input.lockedPhrases,
-      input.topics,
-      input.intentType,
+      normalizedGoal,
+      entityTerms,
+      primaryEntities,
+      secondaryEntities,
+      negativeEntities,
+      lockedPhrases,
+      topics,
+      intentType,
     );
 
     // Collect rejection reasons from candidates that didn't pass validation
@@ -507,7 +519,7 @@ export async function resolveSources(
     }
 
     // Coverage-aware source selection
-    const requiredEntities = (input.primaryEntities || []).filter((entity) => entity.required).map((entity) => entity.canonical);
+    const requiredEntities = primaryEntities.filter((entity) => entity.required).map((entity) => entity.canonical);
     const rankedValidated = [...validatedSources].sort((a, b) => b.relevance_score - a.relevance_score);
     const selected: SourceItem[] = [];
     
@@ -518,8 +530,8 @@ export async function resolveSources(
     }
     
     // Phase B: close remaining aspect gaps before filling by score
-    if (input.requestedAspects && input.requestedAspects.length > 0) {
-      const missingAspects = new Set(input.requestedAspects);
+    if (requestedAspects && requestedAspects.length > 0) {
+      const missingAspects = new Set(requestedAspects);
       // Remove aspects already covered by selected sources
       for (const src of selected) {
         const text = `${src.title || ''} ${src.summary || ''}`;
@@ -565,7 +577,7 @@ export async function resolveSources(
     const technicalIntents = new Set(['definition', 'explanation', 'comparison', 'protocol comparison', 'risk analysis']);
     // Intents where current-event news IS acceptable (incident, regulation, exploit)
     const newsFriendlyIntents = new Set(['latest', 'current', 'incident', 'regulation', 'market conditions', 'etf', 'adoption', 'price', 'exploit', 'hack', 'attack', 'vulnerability']);
-    const intentLower = (input.intentType || '').toLowerCase();
+    const intentLower = (intentType || '').toLowerCase();
     if (input.intentType && nonPriceIntents.has(intentLower)) {
       sources = sources.filter((src) => {
         const title = (src.title || '').toLowerCase();
@@ -596,7 +608,7 @@ export async function resolveSources(
         const isGenericNoise = genericNoisePatterns.some(p => combined.includes(p));
         if (isGenericNoise) {
           // Allow if it also matches a requested aspect signal term
-          const hasAspectMatch = (input.requestedAspects || []).some((aspect) => {
+          const hasAspectMatch = (requestedAspects || []).some((aspect) => {
             const def = ASPECT_DEFINITIONS[aspect];
             if (!def) return combined.includes(aspect.replace(/_/g, ' '));
             return def.signalTerms.some((term) => matchesExactPhrase(combined, term));
@@ -616,13 +628,13 @@ export async function resolveSources(
           if (isTechnicalSource) return true; // docs/research always pass
 
           // For non-technical sources: require aspect or entity+concept match
-          const hasAspectMatch = (input.requestedAspects || []).some((aspect) => {
+          const hasAspectMatch = (requestedAspects || []).some((aspect) => {
             const def = ASPECT_DEFINITIONS[aspect];
             if (!def) return combined.includes(aspect.replace(/_/g, ' '));
             return def.signalTerms.some((term) => matchesExactPhrase(combined, term));
           });
           // Must have entity match AND at least one aspect/concept signal
-          const hasEntityMatch = (input.primaryEntities || []).some((e) =>
+          const hasEntityMatch = primaryEntities.some((e) =>
             matchesExactPhrase(combined, e.canonical) || combined.includes(e.canonical.toLowerCase())
           );
           if (!hasEntityMatch || !hasAspectMatch) {
@@ -635,15 +647,15 @@ export async function resolveSources(
       });
     }
 
-    const sanitizedEntityCount = sanitizeEntityTerms(input.entityTerms || []).length;
+    const sanitizedEntityCount = sanitizeEntityTerms(entityTerms).length;
     const sourceConfidence = computeSourceConfidence(sources);
 
     // Entity coverage validation
-    const entityCoverage = validateEntityCoverage(sources, input.primaryEntities || []);
+    const entityCoverage = validateEntityCoverage(sources, primaryEntities);
 
     // Aspect coverage validation
     const sourceTexts = sources.map((s) => `${s.title} ${s.summary}`);
-    const aspectCoverage = computeAspectCoverage(sourceTexts, input.requestedAspects || []);
+    const aspectCoverage = computeAspectCoverage(sourceTexts, requestedAspects);
     if (aspectCoverage.missing.length > 0) {
       for (const aspect of aspectCoverage.missing) {
         rejectionReasons.push(`missing_requested_aspect: ${aspect}`);
@@ -660,12 +672,12 @@ export async function resolveSources(
       : "";
     const sourceSelectionSummary = buildSelectionSummary(
       sources,
-      input.normalizedGoal,
-      input.intentType
+      normalizedGoal,
+      intentType
     ) + entityDiagnostic;
 
     // Topic-aware validation: warn if AI/crypto topic but 0 sources
-    const sourceValidation = validateTopicSources(sources, input.normalizedGoal, input.entityTerms || []);
+    const sourceValidation = validateTopicSources(sources, normalizedGoal, entityTerms);
 
     return {
       ok: true,

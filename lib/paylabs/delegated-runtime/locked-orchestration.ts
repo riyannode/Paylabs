@@ -384,37 +384,7 @@ export async function executeLockedMacroNodePipeline(
         // This is the single source of truth for retrieval parameters.
         const retrievalContext = dData.retrievalContext as import("../sources/types").RetrievalContext | undefined;
 
-        // Fallback: extract from serviceEvaluations if retrievalContext missing
-        // (backward compat for old discovery planner results)
-        let normalizedGoal = retrievalContext?.normalizedGoal
-          || (brainData ? String(brainData.normalized_goal || "") : "");
-        let entityTerms = retrievalContext?.entityTerms
-          || (dData.entityTerms as string[]) || (dData.entity_terms as string[]) || [];
-        let primaryEntities = retrievalContext?.primaryEntities || [];
-        let secondaryEntities = retrievalContext?.secondaryEntities || [];
-        let negativeEntities = retrievalContext?.negativeEntities || [];
-        let lockedPhrases = retrievalContext?.lockedPhrases || [];
-        let topics = retrievalContext?.topics || [];
-        let requestedAspects = retrievalContext?.requestedAspects || [];
-
-        if (!retrievalContext && entityTerms.length === 0) {
-          const childEvals = dData.serviceEvaluations as Array<{
-            serviceName: string;
-            output?: Record<string, unknown>;
-          }> | undefined;
-          if (childEvals) {
-            const qbEval = childEvals.find(
-              (e) => e.serviceName === "query_builder" && e.output,
-            );
-            if (qbEval?.output) {
-              entityTerms =
-                (qbEval.output.entity_terms as string[]) ||
-                (qbEval.output.entityTerms as string[]) ||
-                [];
-            }
-          }
-        }
-
+        // Backward compat: extract from serviceEvaluations if retrievalContext missing
         if (!retrievalContext) {
           const childEvals = dData.serviceEvaluations as Array<{
             serviceName: string;
@@ -425,26 +395,43 @@ export async function executeLockedMacroNodePipeline(
               (e) => e.serviceName === "query_builder" && e.output,
             );
             if (qbEval?.output) {
-              primaryEntities = (qbEval.output.primary_entities as typeof primaryEntities) || [];
-              secondaryEntities = (qbEval.output.secondary_entities as typeof secondaryEntities) || [];
-              negativeEntities = (qbEval.output.negative_entities as string[]) || [];
-              lockedPhrases = (qbEval.output.locked_phrases as string[]) || [];
-              topics = (qbEval.output.topics as string[]) || [];
-              requestedAspects = (qbEval.output.requested_aspects as string[]) || [];
+              // Build a retrievalContext from QB output as fallback
+              const rcFallback: import("../sources/types").RetrievalContext = {
+                originalGoal: userGoal,
+                normalizedGoal: String(brainData?.normalized_goal || userGoal),
+                intentType: "unknown",
+                primaryEntities: (qbEval.output.primary_entities as import("../sources/types").RetrievalContext["primaryEntities"]) || [],
+                secondaryEntities: (qbEval.output.secondary_entities as import("../sources/types").RetrievalContext["secondaryEntities"]) || [],
+                lockedPhrases: (qbEval.output.locked_phrases as string[]) || [],
+                negativeEntities: (qbEval.output.negative_entities as string[]) || [],
+                topics: (qbEval.output.topics as string[]) || [],
+                requestedAspects: (qbEval.output.requested_aspects as string[]) || [],
+                entityTerms: (qbEval.output.entity_terms as string[]) || [],
+                expandedQueries: (qbEval.output.expanded_queries as string[]) || [],
+                negativeFilters: (qbEval.output.negative_filters as string[]) || [],
+                sourcePreferences: (qbEval.output.source_preferences as string[]) || [],
+              };
+              (dData as Record<string, unknown>).retrievalContext = rcFallback;
             }
           }
         }
 
+        const rc = dData.retrievalContext as import("../sources/types").RetrievalContext | undefined;
+        const resolvedNormalizedGoal = rc?.normalizedGoal
+          || (brainData ? String(brainData.normalized_goal || "") : "");
+
         const resolverResult = await resolveSources({
           rankedCandidates,
-          normalizedGoal,
-          entityTerms,
-          primaryEntities,
-          secondaryEntities,
-          negativeEntities,
-          lockedPhrases,
-          topics,
-          requestedAspects,
+          retrievalContext: rc,
+          // Individual fields as fallback for backward compat
+          normalizedGoal: resolvedNormalizedGoal,
+          entityTerms: rc?.entityTerms || [],
+          primaryEntities: rc?.primaryEntities || [],
+          secondaryEntities: rc?.secondaryEntities || [],
+          negativeEntities: rc?.negativeEntities || [],
+          lockedPhrases: rc?.lockedPhrases || [],
+          topics: rc?.topics || [],
+          requestedAspects: rc?.requestedAspects || [],
         });
         if (resolverResult.ok) {
           sourceContext = resolverResult.sourceContext;
@@ -460,7 +447,7 @@ export async function executeLockedMacroNodePipeline(
             const _retrievalModeBefore = sourceContext.retrieval_mode;
             try {
               const { detectTopics } = await import("../rsshub/topic-routes");
-              const detectedTopics = detectTopics(normalizedGoal, entityTerms);
+              const detectedTopics = detectTopics(resolvedNormalizedGoal, rc?.entityTerms || []);
               const hasAiOrCrypto = detectedTopics.some((t) => t.category === "ai" || t.category === "crypto");
 
               if (hasAiOrCrypto) {
@@ -472,8 +459,8 @@ export async function executeLockedMacroNodePipeline(
                 if (_tavilyEnabled) {
                   const primaryTopic = detectedTopics.find((t) => t.subcategory) || detectedTopics[0];
                   const tavilyResult = await fetchTavilyLiveSources({
-                    userGoal: normalizedGoal,
-                    entityTerms,
+                    userGoal: resolvedNormalizedGoal,
+                    entityTerms: rc?.entityTerms || [],
                     topicCategory: primaryTopic.category,
                     topicSubcategory: primaryTopic.subcategory,
                     callerTag: "locked_orchestration",
@@ -501,17 +488,29 @@ export async function executeLockedMacroNodePipeline(
                       feed_item_id: c.feed_item_id,
                       rank: c.rank,
                       relevance_score: c.relevance_score,
+                      // Preserve full live candidate metadata for enrichRankedCandidates
+                      source_kind: "tavily_live" as const,
+                      provider: "tavily" as const,
+                      source_url: c.source_url || "",
+                      title: c.title || "",
+                      domain: c.domain || null,
+                      summary: c.summary || "",
+                      author: c.author || "",
+                      published_at: c.published_at || null,
+                      route_path: c.route_path || null,
+                      reason: c.reason || "",
                     }));
                     const tavilyResolverResult = await resolveSources({
                       rankedCandidates: tavilyRankedCandidates,
-                      normalizedGoal,
-                      entityTerms,
-                      primaryEntities,
-                      secondaryEntities,
-                      negativeEntities,
-                      lockedPhrases,
-                      topics,
-                      requestedAspects,
+                      retrievalContext: rc,
+                      normalizedGoal: resolvedNormalizedGoal,
+                      entityTerms: rc?.entityTerms || [],
+                      primaryEntities: rc?.primaryEntities || [],
+                      secondaryEntities: rc?.secondaryEntities || [],
+                      negativeEntities: rc?.negativeEntities || [],
+                      lockedPhrases: rc?.lockedPhrases || [],
+                      topics: rc?.topics || [],
+                      requestedAspects: rc?.requestedAspects || [],
                     });
                     if (tavilyResolverResult.ok && tavilyResolverResult.sourceContext.source_count > 0) {
                       sourceContext = tavilyResolverResult.sourceContext;
@@ -555,35 +554,9 @@ export async function executeLockedMacroNodePipeline(
       // Still try Tavily fallback for AI/Crypto topics.
       // Use canonical retrievalContext if available
       const { resolveSources: resolveSources2 } = await import("../sources/source-resolver");
-      const retrievalCtx2 = dData.retrievalContext as import("../sources/types").RetrievalContext | undefined;
-      const normalizedGoal = retrievalCtx2?.normalizedGoal
+      const rc2 = dData.retrievalContext as import("../sources/types").RetrievalContext | undefined;
+      const normalizedGoal2 = rc2?.normalizedGoal
         || (brainData ? String(brainData.normalized_goal || "") : "");
-      let entityTerms = retrievalCtx2?.entityTerms
-        || (dData.entityTerms as string[])
-        || (dData.entity_terms as string[])
-        || [];
-      const primaryEntities2 = retrievalCtx2?.primaryEntities || [];
-      const secondaryEntities2 = retrievalCtx2?.secondaryEntities || [];
-      const negativeEntities2 = retrievalCtx2?.negativeEntities || [];
-      const lockedPhrases2 = retrievalCtx2?.lockedPhrases || [];
-      const requestedAspects2 = retrievalCtx2?.requestedAspects || [];
-      if (!retrievalCtx2 && entityTerms.length === 0) {
-        const childEvals = dData.serviceEvaluations as Array<{
-          serviceName: string;
-          output?: Record<string, unknown>;
-        }> | undefined;
-        if (childEvals) {
-          const qbEval = childEvals.find(
-            (e) => e.serviceName === "query_builder" && e.output,
-          );
-          if (qbEval?.output) {
-            entityTerms =
-              (qbEval.output.entity_terms as string[]) ||
-              (qbEval.output.entityTerms as string[]) ||
-              [];
-          }
-        }
-      }
 
       sourceContext = {
         sources_used: [],
@@ -598,7 +571,7 @@ export async function executeLockedMacroNodePipeline(
       const _tavilyDebugEnabled0 = process.env.PAYLABS_TAVILY_DEBUG === "true";
       try {
         const { detectTopics } = await import("../rsshub/topic-routes");
-        const detectedTopics2 = detectTopics(normalizedGoal, entityTerms);
+        const detectedTopics2 = detectTopics(normalizedGoal2, rc2?.entityTerms || []);
         const hasAiOrCrypto = detectedTopics2.some((t) => t.category === "ai" || t.category === "crypto");
 
         if (hasAiOrCrypto) {
@@ -610,8 +583,8 @@ export async function executeLockedMacroNodePipeline(
           if (_tavilyEnabled0) {
             const primaryTopic = detectedTopics2.find((t) => t.subcategory) || detectedTopics2[0];
             const tavilyResult = await fetchTavilyLiveSources({
-              userGoal: normalizedGoal,
-              entityTerms,
+              userGoal: normalizedGoal2,
+              entityTerms: rc2?.entityTerms || [],
               topicCategory: primaryTopic.category,
               topicSubcategory: primaryTopic.subcategory,
               callerTag: "locked_orchestration_empty",
@@ -639,17 +612,29 @@ export async function executeLockedMacroNodePipeline(
                 feed_item_id: c.feed_item_id,
                 rank: c.rank,
                 relevance_score: c.relevance_score,
+                // Preserve full live candidate metadata for enrichRankedCandidates
+                source_kind: "tavily_live" as const,
+                provider: "tavily" as const,
+                source_url: c.source_url || "",
+                title: c.title || "",
+                domain: c.domain || null,
+                summary: c.summary || "",
+                author: c.author || "",
+                published_at: c.published_at || null,
+                route_path: c.route_path || null,
+                reason: c.reason || "",
               }));
               const tavilyResolverResult2 = await resolveSources2({
                 rankedCandidates: tavilyRankedCandidates2,
-                normalizedGoal,
-                entityTerms,
-                primaryEntities: primaryEntities2,
-                secondaryEntities: secondaryEntities2,
-                negativeEntities: negativeEntities2,
-                lockedPhrases: lockedPhrases2,
-                topics: [],
-                requestedAspects: requestedAspects2,
+                retrievalContext: rc2,
+                normalizedGoal: normalizedGoal2,
+                entityTerms: rc2?.entityTerms || [],
+                primaryEntities: rc2?.primaryEntities || [],
+                secondaryEntities: rc2?.secondaryEntities || [],
+                negativeEntities: rc2?.negativeEntities || [],
+                lockedPhrases: rc2?.lockedPhrases || [],
+                topics: rc2?.topics || [],
+                requestedAspects: rc2?.requestedAspects || [],
               });
               if (tavilyResolverResult2.ok && tavilyResolverResult2.sourceContext.source_count > 0) {
                 sourceContext = tavilyResolverResult2.sourceContext;

@@ -142,6 +142,8 @@ export interface SourceResolverInput {
   topics?: string[];
   /** Aspects the user wants covered (e.g. "pricing", "api-reference", "getting-started") */
   requestedAspects?: string[];
+  /** Canonical retrieval context — preferred over individual fields when present */
+  retrievalContext?: RetrievalContext;
 }
 
 // ─── Source Resolver Output ────────────────────────────────
