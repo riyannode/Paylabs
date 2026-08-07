@@ -460,8 +460,8 @@ export async function executeLockedMacroNodePipeline(
             const _retrievalModeBefore = sourceContext.retrieval_mode;
             try {
               const { detectTopics } = await import("../rsshub/topic-routes");
-              const topics = detectTopics(normalizedGoal, entityTerms);
-              const hasAiOrCrypto = topics.some((t) => t.category === "ai" || t.category === "crypto");
+              const detectedTopics = detectTopics(normalizedGoal, entityTerms);
+              const hasAiOrCrypto = detectedTopics.some((t) => t.category === "ai" || t.category === "crypto");
 
               if (hasAiOrCrypto) {
                 const { isTavilyEnabled, fetchTavilyLiveSources } = await import(
@@ -470,7 +470,7 @@ export async function executeLockedMacroNodePipeline(
                 const _tavilyEnabled = isTavilyEnabled();
 
                 if (_tavilyEnabled) {
-                  const primaryTopic = topics.find((t) => t.subcategory) || topics[0];
+                  const primaryTopic = detectedTopics.find((t) => t.subcategory) || detectedTopics[0];
                   const tavilyResult = await fetchTavilyLiveSources({
                     userGoal: normalizedGoal,
                     entityTerms,
@@ -496,32 +496,38 @@ export async function executeLockedMacroNodePipeline(
                   }));
 
                   if (tavilyResult.candidates.length > 0) {
-                    const tavilySources = tavilyResult.candidates.map((c) => ({
+                    // Route Tavily candidates through canonical resolveSources()
+                    const tavilyRankedCandidates = tavilyResult.candidates.map((c) => ({
                       feed_item_id: c.feed_item_id,
-                      title: c.title,
-                      url: c.source_url,
-                      domain: c.domain,
-                      summary: c.summary,
-                      author: c.author,
-                      published_at: c.published_at,
-                      route_path: c.route_path,
-                      trust_status: "unverified" as const,
-                      claim_status: "unclaimed" as const,
                       rank: c.rank,
                       relevance_score: c.relevance_score,
-                      source_kind: "tavily_live" as const,
-                      provider: "tavily" as const,
-                      reason: c.reason,
                     }));
-
-                    sourceContext = {
-                      sources_used: tavilySources,
-                      source_selection_summary: `RSSHub returned 0 ${primaryTopic.category} sources. Tavily web search found ${tavilySources.length} link(s).`,
-                      source_confidence: 0.50,
-                      source_count: tavilySources.length,
-                      retrieval_mode: "rsshub_empty_tavily_live",
-                      source_strategy: "tavily_links_only_after_rsshub_empty",
-                    };
+                    const tavilyResolverResult = await resolveSources({
+                      rankedCandidates: tavilyRankedCandidates,
+                      normalizedGoal,
+                      entityTerms,
+                      primaryEntities,
+                      secondaryEntities,
+                      negativeEntities,
+                      lockedPhrases,
+                      topics,
+                      requestedAspects,
+                    });
+                    if (tavilyResolverResult.ok && tavilyResolverResult.sourceContext.source_count > 0) {
+                      sourceContext = tavilyResolverResult.sourceContext;
+                      sourceContext.retrieval_mode = "rsshub_empty_tavily_live";
+                      sourceContext.source_strategy = "tavily_resolved";
+                    } else {
+                      // Canonical resolver rejected all Tavily — return what we have
+                      sourceContext = {
+                        sources_used: [],
+                        source_selection_summary: `RSSHub returned 0 ${primaryTopic.category} sources. Tavily found ${tavilyResult.candidates.length} candidates but none passed canonical relevance.`,
+                        source_confidence: 0,
+                        source_count: 0,
+                        retrieval_mode: "rsshub_empty_tavily_live",
+                        source_strategy: "tavily_no_pass",
+                      };
+                    }
                   }
                 }
               }
@@ -548,6 +554,7 @@ export async function executeLockedMacroNodePipeline(
       // No ranked candidates — RSSHub returned 0.
       // Still try Tavily fallback for AI/Crypto topics.
       // Use canonical retrievalContext if available
+      const { resolveSources: resolveSources2 } = await import("../sources/source-resolver");
       const retrievalCtx2 = dData.retrievalContext as import("../sources/types").RetrievalContext | undefined;
       const normalizedGoal = retrievalCtx2?.normalizedGoal
         || (brainData ? String(brainData.normalized_goal || "") : "");
@@ -555,6 +562,11 @@ export async function executeLockedMacroNodePipeline(
         || (dData.entityTerms as string[])
         || (dData.entity_terms as string[])
         || [];
+      const primaryEntities2 = retrievalCtx2?.primaryEntities || [];
+      const secondaryEntities2 = retrievalCtx2?.secondaryEntities || [];
+      const negativeEntities2 = retrievalCtx2?.negativeEntities || [];
+      const lockedPhrases2 = retrievalCtx2?.lockedPhrases || [];
+      const requestedAspects2 = retrievalCtx2?.requestedAspects || [];
       if (!retrievalCtx2 && entityTerms.length === 0) {
         const childEvals = dData.serviceEvaluations as Array<{
           serviceName: string;
@@ -586,8 +598,8 @@ export async function executeLockedMacroNodePipeline(
       const _tavilyDebugEnabled0 = process.env.PAYLABS_TAVILY_DEBUG === "true";
       try {
         const { detectTopics } = await import("../rsshub/topic-routes");
-        const topics = detectTopics(normalizedGoal, entityTerms);
-        const hasAiOrCrypto = topics.some((t) => t.category === "ai" || t.category === "crypto");
+        const detectedTopics2 = detectTopics(normalizedGoal, entityTerms);
+        const hasAiOrCrypto = detectedTopics2.some((t) => t.category === "ai" || t.category === "crypto");
 
         if (hasAiOrCrypto) {
           const { isTavilyEnabled, fetchTavilyLiveSources } = await import(
@@ -596,7 +608,7 @@ export async function executeLockedMacroNodePipeline(
           const _tavilyEnabled0 = isTavilyEnabled();
 
           if (_tavilyEnabled0) {
-            const primaryTopic = topics.find((t) => t.subcategory) || topics[0];
+            const primaryTopic = detectedTopics2.find((t) => t.subcategory) || detectedTopics2[0];
             const tavilyResult = await fetchTavilyLiveSources({
               userGoal: normalizedGoal,
               entityTerms,
@@ -622,32 +634,37 @@ export async function executeLockedMacroNodePipeline(
             }));
 
             if (tavilyResult.candidates.length > 0) {
-              const tavilySources = tavilyResult.candidates.map((c) => ({
+              // Route Tavily candidates through canonical resolveSources()
+              const tavilyRankedCandidates2 = tavilyResult.candidates.map((c) => ({
                 feed_item_id: c.feed_item_id,
-                title: c.title,
-                url: c.source_url,
-                domain: c.domain,
-                summary: c.summary,
-                author: c.author,
-                published_at: c.published_at,
-                route_path: c.route_path,
-                trust_status: "unverified" as const,
-                claim_status: "unclaimed" as const,
                 rank: c.rank,
                 relevance_score: c.relevance_score,
-                source_kind: "tavily_live" as const,
-                provider: "tavily" as const,
-                reason: c.reason,
               }));
-
-              sourceContext = {
-                sources_used: tavilySources,
-                source_selection_summary: `RSSHub returned 0 ${primaryTopic.category} sources. Tavily web search found ${tavilySources.length} link(s).`,
-                source_confidence: 0.50,
-                source_count: tavilySources.length,
-                retrieval_mode: "rsshub_empty_tavily_live",
-                source_strategy: "tavily_links_only_after_rsshub_empty",
-              };
+              const tavilyResolverResult2 = await resolveSources2({
+                rankedCandidates: tavilyRankedCandidates2,
+                normalizedGoal,
+                entityTerms,
+                primaryEntities: primaryEntities2,
+                secondaryEntities: secondaryEntities2,
+                negativeEntities: negativeEntities2,
+                lockedPhrases: lockedPhrases2,
+                topics: [],
+                requestedAspects: requestedAspects2,
+              });
+              if (tavilyResolverResult2.ok && tavilyResolverResult2.sourceContext.source_count > 0) {
+                sourceContext = tavilyResolverResult2.sourceContext;
+                sourceContext.retrieval_mode = "rsshub_empty_tavily_live";
+                sourceContext.source_strategy = "tavily_resolved";
+              } else {
+                sourceContext = {
+                  sources_used: [],
+                  source_selection_summary: `RSSHub returned 0 ${primaryTopic.category} sources. Tavily found ${tavilyResult.candidates.length} candidates but none passed canonical relevance.`,
+                  source_confidence: 0,
+                  source_count: 0,
+                  retrieval_mode: "rsshub_empty_tavily_live",
+                  source_strategy: "tavily_no_pass",
+                };
+              }
             }
           }
         }
