@@ -397,8 +397,18 @@ async function fetchRetryTavilyCandidates(
           routeTier: isExternalAdvanced ? "advanced" : delegatedRouteTier,
         });
 
-        if (result.error_class === "tavily_disabled") {
-          // Provider unavailable for this query
+        // A search is "successful" when Tavily returned a usable response.
+        // error_class null or all_results_filtered = search completed (may have zero results).
+        // tavily_disabled, empty_query, thrown errors = NOT successful.
+        if (
+          result.error_class === "tavily_disabled" ||
+          result.error_class === "empty_query"
+        ) {
+          continue;
+        }
+        // Any other error_class (e.g. network/timeout/API failure from the catch above)
+        // also means the search did not complete successfully.
+        if (result.error_class !== null && result.error_class !== "all_results_filtered") {
           continue;
         }
 
@@ -635,13 +645,14 @@ export async function runEvidenceRetrievalWithCoverage(params: {
       delegatedRouteTier,
     );
 
-    // Distinguish provider unavailable from no results
-    if (!retryResult.providerAvailable) {
+    // Distinguish provider unavailable from no results.
+    // provider_unavailable: Tavily disabled, or every query failed before a usable response.
+    // no_new_sources: at least one search completed but yielded zero usable new sources.
+    if (!retryResult.providerAvailable || !retryResult.hadSuccessfulSearch) {
       stoppedReason = "provider_unavailable";
       break;
     }
     if (retryResult.candidates.length === 0) {
-      // Provider was reachable but search returned no candidates
       stoppedReason = "no_new_sources";
       break;
     }
