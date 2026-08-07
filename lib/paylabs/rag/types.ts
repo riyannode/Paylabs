@@ -45,6 +45,32 @@ export type ContentFetchOptions = {
   maxRedirects?: number;
 };
 
+/**
+ * A bounded chunk of evidence text with provenance metadata.
+ */
+export type EvidenceChunk = {
+  /** Unique chunk identifier */
+  id: string;
+  /** Source document identifier */
+  sourceId: string;
+  /** Chunk text content */
+  text: string;
+  /** Provenance and metadata */
+  metadata: {
+    url: string;
+    canonicalUrl: string;
+    title: string;
+    domain: string | null;
+    publishedAt: string | null;
+    chunkIndex: number;
+    evidenceGranularity: EvidenceGranularity;
+    /** Entities this chunk provides support for */
+    entitySupport: string[];
+    /** Aspects this chunk provides support for */
+    aspectSupport: string[];
+  };
+};
+
 /** Default configuration constants */
 export const CONTENT_FETCH_DEFAULTS = {
   maxBytes: 200_000,
