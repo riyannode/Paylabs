@@ -122,6 +122,18 @@ const TOPIC_KEYWORDS: Array<{ keywords: string[]; category: "ai" | "crypto"; sub
   { keywords: ["circle usdc", "circle gateway", "circle financial", "circle stablecoin", "circle x402", "circle wallet"], category: "crypto", subcategory: "circle" },
   { keywords: ["circle developer controlled wallet", "circle dcw", "circle user controlled wallet", "circle ucw", "circle wallets", "circle programmable wallets", "circle wallet sdk"], category: "crypto", subcategory: "circle" },
   { keywords: ["circle gateway api", "circle gateway wallet", "circle gateway wallet batched", "circle usdc payments", "circle stablecoin payments", "circle payments network", "circle cctp", "circle usdc transfer", "usdc gateway", "usdc payments"], category: "crypto", subcategory: "circle" },
+  // DeFi Lending
+  { keywords: ["aave", "compound", "makerdao", "maker dao", "sky protocol", "lending protocol", "lending market", "collateral factor", "collateral requirements", "liquidation threshold", "interest rate model", "defi lending"], category: "crypto", subcategory: "ecosystems" },
+  // DEX / AMM
+  { keywords: ["uniswap", "curve finance", "balancer", "amm", "automated market maker", "cfmm", "constant function market maker", "constant product", "concentrated liquidity", "impermanent loss", "dex", "decentralized exchange"], category: "crypto", subcategory: "ecosystems" },
+  // MEV
+  { keywords: ["mev", "maximal extractable value", "pbs", "proposer-builder separation", "sandwich attack", "sandwich attacks"], category: "crypto", subcategory: "ecosystems" },
+  // Fee Markets
+  { keywords: ["eip-1559", "eip 1559", "base fee", "priority fee", "local fee market", "transaction fee market", "congestion pricing", "fee market"], category: "crypto", subcategory: "ecosystems" },
+  // Mining / Consensus
+  { keywords: ["proof of work", "proof-of-work", "pow", "bitcoin mining", "hashrate", "hash rate", "mining difficulty", "double spending", "double-spending"], category: "crypto", subcategory: "ecosystems" },
+  // Risks
+  { keywords: ["slashing", "custody risk", "counterparty risk", "bridge risk", "smart contract risk", "smart-contract risk", "liquidity risk", "oracle manipulation", "oracle risk", "price oracle"], category: "crypto", subcategory: "ecosystems" },
   // Gateway: qualified phrases only (bare "gateway" removed — false positive on AWS API Gateway etc.)
   { keywords: ["circle gateway", "gateway wallet", "gateway deposit", "unified balance", "x402 gateway"], category: "crypto", subcategory: "ecosystems" },
   // Arc: qualified phrases only (bare "arc" removed — false positive on research, search, March)

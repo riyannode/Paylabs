@@ -53,6 +53,7 @@ export const QueryBuilderOutput = z.object({
   expanded_queries: z.array(z.string()),
   negative_filters: z.array(z.string()),
   source_preferences: z.array(z.string()),
+  requested_aspects: z.array(z.string()),
   safe_query_summary: z.string(),
 });
 type QueryBuilderOutput = z.infer<typeof QueryBuilderOutput>;
@@ -80,6 +81,7 @@ export const SignalScoutInput = z.object({
   })).optional(),
   negative_entities: z.array(z.string()).optional(),
   topics: z.array(z.string()).optional(),
+  requested_aspects: z.array(z.string()).optional(),
 });
 type SignalScoutInput = z.infer<typeof SignalScoutInput>;
 

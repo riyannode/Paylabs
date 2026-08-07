@@ -53,6 +53,14 @@ export interface SourceContext {
     warning?: string;
     detected_topic?: string;
   };
+  /** Entity coverage across the selected source set */
+  entity_coverage?: { covered: string[]; missing: string[] };
+  /** Aspect (requestedAspects) coverage across the selected source set */
+  aspect_coverage?: { covered: string[]; missing: string[] };
+  /** Overall evidence status derived from coverage + confidence */
+  evidence_status?: "strong" | "moderate" | "weak" | "insufficient";
+  /** Per-source rejection reasons collected during resolution */
+  rejection_reasons?: string[];
 }
 
 // ─── Source Resolver Input ─────────────────────────────────
@@ -82,6 +90,8 @@ export interface SourceResolverInput {
   negativeEntities?: string[];
   lockedPhrases?: string[];
   topics?: string[];
+  /** Aspects the user wants covered (e.g. "pricing", "api-reference", "getting-started") */
+  requestedAspects?: string[];
 }
 
 // ─── Source Resolver Output ────────────────────────────────

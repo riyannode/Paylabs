@@ -23,7 +23,7 @@ export type RelevanceResult = {
   matchedSecondaryEntities: string[];
   matchedLockedPhrases: string[];
   matchedNegativeEntities: string[];
-  rejectionReason?: "missing_required_entity" | "topic_only_match" | "generic_token_only" | "negative_entity_match" | "zero_or_negative_score" | "invalid_url";
+  rejectionReason?: "missing_required_entity" | "topic_only_match" | "generic_token_only" | "negative_entity_match" | "zero_or_negative_score" | "invalid_url" | "intent_mismatch" | "missing_requested_aspect" | "duplicate_canonical_url";
 };
 
 export function normalizeSearchText(value: string): string {
@@ -106,13 +106,12 @@ export function scoreCandidateRelevance(
   const requiredSecondaryEntities = (context.secondaryEntities || [])
     .filter((entity) => entity.required && entity.type !== "topic");
   const matchedRequiredEntities = required.filter((entity) => matchedPrimaryEntities.includes(entity.canonical));
-  if (required.length === 1 && matchedRequiredEntities.length === 0) {
+  // At-least-one semantics: reject only when ZERO required entities match
+  if (required.length > 0 && matchedRequiredEntities.length === 0) {
     return { accepted: false, score: 0, matchedPrimaryEntities, matchedSecondaryEntities: [], matchedLockedPhrases: [], matchedNegativeEntities: [], rejectionReason: "missing_required_entity" };
   }
-  if (required.length > 1 && matchedRequiredEntities.length === 0) {
-    return { accepted: false, score: 0, matchedPrimaryEntities, matchedSecondaryEntities: [], matchedLockedPhrases: [], matchedNegativeEntities: [], rejectionReason: "missing_required_entity" };
-  }
-  if (requiredSecondaryEntities.some((entity) => !matchedSecondaryEntities.includes(entity.canonical))) {
+  // At-least-one semantics for required secondary entities
+  if (requiredSecondaryEntities.length > 0 && requiredSecondaryEntities.every((entity) => !matchedSecondaryEntities.includes(entity.canonical))) {
     return { accepted: false, score: 0, matchedPrimaryEntities, matchedSecondaryEntities, matchedLockedPhrases: [], matchedNegativeEntities: [], rejectionReason: "missing_required_entity" };
   }
 
@@ -156,4 +155,67 @@ export function validateCandidateRelevance(candidate: RelevanceCandidate, contex
     return { accepted: false, score: 0, matchedPrimaryEntities: [], matchedSecondaryEntities: [], matchedLockedPhrases: [], matchedNegativeEntities: [], rejectionReason: "invalid_url" };
   }
   return scoreCandidateRelevance(candidate, context);
+}
+
+// ─── Intent filter helper ────────────────────────────────────
+
+const INTENT_PHRASES: Record<string, string[]> = {
+  definition: ["overview", "introduction", "what is", "documentation", "explained"],
+  explanation: ["overview", "introduction", "what is", "documentation", "explained"],
+  implementation: ["quickstart", "integration", "sdk", "api", "install", "configure", "example"],
+  comparison: ["comparison", "versus", "vs", "difference"],
+  troubleshooting: ["error", "issue", "troubleshoot", "fix", "failed", "failure"],
+};
+
+/**
+ * Check whether a candidate's text content aligns with the requested intent type.
+ * Returns true when intentType is empty/undefined (no intent constraint) or
+ * when at least one intent keyword appears in the title or summary.
+ */
+export function passesIntentFilter(
+  candidate: { title?: string; summary?: string },
+  intentType?: string,
+): boolean {
+  if (!intentType) return true;
+  const phrases = INTENT_PHRASES[intentType.toLowerCase()];
+  if (!phrases || phrases.length === 0) return true;
+  const title = candidate.title || "";
+  const summary = candidate.summary || "";
+  const text = `${title} ${summary}`;
+  return phrases.some((phrase) => matchesExactPhrase(text, phrase));
+}
+
+// ─── Aspect coverage helper ──────────────────────────────────
+
+/** Aspect keyword map: requested aspect → keywords that indicate coverage */
+const ASPECT_KEYWORDS: Record<string, string[]> = {
+  pricing: ["pricing", "price", "cost", "fee", "tariff", "billing"],
+  "api-reference": ["api", "endpoint", "reference", "documentation", "schema"],
+  "getting-started": ["quickstart", "getting started", "install", "setup", "tutorial", "hello world"],
+  tutorial: ["tutorial", "walkthrough", "guide", "step by step", "how to"],
+  comparison: ["comparison", "versus", "vs", "differ", "alternative"],
+  security: ["security", "auth", "authentication", "permission", "access control", "encryption"],
+  performance: ["performance", "latency", "throughput", "benchmark", "optimization"],
+  "troubleshooting": ["error", "issue", "troubleshoot", "fix", "debug", "failed", "failure"],
+};
+
+/**
+ * Compute which requested aspects are covered by a set of source texts.
+ * Returns { covered, missing } listing the aspects.
+ */
+export function computeAspectCoverage(
+  sourceTexts: string[],
+  requestedAspects: string[],
+): { covered: string[]; missing: string[] } {
+  if (!requestedAspects.length) return { covered: [], missing: [] };
+  const combined = sourceTexts.join(" ");
+  const covered: string[] = [];
+  const missing: string[] = [];
+  for (const aspect of requestedAspects) {
+    const keywords = ASPECT_KEYWORDS[aspect.toLowerCase()] || [aspect.toLowerCase()];
+    const isCovered = keywords.some((kw) => matchesExactPhrase(combined, kw));
+    if (isCovered) covered.push(aspect);
+    else missing.push(aspect);
+  }
+  return { covered, missing };
 }

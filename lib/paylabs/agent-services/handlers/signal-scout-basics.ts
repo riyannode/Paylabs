@@ -467,37 +467,69 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
           : item.relevance_score,
       }));
 
-    // Only return if rescored has results; otherwise fall through to Tavily fallback
+    // Only return if rescored has results AND covers required entities;
+    // otherwise fall through to Tavily fallback to fill gaps
     if (rescored.length > 0) {
-      return {
-        ok: true,
-        serviceName: "signal_scout_basics",
-        data: {
-          ranked_candidates: rescored,
-          top_candidates: rescored.slice(0, 3).map((r) => r.feed_item_id),
-          quick_relevance_notes: rescored.slice(0, 5).map((r) => r.reason),
-          safe_signal_summary: `[basic] Live RSSHub: ${rescored.length} source(s) found${topicCandidates.length > 0 ? `, ${topicCandidates.length} from topic routes` : ""}.`,
-          retrieval_mode: "rsshub_live",
-          source_strategy: topicResult.candidates.length > 0 && liveResults.length > 0
-            ? "topic_routes_plus_catalog"
-            : topicResult.candidates.length > 0
-              ? "topic_routes"
-              : "catalog",
-          topic_routes_count: topicResult.diagnostics.topic_routes_count,
-          topic_candidates_count: topicResult.candidates.length,
-          live_diagnostics: diagnostics,
-        },
-        safeSummary: `[basic] Live RSSHub: ${rescored.length} source(s) found.`,
-        settled: false,
-        error: null,
-      };
+      // Check if rescored results cover all required primary entities
+      const requiredPrimaryEntities = (primary_entities || [])
+        .filter((e) => e.required)
+        .map((e) => e.canonical.toLowerCase());
+      const coveredEntities = new Set<string>();
+      for (const item of rescored) {
+        const title = (item.title || "").toLowerCase();
+        const summary = (item.summary || "").toLowerCase();
+        const url = (item.source_url || "").toLowerCase();
+        const combined = `${title} ${summary} ${url}`;
+        for (const entity of requiredPrimaryEntities) {
+          if (combined.includes(entity)) coveredEntities.add(entity);
+        }
+      }
+      const missingEntities = requiredPrimaryEntities.filter(
+        (e) => !coveredEntities.has(e)
+      );
+      // If all required entities covered, return immediately
+      // If entities missing, fall through to Tavily to try to fill gaps
+      if (missingEntities.length === 0) {
+        return {
+          ok: true,
+          serviceName: "signal_scout_basics",
+          data: {
+            ranked_candidates: rescored,
+            top_candidates: rescored.slice(0, 3).map((r) => r.feed_item_id),
+            quick_relevance_notes: rescored.slice(0, 5).map((r) => r.reason),
+            safe_signal_summary: `[basic] Live RSSHub: ${rescored.length} source(s) found${topicCandidates.length > 0 ? `, ${topicCandidates.length} from topic routes` : ""}.`,
+            retrieval_mode: "rsshub_live",
+            source_strategy: topicResult.candidates.length > 0 && liveResults.length > 0
+              ? "topic_routes_plus_catalog"
+              : topicResult.candidates.length > 0
+                ? "topic_routes"
+                : "catalog",
+            topic_routes_count: topicResult.diagnostics.topic_routes_count,
+            topic_candidates_count: topicResult.candidates.length,
+            live_diagnostics: diagnostics,
+          },
+          safeSummary: `[basic] Live RSSHub: ${rescored.length} source(s) found.`,
+          settled: false,
+          error: null,
+        };
+      }
+      // Entities missing: log and fall through to Tavily fallback
+      console.log(JSON.stringify({
+        log: "[signal_scout_basics] entity_coverage_gap",
+        rescored_count: rescored.length,
+        required_entities: requiredPrimaryEntities,
+        covered_entities: [...coveredEntities],
+        missing_entities: missingEntities,
+        fallback_reason: "Tavily fallback triggered due to entity coverage gap",
+      }));
     }
-    // rescored.length === 0: fall through to Tavily fallback below
+    // rescored.length === 0 or entities missing: fall through to Tavily fallback below
   }
 
-  // ── Step 2b: Tavily fallback for AI/Crypto when RSSHub returns 0 ──
+  // ── Step 2b: Tavily fallback for AI/Crypto when RSSHub returns 0 or has coverage gaps ──
   // Check after ALL RSSHub filtering (merged + rescored) to catch cases where
-  // merged had items but they were all filtered out by scoring/domain guards.
+  // merged had items but they were all filtered out by scoring/domain guards,
+  // or rescored had items but didn't cover all required entities.
   const hasRelevantTopic = queryHasAiTopic || queryHasCryptoTopic;
   if (hasRelevantTopic) {
     const tavilyEnabled = process.env.PAYLABS_TAVILY_ENABLED === "true";

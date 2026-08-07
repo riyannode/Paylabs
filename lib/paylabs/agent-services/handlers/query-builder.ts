@@ -19,6 +19,7 @@ import { z } from "zod";
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 import { shouldRunServiceAsDeterministic } from "../execution-mode";
+import { extractRequestedAspects } from "../../sources/crypto-entity-registry";
 
 // ─── Schemas ───────────────────────────────────────────────
 
@@ -572,10 +573,14 @@ export const queryBuilderHandler: ServiceHandler = async (
     brain_normalized_goal?: string;
   };
 
-  // Merge Brain query variants with deterministic expansion as baseline
-  const baseGoal = brain_normalized_goal || normalized_goal || "";
+  // Use normalized_goal as authoritative source for entity extraction.
+  // brain_normalized_goal is advisory only — may drift from user intent.
+  const baseGoal = normalized_goal || "";
   const det = runDeterministicQueryBuilder(baseGoal, topics || []);
   const brainVariants = (brain_query_variants || []).map((q: string) => q.trim()).filter(Boolean);
+
+  // Extract requested aspects from the authoritative goal
+  const requestedAspects = extractRequestedAspects(baseGoal).map((a) => a.aspectKey);
 
   // ── Deterministic mode: Brain variants primary, deterministic second ──
   if (shouldRunServiceAsDeterministic("query_builder")) {
@@ -592,7 +597,27 @@ export const queryBuilderHandler: ServiceHandler = async (
         deduped.push(q.trim());
       }
     }
-    const finalQueries = deduped.slice(0, 7);
+    let finalQueries = deduped.slice(0, 7);
+
+    // Validate brain variants preserve required entities
+    const requiredEntities = det.primary_entities
+      .filter((e) => e.required)
+      .map((e) => e.canonical.toLowerCase());
+    if (requiredEntities.length > 0) {
+      const validBrain = brainVariants.filter((q) => {
+        const ql = q.toLowerCase();
+        return requiredEntities.every((e) => ql.includes(e));
+      });
+      // If some brain variants dropped required entities, re-run deterministic for full coverage
+      if (validBrain.length < brainVariants.length) {
+        const replaced = brainVariants.filter((q) => !validBrain.includes(q));
+        finalQueries = [...validBrain, ...det.expanded_queries.filter((q) => !finalQueries.includes(q))].slice(0, 7);
+        console.log("[query-builder] Brain variants dropped required entities, replaced", {
+          dropped_count: replaced.length,
+          required_entities: requiredEntities,
+        });
+      }
+    }
 
     // Derive negative_filters and source_preferences from constraints
     const negativeFilters = [...(det.negative_filters || [])];
@@ -626,7 +651,8 @@ export const queryBuilderHandler: ServiceHandler = async (
         expanded_queries: finalQueries,
         negative_filters: negativeFilters,
         source_preferences: sourcePreferences,
-        safe_query_summary: `Built ${finalQueries.length} queries${brainVariants.length > 0 ? ` (${brainVariants.length} from Brain)` : ""}, ${det.primary_entities.length + det.secondary_entities.length} entities, ${negativeFilters.length} filters. Deterministic expansion.`,
+        requested_aspects: requestedAspects,
+        safe_query_summary: `Built ${finalQueries.length} queries${brainVariants.length > 0 ? ` (${brainVariants.length} from Brain)` : ""}, ${det.primary_entities.length + det.secondary_entities.length} entities, ${negativeFilters.length} filters, ${requestedAspects.length} aspects. Deterministic expansion.`,
       },
       safeSummary: `Built ${finalQueries.length} queries, ${det.primary_entities.length + det.secondary_entities.length} entities, ${negativeFilters.length} filters. Deterministic expansion.`,
       settled: false,
@@ -758,6 +784,7 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
         expanded_queries: fallbackQueries,
         negative_filters: det.negative_filters,
         source_preferences: det.source_preferences,
+        requested_aspects: requestedAspects,
         safe_query_summary: `Built ${fallbackQueries.length} queries (LLM failed, ${brainVariants.length > 0 ? "Brain variants + " : ""}deterministic fallback).`,
         degraded: true,
         fallback_reason: "LLM structured output failed; deterministic fallback used",
@@ -784,6 +811,7 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
       expanded_queries: result.data.expanded_queries,
       negative_filters: result.data.negative_filters,
       source_preferences: result.data.source_preferences,
+      requested_aspects: requestedAspects,
       safe_query_summary: result.data.safe_summary,
     },
     safeSummary: result.data.safe_summary,

@@ -16,7 +16,7 @@ import type {
   SourceResolverOutput,
 } from "./types";
 import { sanitizeEntityTerms, hasBoundaryTerm } from "./source-term-matching";
-import { validateCandidateRelevance } from "./source-relevance";
+import { validateCandidateRelevance, passesIntentFilter, computeAspectCoverage } from "./source-relevance";
 import { detectTopics } from "@/lib/paylabs/rsshub/topic-routes";
 import {
   passesAiSourceGuard,
@@ -26,6 +26,96 @@ import {
 
 const CANDIDATE_SCAN_LIMIT = 20;
 const FINAL_SOURCE_LIMIT = 5;
+
+// ─── Canonical URL helpers ─────────────────────────────────
+
+/**
+ * Canonicalize a URL for dedup purposes.
+ * Strips trailing slashes, fragments, common tracking params,
+ * and normalizes to lowercase hostname.
+ */
+export function canonicalizeUrl(raw: string): string {
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    // Remove common tracking params
+    const TRACKING_PARAMS = new Set(["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "ref", "source", "fbclid", "gclid"]);
+    for (const key of TRACKING_PARAMS) {
+      url.searchParams.delete(key);
+    }
+    url.hash = "";
+    // Normalize: lowercase host, strip trailing slash from pathname
+    let path = url.pathname.replace(/\/+$/, "") || "/";
+    return `${url.protocol}//${url.hostname.toLowerCase()}${path}${url.search}`;
+  } catch {
+    return raw.trim().toLowerCase();
+  }
+}
+
+/**
+ * Remove duplicate sources by canonical URL, keeping the one with higher relevance_score.
+ * Returns deduplicated array preserving rank order.
+ */
+export function deduplicateByCanonicalUrl(sources: SourceItem[]): SourceItem[] {
+  const byCanonical = new Map<string, SourceItem>();
+  for (const src of sources) {
+    const canon = canonicalizeUrl(src.url);
+    if (!canon) continue;
+    const existing = byCanonical.get(canon);
+    if (!existing || (src.relevance_score ?? 0) > (existing.relevance_score ?? 0)) {
+      byCanonical.set(canon, src);
+    }
+  }
+  return Array.from(byCanonical.values()).sort((a, b) => a.rank - b.rank);
+}
+
+// ─── Entity coverage validation ────────────────────────────
+
+/**
+ * Check which required primary entities are covered by the selected source set.
+ * Returns { covered, missing } listing canonical entity names.
+ */
+function validateEntityCoverage(
+  sources: SourceItem[],
+  primaryEntities: Array<{ text: string; canonical: string; type: string; required: boolean }>,
+): { covered: string[]; missing: string[] } {
+  const required = primaryEntities.filter((e) => e.required);
+  if (!required.length) return { covered: [], missing: [] };
+  const allMatched = new Set(
+    sources.flatMap((s) => s.matched_primary_entities || []),
+  );
+  const covered: string[] = [];
+  const missing: string[] = [];
+  for (const entity of required) {
+    if (allMatched.has(entity.canonical)) covered.push(entity.canonical);
+    else missing.push(entity.canonical);
+  }
+  return { covered, missing };
+}
+
+// ─── Evidence status computation ───────────────────────────
+
+/**
+ * Derive evidence_status from source confidence + entity/aspect coverage.
+ *
+ * - strong:     confidence >= 0.5 AND all required entities covered
+ * - moderate:   confidence >= 0.3 OR at least half of entities covered
+ * - weak:       at least 1 source exists but below moderate threshold
+ * - insufficient: no sources or confidence == 0
+ */
+function computeEvidenceStatus(
+  sourceConfidence: number,
+  entityCoverage: { covered: string[]; missing: string[] },
+  aspectCoverage: { covered: string[]; missing: string[] },
+  sourceCount: number,
+): "strong" | "moderate" | "weak" | "insufficient" {
+  if (sourceCount === 0 || sourceConfidence === 0) return "insufficient";
+  const totalRequired = entityCoverage.covered.length + entityCoverage.missing.length;
+  const entityRatio = totalRequired > 0 ? entityCoverage.covered.length / totalRequired : 1;
+  if (sourceConfidence >= 0.5 && entityRatio >= 1) return "strong";
+  if (sourceConfidence >= 0.3 || entityRatio >= 0.5) return "moderate";
+  return "weak";
+}
 
 // ─── Topic-aware source validation ────────────────────────
 
@@ -407,6 +497,15 @@ export async function resolveSources(
       input.topics,
       input.intentType,
     );
+
+    // Collect rejection reasons from candidates that didn't pass validation
+    const rejectionReasons: string[] = [];
+    for (const raw of rawSources) {
+      if (!validatedSources.includes(raw)) {
+        rejectionReasons.push(`${raw.url}: relevance_filter`);
+      }
+    }
+
     const requiredEntities = (input.primaryEntities || []).filter((entity) => entity.required).map((entity) => entity.canonical);
     const rankedValidated = [...validatedSources].sort((a, b) => b.relevance_score - a.relevance_score);
     const selected: SourceItem[] = [];
@@ -418,9 +517,38 @@ export async function resolveSources(
       if (selected.length >= FINAL_SOURCE_LIMIT) break;
       if (!selected.includes(source)) selected.push(source);
     }
-    const sources = selected.slice(0, maxSources).map((source, index) => ({ ...source, rank: index + 1 }));
+
+    // Canonical dedup: remove duplicate URLs, keep highest-scoring
+    const dedupedSources = deduplicateByCanonicalUrl(selected.slice(0, maxSources));
+    const sources = dedupedSources.map((source, index) => ({ ...source, rank: index + 1 }));
+
+    // Intent filter: reject sources that don't match requested intent
+    if (input.intentType) {
+      for (const src of sources) {
+        if (!passesIntentFilter({ title: src.title, summary: src.summary }, input.intentType)) {
+          rejectionReasons.push(`${src.url}: intent_mismatch`);
+        }
+      }
+    }
+
     const sanitizedEntityCount = sanitizeEntityTerms(input.entityTerms || []).length;
     const sourceConfidence = computeSourceConfidence(sources);
+
+    // Entity coverage validation
+    const entityCoverage = validateEntityCoverage(sources, input.primaryEntities || []);
+
+    // Aspect coverage validation
+    const sourceTexts = sources.map((s) => `${s.title} ${s.summary}`);
+    const aspectCoverage = computeAspectCoverage(sourceTexts, input.requestedAspects || []);
+    if (aspectCoverage.missing.length > 0) {
+      for (const aspect of aspectCoverage.missing) {
+        rejectionReasons.push(`missing_requested_aspect: ${aspect}`);
+      }
+    }
+
+    // Evidence status computation
+    const evidenceStatus = computeEvidenceStatus(sourceConfidence, entityCoverage, aspectCoverage, sources.length);
+
     // Safe diagnostic: entity term counts (no raw secrets)
     const entityDiagnostic = rawEntityCount > 0
       ? ` entity_terms_raw_count=${rawEntityCount} entity_terms_sanitized_count=${sanitizedEntityCount}`
@@ -442,6 +570,10 @@ export async function resolveSources(
         source_confidence: sourceConfidence,
         source_count: sources.length,
         source_validation: sourceValidation,
+        entity_coverage: entityCoverage,
+        aspect_coverage: aspectCoverage,
+        evidence_status: evidenceStatus,
+        rejection_reasons: rejectionReasons.length > 0 ? rejectionReasons : undefined,
       },
       error: null,
     };

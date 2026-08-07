@@ -130,6 +130,10 @@ export const DiscoveryPlannerState = Annotation.Root({
     reducer: replaceReducer<string>,
     default: () => [],
   }),
+  requestedAspects: Annotation<string[]>({
+    reducer: replaceReducer<string>,
+    default: () => [],
+  }),
 
   // Accumulated state
   serviceEvaluations: Annotation<ServiceEvaluation[]>({

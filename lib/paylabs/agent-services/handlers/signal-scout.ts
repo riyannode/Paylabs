@@ -442,25 +442,55 @@ export const signalScoutHandler: ServiceHandler = async (
       ? "rsshub_topic_live"
       : "rsshub_live";
 
-  // ── Step 3: If merged live results exist, use them ──
+  // ── Step 3: If merged live results exist, check entity coverage ──
   if (mergedLive.length > 0) {
-    return {
-      ok: true,
-      serviceName: "signal_scout",
-      data: {
-        ranked_candidates: mergedLive,
-        top_candidates: mergedLive.slice(0, 3).map((r) => r.feed_item_id),
-        quick_relevance_notes: mergedLive.slice(0, 5).map((r) => r.reason),
-        safe_signal_summary: `Live RSSHub: ${mergedLive.length} source(s) found${hasTopicResults ? `, ${topicResult.candidates.length} from topic routes` : ""}.`,
-        retrieval_mode: "rsshub_live",
-        source_strategy: sourceStrategy,
-        topic_routes_count: topicResult.diagnostics.topic_routes_count,
-        topic_candidates_count: topicResult.candidates.length,
-      },
-      safeSummary: `Live RSSHub: ${mergedLive.length} source(s) found.`,
-      settled: false,
-      error: null,
-    };
+    // Check if merged live results cover all required primary entities
+    const requiredPrimaryEntities = (primary_entities || [])
+      .filter((e) => e.required)
+      .map((e) => e.canonical.toLowerCase());
+    const coveredEntities = new Set<string>();
+    for (const item of mergedLive) {
+      const title = (item.title || "").toLowerCase();
+      const summary = (item.summary || "").toLowerCase();
+      const url = (item.source_url || "").toLowerCase();
+      const combined = `${title} ${summary} ${url}`;
+      for (const entity of requiredPrimaryEntities) {
+        if (combined.includes(entity)) coveredEntities.add(entity);
+      }
+    }
+    const missingEntities = requiredPrimaryEntities.filter(
+      (e) => !coveredEntities.has(e)
+    );
+    // If all required entities covered, return immediately
+    // If entities missing, fall through to DB fallback for additional sources
+    if (missingEntities.length === 0) {
+      return {
+        ok: true,
+        serviceName: "signal_scout",
+        data: {
+          ranked_candidates: mergedLive,
+          top_candidates: mergedLive.slice(0, 3).map((r) => r.feed_item_id),
+          quick_relevance_notes: mergedLive.slice(0, 5).map((r) => r.reason),
+          safe_signal_summary: `Live RSSHub: ${mergedLive.length} source(s) found${hasTopicResults ? `, ${topicResult.candidates.length} from topic routes` : ""}.`,
+          retrieval_mode: "rsshub_live",
+          source_strategy: sourceStrategy,
+          topic_routes_count: topicResult.diagnostics.topic_routes_count,
+          topic_candidates_count: topicResult.candidates.length,
+        },
+        safeSummary: `Live RSSHub: ${mergedLive.length} source(s) found.`,
+        settled: false,
+        error: null,
+      };
+    }
+    // Entities missing: log and fall through to DB fallback
+    console.log(JSON.stringify({
+      log: "[signal_scout] entity_coverage_gap",
+      merged_count: mergedLive.length,
+      required_entities: requiredPrimaryEntities,
+      covered_entities: [...coveredEntities],
+      missing_entities: missingEntities,
+      fallback_reason: "DB fallback triggered due to entity coverage gap",
+    }));
   }
 
   // ── Step 2c: If live-only mode, do NOT fallback to DB ──

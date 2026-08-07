@@ -48,8 +48,13 @@ export const CRYPTO_ALLOWED_DOMAINS = new Set([
   "binance.com", "www.binance.com",
 ]);
 
-/** Strong crypto terms — generic domains must have these in title/summary to pass */
-const STRONG_CRYPTO_TERMS_RE = /\b(crypto|bitcoin|ethereum|blockchain|defi|web3|token|stablecoin|usdc|binance|staking|stake|validator|rollup|layer\s?[12]|l[12]|scaling|scalability|etf|eigenlayer|lido|arbitrum|optimism|polygon|zksync|starknet|modular blockchain|data availability|x402|nanopayment|micropayment|circle\s?(?:usdc|gateway|dcw|ucw|wallet|cctp)|arc\s?(?:chain|testnet|network|blockchain|explorer|rpc|payments|usdc)|arclayer|pay\s?per\s?request)\b/i;
+/**
+ * Strong crypto terms — generic domains must have these in title/summary to pass.
+ * NOTE: Passing this guard ONLY indicates the source belongs to an acceptable crypto domain.
+ * The source must STILL independently pass entity relevance, intent relevance, aspect relevance,
+ * and negative/noise filtering downstream. Domain guard is NOT a relevance guarantee.
+ */
+const STRONG_CRYPTO_TERMS_RE = /\b(crypto|bitcoin|ethereum|blockchain|defi|web3|token|stablecoin|usdc|binance|staking|stake|validator|rollup|layer\s?[12]|l[12]|scaling|scalability|etf|eigenlayer|lido|arbitrum|optimism|polygon|zksync|starknet|modular blockchain|data availability|x402|nanopayment|micropayment|circle\s?(?:usdc|gateway|dcw|ucw|wallet|cctp)|arc\s?(?:chain|testnet|network|blockchain|explorer|rpc|payments|usdc)|arclayer|pay\s?per\s?request|aave|compound|makerdao|uniswap|curve\s?finance|balancer|amm|automated market maker|cfmm|constant product|concentrated liquidity|impermanent loss|mev|maximal extractable value|pbs|proposer-builder separation|sandwich attack|eip-1559|base fee|priority fee|proof of work|bitcoin mining|hashrate|slashing|custody risk|counterparty risk|bridge risk|oracle risk|price oracle|liquidation|collateral factor|interest rate|governance risk)\b/i;
 
 // ─── Helpers ──────────────────────────────────────────────
 
