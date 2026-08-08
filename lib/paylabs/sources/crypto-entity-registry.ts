@@ -212,7 +212,13 @@ export const CRYPTO_CONCEPT_ENTITIES: Record<string, CryptoConceptEntry> = {
     ],
     category: "lending",
     description: "Decentralized lending/borrowing with collateral, liquidation, and interest rate models",
-    relatedAspects: ["collateral", "liquidation", "interest_rates"],
+    relatedAspects: [
+      "collateral",
+      "liquidation",
+      "interest_rates",
+      "lending_model",
+      "protocol_risks",
+    ],
   },
 
   // ── Oracle Concepts ──
@@ -364,6 +370,11 @@ export const CRYPTO_CONCEPT_ENTITIES: Record<string, CryptoConceptEntry> = {
       "seed phrase",
       "hardware wallet",
       "cold storage",
+      "risks",
+      "major risks",
+      "key risks",
+      "protocol risks",
+      "risk factors",
     ],
     category: "risk",
     description: "DeFi and crypto risk categories — smart contract, oracle, bridge, custody",
@@ -442,6 +453,25 @@ export const ASPECT_DEFINITIONS: Record<string, AspectDefinition> = {
     description: "How the network achieves agreement on block validity",
   },
 
+  lending_model: {
+    key: "lending_model",
+    label: "Lending Model",
+    category: "protocol_mechanism",
+    signalTerms: [
+      "lending model",
+      "lending models",
+      "borrowing model",
+      "borrowing models",
+      "lending mechanism",
+      "lending mechanisms",
+      "money market model",
+      "market model",
+    ],
+    relevantProtocols: ["aave", "compound", "makerDAO"],
+    relevantConcepts: ["lending"],
+    description: "How a protocol structures lending and borrowing markets",
+  },
+
   collateral: {
     key: "collateral",
     label: "Collateral",
@@ -498,6 +528,27 @@ export const ASPECT_DEFINITIONS: Record<string, AspectDefinition> = {
     relevantProtocols: ["aave", "compound", "makerDAO"],
     relevantConcepts: ["lending"],
     description: "Dynamic rates for borrowing/lending based on supply and demand",
+  },
+
+  protocol_risks: {
+    key: "protocol_risks",
+    label: "Protocol Risks",
+    category: "risk_factors",
+    signalTerms: [
+      "major risk",
+      "major risks",
+      "key risk",
+      "key risks",
+      "protocol risk",
+      "protocol risks",
+      "risk profile",
+      "risk factors",
+      "lending risk",
+      "lending risks",
+    ],
+    relevantProtocols: ["aave", "compound", "makerDAO"],
+    relevantConcepts: ["lending", "risks"],
+    description: "Broad protocol risk factors without requiring individual risk subtypes",
   },
 
   governance: {
