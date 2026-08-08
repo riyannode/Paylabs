@@ -30,6 +30,8 @@ export interface GenerateStructuredJsonInput {
   maxAttempts?: number;
   /** Disable repair calls when the caller has a hard outer deadline. */
   allowRepair?: boolean;
+  /** Opt out of the required brain failure throw for post-processing callers. */
+  throwOnRequiredFailure?: boolean;
 }
 
 export interface GenerateStructuredJsonOk<T> {
@@ -225,6 +227,7 @@ export async function generateStructuredJson<T>(
   const { agentName, routeTier, systemPrompt, userPrompt, schema } = input;
   const required = isLlmRequired();
   const allowRepair = input.allowRepair !== false;
+  const throwOnRequiredFailure = input.throwOnRequiredFailure !== false;
 
   const model = getTutorModel(agentName);
   const modelConfig = getTutorModelConfig(agentName);
@@ -572,7 +575,7 @@ export async function generateStructuredJson<T>(
 
   if (required) {
     // brain_planner: throw on failure (fail-closed for paid path)
-    if (agentName === "brain_planner") {
+    if (agentName === "brain_planner" && throwOnRequiredFailure) {
       throw new Error(`PAYLABS_LLM_REQUIRED=true but ${agentName} failed after ${maxAttempts} attempts: ${lastError}`);
     }
     // Non-brain agents (query_builder, signal_scout, etc.): return ok:false

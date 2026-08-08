@@ -1137,6 +1137,7 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
         schema: EvidencePackSynthesisSchema,
         maxAttempts: 1,
         allowRepair: false,
+        throwOnRequiredFailure: false,
       }),
       timeoutMs,
     );
