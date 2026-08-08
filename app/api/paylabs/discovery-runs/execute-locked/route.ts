@@ -1050,6 +1050,7 @@ export async function POST(req: NextRequest) {
           citation_validation_ok: groundingResult?.citationValidationOk === true,
           claim_support_validation_ok: groundingResult?.claimSupportValidationOk === true,
           unknown_citation_ids: groundingResult?.unknownCitationIds ?? [],
+          citation_validation_failure_codes: groundingResult?.citationValidationFailureCodes ?? [],
           synthesis_provider: groundingResult?.synthesisProvider ?? groundingProvider,
           synthesis_model: groundingResult?.synthesisModel ?? groundingModel,
           synthesis_latency_ms: groundingResult?.synthesisLatencyMs ?? groundingLatencyMs,

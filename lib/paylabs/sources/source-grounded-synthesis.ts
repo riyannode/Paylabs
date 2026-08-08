@@ -50,6 +50,8 @@ export type GroundedSynthesisResult = {
   errorSafe: string | null;
   /** Safe diagnostics needed by the persisted grounding trace. */
   unknownCitationIds?: string[];
+  /** Deterministic, bounded citation validation failure reasons. */
+  citationValidationFailureCodes?: CitationValidationFailureCode[];
   /** V2 diagnostics use chunk citation IDs while retaining source labels. */
   usedChunkCitationIds?: string[];
   availableSourceIds?: string[];
@@ -64,6 +66,23 @@ export type GroundedSynthesisResult = {
   verificationModel?: string | null;
   verificationLatencyMs?: number | null;
 };
+
+export const CITATION_VALIDATION_FAILURE_CODES = [
+  "empty_answer",
+  "malformed_inline_citation",
+  "unknown_inline_citation",
+  "unknown_declared_citation",
+  "citation_set_mismatch",
+  "grounded_with_unsupported_claims",
+  "grounded_without_citations",
+  "too_many_factual_units",
+  "uncited_factual_unit",
+  "partial_missing_coverage_not_explicit",
+] as const;
+
+export type CitationValidationFailureCode = typeof CITATION_VALIDATION_FAILURE_CODES[number];
+
+const MAX_CITATION_VALIDATION_FAILURE_CODES = 4;
 
 type ModelSynthesisOutput = {
   status: "grounded" | "partially_grounded" | "insufficient_evidence";
@@ -600,6 +619,7 @@ function v2FailureResult(
     unsupportedClaimCount?: number;
     citationValidationOk?: boolean;
     claimSupportValidationOk?: boolean;
+    citationValidationFailureCodes?: CitationValidationFailureCode[];
   },
 ): GroundedSynthesisResult {
   return {
@@ -614,6 +634,7 @@ function v2FailureResult(
     availableChunkCitationIds: citationMap.availableChunkCitationIds,
     errorSafe: errorSafe.slice(0, 220),
     unknownCitationIds: [],
+    citationValidationFailureCodes: metadata?.citationValidationFailureCodes ?? [],
     citationValidationOk: metadata?.citationValidationOk ?? false,
     claimSupportValidationOk: metadata?.claimSupportValidationOk ?? false,
     synthesisProvider: metadata?.synthesisProvider ?? null,
@@ -742,6 +763,41 @@ function citationSetsMatch(left: string[], right: string[]): boolean {
   return a.size === b.size && [...a].every((value) => b.has(value));
 }
 
+function collectCitationValidationFailureCodes(input: {
+  answer: string;
+  cited: ReturnType<typeof extractV2CitationIds>;
+  declaredIds: string[];
+  unknownCitationIds: string[];
+  unknownDeclaredIds: string[];
+  output: EvidencePackSynthesisOutput;
+  units: V2FactualUnit[];
+  pack: EvidencePack;
+}): CitationValidationFailureCode[] {
+  const failureCodes: CitationValidationFailureCode[] = [];
+  const add = (code: CitationValidationFailureCode): void => {
+    if (!failureCodes.includes(code)) failureCodes.push(code);
+  };
+
+  if (!input.answer) add("empty_answer");
+  if (input.cited.malformed) add("malformed_inline_citation");
+  if (input.unknownCitationIds.length > 0) add("unknown_inline_citation");
+  if (input.unknownDeclaredIds.length > 0) add("unknown_declared_citation");
+  if (!citationSetsMatch(input.cited.citedIds, input.declaredIds)) add("citation_set_mismatch");
+  if (input.output.status === "grounded" && input.output.unsupported_claims.length > 0) {
+    add("grounded_with_unsupported_claims");
+  }
+  if (input.output.status === "grounded" && input.cited.citedIds.length === 0) {
+    add("grounded_without_citations");
+  }
+  if (input.units.length > 8) add("too_many_factual_units");
+  if (input.units.some((unit) => unit.citationIds.length === 0)) add("uncited_factual_unit");
+  if (input.pack.status === "partially_grounded" && !hasExplicitMissingCoverage(input.answer, input.pack)) {
+    add("partial_missing_coverage_not_explicit");
+  }
+
+  return failureCodes.slice(0, MAX_CITATION_VALIDATION_FAILURE_CODES);
+}
+
 function cappedPackStatus(
   packStatus: EvidencePack["status"],
   modelStatus: EvidencePackSynthesisOutput["status"],
@@ -775,26 +831,26 @@ function validateEvidencePackModelOutput(
   const unknownDeclaredIds = declaredIds.filter((id) => !citationMap.byCitationId.has(id));
   const units = splitV2FactualUnits(answer);
   const effectiveStatus = cappedPackStatus(pack.status, output.status);
+  const citationValidationFailureCodes = collectCitationValidationFailureCodes({
+    answer,
+    cited,
+    declaredIds,
+    unknownCitationIds,
+    unknownDeclaredIds,
+    output,
+    units,
+    pack,
+  });
 
-  const invalid =
-    !answer ||
-    cited.malformed ||
-    unknownCitationIds.length > 0 ||
-    unknownDeclaredIds.length > 0 ||
-    !citationSetsMatch(cited.citedIds, declaredIds) ||
-    output.status === "grounded" && output.unsupported_claims.length > 0 ||
-    output.status === "grounded" && cited.citedIds.length === 0 ||
-    units.length > 8 ||
-    units.some((unit) => unit.citationIds.length === 0) ||
-    pack.status === "partially_grounded" && !hasExplicitMissingCoverage(answer, pack);
-
-  if (invalid) {
+  if (citationValidationFailureCodes.length > 0) {
     return {
       ok: false,
       result: {
-        ...v2FailureResult(citationMap, unknownCitationIds.length || unknownDeclaredIds.length
-          ? "Generated answer referenced an unavailable or malformed chunk citation."
-          : "Generated answer failed deterministic EvidencePack citation validation."),
+        ...v2FailureResult(
+          citationMap,
+          `EvidencePack citation validation failed: ${citationValidationFailureCodes.join(",")}.`,
+          { citationValidationFailureCodes },
+        ),
         unknownCitationIds: [...new Set([...unknownCitationIds, ...unknownDeclaredIds])],
       },
     };
