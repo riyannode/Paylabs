@@ -37,8 +37,8 @@ import { randomUUID } from "node:crypto";
 import { isOfficeMacroAgentId } from "@/lib/paylabs/office/registry";
 import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
 import { attachPaymentResponseHeader } from "@/lib/paylabs/x402/seller-challenge";
-import { getTutorModelConfig } from "@/lib/paylabs/ai/llm";
 import type { GroundedSynthesisResult } from "@/lib/paylabs/sources/source-grounded-synthesis";
+import type { EvidencePack } from "@/lib/paylabs/rag/types";
 
 // ─── Local helpers (same as inline/route.ts) ─────────────────
 
@@ -728,8 +728,9 @@ export async function POST(req: NextRequest) {
 
     // ── Run locked macro-node pipeline ──────────────────────
     let result: import("@/lib/paylabs/delegated-runtime/types").OrchestratorOutput;
+    let ragEvidencePack: EvidencePack | undefined;
     try {
-      ({ output: result } = await executeLockedMacroNodePipeline({
+      const lockedExecution = await executeLockedMacroNodePipeline({
         discoveryRunId,
         userGoal: resolvedGoal,
         userWallet: resolvedWallet,
@@ -740,7 +741,9 @@ export async function POST(req: NextRequest) {
         dcwSigner,
         callMacroNode: callMacroNodeX402,
         buildOutput: buildLockedOutput,
-      }));
+      });
+      result = lockedExecution.output;
+      ragEvidencePack = lockedExecution._ragEvidencePack;
     } catch (pipelineError) {
       // Emit Brain failed terminal event, then re-throw
       await emitBrainTerminalOnce(
@@ -970,10 +973,7 @@ export async function POST(req: NextRequest) {
 
     try {
       const { buildSourceGroundedFinalAnswer } = await import("@/lib/paylabs/sources/source-final-answer");
-      const {
-        buildGroundingEvidence,
-        synthesizeGroundedAnswer,
-      } = await import("@/lib/paylabs/sources/source-grounded-synthesis");
+      const { synthesizeGroundedAnswerFromEvidencePack } = await import("@/lib/paylabs/sources/source-grounded-synthesis");
       const sourcesUsed = exitOutput.sources_used || [];
       sourceAvailabilityNote = buildSourceGroundedFinalAnswer({
         goal: resolvedGoal,
@@ -985,24 +985,15 @@ export async function POST(req: NextRequest) {
       });
 
       if (groundedEnabled) {
-        groundingSourceIds = buildGroundingEvidence(sourcesUsed).map((source) => source.sourceId);
         const startedAt = Date.now();
-        groundingResult = await synthesizeGroundedAnswer({
+        groundingResult = await synthesizeGroundedAnswerFromEvidencePack({
           goal: resolvedGoal,
-          brainDraft: (safeBrainPlanning?.assistant_response as string | null | undefined) ?? null,
-          sources: sourcesUsed,
-          intentType: null,  // intentType is not on SourceContext; null acceptable per spec
-          coverageCeiling: {
-            missingPrimaryEntities: result.sourceContext?.entity_coverage?.missing ?? [],
-            missingAspects: result.sourceContext?.aspect_coverage?.missing ?? [],
-          },
+          evidencePack: ragEvidencePack,
         });
-        groundingLatencyMs = groundingSourceIds.length > 0 ? Date.now() - startedAt : null;
-        if (groundingSourceIds.length > 0) {
-          const modelConfig = getTutorModelConfig("brain_planner");
-          groundingProvider = modelConfig.apiKeyPresent ? modelConfig.provider : null;
-          groundingModel = modelConfig.apiKeyPresent ? modelConfig.model : null;
-        }
+        groundingSourceIds = groundingResult.availableSourceIds ?? [];
+        groundingLatencyMs = groundingResult.synthesisLatencyMs ?? (Date.now() - startedAt);
+        groundingProvider = groundingResult.synthesisProvider ?? null;
+        groundingModel = groundingResult.synthesisModel ?? null;
         finalAnswer = groundingResult.answer;
       } else {
         // Feature flag off: preserve the existing availability-note behavior.
@@ -1029,16 +1020,22 @@ export async function POST(req: NextRequest) {
 
     const groundingDiagnostics = groundedEnabled
       ? {
-          version: "grounded_answer_v1" as const,
+          version: "grounded_answer_v2" as const,
           status: groundingResult?.status ?? "synthesis_failed",
-          source_ids_available: groundingSourceIds,
+          source_ids_available: groundingResult?.availableSourceIds ?? groundingSourceIds,
           source_ids_used: groundingResult?.usedSourceIds ?? [],
-          unsupported_claim_count: groundingResult?.unsupportedClaims.length ?? 0,
-          citation_validation_ok: groundingResult?.status !== "synthesis_failed",
+          chunk_citation_ids_available: groundingResult?.availableChunkCitationIds ?? [],
+          chunk_citation_ids_used: groundingResult?.usedChunkCitationIds ?? [],
+          unsupported_claim_count: groundingResult?.unsupportedClaimCount ?? groundingResult?.unsupportedClaims.length ?? 0,
+          citation_validation_ok: groundingResult?.citationValidationOk === true,
+          claim_support_validation_ok: groundingResult?.claimSupportValidationOk === true,
           unknown_citation_ids: groundingResult?.unknownCitationIds ?? [],
-          synthesis_provider: groundingProvider,
-          synthesis_model: groundingModel,
-          synthesis_latency_ms: groundingLatencyMs,
+          synthesis_provider: groundingResult?.synthesisProvider ?? groundingProvider,
+          synthesis_model: groundingResult?.synthesisModel ?? groundingModel,
+          synthesis_latency_ms: groundingResult?.synthesisLatencyMs ?? groundingLatencyMs,
+          verification_provider: groundingResult?.verificationProvider ?? null,
+          verification_model: groundingResult?.verificationModel ?? null,
+          verification_latency_ms: groundingResult?.verificationLatencyMs ?? null,
           error_safe: groundingResult?.errorSafe ?? null,
         }
       : null;
