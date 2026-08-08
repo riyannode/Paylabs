@@ -11,16 +11,6 @@
  *   - NO paid services
  *
  * It only selects from already-graded evidence.
- *
- * Selection priority:
- *   1. required entity coverage
- *   2. comparison entity × aspect gaps
- *   3. requested aspect coverage
- *   4. supportStrength
- *   5. hybrid relevance
- *   6. evidence granularity / quality
- *   7. source diversity
- *   8. redundancy penalty
  */
 
 import type { RetrievalContext, SourceItem } from "../sources/types";
@@ -40,11 +30,8 @@ import { canonicalizeUrl } from "../sources/source-resolver";
 const MAX_PACK_CHUNKS = 12;
 const MAX_PACK_CHARS = 24_000;
 const MAX_CHUNKS_PER_SOURCE = 3;
-/** Hard max: exceed soft limit by 1 only to close a required coverage gap */
 const HARD_MAX_CHUNKS_PER_SOURCE = 4;
-/** Minimum supportStrength for a chunk to be a pack candidate */
 const TRUST_THRESHOLD = 0.25;
-/** Jaccard overlap threshold for redundancy detection */
 const REDUNDANCY_THRESHOLD = 0.85;
 
 // ─── Score Weights for Selection Utility ─────────────────
@@ -57,41 +44,32 @@ const WEIGHTS = {
   hybridRelevance: 0.05,
   quality: 0.03,
   sourceDiversity: 0.02,
-  granularity: 0.00, // tiebreak only, handled in comparator
 } as const;
 
 // ─── Token Normalization (for Jaccard) ───────────────────
 
-/**
- * Normalize text to lowercase tokens for Jaccard overlap.
- * Simple whitespace + punctuation split. No dependency.
- */
 function normalizeTokens(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter((t) => t.length > 2);
+    .filter((token) => token.length > 2);
 }
 
-/**
- * Compute Jaccard similarity between two token sets.
- * Returns 0..1 where 1 = identical.
- */
 function jaccardSimilarity(a: string[], b: string[]): number {
   if (a.length === 0 && b.length === 0) return 1;
   if (a.length === 0 || b.length === 0) return 0;
+
   const setA = new Set(a);
   const setB = new Set(b);
   let intersection = 0;
-  for (const t of setA) {
-    if (setB.has(t)) intersection++;
+  for (const token of setA) {
+    if (setB.has(token)) intersection++;
   }
+
   const union = setA.size + setB.size - intersection;
   return union === 0 ? 0 : intersection / union;
 }
-
-// ─── Granularity Preference ──────────────────────────────
 
 function granularityScore(granularity: string): number {
   switch (granularity) {
@@ -99,8 +77,6 @@ function granularityScore(granularity: string): number {
       return 1.0;
     case "snippet":
       return 0.5;
-    case "metadata_only":
-      return 0.0;
     default:
       return 0.0;
   }
@@ -108,42 +84,23 @@ function granularityScore(granularity: string): number {
 
 // ─── Trusted Candidate Filtering ─────────────────────────
 
-/**
- * Filter graded chunks to trusted candidates only.
- *
- * Trusted = grade.relevant === true
- *         AND grade.supportStrength >= TRUST_THRESHOLD
- *         AND gradingMode !== "deterministic_reject"
- *
- * Content is preferred over snippet.
- * Snippet is acceptable when stronger content evidence is unavailable.
- * Metadata-only never becomes trusted.
- */
 function filterTrustedCandidates(
   gradedChunks: GradedEvidenceChunk[],
 ): GradedEvidenceChunk[] {
-  return gradedChunks.filter((gc) => {
-    if (!gc.grade.relevant) return false;
-    if (gc.grade.supportStrength < TRUST_THRESHOLD) return false;
-    if (gc.grade.gradingMode === "deterministic_reject") return false;
-    // Metadata-only must not become substantive packed evidence
-    if (gc.chunk.metadata.evidenceGranularity === "metadata_only") return false;
+  return gradedChunks.filter((graded) => {
+    if (!graded.grade.relevant) return false;
+    if (graded.grade.supportStrength < TRUST_THRESHOLD) return false;
+    if (graded.grade.gradingMode === "deterministic_reject") return false;
+    if (graded.chunk.metadata.evidenceGranularity === "metadata_only") return false;
     return true;
   });
 }
 
 // ─── Coverage Gain Computation ───────────────────────────
 
-/**
- * Compute coverage gain for a candidate chunk against the current selected set.
- *
- * Returns a breakdown of gains for each coverage dimension.
- * Comparison entity×aspect gaps receive the strongest priority.
- */
 function computeCoverageGain(
   candidate: GradedEvidenceChunk,
   selectedSoFar: GradedEvidenceChunk[],
-  retrievalContext: RetrievalContext,
   comparisonLike: boolean,
   requiredEntitySet: Set<string>,
   requiredAspectSet: Set<string>,
@@ -153,303 +110,429 @@ function computeCoverageGain(
   aspectGain: number;
 } {
   const candidateEntities = new Set(
-    candidate.grade.entitySupport.map((e) => e.toLowerCase()),
+    candidate.grade.entitySupport.map((entity) => entity.toLowerCase()),
   );
   const candidateAspects = new Set(candidate.grade.aspectSupport);
-
-  // Track what's already covered by selected chunks
   const coveredEntities = new Set<string>();
   const coveredAspects = new Set<string>();
   const coveredEntityAspectPairs = new Set<string>();
 
-  for (const sel of selectedSoFar) {
-    for (const e of sel.grade.entitySupport) {
-      coveredEntities.add(e.toLowerCase());
+  for (const selected of selectedSoFar) {
+    for (const entity of selected.grade.entitySupport) {
+      coveredEntities.add(entity.toLowerCase());
     }
-    for (const a of sel.grade.aspectSupport) {
-      coveredAspects.add(a);
+    for (const aspect of selected.grade.aspectSupport) {
+      coveredAspects.add(aspect);
     }
-    // For comparison: entity × aspect pairs
-    if (comparisonLike) {
-      for (const e of sel.grade.entitySupport) {
-        for (const a of sel.grade.aspectSupport) {
-          coveredEntityAspectPairs.add(`${e.toLowerCase()}|${a}`);
+    if (comparisonLike && requiredEntitySet.size > 1) {
+      for (const entity of selected.grade.entitySupport) {
+        for (const aspect of selected.grade.aspectSupport) {
+          coveredEntityAspectPairs.add(`${entity.toLowerCase()}|${aspect}`);
         }
       }
     }
   }
 
-  // Entity gain: does this close a required entity gap?
   let entityGain = 0;
-  if (comparisonLike && requiredEntitySet.size > 1) {
-    // For comparison: entity×aspect pairs matter more
-    let newPairs = 0;
-    for (const entity of candidateEntities) {
-      if (!requiredEntitySet.has(entity)) continue;
-      for (const aspect of candidateAspects) {
-        if (!requiredAspectSet.has(aspect)) continue;
-        const pair = `${entity}|${aspect}`;
-        if (!coveredEntityAspectPairs.has(pair)) {
-          newPairs++;
-        }
-      }
-    }
-    // Pairs gain is handled by comparisonEntityAspectGain
-    // Entity gain is simpler: new required entities
-    for (const entity of candidateEntities) {
-      if (requiredEntitySet.has(entity) && !coveredEntities.has(entity)) {
-        entityGain += 1;
-      }
-    }
-  } else {
-    for (const entity of candidateEntities) {
-      if (requiredEntitySet.has(entity) && !coveredEntities.has(entity)) {
-        entityGain += 1;
-      }
+  for (const entity of candidateEntities) {
+    if (requiredEntitySet.has(entity) && !coveredEntities.has(entity)) {
+      entityGain++;
     }
   }
 
-  // Comparison entity×aspect gain: critical for comparison queries
   let comparisonEntityAspectGain = 0;
   if (comparisonLike && requiredEntitySet.size > 1) {
     for (const entity of candidateEntities) {
       if (!requiredEntitySet.has(entity)) continue;
       for (const aspect of candidateAspects) {
         if (!requiredAspectSet.has(aspect)) continue;
-        const pair = `${entity.toLowerCase()}|${aspect}`;
-        if (!coveredEntityAspectPairs.has(pair)) {
-          comparisonEntityAspectGain += 1;
+        if (!coveredEntityAspectPairs.has(`${entity}|${aspect}`)) {
+          comparisonEntityAspectGain++;
         }
       }
     }
   }
 
-  // Aspect gain: does this close a requested aspect gap?
   let aspectGain = 0;
   for (const aspect of candidateAspects) {
     if (requiredAspectSet.has(aspect) && !coveredAspects.has(aspect)) {
-      aspectGain += 1;
+      aspectGain++;
     }
   }
 
   return { entityGain, comparisonEntityAspectGain, aspectGain };
 }
 
-// ─── Selection Utility ───────────────────────────────────
+function closesRequiredCoverageGap(
+  candidate: GradedEvidenceChunk,
+  selectedSoFar: GradedEvidenceChunk[],
+  comparisonLike: boolean,
+  requiredEntitySet: Set<string>,
+  requiredAspectSet: Set<string>,
+): boolean {
+  const gain = computeCoverageGain(
+    candidate,
+    selectedSoFar,
+    comparisonLike,
+    requiredEntitySet,
+    requiredAspectSet,
+  );
+  return (
+    gain.entityGain > 0 ||
+    gain.comparisonEntityAspectGain > 0 ||
+    gain.aspectGain > 0
+  );
+}
 
-/**
- * Compute deterministic selection utility for a candidate.
- *
- * Coverage gain dominates generic relevance.
- * This is a pure function — no LLM, no network.
- */
+// ─── Selection Utility and Reasons ───────────────────────
+
 function computeSelectionUtility(
   candidate: GradedEvidenceChunk,
   selectedSoFar: GradedEvidenceChunk[],
-  retrievalContext: RetrievalContext,
   comparisonLike: boolean,
   requiredEntitySet: Set<string>,
   requiredAspectSet: Set<string>,
   sourceChunkCounts: Map<string, number>,
-): { utility: number; reasons: string[] } {
-  const reasons: string[] = [];
-
-  // Coverage gain
+): number {
   const { entityGain, comparisonEntityAspectGain, aspectGain } =
     computeCoverageGain(
       candidate,
       selectedSoFar,
-      retrievalContext,
       comparisonLike,
       requiredEntitySet,
       requiredAspectSet,
     );
 
-  let utility = 0;
+  let utility =
+    WEIGHTS.requiredEntity * entityGain +
+    WEIGHTS.comparisonEntityAspect * comparisonEntityAspectGain +
+    WEIGHTS.requestedAspect * aspectGain +
+    WEIGHTS.supportStrength * candidate.grade.supportStrength +
+    WEIGHTS.hybridRelevance * candidate.relevance.score +
+    WEIGHTS.quality * candidate.relevance.qualityScore;
 
-  if (entityGain > 0) {
-    utility += WEIGHTS.requiredEntity * entityGain;
-    reasons.push(`required_entity:${candidate.grade.entitySupport[0] || "unknown"}`);
+  if ((sourceChunkCounts.get(candidate.chunk.sourceId) || 0) === 0) {
+    utility += WEIGHTS.sourceDiversity;
   }
 
-  if (comparisonEntityAspectGain > 0) {
-    utility += WEIGHTS.comparisonEntityAspect * comparisonEntityAspectGain;
-    for (const entity of candidate.grade.entitySupport) {
-      for (const aspect of candidate.grade.aspectSupport) {
-        reasons.push(`entity_aspect:${entity}:${aspect}`);
+  // Content is preferred over snippet as a deterministic final tiebreak.
+  utility +=
+    0.001 * granularityScore(candidate.chunk.metadata.evidenceGranularity);
+
+  return utility;
+}
+
+function computeSelectionReasons(
+  candidate: GradedEvidenceChunk,
+  selectedSoFar: GradedEvidenceChunk[],
+  comparisonLike: boolean,
+  requiredEntitySet: Set<string>,
+  requiredAspectSet: Set<string>,
+  sourceChunkCounts: Map<string, number>,
+): string[] {
+  const coveredEntities = new Set<string>();
+  const coveredAspects = new Set<string>();
+  const coveredEntityAspectPairs = new Set<string>();
+
+  for (const selected of selectedSoFar) {
+    for (const entity of selected.grade.entitySupport) {
+      coveredEntities.add(entity.toLowerCase());
+    }
+    for (const aspect of selected.grade.aspectSupport) {
+      coveredAspects.add(aspect);
+    }
+    if (comparisonLike && requiredEntitySet.size > 1) {
+      for (const entity of selected.grade.entitySupport) {
+        for (const aspect of selected.grade.aspectSupport) {
+          coveredEntityAspectPairs.add(`${entity.toLowerCase()}|${aspect}`);
+        }
       }
     }
   }
 
-  if (aspectGain > 0) {
-    utility += WEIGHTS.requestedAspect * aspectGain;
-    for (const aspect of candidate.grade.aspectSupport) {
+  const reasons: string[] = [];
+  for (const entity of candidate.grade.entitySupport) {
+    const canonicalEntity = entity.toLowerCase();
+    if (
+      requiredEntitySet.has(canonicalEntity) &&
+      !coveredEntities.has(canonicalEntity)
+    ) {
+      reasons.push(`required_entity:${entity}`);
+    }
+  }
+
+  if (comparisonLike && requiredEntitySet.size > 1) {
+    for (const entity of candidate.grade.entitySupport) {
+      const canonicalEntity = entity.toLowerCase();
+      if (!requiredEntitySet.has(canonicalEntity)) continue;
+      for (const aspect of candidate.grade.aspectSupport) {
+        if (
+          requiredAspectSet.has(aspect) &&
+          !coveredEntityAspectPairs.has(`${canonicalEntity}|${aspect}`)
+        ) {
+          reasons.push(`entity_aspect:${entity}:${aspect}`);
+        }
+      }
+    }
+  }
+
+  for (const aspect of candidate.grade.aspectSupport) {
+    if (requiredAspectSet.has(aspect) && !coveredAspects.has(aspect)) {
       reasons.push(`requested_aspect:${aspect}`);
     }
   }
 
-  // Support strength
-  utility += WEIGHTS.supportStrength * candidate.grade.supportStrength;
-  if (candidate.grade.supportStrength >= 0.7) {
-    reasons.push("high_support");
-  }
-
-  // Hybrid relevance
-  utility += WEIGHTS.hybridRelevance * candidate.relevance.score;
-
-  // Quality
-  utility += WEIGHTS.quality * candidate.relevance.qualityScore;
-
-  // Source diversity bonus
-  const sourceCount = sourceChunkCounts.get(candidate.chunk.sourceId) || 0;
-  if (sourceCount === 0) {
-    utility += WEIGHTS.sourceDiversity;
+  if (candidate.grade.supportStrength >= 0.7) reasons.push("high_support");
+  if ((sourceChunkCounts.get(candidate.chunk.sourceId) || 0) === 0) {
     reasons.push("source_diversity");
   }
 
-  // Granularity tiebreak (content preferred over snippet)
-  const granScore = granularityScore(
-    candidate.chunk.metadata.evidenceGranularity,
-  );
-  utility += 0.001 * granScore; // tiny tiebreak weight
-
-  return { utility, reasons };
+  return [...new Set(reasons)];
 }
 
-// ─── Pack Coverage Recomputation ─────────────────────────
-
 /**
- * Recompute coverage from ONLY the selected packed chunks.
- *
- * CRITICAL: This is different from retrievalCoverage.
- * Pack may be a subset of retrieval — coverage MUST reflect that.
- *
- * Uses same trust semantics as computeEvidenceCoverage
- * but operates on pack chunks only.
+ * Deterministic ordering for the comparison entity-reservation phase:
+ * entity×aspect cells, requested aspects, support, relevance, quality,
+ * content over snippet, source diversity, then stable chunk identity.
  */
+function compareReservationCandidates(
+  a: GradedEvidenceChunk,
+  b: GradedEvidenceChunk,
+  entity: string,
+  selectedSoFar: GradedEvidenceChunk[],
+  requiredAspectSet: Set<string>,
+  sourceChunkCounts: Map<string, number>,
+): number {
+  const coveredPairs = new Set<string>();
+  const coveredAspects = new Set<string>();
+  for (const selected of selectedSoFar) {
+    for (const selectedEntity of selected.grade.entitySupport) {
+      for (const aspect of selected.grade.aspectSupport) {
+        coveredPairs.add(`${selectedEntity.toLowerCase()}|${aspect}`);
+      }
+    }
+    for (const aspect of selected.grade.aspectSupport) {
+      coveredAspects.add(aspect);
+    }
+  }
+
+  const entityAspectGain = (candidate: GradedEvidenceChunk): number =>
+    candidate.grade.aspectSupport.filter(
+      (aspect) =>
+        requiredAspectSet.has(aspect) &&
+        !coveredPairs.has(`${entity.toLowerCase()}|${aspect}`),
+    ).length;
+  const requestedAspectGain = (candidate: GradedEvidenceChunk): number =>
+    candidate.grade.aspectSupport.filter(
+      (aspect) => requiredAspectSet.has(aspect) && !coveredAspects.has(aspect),
+    ).length;
+  const descending = (left: number, right: number): number => right - left;
+
+  return (
+    descending(entityAspectGain(a), entityAspectGain(b)) ||
+    descending(requestedAspectGain(a), requestedAspectGain(b)) ||
+    descending(a.grade.supportStrength, b.grade.supportStrength) ||
+    descending(a.relevance.score, b.relevance.score) ||
+    descending(a.relevance.qualityScore, b.relevance.qualityScore) ||
+    descending(
+      granularityScore(a.chunk.metadata.evidenceGranularity),
+      granularityScore(b.chunk.metadata.evidenceGranularity),
+    ) ||
+    descending(
+      (sourceChunkCounts.get(a.chunk.sourceId) || 0) === 0 ? 1 : 0,
+      (sourceChunkCounts.get(b.chunk.sourceId) || 0) === 0 ? 1 : 0,
+    ) ||
+    a.chunk.id.localeCompare(b.chunk.id)
+  );
+}
+
+// ─── Pack Coverage and Status ────────────────────────────
+
 function recomputePackCoverage(
   packChunks: GradedEvidenceChunk[],
   retrievalContext: RetrievalContext,
 ): EvidenceCoverage {
-  // Reuse existing computeEvidenceCoverage logic
-  // This operates on the graded chunks and respects the same trust semantics
   return computeEvidenceCoverage(packChunks, retrievalContext);
 }
 
-// ─── Pack Status Derivation ──────────────────────────────
-
-/**
- * Derive EvidencePack.status from packCoverage.
- *
- * Rules:
- *   - zero trusted evidence → insufficient_evidence
- *   - any required primary entity missing → insufficient_evidence
- *   - any requested aspect missing → partially_grounded
- *   - comparisonLike and any entity×aspect cell missing → partially_grounded
- *   - else → grounded
- *
- * "grounded" means sufficient evidence coverage to ATTEMPT synthesis.
- * It does NOT mean the final answer is validated.
- */
 function derivePackStatus(
   packCoverage: EvidenceCoverage,
   packChunkCount: number,
 ): EvidencePackStatus {
   if (packChunkCount === 0) return "insufficient_evidence";
-
   if (packCoverage.missingEntities.length > 0) return "insufficient_evidence";
-
   if (packCoverage.missingAspects.length > 0) return "partially_grounded";
 
   if (packCoverage.comparisonLike) {
-    for (const eac of packCoverage.entityAspectCoverage) {
-      if (eac.missingAspects.length > 0) return "partially_grounded";
+    for (const entityAspect of packCoverage.entityAspectCoverage) {
+      if (entityAspect.missingAspects.length > 0) {
+        return "partially_grounded";
+      }
     }
   }
 
   return "grounded";
 }
 
-// ─── Source Set Construction ─────────────────────────────
+// ─── Source Correspondence and Final Invariants ───────────
+
+function buildResolverSourceMap(
+  resolvedSources: SourceItem[],
+): Map<string, SourceItem> {
+  const sourceMap = new Map<string, SourceItem>();
+  for (const source of resolvedSources) {
+    sourceMap.set(source.feed_item_id, source);
+  }
+  return sourceMap;
+}
 
 /**
- * Build exact source set from resolved sources, matched by selected chunk.sourceId.
- *
- * Only includes resolver-approved sources that have at least one packed chunk.
- * Canonical-deduped via canonicalizeUrl.
- * Preserves resolver source metadata.
+ * Final fail-closed pass. A packed chunk must map to an exact resolver source,
+ * and canonical URL dedupe may not leave a chunk pointing at an omitted source.
+ * This pass also re-enforces every hard pack limit without truncating text.
  */
-function buildPackSourceSet(
-  packChunkSourceIds: Set<string>,
-  resolvedSources: SourceItem[],
-): SourceItem[] {
-  const seenCanonical = new Set<string>();
-  const sources: SourceItem[] = [];
+function enforceFinalPackInvariants(params: {
+  selected: GradedEvidenceChunk[];
+  resolvedSourceMap: Map<string, SourceItem>;
+  comparisonLike: boolean;
+  requiredEntitySet: Set<string>;
+  requiredAspectSet: Set<string>;
+  droppedForBudget: Set<string>;
+  droppedForPerSourceLimit: Set<string>;
+}): GradedEvidenceChunk[] {
+  const {
+    selected,
+    resolvedSourceMap,
+    comparisonLike,
+    requiredEntitySet,
+    requiredAspectSet,
+    droppedForBudget,
+    droppedForPerSourceLimit,
+  } = params;
+  const finalSelected: GradedEvidenceChunk[] = [];
+  const finalSourceCounts = new Map<string, number>();
+  const canonicalSourceIds = new Map<string, string>();
+  let totalChars = 0;
 
-  for (const source of resolvedSources) {
-    if (!packChunkSourceIds.has(source.feed_item_id)) continue;
-    const canon = canonicalizeUrl(source.url || "");
-    if (!canon || seenCanonical.has(canon)) continue;
-    seenCanonical.add(canon);
-    sources.push(source);
+  for (const candidate of selected) {
+    const source = resolvedSourceMap.get(candidate.chunk.sourceId);
+    if (!source) continue;
+
+    const canonicalUrl = canonicalizeUrl(source.url || "");
+    if (!canonicalUrl) continue;
+    const existingSourceId = canonicalSourceIds.get(canonicalUrl);
+    if (existingSourceId && existingSourceId !== candidate.chunk.sourceId) {
+      continue;
+    }
+
+    if (finalSelected.length >= MAX_PACK_CHUNKS) continue;
+    if (candidate.chunk.text.length + totalChars > MAX_PACK_CHARS) {
+      droppedForBudget.add(candidate.chunk.id);
+      continue;
+    }
+
+    const sourceCount = finalSourceCounts.get(candidate.chunk.sourceId) || 0;
+    const closesGap = closesRequiredCoverageGap(
+      candidate,
+      finalSelected,
+      comparisonLike,
+      requiredEntitySet,
+      requiredAspectSet,
+    );
+    if (
+      sourceCount >= HARD_MAX_CHUNKS_PER_SOURCE ||
+      (sourceCount === MAX_CHUNKS_PER_SOURCE && !closesGap)
+    ) {
+      droppedForPerSourceLimit.add(candidate.chunk.id);
+      continue;
+    }
+
+    // These checks are intentionally repeated at the final boundary.
+    if (!candidate.grade.relevant) continue;
+    if (candidate.grade.supportStrength < TRUST_THRESHOLD) continue;
+    if (candidate.chunk.metadata.evidenceGranularity === "metadata_only") continue;
+
+    finalSelected.push(candidate);
+    totalChars += candidate.chunk.text.length;
+    finalSourceCounts.set(
+      candidate.chunk.sourceId,
+      sourceCount + 1,
+    );
+    canonicalSourceIds.set(canonicalUrl, candidate.chunk.sourceId);
   }
 
+  return finalSelected;
+}
+
+function buildPackSourceSet(
+  selected: GradedEvidenceChunk[],
+  resolvedSourceMap: Map<string, SourceItem>,
+): SourceItem[] {
+  const sources: SourceItem[] = [];
+  const seenSourceIds = new Set<string>();
+  for (const chunk of selected) {
+    if (seenSourceIds.has(chunk.chunk.sourceId)) continue;
+    const source = resolvedSourceMap.get(chunk.chunk.sourceId);
+    if (!source) continue;
+    sources.push(source);
+    seenSourceIds.add(chunk.chunk.sourceId);
+  }
   return sources;
 }
 
 // ─── Upgrade Guard ───────────────────────────────────────
 
-/**
- * Verify packCoverage ⊆ retrievalCoverage.
- *
- * Pack may preserve or REDUCE coverage but can NEVER upgrade beyond
- * retrieval evidence. If violated, fail closed by removing unsupported coverage.
- */
 function enforceUpgradeGuard(
   packCoverage: EvidenceCoverage,
   retrievalCoverage: EvidenceCoverage,
 ): EvidenceCoverage {
-  // coveredEntities ⊆ retrievalCoverage.coveredEntities
   const retrievalEntitySet = new Set(
-    retrievalCoverage.coveredEntities.map((e) => e.toLowerCase()),
+    retrievalCoverage.coveredEntities.map((entity) => entity.toLowerCase()),
   );
-  const validCoveredEntities = packCoverage.coveredEntities.filter((e) =>
-    retrievalEntitySet.has(e.toLowerCase()),
+  const validCoveredEntities = packCoverage.coveredEntities.filter((entity) =>
+    retrievalEntitySet.has(entity.toLowerCase()),
   );
   const validMissingEntities = packCoverage.requiredEntities.filter(
-    (e) => !validCoveredEntities.some((ve) => ve.toLowerCase() === e.toLowerCase()),
+    (entity) =>
+      !validCoveredEntities.some(
+        (covered) => covered.toLowerCase() === entity.toLowerCase(),
+      ),
   );
 
-  // coveredAspects ⊆ retrievalCoverage.coveredAspects
   const retrievalAspectSet = new Set(retrievalCoverage.coveredAspects);
-  const validCoveredAspects = packCoverage.coveredAspects.filter((a) =>
-    retrievalAspectSet.has(a),
+  const validCoveredAspects = packCoverage.coveredAspects.filter((aspect) =>
+    retrievalAspectSet.has(aspect),
   );
   const validMissingAspects = packCoverage.requiredAspects.filter(
-    (a) => !validCoveredAspects.includes(a),
+    (aspect) => !validCoveredAspects.includes(aspect),
   );
 
-  // Entity×Aspect matrix: each covered pair must exist in retrieval
-  const retrievalEAPairs = new Set<string>();
-  for (const eac of retrievalCoverage.entityAspectCoverage) {
-    for (const a of eac.coveredAspects) {
-      retrievalEAPairs.add(`${eac.entity.toLowerCase()}|${a}`);
+  const retrievalEntityAspectPairs = new Set<string>();
+  for (const entityAspect of retrievalCoverage.entityAspectCoverage) {
+    for (const aspect of entityAspect.coveredAspects) {
+      retrievalEntityAspectPairs.add(
+        `${entityAspect.entity.toLowerCase()}|${aspect}`,
+      );
     }
   }
 
-  const validEntityAspectCoverage = packCoverage.entityAspectCoverage.map((eac) => {
-    const validCovered = eac.coveredAspects.filter((a) =>
-      retrievalEAPairs.has(`${eac.entity.toLowerCase()}|${a}`),
-    );
-    const validMissing = packCoverage.requiredAspects.filter(
-      (a) => !validCovered.includes(a),
-    );
-    return {
-      entity: eac.entity,
-      coveredAspects: validCovered,
-      missingAspects: validMissing,
-    };
-  });
+  const validEntityAspectCoverage = packCoverage.entityAspectCoverage.map(
+    (entityAspect) => {
+      const validCovered = entityAspect.coveredAspects.filter((aspect) =>
+        retrievalEntityAspectPairs.has(
+          `${entityAspect.entity.toLowerCase()}|${aspect}`,
+        ),
+      );
+      const validMissing = packCoverage.requiredAspects.filter(
+        (aspect) => !validCovered.includes(aspect),
+      );
+      return {
+        entity: entityAspect.entity,
+        coveredAspects: validCovered,
+        missingAspects: validMissing,
+      };
+    },
+  );
 
   return {
     ...packCoverage,
@@ -463,254 +546,221 @@ function enforceUpgradeGuard(
 
 // ─── Main Build Function ─────────────────────────────────
 
-/**
- * Build a deterministic, coverage-aware EvidencePack from retrieval results.
- *
- * Primary API:
- *   buildEvidencePack({ retrievalContext, evidenceRetrieval }) → EvidencePack
- *
- * Deterministic. No LLM. No network. No paid services.
- */
 export function buildEvidencePack(params: {
   retrievalContext: RetrievalContext;
   evidenceRetrieval: EvidenceRetrievalResult;
 }): EvidencePack {
   const { retrievalContext, evidenceRetrieval } = params;
-
   const {
     gradedChunks,
     resolvedSources,
     coverage: retrievalCoverage,
   } = evidenceRetrieval;
 
-  // ── Step 1: Filter to trusted candidates ────────────────
   const trustedCandidates = filterTrustedCandidates(gradedChunks);
-
-  // ── Step 2: Prepare selection state ─────────────────────
   const selected: GradedEvidenceChunk[] = [];
-  const selectedChunkIds = new Set<string>();
+  const remainingCandidates = [...trustedCandidates];
   const sourceChunkCounts = new Map<string, number>();
+  const selectionReasons = new Map<string, string[]>();
   const requiredEntitySet = new Set(
     retrievalContext.primaryEntities
-      .filter((e) => e.required)
-      .map((e) => e.canonical.toLowerCase()),
+      .filter((entity) => entity.required)
+      .map((entity) => entity.canonical.toLowerCase()),
   );
   const requiredAspectSet = new Set(retrievalContext.requestedAspects);
   const comparisonLike = retrievalCoverage.comparisonLike;
+  const resolvedSourceMap = buildResolverSourceMap(resolvedSources);
 
-  // Diagnostics
-  let droppedForBudget = 0;
-  let droppedForRedundancy = 0;
-  let droppedForPerSourceLimit = 0;
-
-  // ── Step 3: Coverage-first greedy selection ─────────────
-  // Each iteration picks the candidate with highest utility that fits constraints.
-  // Stops at MAX_PACK_CHUNKS or MAX_PACK_CHARS.
-
-  const remainingCandidates = [...trustedCandidates];
+  const droppedForBudget = new Set<string>();
+  const droppedForRedundancy = new Set<string>();
+  const droppedForPerSourceLimit = new Set<string>();
+  const tokenCache = new Map<string, string[]>();
   let totalChars = 0;
 
-  // Build token cache for redundancy detection
-  const tokenCache = new Map<string, string[]>();
+  const getCandidateTokens = (candidate: GradedEvidenceChunk): string[] => {
+    // Stable chunk identity is the cache key; text prefixes can collide.
+    const key = candidate.chunk.id;
+    const cached = tokenCache.get(key);
+    if (cached) return cached;
+    const tokens = normalizeTokens(candidate.chunk.text);
+    tokenCache.set(key, tokens);
+    return tokens;
+  };
 
-  function getCandidateTokens(text: string): string[] {
-    // Simple cache by first 100 chars as key
-    const key = text.slice(0, 100);
-    if (!tokenCache.has(key)) {
-      tokenCache.set(key, normalizeTokens(text));
+  const isRedundant = (candidate: GradedEvidenceChunk): boolean => {
+    const candidateTokens = getCandidateTokens(candidate);
+    return selected.some(
+      (selectedChunk) =>
+        jaccardSimilarity(candidateTokens, getCandidateTokens(selectedChunk)) >
+        REDUNDANCY_THRESHOLD,
+    );
+  };
+
+  /**
+   * Evaluate all deterministic rejection rules for one scoring attempt.
+   * A candidate may be recorded in multiple unique categories, but a category
+   * can never count the same chunk more than once.
+   */
+  const canSelectCandidate = (candidate: GradedEvidenceChunk): boolean => {
+    const sourceCount = sourceChunkCounts.get(candidate.chunk.sourceId) || 0;
+    const closesGap = closesRequiredCoverageGap(
+      candidate,
+      selected,
+      comparisonLike,
+      requiredEntitySet,
+      requiredAspectSet,
+    );
+    const sourceLimitRejected =
+      sourceCount >= HARD_MAX_CHUNKS_PER_SOURCE ||
+      (sourceCount === MAX_CHUNKS_PER_SOURCE && !closesGap);
+    if (sourceLimitRejected) {
+      droppedForPerSourceLimit.add(candidate.chunk.id);
     }
-    return tokenCache.get(key)!;
+
+    const budgetRejected = totalChars + candidate.chunk.text.length > MAX_PACK_CHARS;
+    if (budgetRejected) droppedForBudget.add(candidate.chunk.id);
+
+    const redundancyRejected = isRedundant(candidate) && !closesGap;
+    if (redundancyRejected) droppedForRedundancy.add(candidate.chunk.id);
+
+    return !sourceLimitRejected && !budgetRejected && !redundancyRejected;
+  };
+
+  const selectCandidate = (candidate: GradedEvidenceChunk): void => {
+    const reasons = computeSelectionReasons(
+      candidate,
+      selected,
+      comparisonLike,
+      requiredEntitySet,
+      requiredAspectSet,
+      sourceChunkCounts,
+    );
+    selectionReasons.set(candidate.chunk.id, reasons);
+    selected.push(candidate);
+    totalChars += candidate.chunk.text.length;
+    sourceChunkCounts.set(
+      candidate.chunk.sourceId,
+      (sourceChunkCounts.get(candidate.chunk.sourceId) || 0) + 1,
+    );
+    const index = remainingCandidates.indexOf(candidate);
+    if (index >= 0) remainingCandidates.splice(index, 1);
+  };
+
+  // ── Phase A: deterministic comparison entity reservation ──
+  if (comparisonLike && requiredEntitySet.size > 1) {
+    for (const requiredEntity of requiredEntitySet) {
+      const alreadyCovered = selected.some((candidate) =>
+        candidate.grade.entitySupport.some(
+          (entity) => entity.toLowerCase() === requiredEntity,
+        ),
+      );
+      if (alreadyCovered || selected.length >= MAX_PACK_CHUNKS) continue;
+
+      const reservationCandidates = remainingCandidates
+        .filter((candidate) =>
+          candidate.grade.entitySupport.some(
+            (entity) => entity.toLowerCase() === requiredEntity,
+          ),
+        )
+        .sort((a, b) =>
+          compareReservationCandidates(
+            a,
+            b,
+            requiredEntity,
+            selected,
+            requiredAspectSet,
+            sourceChunkCounts,
+          ),
+        );
+
+      for (const candidate of reservationCandidates) {
+        if (!canSelectCandidate(candidate)) continue;
+        selectCandidate(candidate);
+        break;
+      }
+    }
   }
 
+  // ── Phase B: coverage-first greedy selection ────────────
   while (selected.length < MAX_PACK_CHUNKS && remainingCandidates.length > 0) {
-    // Score all remaining candidates
-    let bestIdx = -1;
+    let bestCandidate: GradedEvidenceChunk | undefined;
     let bestUtility = -Infinity;
 
-    for (let i = 0; i < remainingCandidates.length; i++) {
-      const candidate = remainingCandidates[i];
-      const sourceCount =
-        sourceChunkCounts.get(candidate.chunk.sourceId) || 0;
-
-      // Source diversity: soft limit
-      if (sourceCount >= MAX_CHUNKS_PER_SOURCE) {
-        // Allow exceeding by 1 only to close a required coverage gap
-        const { entityGain, comparisonEntityAspectGain, aspectGain } =
-          computeCoverageGain(
-            candidate,
-            selected,
-            retrievalContext,
-            comparisonLike,
-            requiredEntitySet,
-            requiredAspectSet,
-          );
-        const hasRequiredGap =
-          entityGain > 0 || comparisonEntityAspectGain > 0 || aspectGain > 0;
-
-        if (!hasRequiredGap && sourceCount >= HARD_MAX_CHUNKS_PER_SOURCE) {
-          droppedForPerSourceLimit++;
-          continue;
-        }
-        if (!hasRequiredGap) {
-          // Still at soft limit but no required gap — deprioritize but allow
-        }
-      }
-
-      // Char budget check
-      if (totalChars + candidate.chunk.text.length > MAX_PACK_CHARS) {
-        droppedForBudget++;
-        continue;
-      }
-
-      // Redundancy check: Jaccard overlap with already-selected chunks
-      const candidateTokens = getCandidateTokens(candidate.chunk.text);
-      let isRedundant = false;
-      for (const sel of selected) {
-        const selTokens = getCandidateTokens(sel.chunk.text);
-        if (jaccardSimilarity(candidateTokens, selTokens) > REDUNDANCY_THRESHOLD) {
-          isRedundant = true;
-          break;
-        }
-      }
-
-      if (isRedundant) {
-        // Check if this chunk closes a required coverage gap — if so, still allow
-        const { entityGain, comparisonEntityAspectGain, aspectGain } =
-          computeCoverageGain(
-            candidate,
-            selected,
-            retrievalContext,
-            comparisonLike,
-            requiredEntitySet,
-            requiredAspectSet,
-          );
-        const hasRequiredGap =
-          entityGain > 0 || comparisonEntityAspectGain > 0 || aspectGain > 0;
-        if (!hasRequiredGap) {
-          droppedForRedundancy++;
-          continue;
-        }
-      }
-
-      // Compute selection utility
-      const { utility } = computeSelectionUtility(
+    for (const candidate of remainingCandidates) {
+      if (!canSelectCandidate(candidate)) continue;
+      const utility = computeSelectionUtility(
         candidate,
         selected,
-        retrievalContext,
         comparisonLike,
         requiredEntitySet,
         requiredAspectSet,
         sourceChunkCounts,
       );
-
-      if (utility > bestUtility) {
+      if (
+        utility > bestUtility ||
+        (utility === bestUtility &&
+          (!bestCandidate || candidate.chunk.id.localeCompare(bestCandidate.chunk.id) < 0))
+      ) {
+        bestCandidate = candidate;
         bestUtility = utility;
-        bestIdx = i;
       }
     }
 
-    if (bestIdx === -1) break; // no more candidates fit
-
-    // Select the best candidate
-    const chosen = remainingCandidates.splice(bestIdx, 1)[0];
-    const reasons: string[] = [];
-
-    // Recompute reasons for the chosen candidate
-    const { entityGain, comparisonEntityAspectGain, aspectGain } =
-      computeCoverageGain(
-        chosen,
-        selected,
-        retrievalContext,
-        comparisonLike,
-        requiredEntitySet,
-        requiredAspectSet,
-      );
-
-    if (entityGain > 0) {
-      for (const e of chosen.grade.entitySupport) {
-        if (requiredEntitySet.has(e.toLowerCase())) {
-          reasons.push(`required_entity:${e}`);
-        }
-      }
-    }
-    if (comparisonEntityAspectGain > 0) {
-      for (const e of chosen.grade.entitySupport) {
-        for (const a of chosen.grade.aspectSupport) {
-          if (
-            requiredEntitySet.has(e.toLowerCase()) &&
-            requiredAspectSet.has(a)
-          ) {
-            reasons.push(`entity_aspect:${e}:${a}`);
-          }
-        }
-      }
-    }
-    if (aspectGain > 0) {
-      for (const a of chosen.grade.aspectSupport) {
-        if (requiredAspectSet.has(a)) {
-          reasons.push(`requested_aspect:${a}`);
-        }
-      }
-    }
-    if (chosen.grade.supportStrength >= 0.7) reasons.push("high_support");
-    const srcCount = sourceChunkCounts.get(chosen.chunk.sourceId) || 0;
-    if (srcCount === 0) reasons.push("source_diversity");
-
-    // Add to selected
-    selected.push(chosen);
-    selectedChunkIds.add(chosen.chunk.id);
-    totalChars += chosen.chunk.text.length;
-    sourceChunkCounts.set(
-      chosen.chunk.sourceId,
-      (sourceChunkCounts.get(chosen.chunk.sourceId) || 0) + 1,
-    );
+    if (!bestCandidate) break;
+    selectCandidate(bestCandidate);
   }
 
-  // ── Step 4: Build EvidencePackChunks ────────────────────
-  const packChunks: EvidencePackChunk[] = selected.map((gc) => ({
-    chunkId: gc.chunk.id,
-    sourceId: gc.chunk.sourceId,
-    text: gc.chunk.text,
-    title: gc.chunk.metadata.title,
-    url: gc.chunk.metadata.url,
-    canonicalUrl: gc.chunk.metadata.canonicalUrl,
-    domain: gc.chunk.metadata.domain,
-    publishedAt: gc.chunk.metadata.publishedAt,
-    evidenceGranularity: gc.chunk.metadata.evidenceGranularity,
-    entitySupport: gc.grade.entitySupport,
-    aspectSupport: gc.grade.aspectSupport,
-    lockedPhraseSupport: gc.relevance.lockedPhraseSupport,
-    supportStrength: gc.grade.supportStrength,
-    hybridScore: gc.relevance.score,
-    qualityScore: gc.relevance.qualityScore,
-    gradingMode: gc.grade.gradingMode as "llm" | "deterministic_fallback",
-    selectionReasons: [], // reasons computed per-chunk above but simplified
+  // ── Final fail-closed pruning and recomputation ─────────
+  const finalSelected = enforceFinalPackInvariants({
+    selected,
+    resolvedSourceMap,
+    comparisonLike,
+    requiredEntitySet,
+    requiredAspectSet,
+    droppedForBudget,
+    droppedForPerSourceLimit,
+  });
+
+  const packChunks: EvidencePackChunk[] = finalSelected.map((graded) => ({
+    chunkId: graded.chunk.id,
+    sourceId: graded.chunk.sourceId,
+    text: graded.chunk.text,
+    title: graded.chunk.metadata.title,
+    url: graded.chunk.metadata.url,
+    canonicalUrl: graded.chunk.metadata.canonicalUrl,
+    domain: graded.chunk.metadata.domain,
+    publishedAt: graded.chunk.metadata.publishedAt,
+    evidenceGranularity: graded.chunk.metadata.evidenceGranularity,
+    entitySupport: graded.grade.entitySupport,
+    aspectSupport: graded.grade.aspectSupport,
+    lockedPhraseSupport: graded.relevance.lockedPhraseSupport,
+    supportStrength: graded.grade.supportStrength,
+    hybridScore: graded.relevance.score,
+    qualityScore: graded.relevance.qualityScore,
+    gradingMode: graded.grade.gradingMode as "llm" | "deterministic_fallback",
+    selectionReasons: [
+      ...new Set(selectionReasons.get(graded.chunk.id) || []),
+    ],
   }));
 
-  // ── Step 5: Recompute pack coverage ─────────────────────
-  let packCoverage = recomputePackCoverage(selected, retrievalContext);
-
-  // ── Step 6: Enforce upgrade guard ───────────────────────
+  const totalCharsFinal = finalSelected.reduce(
+    (total, chunk) => total + chunk.chunk.text.length,
+    0,
+  );
+  let packCoverage = recomputePackCoverage(finalSelected, retrievalContext);
   packCoverage = enforceUpgradeGuard(packCoverage, retrievalCoverage);
+  const status = derivePackStatus(packCoverage, finalSelected.length);
+  const sources = buildPackSourceSet(finalSelected, resolvedSourceMap);
 
-  // ── Step 7: Derive status ───────────────────────────────
-  const status = derivePackStatus(packCoverage, selected.length);
-
-  // ── Step 8: Build source set ────────────────────────────
-  const packSourceIds = new Set(selected.map((gc) => gc.chunk.sourceId));
-  const sources = buildPackSourceSet(packSourceIds, resolvedSources);
-
-  // ── Step 9: Build diagnostics ───────────────────────────
   const diagnostics = {
     candidateChunkCount: trustedCandidates.length,
-    selectedChunkCount: selected.length,
+    selectedChunkCount: finalSelected.length,
     selectedSourceCount: sources.length,
-    droppedForBudget,
-    droppedForRedundancy,
-    droppedForPerSourceLimit,
+    droppedForBudget: droppedForBudget.size,
+    droppedForRedundancy: droppedForRedundancy.size,
+    droppedForPerSourceLimit: droppedForPerSourceLimit.size,
   };
 
-  // Safe diagnostic log — no chunk text, no article bodies
   console.log(
     JSON.stringify({
       log: "[evidence-pack] built",
@@ -718,7 +768,7 @@ export function buildEvidencePack(params: {
       candidate_chunks: diagnostics.candidateChunkCount,
       selected_chunks: diagnostics.selectedChunkCount,
       selected_sources: diagnostics.selectedSourceCount,
-      total_chars: totalChars,
+      total_chars: totalCharsFinal,
       covered_entities: `${packCoverage.coveredEntities.length}/${packCoverage.requiredEntities.length}`,
       missing_entities: packCoverage.missingEntities.length,
       covered_aspects: `${packCoverage.coveredAspects.length}/${packCoverage.requiredAspects.length}`,
@@ -735,7 +785,7 @@ export function buildEvidencePack(params: {
     retrievalCoverage,
     packCoverage,
     status,
-    totalChars,
+    totalChars: totalCharsFinal,
     selectionDiagnostics: diagnostics,
   };
 }
