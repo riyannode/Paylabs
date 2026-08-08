@@ -731,6 +731,42 @@ function hasExplicitMissingCoverage(answer: string, pack: EvidencePack): boolean
     .every((label) => !label || normalizedAnswer.includes(label));
 }
 
+/**
+ * Normalize only grouped chunk citations whose exact IDs are already present
+ * in the deterministic EvidencePack citation map. Validation remains strict;
+ * this helper changes bracket syntax only and never invents or relocates IDs.
+ */
+export function canonicalizeSafeGroupedInlineCitations(
+  answer: string,
+  citationMap: EvidencePackCitationMap,
+): string {
+  const citationPattern = /S[1-9]\d*-C[1-9]\d*/g;
+  return answer.replace(/\[([^\]]*)\]/g, (bracket, body: string) => {
+    const normalizedBody = body.trim();
+    if (!normalizedBody.startsWith("S")) return bracket;
+
+    const matches = [...normalizedBody.matchAll(citationPattern)];
+    if (matches.length === 0) return bracket;
+
+    const citationIds = matches.map((match) => match[0]);
+    const remaining = normalizedBody.replace(citationPattern, "");
+    if (!/^[\s,;]*$/.test(remaining)) return bracket;
+
+    for (let index = 1; index < matches.length; index += 1) {
+      const previous = matches[index - 1];
+      const previousEnd = (previous.index ?? 0) + previous[0].length;
+      const separator = normalizedBody.slice(previousEnd, matches[index].index ?? previousEnd);
+      if (!/^[\s,;]+$/.test(separator)) return bracket;
+    }
+
+    if (citationIds.some((citationId) => !citationMap.byCitationId.has(citationId))) {
+      return bracket;
+    }
+
+    return citationIds.map((citationId) => `[${citationId}]`).join("");
+  });
+}
+
 function extractV2CitationIds(answer: string): {
   citedIds: string[];
   malformed: boolean;
@@ -1113,15 +1149,22 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
     };
   }
 
+  const canonicalizedModelAnswer = canonicalizeSafeGroupedInlineCitations(
+    synthesisCall.data.answer,
+    citationMap,
+  );
   const modelOutput = pack.status === "partially_grounded" && synthesisCall.data.answer.trim()
     ? {
         ...synthesisCall.data,
         answer: [
-          synthesisCall.data.answer.trim(),
+          canonicalizedModelAnswer.trim(),
           buildDeterministicPartialDisclosure(pack),
         ].filter(Boolean).join("\n\n"),
       }
-    : synthesisCall.data;
+    : {
+        ...synthesisCall.data,
+        answer: canonicalizedModelAnswer,
+      };
   const validated = validateEvidencePackModelOutput(modelOutput, pack, citationMap);
   const synthesisProvider = metaString(synthesisCall.meta, "provider");
   const synthesisModel = metaString(synthesisCall.meta, "model");
