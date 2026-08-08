@@ -598,6 +598,7 @@ function v2FailureResult(
     verificationModel?: string | null;
     verificationLatencyMs?: number | null;
     unsupportedClaimCount?: number;
+    citationValidationOk?: boolean;
     claimSupportValidationOk?: boolean;
   },
 ): GroundedSynthesisResult {
@@ -613,7 +614,7 @@ function v2FailureResult(
     availableChunkCitationIds: citationMap.availableChunkCitationIds,
     errorSafe: errorSafe.slice(0, 220),
     unknownCitationIds: [],
-    citationValidationOk: false,
+    citationValidationOk: metadata?.citationValidationOk ?? false,
     claimSupportValidationOk: metadata?.claimSupportValidationOk ?? false,
     synthesisProvider: metadata?.synthesisProvider ?? null,
     synthesisModel: metadata?.synthesisModel ?? null,
@@ -688,15 +689,26 @@ function extractV2CitationIds(answer: string): {
   return { citedIds: [...new Set(citedIds)], malformed };
 }
 
-function isV2HeadingOrUncertainty(unit: string): boolean {
+function isV2HeadingOrPureUncertainty(unit: string): boolean {
   const normalized = unit
     .replace(/\[(S[1-9]\d*-C[1-9]\d*)\]/g, "")
-    .replace(/^\s*[-*+]\s+/, "")
+    .replace(/^\s*(?:[-*+]\s+|\d{1,3}[.)]\s+)/, "")
     .replace(/^\s*#+\s*/, "")
     .trim();
   if (!normalized) return true;
   if (/^#{1,6}\s/.test(unit.trim())) return true;
-  return /(?:could not be verified|cannot be verified|unable to verify|not verified|insufficient evidence|not enough evidence|no reliable evidence)/i.test(normalized);
+
+  // A factual clause must not piggyback on an uncertainty statement. Be
+  // conservative around conjunctions that introduce additional content and
+  // only exempt a single, verification-focused sentence.
+  if (/\b(?:but|while|whereas|however|although|though|yet)\b/i.test(normalized)) return false;
+  if (normalized.split(/[.!?]+/).map((part) => part.trim()).filter(Boolean).length !== 1) return false;
+
+  return [
+    /^.+\b(?:could not be verified|cannot be verified|unable to verify|unable to be verified|not verified)\b(?:\s+(?:from|in|with|based on|using)\s+.+)?$/i,
+    /^(?:the )?(?:(?:available|supplied) )?evidence\s+(?:is|was|remains)\s+(?:insufficient|not enough)(?:\s+(?:to|for|about|on)\s+.+)?$/i,
+    /^no reliable evidence(?:\s+(?:was|is|exists|available|to|for|about|on)\s+.+)?$/i,
+  ].some((pattern) => pattern.test(normalized));
 }
 
 type V2FactualUnit = {
@@ -710,11 +722,11 @@ function splitV2FactualUnits(answer: string): V2FactualUnit[] {
   const blocks = answer.split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean);
   for (const block of blocks) {
     const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
-    const hasListItems = lines.some((line) => /^[-*+]\s+/.test(line));
+    const hasListItems = lines.some((line) => /^(?:[-*+]\s+|\d{1,3}[.)]\s+)/.test(line));
     const candidates = hasListItems ? lines : [block];
     for (const candidate of candidates) {
-      const text = candidate.replace(/^[-*+]\s+/, "").trim();
-      if (!text || isV2HeadingOrUncertainty(text)) continue;
+      const text = candidate.replace(/^(?:[-*+]\s+|\d{1,3}[.)]\s+)/, "").trim();
+      if (!text || isV2HeadingOrPureUncertainty(text)) continue;
       const { citedIds } = extractV2CitationIds(text);
       units.push({ paragraphId: `P${units.length + 1}`, text, citationIds: citedIds });
     }
@@ -874,7 +886,11 @@ async function verifyEvidencePackClaims(
   const expectedIds = units.map((unit) => unit.paragraphId);
   const returnedIds = result.data.paragraphs.map((paragraph) => paragraph.paragraph_id);
   const validIds = returnedIds.every((id) => expectedIds.includes(id));
-  const exactIds = validIds && citationSetsMatch(expectedIds, returnedIds);
+  const uniqueIds = new Set(returnedIds).size === returnedIds.length;
+  const exactIds = returnedIds.length === expectedIds.length
+    && uniqueIds
+    && validIds
+    && citationSetsMatch(expectedIds, returnedIds);
   const invalidSupportRows = result.data.paragraphs.filter((paragraph) => !paragraph.supported);
   const malformedSupportedRows = result.data.paragraphs.some((paragraph) =>
     paragraph.supported && paragraph.unsupported_claims.length > 0
@@ -1049,6 +1065,7 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
         verificationModel,
         verificationLatencyMs,
         unsupportedClaimCount: claimVerification.unsupportedClaimCount,
+        citationValidationOk: true,
         claimSupportValidationOk: false,
       }),
       ...baseDiagnostics,
