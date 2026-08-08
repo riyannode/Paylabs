@@ -699,9 +699,11 @@ function isV2HeadingOrPureUncertainty(unit: string): boolean {
   if (/^#{1,6}\s/.test(unit.trim())) return true;
 
   // A factual clause must not piggyback on an uncertainty statement. Be
-  // conservative around conjunctions that introduce additional content and
-  // only exempt a single, verification-focused sentence.
-  if (/\b(?:but|while|whereas|however|although|though|yet)\b/i.test(normalized)) return false;
+  // conservative around conjunctions and clause punctuation that can
+  // introduce additional content; only exempt a single, verification-focused
+  // sentence.
+  if (/\b(?:and|or|but|while|whereas|however|although|though|yet)\b/i.test(normalized)) return false;
+  if (/[,;:—]/.test(normalized)) return false;
   if (normalized.split(/[.!?]+/).map((part) => part.trim()).filter(Boolean).length !== 1) return false;
 
   return [
