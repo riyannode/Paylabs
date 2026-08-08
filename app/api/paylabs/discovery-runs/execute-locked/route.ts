@@ -951,6 +951,7 @@ export async function POST(req: NextRequest) {
     // ── Build exit output ───────────────────────────────────
     const { buildExitOutput } = await import("@/lib/paylabs/delegated-runtime/exit-output");
     const exitOutput = buildExitOutput(result);
+    const groundedEnabled = isGroundedAnswerEnabled();
 
     // Source context
     if (result.sourceContext) {
@@ -961,8 +962,26 @@ export async function POST(req: NextRequest) {
       exitOutput.source_retrieval_mode = result.sourceContext.retrieval_mode;
     }
 
+    const groundedSources = groundedEnabled
+      ? (ragEvidencePack?.sources ?? []).map((source, index) => ({
+          source_label: `S${index + 1}`,
+          title: source.title,
+          url: source.url,
+          domain: source.domain,
+          rank: source.rank,
+          source_kind: source.source_kind,
+          provider: source.provider,
+        }))
+      : [];
+
+    if (groundedEnabled) {
+      // The EvidencePack source set is the final presentation set. Keep
+      // result.sourceContext as retrieval diagnostics only.
+      exitOutput.sources_used = ragEvidencePack?.sources ?? [];
+      exitOutput.source_count = exitOutput.sources_used.length;
+    }
+
     // ── Final answer: optional post-retrieval grounded synthesis ──
-    const groundedEnabled = isGroundedAnswerEnabled();
     let finalAnswer: string | null = null;
     let sourceAvailabilityNote: string | null = null;
     let groundingResult: GroundedSynthesisResult | null = null;
@@ -974,7 +993,7 @@ export async function POST(req: NextRequest) {
     try {
       const { buildSourceGroundedFinalAnswer } = await import("@/lib/paylabs/sources/source-final-answer");
       const { synthesizeGroundedAnswerFromEvidencePack } = await import("@/lib/paylabs/sources/source-grounded-synthesis");
-      const sourcesUsed = exitOutput.sources_used || [];
+      const sourcesUsed = result.sourceContext?.sources_used || [];
       sourceAvailabilityNote = buildSourceGroundedFinalAnswer({
         goal: resolvedGoal,
         sourcesUsed,
@@ -1020,6 +1039,7 @@ export async function POST(req: NextRequest) {
 
     const groundingDiagnostics = groundedEnabled
       ? {
+          authoritative: true as const,
           version: "grounded_answer_v2" as const,
           status: groundingResult?.status ?? "synthesis_failed",
           source_ids_available: groundingResult?.availableSourceIds ?? groundingSourceIds,
@@ -1037,6 +1057,7 @@ export async function POST(req: NextRequest) {
           verification_model: groundingResult?.verificationModel ?? null,
           verification_latency_ms: groundingResult?.verificationLatencyMs ?? null,
           error_safe: groundingResult?.errorSafe ?? null,
+          source_refs: groundedSources,
         }
       : null;
 
@@ -1049,11 +1070,12 @@ export async function POST(req: NextRequest) {
         .eq("id", discoveryRunId)
         .single();
       const trace = (existingRun?.agent_trace as Record<string, unknown>) || {};
+      const retrievalSourceContext = result.sourceContext;
       const sourceContextTrace = {
-        source_count: exitOutput.source_count || 0,
-        source_confidence: exitOutput.source_confidence || 0,
-        retrieval_mode: exitOutput.source_retrieval_mode || "rsshub_live_empty",
-        sources_used: (exitOutput.sources_used || []).slice(0, 20).map((s) => ({
+        source_count: retrievalSourceContext?.source_count || 0,
+        source_confidence: retrievalSourceContext?.source_confidence || 0,
+        retrieval_mode: retrievalSourceContext?.retrieval_mode || "rsshub_live_empty",
+        sources_used: (retrievalSourceContext?.sources_used || []).slice(0, 20).map((s) => ({
           title: s.title,
           url: s.url,
           domain: s.domain,
@@ -1071,7 +1093,13 @@ export async function POST(req: NextRequest) {
             source_context: sourceContextTrace,
             source_availability_note: sourceAvailabilityNote,
             final_answer: finalAnswer,
-            ...(groundingDiagnostics ? { grounding: groundingDiagnostics } : {}),
+            ...(groundingDiagnostics
+              ? {
+                  grounding_authoritative: true,
+                  grounding_version: "grounded_answer_v2",
+                  grounding: groundingDiagnostics,
+                }
+              : {}),
             exit_output: exitOutput,
           },
         })
@@ -1107,9 +1135,14 @@ export async function POST(req: NextRequest) {
       source_availability_note: sourceAvailabilityNote,
       ...(groundedEnabled && groundingDiagnostics
         ? {
+            grounding_authoritative: true,
+            grounding_version: groundingDiagnostics.version,
             grounding_status: groundingDiagnostics.status,
             grounding_source_ids: groundingDiagnostics.source_ids_used,
+            grounding_chunk_citation_ids: groundingDiagnostics.chunk_citation_ids_used,
             grounding_citation_validation_ok: groundingDiagnostics.citation_validation_ok,
+            grounding_claim_support_validation_ok: groundingDiagnostics.claim_support_validation_ok,
+            grounded_sources: groundedSources,
           }
         : {}),
       discovery_run_id: discoveryRunId,

@@ -40,7 +40,7 @@ export function ChatResultCard({ result, onReset }: { result: SafeRunResult; onR
           )}
         </div>
       )}
-      {result.sourceFinalAnswer && result.sourceFinalAnswer !== result.assistantResponse && (
+      {!result.groundingAuthoritative && result.sourceFinalAnswer && result.sourceFinalAnswer !== result.assistantResponse && (
         <div className="pl-source-summary-pill-wrap">
           <button
             className="pl-source-summary-pill"
@@ -57,9 +57,9 @@ export function ChatResultCard({ result, onReset }: { result: SafeRunResult; onR
       )}
       {result.sourcesUsed.length > 0 && (
         <div className="pl-source-links-row">
-          {result.sourcesUsed.slice(0, 5).map((s, i) => (
+          {result.sourcesUsed.map((s, i) => (
             <a key={s.url} href={s.url} target="_blank" rel="noopener noreferrer" title={s.title}>
-              <span>{s.title || `Source ${i + 1}`}</span>
+              <span>{s.citationLabel ? `${s.citationLabel} · ` : ""}{s.title || `Source ${i + 1}`}</span>
               <span className="pl-source-link-meta">{s.domain || ""}</span>
             </a>
           ))}

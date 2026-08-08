@@ -45,6 +45,64 @@ function getAllowedSellerUrl(path: string): string | null {
 // ─── Budget constants ────────────────────────────────────────
 const SERVER_MAX_BUDGET_USDC = 1.0;
 const ALLOWED_ROUTE_TIERS = new Set(["standard", "auto", "easy", "normal", "advanced"]);
+const GROUNDED_ANSWER_VERSION = "grounded_answer_v2";
+const INSUFFICIENT_EVIDENCE_ANSWER = "PayLabs could not find enough relevant evidence to answer this reliably.";
+const SYNTHESIS_FAILED_ANSWER = "PayLabs found relevant sources but could not complete evidence verification for this answer.";
+const GROUNDED_STATUSES = new Set([
+  "grounded",
+  "partially_grounded",
+  "insufficient_evidence",
+  "synthesis_failed",
+]);
+
+type GroundedSourceRef = {
+  source_label: string;
+  title: string;
+  url: string;
+  domain: string | null;
+  rank: number;
+  source_kind?: string;
+  provider?: string;
+};
+
+function readGroundedSourceRefs(value: unknown): GroundedSourceRef[] {
+  if (!Array.isArray(value)) return [];
+  const refs: GroundedSourceRef[] = [];
+  for (const valueItem of value) {
+    if (!valueItem || typeof valueItem !== "object") return [];
+    const item = valueItem as Record<string, unknown>;
+    if (
+      typeof item.source_label !== "string" ||
+      !/^S[1-9]\d*$/.test(item.source_label) ||
+      typeof item.title !== "string" ||
+      typeof item.url !== "string" ||
+      !/^https?:\/\//.test(item.url) ||
+      (item.domain !== null && typeof item.domain !== "string") ||
+      typeof item.rank !== "number" ||
+      !Number.isFinite(item.rank) ||
+      (item.source_kind !== undefined && typeof item.source_kind !== "string") ||
+      (item.provider !== undefined && typeof item.provider !== "string")
+    ) {
+      return [];
+    }
+    refs.push({
+      source_label: item.source_label,
+      title: item.title,
+      url: item.url,
+      domain: item.domain as string | null,
+      rank: item.rank,
+      ...(typeof item.source_kind === "string" ? { source_kind: item.source_kind } : {}),
+      ...(typeof item.provider === "string" ? { provider: item.provider } : {}),
+    });
+  }
+  return refs;
+}
+
+function readGroundingIds(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
 
 function parseBudget(value: unknown): number {
   const n = typeof value === "number" ? value : Number(value);
@@ -312,12 +370,44 @@ export async function POST(req: NextRequest) {
           const finalEntryUsdc = Number(pf?.final_entry_payment_usdc) || 0;
           const userCostUsdc = routingFeeUsdc + finalEntryUsdc;
 
-          const recoveredFinalAnswer = run.final_answer || sourceSnapshot.final_answer || agentTrace.final_answer || null;
           const grounding = agentTrace.grounding as Record<string, unknown> | undefined;
           const groundedRecoveryEnabled = isGroundedAnswerEnabled();
-          const recoveredAnswer = groundedRecoveryEnabled
-            ? (grounding ? recoveredFinalAnswer : "PayLabs found relevant sources but could not complete evidence verification for this answer.")
-            : recoveredFinalAnswer;
+          const recoveredFinalAnswer = [run.final_answer, agentTrace.final_answer]
+            .find((value): value is string => typeof value === "string" && value.trim().length > 0) || null;
+          const groundingStatus = typeof grounding?.status === "string" && GROUNDED_STATUSES.has(grounding.status)
+            ? grounding.status
+            : "synthesis_failed";
+          const groundingVersion = grounding?.version === GROUNDED_ANSWER_VERSION
+            ? GROUNDED_ANSWER_VERSION
+            : null;
+          const groundedSources = readGroundedSourceRefs(grounding?.source_refs);
+          let recoveredAnswer: string | null;
+          let recoveredGroundingStatus: string;
+
+          if (!groundedRecoveryEnabled) {
+            recoveredAnswer = run.final_answer || sourceSnapshot.final_answer || agentTrace.final_answer || null;
+            recoveredGroundingStatus = groundingStatus;
+          } else if (groundingVersion !== GROUNDED_ANSWER_VERSION) {
+            recoveredAnswer = SYNTHESIS_FAILED_ANSWER;
+            recoveredGroundingStatus = "synthesis_failed";
+          } else if (groundingStatus === "insufficient_evidence") {
+            recoveredAnswer = INSUFFICIENT_EVIDENCE_ANSWER;
+            recoveredGroundingStatus = groundingStatus;
+          } else if (groundingStatus === "synthesis_failed") {
+            recoveredAnswer = SYNTHESIS_FAILED_ANSWER;
+            recoveredGroundingStatus = groundingStatus;
+          } else if (
+            (groundingStatus === "grounded" || groundingStatus === "partially_grounded") &&
+            grounding?.citation_validation_ok === true &&
+            grounding?.claim_support_validation_ok === true &&
+            recoveredFinalAnswer
+          ) {
+            recoveredAnswer = recoveredFinalAnswer;
+            recoveredGroundingStatus = groundingStatus;
+          } else {
+            recoveredAnswer = SYNTHESIS_FAILED_ANSWER;
+            recoveredGroundingStatus = "synthesis_failed";
+          }
 
           return {
             ok: true,
@@ -327,9 +417,14 @@ export async function POST(req: NextRequest) {
             source_availability_note: (agentTrace.source_availability_note as string) || null,
             ...(groundedRecoveryEnabled
               ? {
-                  grounding_status: (grounding?.status as string) || "synthesis_failed",
-                  grounding_source_ids: (grounding?.source_ids_used as string[]) || [],
+                  grounding_authoritative: true,
+                  grounding_version: groundingVersion,
+                  grounding_status: recoveredGroundingStatus,
+                  grounding_source_ids: readGroundingIds(grounding?.source_ids_used),
+                  grounding_chunk_citation_ids: readGroundingIds(grounding?.chunk_citation_ids_used),
                   grounding_citation_validation_ok: grounding?.citation_validation_ok === true,
+                  grounding_claim_support_validation_ok: grounding?.claim_support_validation_ok === true,
+                  grounded_sources: groundedSources,
                 }
               : {}),
             brain_planning: agentTrace.brain_planning || null,

@@ -176,11 +176,14 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
   const tieredSummaries = data?.tiered_summaries as Record<string, string> | undefined;
   const brainPlanning = data?.brain_planning as Record<string, unknown> | undefined;
   const agentTraceBrain = (data?.agent_trace as Record<string, unknown>)?.brain_planning as Record<string, unknown> | undefined;
+  const groundingAuthoritative = data?.grounding_authoritative === true;
+  const groundingVersion = typeof data?.grounding_version === "string" ? data.grounding_version : null;
 
-  const rawFinalAnswer =
-    (data?.final_answer as string) ??
-    (exitOutput?.final_answer as string) ??
-    null;
+  const INSUFFICIENT_EVIDENCE_MSG = "PayLabs could not find enough relevant evidence to answer this reliably.";
+  const SYNTHESIS_FAILED_MSG = "PayLabs found relevant sources but could not complete evidence verification for this answer.";
+
+  const rawFinalAnswerValue = data?.final_answer ?? exitOutput?.final_answer;
+  const rawFinalAnswer = typeof rawFinalAnswerValue === "string" ? rawFinalAnswerValue : null;
   const rawGroundingStatus = data?.grounding_status;
   const groundingStatus =
     rawGroundingStatus === "grounded" ||
@@ -209,23 +212,38 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
   const isGenericBrainAnswer = !!brainAssistantResponse && GENERIC_ANSWER_RE.test(brainAssistantResponse) && brainAssistantResponse.length < 200;
 
   const NO_SOURCE_FALLBACK_MSG = "No sufficiently relevant live sources were found for this query. The route completed with basic discovery, but PayLabs did not attach source links because no source passed the relevance gate.";
-  const SYNTHESIS_FAILED_MSG = "PayLabs found relevant sources but could not complete evidence verification for this answer.";
+  let assistantResponse: string;
+  if (groundingAuthoritative) {
+    if (groundingVersion !== "grounded_answer_v2") {
+      assistantResponse = SYNTHESIS_FAILED_MSG;
+    } else if (groundingStatus === "insufficient_evidence") {
+      assistantResponse = INSUFFICIENT_EVIDENCE_MSG;
+    } else if (groundingStatus === "synthesis_failed") {
+      assistantResponse = SYNTHESIS_FAILED_MSG;
+    } else if (
+      (groundingStatus === "grounded" || groundingStatus === "partially_grounded") &&
+      data?.grounding_citation_validation_ok === true &&
+      data?.grounding_claim_support_validation_ok === true &&
+      rawFinalAnswer?.trim()
+    ) {
+      assistantResponse = rawFinalAnswer.trim();
+    } else {
+      assistantResponse = SYNTHESIS_FAILED_MSG;
+    }
+  } else {
+    const groundedResponse = groundingStatus
+      ? (rawFinalAnswer?.trim() || (groundingStatus === "synthesis_failed" ? SYNTHESIS_FAILED_MSG : NO_SOURCE_FALLBACK_MSG))
+      : null;
 
-  // When grounding metadata exists, it is authoritative for presentation. In
-  // particular, insufficient_evidence and synthesis_failed must never fall
-  // through to the raw Brain draft.
-  const groundedResponse = groundingStatus
-    ? (rawFinalAnswer?.trim() || (groundingStatus === "synthesis_failed" ? SYNTHESIS_FAILED_MSG : NO_SOURCE_FALLBACK_MSG))
-    : null;
-
-  const assistantResponse =
-    groundedResponse ??
-    (brainAssistantResponse && !isGenericBrainAnswer ? brainAssistantResponse : null) ??
-    (rawFinalAnswer && !isNoSourceFallback ? rawFinalAnswer : null) ??
-    (isNoSourceFallback || isGenericBrainAnswer ? NO_SOURCE_FALLBACK_MSG : null) ??
-    (exitOutput?.final_summary as string) ??
-    tieredSummaries?.final_summary ??
-    "Run completed.";
+    assistantResponse =
+      groundedResponse ??
+      (brainAssistantResponse && !isGenericBrainAnswer ? brainAssistantResponse : null) ??
+      (rawFinalAnswer && !isNoSourceFallback ? rawFinalAnswer : null) ??
+      (isNoSourceFallback || isGenericBrainAnswer ? NO_SOURCE_FALLBACK_MSG : null) ??
+      (exitOutput?.final_summary as string) ??
+      tieredSummaries?.final_summary ??
+      "Run completed.";
+  }
   const userVisibleReasoning =
     (brainPlanning?.user_visible_reasoning as string) ??
     (agentTraceBrain?.user_visible_reasoning as string) ??
@@ -240,13 +258,16 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (agentTraceBrain?.plan_rationale as string) ??
     null;
 
-  // Extract sources from source_context.sources_used or fallback to exit_output.sources_used
+  // Grounded mode has one authoritative source set. Legacy mode keeps the
+  // existing retrieval-diagnostics parsing and ordering behavior.
   const sourceContext = data?.source_context as Record<string, unknown> | undefined;
   const rawSources: unknown[] =
-    (sourceContext?.sources_used as unknown[]) ??
-    (exitOutput?.sources_used as unknown[]) ??
-    [];
-  const sourcesUsed: SourceLink[] = Array.isArray(rawSources)
+    groundingAuthoritative
+      ? ((data?.grounded_sources as unknown[]) ?? [])
+      : ((sourceContext?.sources_used as unknown[]) ??
+        (exitOutput?.sources_used as unknown[]) ??
+        []);
+  const parsedSources: SourceLink[] = Array.isArray(rawSources)
     ? rawSources
         .filter((s): s is Record<string, unknown> => !!s && typeof s === "object")
         .map((s) => {
@@ -263,16 +284,20 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
             summary: typeof s.summary === "string" ? s.summary : "",
             rank: typeof s.rank === "number" ? s.rank : 0,
             relevance_score: typeof s.relevance_score === "number" ? s.relevance_score : 0,
+            citationLabel: typeof s.source_label === "string" ? s.source_label : null,
           };
         })
         .filter((s) => /^https?:\/\//.test(s.url))
+    : [];
+  const sourcesUsed = groundingAuthoritative
+    ? parsedSources
+    : parsedSources
         .sort((a, b) => {
           const rankA = a.rank > 0 ? a.rank : Number.MAX_SAFE_INTEGER;
           const rankB = b.rank > 0 ? b.rank : Number.MAX_SAFE_INTEGER;
           return rankA - rankB;
         })
-        .slice(0, 5)
-    : [];
+        .slice(0, 5);
 
   // Extract entry payment link fields (safe URLs only, never settlement UUID)
   const entryPayment = data?.entry_payment as Record<string, unknown> | undefined;
@@ -298,8 +323,10 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     assistantResponse,
     userVisibleReasoning,
     brainRationale,
-    sourceFinalAnswer: sourceAvailabilityNote ?? rawFinalAnswer,
+    sourceFinalAnswer: groundingAuthoritative ? null : sourceAvailabilityNote ?? rawFinalAnswer,
     sourceAvailabilityNote,
+    groundingAuthoritative,
+    groundingVersion,
     groundingStatus,
     groundingSourceIds: Array.isArray(data?.grounding_source_ids)
       ? (data.grounding_source_ids as unknown[]).filter((id): id is string => typeof id === "string")
@@ -307,6 +334,13 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     groundingCitationValidationOk:
       typeof data?.grounding_citation_validation_ok === "boolean"
         ? data.grounding_citation_validation_ok
+        : null,
+    groundingChunkCitationIds: Array.isArray(data?.grounding_chunk_citation_ids)
+      ? (data.grounding_chunk_citation_ids as unknown[]).filter((id): id is string => typeof id === "string")
+      : [],
+    groundingClaimSupportValidationOk:
+      typeof data?.grounding_claim_support_validation_ok === "boolean"
+        ? data.grounding_claim_support_validation_ok
         : null,
     lockedNodes: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_macro_nodes as string[]) ?? [],
     lockedServices: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_services as string[]) ?? [],

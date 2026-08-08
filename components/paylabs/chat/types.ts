@@ -13,6 +13,7 @@ export type SourceLink = {
   summary: string;
   rank: number;
   relevance_score: number;
+  citationLabel?: string | null;
 };
 
 export type SafeRunResult = {
@@ -34,9 +35,13 @@ export type SafeRunResult = {
   brainRationale: string | null;
   sourceFinalAnswer: string | null;
   sourceAvailabilityNote: string | null;
+  groundingAuthoritative: boolean;
+  groundingVersion: string | null;
   groundingStatus: "grounded" | "partially_grounded" | "insufficient_evidence" | "synthesis_failed" | null;
   groundingSourceIds: string[];
+  groundingChunkCitationIds: string[];
   groundingCitationValidationOk: boolean | null;
+  groundingClaimSupportValidationOk: boolean | null;
   lockedNodes: string[];
   lockedServices: string[];
   tierDecisionReason: string | null;
