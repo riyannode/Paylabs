@@ -588,13 +588,18 @@ Do not output a Sources section. Return JSON only. Do not return reasoning or ch
 
 Valid simple format example:
 {
-  "text": "Bitcoin mining uses computational work to participate in block production ...",
-  "citation_ids": ["S1-C1"]
-}
-
-{
-  "text": "Another supported property ...",
-  "citation_ids": ["S1-C2", "S2-C1"]
+  "status": "grounded",
+  "paragraphs": [
+    {
+      "text": "Bitcoin mining uses computational work to participate in block production ...",
+      "citation_ids": ["S1-C1"]
+    },
+    {
+      "text": "Another supported property ...",
+      "citation_ids": ["S1-C2", "S2-C1"]
+    }
+  ],
+  "unsupported_claims": []
 }
 
 PayLabs renders each paragraph as prose followed by adjacent citations, then derives the stable first-seen citation union.
@@ -890,9 +895,11 @@ export function renderEvidencePackParagraphs(input: {
   paragraphs: EvidencePackSynthesisOutput["paragraphs"];
   citationMap: EvidencePackCitationMap;
 }): { ok: true; value: RenderedEvidencePackParagraphs } | { ok: false; failure: ParagraphRenderingFailure } {
-  const usedCitationIds: string[] = [];
-  const renderedParagraphs: string[] = [];
+  const normalizedParagraphs: Array<{ text: string; citationIds: string[] }> = [];
 
+  // Validate every binding before constructing any rendered answer text. This
+  // keeps invalid later paragraphs from ever producing a partially rendered
+  // answer, even when this seam is exercised outside the Zod schema.
   for (const paragraph of input.paragraphs) {
     const text = paragraph.text.trim();
     if (!text) {
@@ -923,7 +930,7 @@ export function renderEvidencePackParagraphs(input: {
       return {
         ok: false,
         failure: {
-          failureCode: "citation_set_mismatch",
+          failureCode: "uncited_factual_unit",
           errorSafe: "EvidencePack synthesis returned a paragraph without citation IDs.",
           unknownCitationIds: [],
         },
@@ -954,11 +961,16 @@ export function renderEvidencePackParagraphs(input: {
       };
     }
 
+    normalizedParagraphs.push({ text, citationIds });
+  }
+
+  const usedCitationIds: string[] = [];
+  const renderedParagraphs: string[] = normalizedParagraphs.map(({ text, citationIds }) => {
     for (const citationId of citationIds) {
       if (!usedCitationIds.includes(citationId)) usedCitationIds.push(citationId);
     }
-    renderedParagraphs.push(`${text} ${citationIds.map((citationId) => `[${citationId}]`).join("")}`);
-  }
+    return `${text} ${citationIds.map((citationId) => `[${citationId}]`).join("")}`;
+  });
 
   return {
     ok: true,
@@ -1323,12 +1335,10 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
   );
   const modelOutput: EvidencePackValidatorInput = {
     status: synthesisCall.data.status,
-    answer: renderedParagraphs.value.answer.trim()
-      ? [
-          canonicalizedModelAnswer.trim(),
-          buildDeterministicPartialDisclosure(pack),
-        ].filter(Boolean).join("\n\n")
-      : canonicalizedModelAnswer,
+    answer: [
+      canonicalizedModelAnswer.trim(),
+      pack.status === "partially_grounded" ? buildDeterministicPartialDisclosure(pack) : "",
+    ].filter(Boolean).join("\n\n"),
     used_citation_ids: renderedParagraphs.value.usedCitationIds,
     unsupported_claims: synthesisCall.data.unsupported_claims,
   };
