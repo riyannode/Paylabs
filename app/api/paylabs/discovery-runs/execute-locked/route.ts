@@ -38,7 +38,91 @@ import { isOfficeMacroAgentId } from "@/lib/paylabs/office/registry";
 import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
 import { attachPaymentResponseHeader } from "@/lib/paylabs/x402/seller-challenge";
 import type { GroundedSynthesisResult } from "@/lib/paylabs/sources/source-grounded-synthesis";
-import type { EvidencePack } from "@/lib/paylabs/rag/types";
+import type {
+  EvidenceCoverage,
+  EvidencePack,
+  EvidenceRetrievalResult,
+} from "@/lib/paylabs/rag/types";
+
+const MAX_RAG_RETRY_ROUNDS = 2;
+const MAX_RAG_RETRY_QUERIES_PER_ROUND = 3;
+const MAX_RAG_COVERAGE_LABELS = 20;
+
+function serializeRagCoverage(coverage: EvidenceCoverage) {
+  return {
+    covered_entities: coverage.coveredEntities.slice(0, MAX_RAG_COVERAGE_LABELS),
+    missing_entities: coverage.missingEntities.slice(0, MAX_RAG_COVERAGE_LABELS),
+    covered_aspects: coverage.coveredAspects.slice(0, MAX_RAG_COVERAGE_LABELS),
+    missing_aspects: coverage.missingAspects.slice(0, MAX_RAG_COVERAGE_LABELS),
+    entity_aspect_coverage: coverage.entityAspectCoverage
+      .slice(0, MAX_RAG_COVERAGE_LABELS)
+      .map((row) => ({
+        entity: row.entity,
+        covered_aspects: row.coveredAspects.slice(0, MAX_RAG_COVERAGE_LABELS),
+        missing_aspects: row.missingAspects.slice(0, MAX_RAG_COVERAGE_LABELS),
+      })),
+    trusted_evidence_count: coverage.trustedEvidenceCount,
+  };
+}
+
+function buildRagDiagnostics(params: {
+  ragEvidence?: EvidenceRetrievalResult;
+  ragEvidencePack?: EvidencePack;
+}) {
+  const { ragEvidence, ragEvidencePack } = params;
+  const diagnostics: {
+    rag_retrieval?: Record<string, unknown>;
+    rag_pack?: Record<string, unknown>;
+  } = {};
+
+  if (ragEvidence) {
+    diagnostics.rag_retrieval = {
+      stopped_reason: ragEvidence.stoppedReason,
+      retrieval_context: {
+        required_entities: ragEvidence.coverage.requiredEntities.slice(0, MAX_RAG_COVERAGE_LABELS),
+        requested_aspects: ragEvidence.coverage.requiredAspects.slice(0, MAX_RAG_COVERAGE_LABELS),
+        comparison_like: ragEvidence.coverage.comparisonLike,
+      },
+      retry_queries: ragEvidence.retryQueries.slice(
+        0,
+        MAX_RAG_RETRY_ROUNDS * MAX_RAG_RETRY_QUERIES_PER_ROUND,
+      ),
+      retry_rounds: ragEvidence.retryRounds
+        .slice(0, MAX_RAG_RETRY_ROUNDS)
+        .map((round) => ({
+          round: round.round,
+          queries: round.queries.slice(0, MAX_RAG_RETRY_QUERIES_PER_ROUND),
+          candidate_count: round.candidateCount,
+          resolved_source_count: round.resolvedSourceCount,
+          new_source_count: round.newSourceCount,
+          coverage_before: serializeRagCoverage(round.coverageBefore),
+          coverage_after: serializeRagCoverage(round.coverageAfter),
+        })),
+      final_retrieval_coverage: serializeRagCoverage(ragEvidence.coverage),
+    };
+  }
+
+  if (ragEvidencePack) {
+    const selectedSourceCount = Math.min(
+      ragEvidencePack.sources.length,
+      ragEvidencePack.selectionDiagnostics.selectedSourceCount,
+    );
+    diagnostics.rag_pack = {
+      status: ragEvidencePack.status,
+      pack_coverage: serializeRagCoverage(ragEvidencePack.packCoverage),
+      selected_source_count: ragEvidencePack.selectionDiagnostics.selectedSourceCount,
+      selected_chunk_count: ragEvidencePack.selectionDiagnostics.selectedChunkCount,
+      selected_sources: ragEvidencePack.sources.slice(0, selectedSourceCount).map((source) => ({
+        source_id: source.feed_item_id,
+        title: source.title,
+        url: source.url,
+        domain: source.domain,
+      })),
+    };
+  }
+
+  return diagnostics;
+}
 
 // ─── Local helpers (same as inline/route.ts) ─────────────────
 
@@ -728,6 +812,7 @@ export async function POST(req: NextRequest) {
 
     // ── Run locked macro-node pipeline ──────────────────────
     let result: import("@/lib/paylabs/delegated-runtime/types").OrchestratorOutput;
+    let ragEvidence: EvidenceRetrievalResult | undefined;
     let ragEvidencePack: EvidencePack | undefined;
     try {
       const lockedExecution = await executeLockedMacroNodePipeline({
@@ -743,6 +828,7 @@ export async function POST(req: NextRequest) {
         buildOutput: buildLockedOutput,
       });
       result = lockedExecution.output;
+      ragEvidence = lockedExecution._ragEvidence;
       ragEvidencePack = lockedExecution._ragEvidencePack;
     } catch (pipelineError) {
       // Emit Brain failed terminal event, then re-throw
@@ -1072,6 +1158,7 @@ export async function POST(req: NextRequest) {
         .single();
       const trace = (existingRun?.agent_trace as Record<string, unknown>) || {};
       const retrievalSourceContext = result.sourceContext;
+      const ragDiagnostics = buildRagDiagnostics({ ragEvidence, ragEvidencePack });
       const sourceContextTrace = {
         source_count: retrievalSourceContext?.source_count || 0,
         source_confidence: retrievalSourceContext?.source_confidence || 0,
@@ -1101,6 +1188,7 @@ export async function POST(req: NextRequest) {
                   grounding: groundingDiagnostics,
                 }
               : {}),
+            ...ragDiagnostics,
             exit_output: exitOutput,
           },
         })
