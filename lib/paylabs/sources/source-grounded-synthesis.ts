@@ -563,7 +563,7 @@ A plain-text or bold label such as "Overview", "Key findings", or "Summary" is n
 For easy/simple questions, prefer no headings and 1–4 concise factual paragraphs, with each paragraph ending in exact supporting chunk citation(s).
 The unique citation IDs appearing inline must exactly equal used_citation_ids.
 If evidence is partial, supported factual statements remain cited. Only a pure uncertainty statement accepted by the existing validator may be uncited; never combine uncited uncertainty with factual claims.
-If evidence is partial, answer supported portions only and explicitly identify the requested portions that could not be verified from the supplied coverage metadata.
+If evidence is partial, generate only supported factual paragraphs. Every generated factual paragraph still requires an exact chunk citation. Do not write missing-coverage or uncertainty disclosure yourself; PayLabs will append deterministic coverage disclosure after generation.
 Omit unsupported claims. Keep the answer in the user's language.
 Do not output a Sources section. Return JSON only. Do not return reasoning or chain-of-thought.
 
@@ -677,6 +677,31 @@ function buildEvidencePackBlocks(citations: EvidencePackCitation[]): string {
 
 function humanizeCoverageLabel(value: string): string {
   return value.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/**
+ * Build absence-only disclosure from authoritative pack coverage metadata.
+ * This must never infer or repair a factual claim.
+ */
+export function buildDeterministicPartialDisclosure(pack: EvidencePack): string {
+  const labels: string[] = [];
+  const addLabel = (value: string): void => {
+    const label = humanizeCoverageLabel(value);
+    if (label && !labels.includes(label)) labels.push(label);
+  };
+
+  for (const aspect of pack.packCoverage.missingAspects || []) {
+    addLabel(aspect);
+  }
+  for (const row of pack.packCoverage.entityAspectCoverage) {
+    for (const aspect of row.missingAspects) {
+      addLabel(`${row.entity} ${aspect}`);
+    }
+  }
+
+  return labels
+    .map((label) => `${label} could not be verified from the supplied evidence.`)
+    .join("\n\n");
 }
 
 function packMissingCoverageText(pack: EvidencePack): string {
@@ -1052,6 +1077,9 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
       userPrompt: [
         `User goal: ${cap(input.goal, 4000)}`,
         `EvidencePack status: ${pack.status}`,
+        ...(pack.status === "partially_grounded" ? [
+          "Partial coverage contract: generate only supported factual paragraphs with exact chunk citations. Do not write missing-coverage or uncertainty disclosure; PayLabs appends it deterministically after generation.",
+        ] : []),
         "Deterministic coverage metadata (absence only; not factual evidence):",
         packMissingCoverageText(pack),
         "",
@@ -1085,7 +1113,16 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
     };
   }
 
-  const validated = validateEvidencePackModelOutput(synthesisCall.data, pack, citationMap);
+  const modelOutput = pack.status === "partially_grounded" && synthesisCall.data.answer.trim()
+    ? {
+        ...synthesisCall.data,
+        answer: [
+          synthesisCall.data.answer.trim(),
+          buildDeterministicPartialDisclosure(pack),
+        ].filter(Boolean).join("\n\n"),
+      }
+    : synthesisCall.data;
+  const validated = validateEvidencePackModelOutput(modelOutput, pack, citationMap);
   const synthesisProvider = metaString(synthesisCall.meta, "provider");
   const synthesisModel = metaString(synthesisCall.meta, "model");
   if (!validated.ok) {
