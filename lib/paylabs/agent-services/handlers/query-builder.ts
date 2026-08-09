@@ -89,6 +89,8 @@ const ENTITY_ALIASES: Record<string, { canonical: string; type: string }> = {
   "developer controlled wallets": { canonical: "DCW", type: "product" },
   "solana firedancer": { canonical: "Solana Firedancer", type: "client" },
   "trust wallet": { canonical: "Trust Wallet", type: "product" },
+  "automated market maker": { canonical: "AMM", type: "concept" },
+  "automated market makers": { canonical: "AMM", type: "concept" },
   // Single tokens
   "x402": { canonical: "x402", type: "protocol" },
   "cctp": { canonical: "CCTP", type: "protocol" },
@@ -238,7 +240,7 @@ function extractLockedPhrases(goal: string): string[] {
   // 4. kebab-case tokens (erc-8004, x-402)
   for (const w of words) {
     const clean = w.replace(/[^a-zA-Z0-9-]/g, "");
-    if (/^[a-z]+-[a-z0-9]+$/i.test(clean) && clean.length >= 4) {
+    if (/^[a-z]+(?:-[a-z0-9]+)+$/i.test(clean) && clean.length >= 4) {
       if (!phrases.some((p) => p.includes(clean))) {
         phrases.push(clean);
       }
@@ -474,10 +476,9 @@ export function runDeterministicQueryBuilder(
       }
     }
   }
-  // Also scan individual words for single-token protocol aliases
-  // (e.g. "Aave" written as a standalone word not caught by phrase locking)
+  // Also scan individual words for single-token protocol aliases, including
+  // words inside mixed subject/aspect phrases such as "Curve AMM".
   for (let i = 0; i < words.length; i++) {
-    if (phraseWordIndices.has(i)) continue;
     const w = words[i];
     const wl = cleanToken(w);
     if (!wl) continue;
@@ -510,6 +511,16 @@ export function runDeterministicQueryBuilder(
         type: classified.type,
         required: true,
       });
+    }
+  }
+
+  // Named protocols/chains/products are the comparison subjects. Keep
+  // concepts/mechanisms searchable, but optional, when a stronger named
+  // subject exists (e.g. AMM/MEV in a Uniswap-vs-Curve comparison).
+  // Concept-only queries retain required concept subjects.
+  if (primaryEntities.some((entity) => entity.type !== "concept")) {
+    for (const entity of primaryEntities) {
+      if (entity.type === "concept") entity.required = false;
     }
   }
 
@@ -587,7 +598,9 @@ export function runDeterministicQueryBuilder(
   );
 
   // ── Step 8: Scoped query expansion (preserves required entities) ──
-  const requiredTerms = dedupedPrimary.map((e) => e.canonical);
+  const requiredTerms = dedupedPrimary
+    .filter((entity) => entity.required)
+    .map((entity) => entity.canonical);
   const expandedQueries = buildScopedExpandedQueries(normalizedGoal, requiredTerms, topics);
 
   // ── Step 9: Negative filters (generic noise) ──

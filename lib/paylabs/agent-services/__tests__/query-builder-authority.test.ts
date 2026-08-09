@@ -36,6 +36,12 @@ function protocolEntities(value: unknown): Array<{ text: string; canonical: stri
     .filter((entity) => entity.type === "protocol" && entity.required);
 }
 
+function requiredCanonicalEntities(value: unknown): string[] {
+  return (value as Array<{ canonical: string; required: boolean }>)
+    .filter((entity) => entity.required)
+    .map((entity) => entity.canonical);
+}
+
 function expectPass(label: string, fn: () => void): void {
   try {
     fn();
@@ -64,6 +70,15 @@ async function main(): Promise<void> {
 
   expectPass("deterministic path keeps exact Q4 protocol identities", () => {
     assert(
+      JSON.stringify(deterministicData.primary_entities) === JSON.stringify([
+        { text: "AMM", canonical: "AMM", type: "concept", required: false },
+        { text: "MEV", canonical: "MEV", type: "concept", required: false },
+        { text: "Uniswap", canonical: "Uniswap", type: "protocol", required: true },
+        { text: "Curve", canonical: "Curve Finance", type: "protocol", required: true },
+      ]),
+      `unexpected full Q4 primary_entities: ${JSON.stringify(deterministicData.primary_entities)}`,
+    );
+    assert(
       JSON.stringify(protocolEntities(deterministicData.primary_entities)) === JSON.stringify([
         { text: "Uniswap", canonical: "Uniswap", type: "protocol", required: true },
         { text: "Curve", canonical: "Curve Finance", type: "protocol", required: true },
@@ -71,15 +86,26 @@ async function main(): Promise<void> {
       `unexpected protocol entities: ${JSON.stringify(protocolEntities(deterministicData.primary_entities))}`,
     );
     assert(
+      JSON.stringify(requiredCanonicalEntities(deterministicData.primary_entities)) === JSON.stringify(EXPECTED_PROTOCOLS),
+      `unexpected required entities: ${JSON.stringify(requiredCanonicalEntities(deterministicData.primary_entities))}`,
+    );
+    assert(
       !((deterministicData.primary_entities as Array<{ canonical: string; required: boolean }>)
-        .some((entity) => entity.required && entity.canonical === "Curve")),
-      "raw Curve must not remain a required canonical entity",
+        .some((entity) => entity.required && ["AMM", "MEV", "Curve"].includes(entity.canonical))),
+      "AMM, MEV, and raw Curve must not remain required comparison subjects",
     );
   });
 
   expectPass("deterministic path keeps all requested aspects", () => {
     const actual = [...(deterministicData.requested_aspects as string[])].sort();
     assert(JSON.stringify(actual) === JSON.stringify([...EXPECTED_ASPECTS].sort()), `unexpected aspects: ${actual}`);
+  });
+
+  expectPass("Q4 query expansion preserves subjects, not optional concepts", () => {
+    assert(
+      (deterministicData.expanded_queries as string[]).includes("Uniswap vs Curve Finance comparison"),
+      `subject-only comparison query missing: ${JSON.stringify(deterministicData.expanded_queries)}`,
+    );
   });
 
   const deterministicOutput = runDeterministicQueryBuilder(Q4_GOAL, []);
@@ -113,9 +139,42 @@ async function main(): Promise<void> {
       `LLM-downgraded output leaked through: ${JSON.stringify(protocolEntities(simulatedFinal.primary_entities))}`,
     );
     assert(
+      JSON.stringify(requiredCanonicalEntities(simulatedFinal.primary_entities)) === JSON.stringify(EXPECTED_PROTOCOLS),
+      `LLM output changed required subjects: ${JSON.stringify(requiredCanonicalEntities(simulatedFinal.primary_entities))}`,
+    );
+    assert(
       (simulatedFinal.expanded_queries as string[]).some((query) => query.includes("Curve Finance")),
       `deterministic canonical query path missing: ${JSON.stringify(simulatedFinal.expanded_queries)}`,
     );
+  });
+
+  const subjectRoleCases = [
+    { label: "concept-only MEV", goal: "What is MEV?", required: ["MEV"] },
+    { label: "concept-only AMM", goal: "Explain automated market makers", required: ["AMM"] },
+    { label: "Ethereum with MEV aspect", goal: "Ethereum MEV risks", required: ["Ethereum"], optional: "MEV" },
+    { label: "Aave with liquidation aspect", goal: "Aave liquidation risk", required: ["Aave"] },
+    { label: "protocol comparison with AMM aspect", goal: "Compare Uniswap and Curve AMM designs", required: EXPECTED_PROTOCOLS },
+  ];
+  for (const testCase of subjectRoleCases) {
+    expectPass(`${testCase.label} keeps subject semantics`, () => {
+      const output = runDeterministicQueryBuilder(testCase.goal, []);
+      assert(
+        JSON.stringify(requiredCanonicalEntities(output.primary_entities)) === JSON.stringify(testCase.required),
+        `unexpected required entities: ${JSON.stringify(requiredCanonicalEntities(output.primary_entities))}`,
+      );
+      if (testCase.optional) {
+        assert(
+          output.primary_entities.some((entity) => entity.canonical === testCase.optional && !entity.required),
+          `${testCase.optional} was not retained as optional concept`,
+        );
+      }
+    });
+  }
+
+  expectPass("proof-of-work/proof-of-stake remain concept subjects", () => {
+    const output = runDeterministicQueryBuilder("Compare proof-of-work and proof-of-stake", []);
+    const required = output.primary_entities.filter((entity) => entity.required);
+    assert(required.length === 2 && required.every((entity) => entity.type === "concept"), `unexpected concepts: ${JSON.stringify(required)}`);
   });
 
   const negativeCurveQueries = [
