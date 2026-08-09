@@ -37,6 +37,17 @@ export type GroundedSynthesisInput = {
   };
 };
 
+export type GroundingVerificationDiagnostics = {
+  verificationErrorCode?: string | null;
+  verificationMode?: string | null;
+  verificationRetryCount?: number | null;
+  verificationJsonFound?: boolean | null;
+  verificationValidationIssuePaths?: string[];
+  verificationContentType?: string | null;
+  verificationReceivedKeys?: string[];
+  verificationExpectedKeys?: string[];
+};
+
 export type GroundedSynthesisResult = {
   status:
     | "grounded"
@@ -67,6 +78,7 @@ export type GroundedSynthesisResult = {
   verificationProvider?: string | null;
   verificationModel?: string | null;
   verificationLatencyMs?: number | null;
+  verificationDiagnostics?: GroundingVerificationDiagnostics;
 };
 
 export const CITATION_VALIDATION_FAILURE_CODES = [
@@ -652,6 +664,55 @@ function metaString(meta: Record<string, unknown> | undefined, key: string): str
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+const MAX_VERIFICATION_DIAGNOSTIC_STRING_LENGTH = 160;
+const MAX_VERIFICATION_DIAGNOSTIC_PATHS = 8;
+const MAX_VERIFICATION_DIAGNOSTIC_KEYS = 12;
+
+function boundedMetaString(meta: Record<string, unknown> | undefined, key: string): string | null {
+  const value = metaString(meta, key);
+  return value ? value.slice(0, MAX_VERIFICATION_DIAGNOSTIC_STRING_LENGTH) : null;
+}
+
+function boundedMetaNumber(meta: Record<string, unknown> | undefined, key: string): number | null {
+  const value = meta?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function boundedMetaBoolean(meta: Record<string, unknown> | undefined, key: string): boolean | null {
+  const value = meta?.[key];
+  return typeof value === "boolean" ? value : null;
+}
+
+function boundedMetaStringArray(
+  meta: Record<string, unknown> | undefined,
+  key: string,
+  maxItems: number,
+): string[] | undefined {
+  const value = meta?.[key];
+  if (!Array.isArray(value)) return undefined;
+  const values = value
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim().slice(0, MAX_VERIFICATION_DIAGNOSTIC_STRING_LENGTH));
+  return [...new Set(values)].slice(0, maxItems);
+}
+
+function buildVerificationDiagnostics(
+  meta: Record<string, unknown> | undefined,
+  fallbackErrorCode?: string,
+): GroundingVerificationDiagnostics {
+  const diagnostics: GroundingVerificationDiagnostics = {
+    verificationErrorCode: fallbackErrorCode || boundedMetaString(meta, "error_code"),
+    verificationMode: boundedMetaString(meta, "mode"),
+    verificationRetryCount: boundedMetaNumber(meta, "retry_count"),
+    verificationJsonFound: boundedMetaBoolean(meta, "json_found"),
+    verificationValidationIssuePaths: boundedMetaStringArray(meta, "validation_issue_paths", MAX_VERIFICATION_DIAGNOSTIC_PATHS),
+    verificationContentType: boundedMetaString(meta, "content_type"),
+    verificationReceivedKeys: boundedMetaStringArray(meta, "received_keys", MAX_VERIFICATION_DIAGNOSTIC_KEYS),
+    verificationExpectedKeys: boundedMetaStringArray(meta, "expected_keys", MAX_VERIFICATION_DIAGNOSTIC_KEYS),
+  };
+  return diagnostics;
+}
+
 function v2FailureResult(
   citationMap: EvidencePackCitationMap,
   errorSafe: string,
@@ -667,6 +728,7 @@ function v2FailureResult(
     claimSupportValidationOk?: boolean;
     citationValidationFailureCodes?: CitationValidationFailureCode[];
     synthesisFailureCode?: SynthesisFailureCode;
+    verificationDiagnostics?: GroundingVerificationDiagnostics;
   },
 ): GroundedSynthesisResult {
   return {
@@ -691,6 +753,7 @@ function v2FailureResult(
     verificationProvider: metadata?.verificationProvider ?? null,
     verificationModel: metadata?.verificationModel ?? null,
     verificationLatencyMs: metadata?.verificationLatencyMs ?? null,
+    verificationDiagnostics: metadata?.verificationDiagnostics,
   };
 }
 
@@ -1132,9 +1195,15 @@ async function verifyEvidencePackClaims(
   meta?: Record<string, unknown>;
   latencyMs: number;
   unsupportedClaimCount?: number;
+  verificationDiagnostics?: GroundingVerificationDiagnostics;
 }> {
   if (units.length > 8) {
-    return { ok: false, errorSafe: "Generated answer exceeded the factual-unit limit.", latencyMs: 0 };
+    return {
+      ok: false,
+      errorSafe: "Generated answer exceeded the factual-unit limit.",
+      latencyMs: 0,
+      verificationDiagnostics: buildVerificationDiagnostics(undefined, "verification_factual_unit_limit"),
+    };
   }
 
   const startedAt = Date.now();
@@ -1153,10 +1222,21 @@ async function verifyEvidencePackClaims(
   const latencyMs = Date.now() - startedAt;
 
   if (result === V2_TIMEOUT) {
-    return { ok: false, errorSafe: "Evidence claim verification timed out.", latencyMs };
+    return {
+      ok: false,
+      errorSafe: "Evidence claim verification timed out.",
+      latencyMs,
+      verificationDiagnostics: buildVerificationDiagnostics(undefined, "verification_timeout"),
+    };
   }
   if (!result.ok) {
-    return { ok: false, errorSafe: "Evidence claim verification was unavailable.", meta: result.meta, latencyMs };
+    return {
+      ok: false,
+      errorSafe: "Evidence claim verification was unavailable.",
+      meta: result.meta,
+      latencyMs,
+      verificationDiagnostics: buildVerificationDiagnostics(result.meta, result.code),
+    };
   }
 
   const expectedIds = units.map((unit) => unit.paragraphId);
@@ -1178,6 +1258,7 @@ async function verifyEvidencePackClaims(
       errorSafe: "Evidence claim verifier returned invalid structured results.",
       meta: result.meta,
       latencyMs,
+      verificationDiagnostics: buildVerificationDiagnostics(result.meta, "verification_invalid_structured_results"),
     };
   }
   if (invalidSupportRows.length > 0) {
@@ -1186,6 +1267,7 @@ async function verifyEvidencePackClaims(
       errorSafe: "One or more generated factual units were not supported by their cited chunks.",
       meta: result.meta,
       latencyMs,
+      verificationDiagnostics: buildVerificationDiagnostics(result.meta, "verification_unsupported_claims"),
       unsupportedClaimCount: invalidSupportRows.reduce((count, row) => count + Math.max(1, row.unsupported_claims.length), 0),
     };
   }
@@ -1392,6 +1474,7 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
         unsupportedClaimCount: claimVerification.unsupportedClaimCount,
         citationValidationOk: true,
         claimSupportValidationOk: false,
+        verificationDiagnostics: claimVerification.verificationDiagnostics,
       }),
       ...baseDiagnostics,
     };
