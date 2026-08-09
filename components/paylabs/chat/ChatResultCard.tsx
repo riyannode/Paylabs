@@ -7,6 +7,7 @@ export function ChatResultCard({ result, onReset }: { result: SafeRunResult; onR
   const [rationaleOpen, setRationaleOpen] = useState(false);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [sourceSummaryOpen, setSourceSummaryOpen] = useState(false);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Filter out generic processing text from route reasoning
   const GENERIC_PATTERNS = [
@@ -43,6 +44,11 @@ export function ChatResultCard({ result, onReset }: { result: SafeRunResult; onR
     `Citations validated: ${result.groundingCitationValidationOk === true ? "Yes" : "No"}`,
     `Claims validated: ${result.groundingClaimSupportValidationOk === true ? "Yes" : "No"}`,
   ];
+  const initialVisibleSourceCount = result.answerProvenance === "evidence_verified" ? 4 : 3;
+  const visibleSources = sourcesOpen
+    ? result.sourcesUsed
+    : result.sourcesUsed.slice(0, initialVisibleSourceCount);
+  const remainingSourceCount = result.sourcesUsed.length - initialVisibleSourceCount;
   return (
     <div className="pl-result-card">
       {result.assistantResponse && (
@@ -115,13 +121,25 @@ export function ChatResultCard({ result, onReset }: { result: SafeRunResult; onR
             {result.answerProvenance === "evidence_verified" ? "Sources" : "Sources found"}
           </div>
           <div className="pl-source-links-row">
-            {result.sourcesUsed.map((s, i) => (
+            {visibleSources.map((s, i) => (
               <a key={s.url} href={s.url} target="_blank" rel="noopener noreferrer" title={s.title}>
                 <span>{s.citationLabel ? `${s.citationLabel} · ` : ""}{s.title || `Source ${i + 1}`}</span>
                 <span className="pl-source-link-meta">{s.domain || ""}</span>
               </a>
             ))}
           </div>
+          {remainingSourceCount > 0 && (
+            <div className="pl-source-summary-pill-wrap">
+              <button
+                className="pl-source-summary-pill"
+                onClick={() => setSourcesOpen(!sourcesOpen)}
+                type="button"
+                aria-expanded={sourcesOpen}
+              >
+                {sourcesOpen ? "Show fewer" : `+${remainingSourceCount} more sources`}
+              </button>
+            </div>
+          )}
         </div>
       )}
       <div className="pl-rationale-block">
