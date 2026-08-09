@@ -1411,7 +1411,16 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
     };
   }
 
-  const timeoutMs = Math.max(1, Number(process.env.PAYLABS_GROUNDED_ANSWER_TIMEOUT_MS) || 15000);
+  // Synthesis may make the initial request plus one bounded adapter repair.
+  // Keep claim verification on its existing independent deadline.
+  const synthesisTimeoutMs = Math.max(
+    1,
+    Number(process.env.PAYLABS_GROUNDED_SYNTHESIS_TIMEOUT_MS) || 45000,
+  );
+  const claimVerifierTimeoutMs = Math.max(
+    1,
+    Number(process.env.PAYLABS_GROUNDED_ANSWER_TIMEOUT_MS) || 15000,
+  );
   const synthesisStartedAt = Date.now();
   let synthesisCall: GenerateStructuredJsonResult<EvidencePackSynthesisOutput> | typeof V2_TIMEOUT;
   try {
@@ -1434,10 +1443,10 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
         ].join("\n"),
         schema: EvidencePackSynthesisSchema,
         maxAttempts: 1,
-        allowRepair: false,
+        allowRepair: true,
         throwOnRequiredFailure: false,
       }),
-      timeoutMs,
+      synthesisTimeoutMs,
     );
   } catch {
     return {
@@ -1543,7 +1552,11 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
     };
   }
 
-  const claimVerification = await verifyEvidencePackClaims(validated.units, citationMap, timeoutMs);
+  const claimVerification = await verifyEvidencePackClaims(
+    validated.units,
+    citationMap,
+    claimVerifierTimeoutMs,
+  );
   const verificationProvider = claimVerification.meta ? metaString(claimVerification.meta, "provider") : null;
   const verificationModel = claimVerification.meta ? metaString(claimVerification.meta, "model") : null;
   const verificationLatencyMs = claimVerification.latencyMs;
