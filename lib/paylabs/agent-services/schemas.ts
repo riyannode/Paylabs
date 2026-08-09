@@ -27,7 +27,10 @@ type IntentPlannerOutput = z.infer<typeof IntentPlannerOutput>;
 
 // ─── Query Builder ───────────────────────────────────────────
 export const QueryBuilderInput = z.object({
-  normalized_goal: z.string().min(1),
+  /** Exact original user request; authoritative for entity/aspect extraction. */
+  user_goal: z.string().min(1),
+  /** Intent Planner normalization; advisory search context only. */
+  intent_normalized_goal: z.string().optional(),
   topics: z.array(z.string()),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
   brain_query_variants: z.array(z.string()).optional(),

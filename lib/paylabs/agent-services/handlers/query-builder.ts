@@ -20,6 +20,7 @@ import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 import { shouldRunServiceAsDeterministic } from "../execution-mode";
 import { extractRequestedAspects, PROTOCOL_ALIASES, CONTEXTUAL_SHORT_TOKENS, resolveContextualEntity } from "../../sources/crypto-entity-registry";
+import { matchesRequiredEntity } from "../../sources/source-relevance";
 
 // ─── Schemas ───────────────────────────────────────────────
 
@@ -376,7 +377,7 @@ function deduplicateEntities<T extends { canonical: string }>(
 
 // ─── Deterministic Query Builder ───────────────────────────
 
-function runDeterministicQueryBuilder(
+export function runDeterministicQueryBuilder(
   normalizedGoal: string,
   topics: string[]
 ): {
@@ -442,7 +443,7 @@ function runDeterministicQueryBuilder(
     // If this is a contextual token, skip direct alias resolution — use resolveContextualEntity instead
     if (contextualTokenSet.has(phraseLower)) {
       const ctxResult = resolveContextualEntity(phraseText, normalizedGoal);
-      if (ctxResult) {
+      if (ctxResult?.entityType === "protocol") {
         return { canonical: ctxResult.canonical, isDirectMatch: false };
       }
       return null; // contextual token without matching context → no entity
@@ -626,13 +627,93 @@ function runDeterministicQueryBuilder(
   };
 }
 
+type QueryBuilderLlmData = z.infer<typeof QueryBuilderSchema>;
+
+type StructuredEntity = {
+  text: string;
+  canonical: string;
+  type: string;
+  required: boolean;
+};
+
+function queryPreservesRequiredEntity(query: string, entity: StructuredEntity): boolean {
+  if (matchesRequiredEntity(query, entity)) return true;
+
+  // The shared registry may safely resolve contextual mentions such as
+  // "Curve" in a DEX/AMM query, while rejecting generic uses such as
+  // "yield curve". Canonical retrieval context still stores Curve Finance.
+  return entity.type === "protocol"
+    && resolveContextualEntity(entity.text, query)?.canonical.toLowerCase() === entity.canonical.toLowerCase();
+}
+
+function queryPreservesRequiredEntities(query: string, requiredEntities: StructuredEntity[]): boolean {
+  return requiredEntities.every((entity) => queryPreservesRequiredEntity(query, entity));
+}
+
+function mergeValidatedExpandedQueries(
+  candidateQueries: string[],
+  deterministicQueries: string[],
+  requiredEntities: StructuredEntity[],
+): string[] {
+  const preservesRequired = (query: string) =>
+    requiredEntities.length === 0 || queryPreservesRequiredEntities(query, requiredEntities);
+  const validCandidates = candidateQueries.filter(preservesRequired);
+  const validDeterministic = deterministicQueries.filter(preservesRequired);
+  const fallbackQueries = validDeterministic.length > 0 ? validDeterministic : deterministicQueries;
+  const seen = new Set<string>();
+  const merged: string[] = [];
+
+  for (const query of [...validCandidates, ...fallbackQueries]) {
+    const trimmed = query.trim();
+    const key = trimmed.toLowerCase();
+    if (trimmed && !seen.has(key)) {
+      seen.add(key);
+      merged.push(trimmed);
+    }
+  }
+
+  return merged.slice(0, 7);
+}
+
+/**
+ * Keep deterministic entity identity and requested aspects authoritative
+ * while allowing an LLM to enrich query/source semantics.
+ */
+export function buildAuthoritativeLlmQueryBuilderData(
+  deterministic: ReturnType<typeof runDeterministicQueryBuilder>,
+  llm: QueryBuilderLlmData,
+  requestedAspects: string[],
+  topics: string[],
+): Record<string, unknown> {
+  const requiredEntities = deterministic.primary_entities.filter((entity) => entity.required);
+
+  return {
+    primary_entities: deterministic.primary_entities,
+    secondary_entities: deterministic.secondary_entities,
+    topics,
+    locked_phrases: deterministic.locked_phrases,
+    negative_entities: deterministic.negative_entities,
+    entity_terms: deterministic.entity_terms,
+    expanded_queries: mergeValidatedExpandedQueries(
+      llm.expanded_queries,
+      deterministic.expanded_queries,
+      requiredEntities,
+    ),
+    negative_filters: llm.negative_filters,
+    source_preferences: llm.source_preferences,
+    requested_aspects: requestedAspects,
+    safe_query_summary: llm.safe_summary,
+  };
+}
+
 // ─── Handler ────────────────────────────────────────────────
 
 export const queryBuilderHandler: ServiceHandler = async (
   input: ServiceHandlerInput
 ): Promise<ServiceHandlerOutput> => {
-  const { normalized_goal, topics, routeTier, brain_query_variants, brain_discovery_strategy, brain_normalized_goal } = input.payload as {
-    normalized_goal: string;
+  const { user_goal, intent_normalized_goal, topics, routeTier, brain_query_variants, brain_discovery_strategy, brain_normalized_goal } = input.payload as {
+    user_goal: string;
+    intent_normalized_goal?: string;
     topics: string[];
     routeTier?: DelegatedRouteTier;
     brain_query_variants?: string[];
@@ -640,9 +721,9 @@ export const queryBuilderHandler: ServiceHandler = async (
     brain_normalized_goal?: string;
   };
 
-  // Use normalized_goal as authoritative source for entity extraction.
-  // brain_normalized_goal is advisory only — may drift from user intent.
-  const baseGoal = normalized_goal || "";
+  // The exact original user goal is authoritative for entity/aspect extraction.
+  // Intent Planner and Brain normalizations are advisory search context only.
+  const baseGoal = user_goal || "";
   const det = runDeterministicQueryBuilder(baseGoal, topics || []);
   const brainVariants = (brain_query_variants || []).map((q: string) => q.trim()).filter(Boolean);
 
@@ -651,40 +732,21 @@ export const queryBuilderHandler: ServiceHandler = async (
 
   // ── Deterministic mode: Brain variants primary, deterministic second ──
   if (shouldRunServiceAsDeterministic("query_builder")) {
-    // Merge Brain query variants first, deterministic second
-    const merged = [...brainVariants, ...det.expanded_queries];
-
-    // Dedupe case-insensitively, trim, cap to 7
-    const seen = new Set<string>();
-    const deduped: string[] = [];
-    for (const q of merged) {
-      const key = q.toLowerCase().trim();
-      if (key && !seen.has(key)) {
-        seen.add(key);
-        deduped.push(q.trim());
-      }
-    }
-    let finalQueries = deduped.slice(0, 7);
-
-    // Validate brain variants preserve required entities
-    const requiredEntities = det.primary_entities
-      .filter((e) => e.required)
-      .map((e) => e.canonical.toLowerCase());
-    if (requiredEntities.length > 0) {
-      const validBrain = brainVariants.filter((q) => {
-        const ql = q.toLowerCase();
-        return requiredEntities.every((e) => ql.includes(e));
+    const requiredEntities = det.primary_entities.filter((entity) => entity.required);
+    const invalidBrainVariants = brainVariants.filter(
+      (query) => !queryPreservesRequiredEntities(query, requiredEntities),
+    );
+    if (invalidBrainVariants.length > 0) {
+      console.log("[query-builder] Brain variants dropped required entities, replaced", {
+        dropped_count: invalidBrainVariants.length,
+        required_entities: requiredEntities.map((entity) => entity.canonical),
       });
-      // If some brain variants dropped required entities, re-run deterministic for full coverage
-      if (validBrain.length < brainVariants.length) {
-        const replaced = brainVariants.filter((q) => !validBrain.includes(q));
-        finalQueries = [...validBrain, ...det.expanded_queries.filter((q) => !finalQueries.includes(q))].slice(0, 7);
-        console.log("[query-builder] Brain variants dropped required entities, replaced", {
-          dropped_count: replaced.length,
-          required_entities: requiredEntities,
-        });
-      }
     }
+    const finalQueries = mergeValidatedExpandedQueries(
+      brainVariants,
+      det.expanded_queries,
+      requiredEntities,
+    );
 
     // Derive negative_filters and source_preferences from constraints
     const negativeFilters = [...(det.negative_filters || [])];
@@ -807,27 +869,17 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
     agentName: "query_builder",
     routeTier: toInternalRouteTier(routeTier || "easy"),
     systemPrompt: SYSTEM_PROMPT,
-    userPrompt: `Goal: "${normalized_goal || ""}"\nTopics: ${JSON.stringify(topics || [])}${brainVariantsText}\nDiscovery strategy: ${brain_discovery_strategy || "none"}\nRoute: ${routeTier || "easy"}`,
+    userPrompt: `Original user goal: "${user_goal || ""}"\nIntent Planner normalized goal (advisory only): "${intent_normalized_goal || ""}"\nTopics: ${JSON.stringify(topics || [])}${brainVariantsText}\nDiscovery strategy: ${brain_discovery_strategy || "none"}\nRoute: ${routeTier || "easy"}`,
     schema: QueryBuilderSchema,
   });
 
   if (!result.ok) {
     // ── Last resort: deterministic fallback after all LLM recovery exhausted ──
-    const fallbackMerged = [...brainVariants, ...det.expanded_queries];
-    const seen = new Set<string>();
-    const deduped: string[] = [];
-    for (const q of fallbackMerged) {
-      const key = q.toLowerCase().trim();
-      if (key && !seen.has(key)) {
-        seen.add(key);
-        deduped.push(q.trim());
-      }
-    }
-    // Always include the original goal as minimum fallback query
-    if (normalized_goal && !deduped.some(q => q.toLowerCase().trim() === normalized_goal.toLowerCase().trim())) {
-      deduped.unshift(normalized_goal);
-    }
-    const fallbackQueries = deduped.slice(0, 7);
+    const fallbackQueries = mergeValidatedExpandedQueries(
+      brainVariants,
+      det.expanded_queries,
+      det.primary_entities.filter((entity) => entity.required),
+    );
 
     // Log degraded state (always-on for query_builder — critical discovery path)
     console.log("[query-builder] LLM failed, using deterministic fallback", {
@@ -865,22 +917,12 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
   return {
     ok: true,
     serviceName: "query_builder",
-    data: {
-      primary_entities: result.data.primary_entities,
-      secondary_entities: result.data.secondary_entities,
-      topics: result.data.topics,
-      locked_phrases: result.data.locked_phrases,
-      negative_entities: result.data.negative_entities,
-      entity_terms: computeEntityTerms(
-        result.data.primary_entities,
-        result.data.secondary_entities.filter((entity) => entity.type !== "topic"),
-      ),
-      expanded_queries: result.data.expanded_queries,
-      negative_filters: result.data.negative_filters,
-      source_preferences: result.data.source_preferences,
-      requested_aspects: requestedAspects,
-      safe_query_summary: result.data.safe_summary,
-    },
+    data: buildAuthoritativeLlmQueryBuilderData(
+      det,
+      result.data,
+      requestedAspects,
+      topics || [],
+    ),
     safeSummary: result.data.safe_summary,
     settled: false,
     error: null,

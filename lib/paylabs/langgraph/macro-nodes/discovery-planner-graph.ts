@@ -57,8 +57,10 @@ const queryBuilderNode = createServiceNode(
   "query_builder",
   "discovery_planner",
   (state) => ({
-    // Use normalizedGoal from intent_planner result if available
-    normalized_goal: (state as DiscoveryPlannerStateType).normalizedGoal || state.userGoal,
+    // The exact original request is authoritative for entity/aspect extraction.
+    user_goal: state.userGoal,
+    // Intent Planner output is advisory search context only.
+    intent_normalized_goal: (state as DiscoveryPlannerStateType).normalizedGoal || state.userGoal,
     topics: (state as DiscoveryPlannerStateType).constraints || [],
     routeTier: state.routeTier,
     brain_query_variants: (state as DiscoveryPlannerStateType).brainSuggestedQueryVariants || [],
