@@ -260,6 +260,33 @@ function extractRepairText(response: unknown): string {
   return "";
 }
 
+function getSafeTopLevelKeys(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  return Object.keys(value).slice(0, 12);
+}
+
+function buildSuccessMeta(
+  agentName: string,
+  routeTier: RouteTier,
+  modelConfig: { provider: string; model: string; baseUrl?: string; apiKeyPresent: boolean; agentKey: string; timeoutMs: number; maxTokens: number; streaming?: boolean; forceNonStreamingBody?: boolean; responseFormatJson?: boolean },
+  modelName: string,
+  promptHash: string,
+  retryCount: number,
+  mode: string,
+  schema: z.ZodType<unknown>,
+  data: unknown,
+  diagnostics?: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, retryCount, mode),
+    ...diagnostics,
+    json_found: true,
+    received_keys: getSafeTopLevelKeys(data),
+    expected_keys: getExpectedKeys(schema).slice(0, 12),
+    validation_ok: true,
+  };
+}
+
 // ─── Main API ───────────────────────────────────────────────────
 
 export async function generateStructuredJson<T>(
@@ -325,7 +352,17 @@ export async function generateStructuredJson<T>(
         const result = await structuredModel.invoke(messages);
         const parsed = schema.safeParse(result);
         if (parsed.success) {
-          const meta = buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, attempt, "llm_structured_native");
+          const meta = buildSuccessMeta(
+            agentName,
+            routeTier,
+            modelConfig,
+            modelName,
+            promptHash,
+            attempt,
+            "llm_structured_native",
+            schema,
+            parsed.data,
+          );
           return { ok: true, data: parsed.data as T, meta };
         }
         lastFailureKind = "schema_validation";
@@ -465,7 +502,18 @@ export async function generateStructuredJson<T>(
                     model: modelName,
                     attempt: attempt + 1,
                   });
-                  const meta = buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, attempt + 1, "llm_structured_no_json_repair");
+                  const meta = buildSuccessMeta(
+                    agentName,
+                    routeTier,
+                    modelConfig,
+                    modelName,
+                    promptHash,
+                    attempt + 1,
+                    "llm_structured_no_json_repair",
+                    schema,
+                    repairParsed.data,
+                    lastDiag,
+                  );
                   return { ok: true, data: repairParsed.data as T, meta };
                 }
                 if (repairParsed && !repairParsed.success) {
@@ -575,7 +623,18 @@ export async function generateStructuredJson<T>(
                   model: modelName,
                   attempt: attempt + 1,
                 });
-                const meta = buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, attempt + 1, "llm_structured_repair");
+                const meta = buildSuccessMeta(
+                  agentName,
+                  routeTier,
+                  modelConfig,
+                  modelName,
+                  promptHash,
+                  attempt + 1,
+                  "llm_structured_repair",
+                  schema,
+                  repairParsed.data,
+                  lastDiag,
+                );
                 return { ok: true, data: repairParsed.data as T, meta };
               }
               console.log("[llm-structured] repair also failed Zod", {
@@ -600,7 +659,18 @@ export async function generateStructuredJson<T>(
         break;
       }
 
-      const meta = buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, attempt, "llm_structured_json_extract");
+      const meta = buildSuccessMeta(
+        agentName,
+        routeTier,
+        modelConfig,
+        modelName,
+        promptHash,
+        attempt,
+        "llm_structured_json_extract",
+        schema,
+        parsed.data,
+        lastDiag,
+      );
       return { ok: true, data: parsed.data as T, meta };
 
     } catch (e: unknown) {

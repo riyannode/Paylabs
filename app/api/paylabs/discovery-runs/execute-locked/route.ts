@@ -1157,6 +1157,9 @@ export async function POST(req: NextRequest) {
           verification_content_type: groundingResult?.verificationDiagnostics?.verificationContentType ?? null,
           verification_received_keys: groundingResult?.verificationDiagnostics?.verificationReceivedKeys ?? [],
           verification_expected_keys: groundingResult?.verificationDiagnostics?.verificationExpectedKeys ?? [],
+          verification_structure_failure_codes: groundingResult?.verificationDiagnostics?.verificationStructureFailureCodes ?? [],
+          verification_expected_paragraph_ids: groundingResult?.verificationDiagnostics?.verificationExpectedParagraphIds ?? [],
+          verification_returned_paragraph_ids: groundingResult?.verificationDiagnostics?.verificationReturnedParagraphIds ?? [],
           error_safe: groundingResult?.errorSafe ?? null,
           source_refs: groundedSources,
         }

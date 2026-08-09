@@ -46,6 +46,9 @@ export type GroundingVerificationDiagnostics = {
   verificationContentType?: string | null;
   verificationReceivedKeys?: string[];
   verificationExpectedKeys?: string[];
+  verificationStructureFailureCodes?: ClaimVerificationStructureFailureCode[];
+  verificationExpectedParagraphIds?: string[];
+  verificationReturnedParagraphIds?: string[];
 };
 
 export type GroundingSynthesisDiagnostics = {
@@ -115,6 +118,16 @@ export type SynthesisFailureCode =
   | "synthesis_timeout"
   | "llm_unavailable"
   | "unexpected_synthesis_error";
+
+export const CLAIM_VERIFICATION_STRUCTURE_FAILURE_CODES = [
+  "missing_paragraph_ids",
+  "duplicate_paragraph_ids",
+  "unknown_paragraph_ids",
+  "supported_with_unsupported_claims",
+] as const;
+
+export type ClaimVerificationStructureFailureCode =
+  typeof CLAIM_VERIFICATION_STRUCTURE_FAILURE_CODES[number];
 
 const MAX_CITATION_VALIDATION_FAILURE_CODES = 4;
 
@@ -793,6 +806,8 @@ function metaString(meta: Record<string, unknown> | undefined, key: string): str
 const MAX_VERIFICATION_DIAGNOSTIC_STRING_LENGTH = 160;
 const MAX_VERIFICATION_DIAGNOSTIC_PATHS = 8;
 const MAX_VERIFICATION_DIAGNOSTIC_KEYS = 12;
+const MAX_VERIFICATION_DIAGNOSTIC_PARAGRAPH_IDS = 8;
+const MAX_VERIFICATION_DIAGNOSTIC_FAILURE_CODES = 4;
 
 function boundedDiagnosticString(value: unknown): string | null {
   return typeof value === "string" && value.trim()
@@ -831,21 +846,43 @@ function boundedMetaStringArray(
   return boundedDiagnosticStringArray(value, maxItems);
 }
 
+function boundedParagraphIds(values: string[]): string[] {
+  return [...new Set(values
+    .filter((value) => /^P[1-9]\d*$/.test(value) && value.length <= 16))].slice(0, MAX_VERIFICATION_DIAGNOSTIC_PARAGRAPH_IDS);
+}
+
+function boundedStructureFailureCodes(
+  values: ClaimVerificationStructureFailureCode[],
+): ClaimVerificationStructureFailureCode[] {
+  return [...new Set(values)].slice(0, MAX_VERIFICATION_DIAGNOSTIC_FAILURE_CODES);
+}
+
+type ClaimVerificationStructureDiagnostics = {
+  failureCodes: ClaimVerificationStructureFailureCode[];
+  expectedParagraphIds: string[];
+  returnedParagraphIds: string[];
+};
+
 function buildVerificationDiagnostics(
   meta: Record<string, unknown> | undefined,
   fallbackErrorCode?: string,
+  structure?: ClaimVerificationStructureDiagnostics,
+  callerRetryCount = 0,
+  callerMode = "claim_verifier",
 ): GroundingVerificationDiagnostics {
-  const diagnostics: GroundingVerificationDiagnostics = {
+  return {
     verificationErrorCode: fallbackErrorCode || boundedMetaString(meta, "error_code"),
-    verificationMode: boundedMetaString(meta, "mode"),
-    verificationRetryCount: boundedMetaNumber(meta, "retry_count"),
+    verificationMode: callerMode,
+    verificationRetryCount: callerRetryCount,
     verificationJsonFound: boundedMetaBoolean(meta, "json_found"),
     verificationValidationIssuePaths: boundedMetaStringArray(meta, "validation_issue_paths", MAX_VERIFICATION_DIAGNOSTIC_PATHS),
     verificationContentType: boundedMetaString(meta, "content_type"),
     verificationReceivedKeys: boundedMetaStringArray(meta, "received_keys", MAX_VERIFICATION_DIAGNOSTIC_KEYS),
     verificationExpectedKeys: boundedMetaStringArray(meta, "expected_keys", MAX_VERIFICATION_DIAGNOSTIC_KEYS),
+    verificationStructureFailureCodes: boundedStructureFailureCodes(structure?.failureCodes ?? []),
+    verificationExpectedParagraphIds: boundedParagraphIds(structure?.expectedParagraphIds ?? []),
+    verificationReturnedParagraphIds: boundedParagraphIds(structure?.returnedParagraphIds ?? []),
   };
-  return diagnostics;
 }
 
 export function buildSynthesisDiagnostics(
@@ -1382,6 +1419,40 @@ function buildClaimVerifierPrompt(units: V2FactualUnit[], citationMap: EvidenceP
   ].join("\n")).join("\n\n---\n\n");
 }
 
+type ClaimVerificationStructureClassification =
+  | "exact"
+  | "missing_paragraph_ids"
+  | "duplicate_paragraph_ids"
+  | "unknown_paragraph_ids"
+  | "supported_with_unsupported_claims";
+
+type ClaimVerificationStructureResult = ClaimVerificationStructureDiagnostics & {
+  classification: ClaimVerificationStructureClassification;
+};
+
+function classifyClaimVerificationStructure(
+  expectedIds: string[],
+  paragraphs: ClaimVerificationOutput["paragraphs"],
+): ClaimVerificationStructureResult {
+  const returnedIds = paragraphs.map((paragraph) => paragraph.paragraph_id);
+  const expectedSet = new Set(expectedIds);
+  const returnedSet = new Set(returnedIds);
+  const failureCodes: ClaimVerificationStructureFailureCode[] = [];
+  if (expectedIds.some((id) => !returnedSet.has(id))) failureCodes.push("missing_paragraph_ids");
+  if (returnedSet.size !== returnedIds.length) failureCodes.push("duplicate_paragraph_ids");
+  if (returnedIds.some((id) => !expectedSet.has(id))) failureCodes.push("unknown_paragraph_ids");
+  if (paragraphs.some((paragraph) => paragraph.supported && paragraph.unsupported_claims.length > 0)) {
+    failureCodes.push("supported_with_unsupported_claims");
+  }
+
+  return {
+    classification: failureCodes[0] || "exact",
+    failureCodes,
+    expectedParagraphIds: expectedIds,
+    returnedParagraphIds: returnedIds,
+  };
+}
+
 async function withV2Timeout<T>(work: Promise<T>, timeoutMs: number): Promise<T | typeof V2_TIMEOUT> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -1404,6 +1475,7 @@ async function verifyEvidencePackClaims(
   ok: true;
   meta: Record<string, unknown>;
   latencyMs: number;
+  verificationDiagnostics: GroundingVerificationDiagnostics;
 } | {
   ok: false;
   errorSafe: string;
@@ -1421,73 +1493,143 @@ async function verifyEvidencePackClaims(
     };
   }
 
+  const expectedIds = units.map((unit) => unit.paragraphId);
+  const verifierPrompt = buildClaimVerifierPrompt(units, citationMap);
+  const contextRetrySystemPrompt = `${CLAIM_VERIFIER_SYSTEM_PROMPT}
+
+Context-preserving retry contract:
+Return exactly one row for each expected paragraph ID.
+Expected paragraph IDs: ${expectedIds.join(", ")}
+Do not add, remove, rename, merge, or reorder paragraph identities.
+Judge support from the supplied cited chunks only.
+Formatting correction must not change an unsupported claim into a supported one.`;
+
+  type AttemptResult = {
+    ok: true;
+    meta: Record<string, unknown>;
+    verificationDiagnostics: GroundingVerificationDiagnostics;
+  } | {
+    ok: false;
+    errorSafe: string;
+    meta?: Record<string, unknown>;
+    unsupportedClaimCount?: number;
+    verificationDiagnostics: GroundingVerificationDiagnostics;
+    retryable: boolean;
+  };
+
   const startedAt = Date.now();
-  const result = await withV2Timeout(
-    generateStructuredJson<ClaimVerificationOutput>({
+  let attemptsUsed = 0;
+
+  const runAttempt = async (
+    systemPrompt: string,
+    callerRetryCount: number,
+    callerMode: string,
+  ): Promise<AttemptResult> => {
+    attemptsUsed += 1;
+    const result = await generateStructuredJson<ClaimVerificationOutput>({
       agentName: "source_verifier",
       routeTier: "normal" as RouteTier,
-      systemPrompt: CLAIM_VERIFIER_SYSTEM_PROMPT,
-      userPrompt: buildClaimVerifierPrompt(units, citationMap),
+      systemPrompt,
+      userPrompt: verifierPrompt,
       schema: ClaimVerificationSchema,
       maxAttempts: 1,
-      allowRepair: true,
-    }),
+      allowRepair: false,
+    });
+
+    if (!result.ok) {
+      return {
+        ok: false,
+        errorSafe: "Evidence claim verification was unavailable.",
+        meta: result.meta,
+        verificationDiagnostics: buildVerificationDiagnostics(
+          result.meta,
+          result.code,
+          undefined,
+          callerRetryCount,
+          callerMode,
+        ),
+        retryable: true,
+      };
+    }
+
+    const structure = classifyClaimVerificationStructure(expectedIds, result.data.paragraphs);
+    if (structure.failureCodes.length > 0) {
+      return {
+        ok: false,
+        errorSafe: "Evidence claim verifier returned invalid structured results.",
+        meta: result.meta,
+        verificationDiagnostics: buildVerificationDiagnostics(
+          result.meta,
+          "verification_invalid_structured_results",
+          structure,
+          callerRetryCount,
+          callerMode,
+        ),
+        retryable: true,
+      };
+    }
+
+    const invalidSupportRows = result.data.paragraphs.filter((paragraph) => !paragraph.supported);
+    if (invalidSupportRows.length > 0) {
+      return {
+        ok: false,
+        errorSafe: "One or more generated factual units were not supported by their cited chunks.",
+        meta: result.meta,
+        verificationDiagnostics: buildVerificationDiagnostics(
+          result.meta,
+          "verification_unsupported_claims",
+          structure,
+          callerRetryCount,
+          callerMode,
+        ),
+        unsupportedClaimCount: invalidSupportRows.reduce(
+          (count, row) => count + Math.max(1, row.unsupported_claims.length),
+          0,
+        ),
+        retryable: false,
+      };
+    }
+
+    return {
+      ok: true,
+      meta: result.meta,
+      verificationDiagnostics: buildVerificationDiagnostics(
+        result.meta,
+        undefined,
+        structure,
+        callerRetryCount,
+        callerMode,
+      ),
+    };
+  };
+
+  const verification = await withV2Timeout(
+    (async (): Promise<AttemptResult> => {
+      const first = await runAttempt(CLAIM_VERIFIER_SYSTEM_PROMPT, 0, "claim_verifier");
+      if (first.ok || !first.retryable) return first;
+      return runAttempt(contextRetrySystemPrompt, 1, "claim_verifier_context_retry");
+    })(),
     timeoutMs,
   );
-  const latencyMs = Date.now() - startedAt;
 
-  if (result === V2_TIMEOUT) {
+  const latencyMs = Date.now() - startedAt;
+  if (verification === V2_TIMEOUT) {
+    const retryCount = Math.min(1, Math.max(0, attemptsUsed - 1));
     return {
       ok: false,
       errorSafe: "Evidence claim verification timed out.",
       latencyMs,
-      verificationDiagnostics: buildVerificationDiagnostics(undefined, "verification_timeout"),
-    };
-  }
-  if (!result.ok) {
-    return {
-      ok: false,
-      errorSafe: "Evidence claim verification was unavailable.",
-      meta: result.meta,
-      latencyMs,
-      verificationDiagnostics: buildVerificationDiagnostics(result.meta, result.code),
+      verificationDiagnostics: buildVerificationDiagnostics(
+        undefined,
+        "verification_timeout",
+        undefined,
+        retryCount,
+        retryCount > 0 ? "claim_verifier_context_retry" : "claim_verifier",
+      ),
     };
   }
 
-  const expectedIds = units.map((unit) => unit.paragraphId);
-  const returnedIds = result.data.paragraphs.map((paragraph) => paragraph.paragraph_id);
-  const validIds = returnedIds.every((id) => expectedIds.includes(id));
-  const uniqueIds = new Set(returnedIds).size === returnedIds.length;
-  const exactIds = returnedIds.length === expectedIds.length
-    && uniqueIds
-    && validIds
-    && citationSetsMatch(expectedIds, returnedIds);
-  const invalidSupportRows = result.data.paragraphs.filter((paragraph) => !paragraph.supported);
-  const malformedSupportedRows = result.data.paragraphs.some((paragraph) =>
-    paragraph.supported && paragraph.unsupported_claims.length > 0
-  );
-
-  if (!exactIds || malformedSupportedRows) {
-    return {
-      ok: false,
-      errorSafe: "Evidence claim verifier returned invalid structured results.",
-      meta: result.meta,
-      latencyMs,
-      verificationDiagnostics: buildVerificationDiagnostics(result.meta, "verification_invalid_structured_results"),
-    };
-  }
-  if (invalidSupportRows.length > 0) {
-    return {
-      ok: false,
-      errorSafe: "One or more generated factual units were not supported by their cited chunks.",
-      meta: result.meta,
-      latencyMs,
-      verificationDiagnostics: buildVerificationDiagnostics(result.meta, "verification_unsupported_claims"),
-      unsupportedClaimCount: invalidSupportRows.reduce((count, row) => count + Math.max(1, row.unsupported_claims.length), 0),
-    };
-  }
-
-  return { ok: true, meta: result.meta, latencyMs };
+  return { ...verification, latencyMs };
 }
 
 /**
@@ -1734,5 +1876,6 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
     verificationProvider,
     verificationModel,
     verificationLatencyMs,
+    verificationDiagnostics: claimVerification.verificationDiagnostics,
   };
 }
