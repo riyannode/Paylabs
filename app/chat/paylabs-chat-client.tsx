@@ -7,7 +7,8 @@ import MobileNav from "@/components/paylabs/MobileNav";
 import type { WalletState, WalletInfo, PayLabsWalletBalance } from "@/components/paylabs/wallet-types";
 import DcwModal from "@/components/paylabs/DcwModal";
 import { safeExplorerUrl as validateExplorerUrl } from "@/lib/paylabs/x402/payment-links";
-import type { SafeRunResult, SourceLink, ChatMessage } from "@/components/paylabs/chat/types";
+import type { SafeRunResult, SourceLink, ChatMessage, AnswerProvenance } from "@/components/paylabs/chat/types";
+import { selectAuthoritativeAnswer, isSubstantiveBrainAnswer } from "@/components/paylabs/chat/answer-selection";
 import { BrainIcon } from "@/components/paylabs/chat/BrainIcon";
 import { ChatResultCard } from "@/components/paylabs/chat/ChatResultCard";
 import { ChatTypingIndicator } from "@/components/paylabs/chat/ChatTypingIndicator";
@@ -179,7 +180,6 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
   const groundingAuthoritative = data?.grounding_authoritative === true;
   const groundingVersion = typeof data?.grounding_version === "string" ? data.grounding_version : null;
 
-  const INSUFFICIENT_EVIDENCE_MSG = "PayLabs could not find enough relevant evidence to answer this reliably.";
   const SYNTHESIS_FAILED_MSG = "PayLabs found relevant sources but could not complete evidence verification for this answer.";
 
   const rawFinalAnswerValue = data?.final_answer ?? exitOutput?.final_answer;
@@ -198,38 +198,33 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     null;
 
   const isNoSourceFallback = /no sufficiently relevant sources found|no relevant sources found|no matching live rsshub sources|no sufficiently relevant live sources were found|did not attach source links/i.test(rawFinalAnswer || "");
+  const brainResponseCandidates = [
+    brainPlanning?.assistant_response,
+    agentTraceBrain?.assistant_response,
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
   const brainAssistantResponse =
-    (brainPlanning?.assistant_response as string) ??
-    (agentTraceBrain?.assistant_response as string) ??
-    (brainPlanning?.plan_rationale as string) ??
-    (agentTraceBrain?.plan_rationale as string) ??
+    brainResponseCandidates.find((value) => isSubstantiveBrainAnswer(value)) ??
+    brainResponseCandidates[0] ??
     null;
-
-  // Block generic Brain planning text from being shown as the Answer
-  // Anchored to sentence-start or preceded by planning indicators to avoid
-  // matching legitimate answers like "binary searching for" or "looking for jobs"
-  const GENERIC_ANSWER_RE = /^(i will find|i will search|i am processing|let me find|i'll look|i'll search|saya akan mencari|saya sedang memproses|mohon tunggu sebentar|gathering information|i'm searching for|i'm looking for|saya sedang mencari)/i;
-  const isGenericBrainAnswer = !!brainAssistantResponse && GENERIC_ANSWER_RE.test(brainAssistantResponse) && brainAssistantResponse.length < 200;
+  const isGenericBrainAnswer = !!brainAssistantResponse && !isSubstantiveBrainAnswer(brainAssistantResponse);
 
   const NO_SOURCE_FALLBACK_MSG = "No sufficiently relevant live sources were found for this query. The route completed with basic discovery, but PayLabs did not attach source links because no source passed the relevance gate.";
   let assistantResponse: string;
+  let answerProvenance: AnswerProvenance;
+  let groundingFailureMessage: string | null = null;
   if (groundingAuthoritative) {
-    if (groundingVersion !== "grounded_answer_v2") {
-      assistantResponse = SYNTHESIS_FAILED_MSG;
-    } else if (groundingStatus === "insufficient_evidence") {
-      assistantResponse = INSUFFICIENT_EVIDENCE_MSG;
-    } else if (groundingStatus === "synthesis_failed") {
-      assistantResponse = SYNTHESIS_FAILED_MSG;
-    } else if (
-      (groundingStatus === "grounded" || groundingStatus === "partially_grounded") &&
-      data?.grounding_citation_validation_ok === true &&
-      data?.grounding_claim_support_validation_ok === true &&
-      rawFinalAnswer?.trim()
-    ) {
-      assistantResponse = rawFinalAnswer.trim();
-    } else {
-      assistantResponse = SYNTHESIS_FAILED_MSG;
-    }
+    const selectedAnswer = selectAuthoritativeAnswer({
+      groundingVersion,
+      groundingStatus,
+      groundingCitationValidationOk: data?.grounding_citation_validation_ok === true,
+      groundingClaimSupportValidationOk: data?.grounding_claim_support_validation_ok === true,
+      rawFinalAnswer,
+      brainAssistantResponse,
+      fallbackAnswer: SYNTHESIS_FAILED_MSG,
+    });
+    assistantResponse = selectedAnswer.assistantResponse;
+    answerProvenance = selectedAnswer.answerProvenance;
+    groundingFailureMessage = selectedAnswer.groundingFailureMessage;
   } else {
     const groundedResponse = groundingStatus
       ? (rawFinalAnswer?.trim() || (groundingStatus === "synthesis_failed" ? SYNTHESIS_FAILED_MSG : NO_SOURCE_FALLBACK_MSG))
@@ -243,6 +238,7 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
       (exitOutput?.final_summary as string) ??
       tieredSummaries?.final_summary ??
       "Run completed.";
+    answerProvenance = "fallback";
   }
   const userVisibleReasoning =
     (brainPlanning?.user_visible_reasoning as string) ??
@@ -284,7 +280,12 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
             summary: typeof s.summary === "string" ? s.summary : "",
             rank: typeof s.rank === "number" ? s.rank : 0,
             relevance_score: typeof s.relevance_score === "number" ? s.relevance_score : 0,
-            citationLabel: typeof s.source_label === "string" ? s.source_label : null,
+            citationLabel:
+              answerProvenance === "evidence_verified"
+                ? typeof s.source_label === "string"
+                  ? s.source_label
+                  : null
+                : null,
           };
         })
         .filter((s) => /^https?:\/\//.test(s.url))
@@ -321,6 +322,8 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     receiptReady: (data?.receipt_ready as boolean) ?? (exitOutput?.receipt_ready as boolean) ?? false,
     safeSummary: (exitOutput?.final_summary as string) ?? tieredSummaries?.final_summary ?? "Run completed.",
     assistantResponse,
+    answerProvenance,
+    groundingFailureMessage,
     userVisibleReasoning,
     brainRationale,
     sourceFinalAnswer: groundingAuthoritative ? null : sourceAvailabilityNote ?? rawFinalAnswer,

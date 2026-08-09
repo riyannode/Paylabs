@@ -16,6 +16,14 @@ export type SourceLink = {
   citationLabel?: string | null;
 };
 
+export type GroundingStatus =
+  | "grounded"
+  | "partially_grounded"
+  | "insufficient_evidence"
+  | "synthesis_failed";
+
+export type AnswerProvenance = "evidence_verified" | "brain_unverified" | "fallback";
+
 export type SafeRunResult = {
   ok: boolean;
   runId: string | null;
@@ -31,13 +39,15 @@ export type SafeRunResult = {
   receiptReady: boolean;
   safeSummary: string;
   assistantResponse: string | null;
+  answerProvenance: AnswerProvenance;
+  groundingFailureMessage: string | null;
   userVisibleReasoning: string | null;
   brainRationale: string | null;
   sourceFinalAnswer: string | null;
   sourceAvailabilityNote: string | null;
   groundingAuthoritative: boolean;
   groundingVersion: string | null;
-  groundingStatus: "grounded" | "partially_grounded" | "insufficient_evidence" | "synthesis_failed" | null;
+  groundingStatus: GroundingStatus | null;
   groundingSourceIds: string[];
   groundingChunkCitationIds: string[];
   groundingCitationValidationOk: boolean | null;
