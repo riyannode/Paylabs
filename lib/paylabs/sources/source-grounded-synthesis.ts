@@ -48,6 +48,17 @@ export type GroundingVerificationDiagnostics = {
   verificationExpectedKeys?: string[];
 };
 
+export type GroundingSynthesisDiagnostics = {
+  synthesisErrorCode?: string | null;
+  synthesisMode?: string | null;
+  synthesisRetryCount?: number | null;
+  synthesisJsonFound?: boolean | null;
+  synthesisValidationIssuePaths?: string[];
+  synthesisContentType?: string | null;
+  synthesisReceivedKeys?: string[];
+  synthesisExpectedKeys?: string[];
+};
+
 export type GroundedSynthesisResult = {
   status:
     | "grounded"
@@ -65,6 +76,7 @@ export type GroundedSynthesisResult = {
   citationValidationFailureCodes?: CitationValidationFailureCode[];
   /** Safe diagnostic for failures during the EvidencePack synthesis call. */
   synthesisFailureCode?: SynthesisFailureCode;
+  synthesisDiagnostics?: GroundingSynthesisDiagnostics;
   /** V2 diagnostics use chunk citation IDs while retaining source labels. */
   usedChunkCitationIds?: string[];
   availableSourceIds?: string[];
@@ -668,9 +680,21 @@ const MAX_VERIFICATION_DIAGNOSTIC_STRING_LENGTH = 160;
 const MAX_VERIFICATION_DIAGNOSTIC_PATHS = 8;
 const MAX_VERIFICATION_DIAGNOSTIC_KEYS = 12;
 
+function boundedDiagnosticString(value: unknown): string | null {
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, MAX_VERIFICATION_DIAGNOSTIC_STRING_LENGTH)
+    : null;
+}
+
+function boundedDiagnosticStringArray(value: unknown, maxItems: number): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim().slice(0, MAX_VERIFICATION_DIAGNOSTIC_STRING_LENGTH)))].slice(0, maxItems);
+}
+
 function boundedMetaString(meta: Record<string, unknown> | undefined, key: string): string | null {
-  const value = metaString(meta, key);
-  return value ? value.slice(0, MAX_VERIFICATION_DIAGNOSTIC_STRING_LENGTH) : null;
+  return boundedDiagnosticString(meta?.[key]);
 }
 
 function boundedMetaNumber(meta: Record<string, unknown> | undefined, key: string): number | null {
@@ -690,10 +714,7 @@ function boundedMetaStringArray(
 ): string[] | undefined {
   const value = meta?.[key];
   if (!Array.isArray(value)) return undefined;
-  const values = value
-    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-    .map((item) => item.trim().slice(0, MAX_VERIFICATION_DIAGNOSTIC_STRING_LENGTH));
-  return [...new Set(values)].slice(0, maxItems);
+  return boundedDiagnosticStringArray(value, maxItems);
 }
 
 function buildVerificationDiagnostics(
@@ -713,6 +734,64 @@ function buildVerificationDiagnostics(
   return diagnostics;
 }
 
+export function buildSynthesisDiagnostics(
+  meta: Record<string, unknown> | undefined,
+  fallbackErrorCode?: string | null,
+): GroundingSynthesisDiagnostics {
+  return {
+    synthesisErrorCode: boundedDiagnosticString(fallbackErrorCode) ?? boundedMetaString(meta, "error_code"),
+    synthesisMode: boundedMetaString(meta, "mode"),
+    synthesisRetryCount: boundedMetaNumber(meta, "retry_count"),
+    synthesisJsonFound: boundedMetaBoolean(meta, "json_found"),
+    synthesisValidationIssuePaths: boundedMetaStringArray(
+      meta,
+      "validation_issue_paths",
+      MAX_VERIFICATION_DIAGNOSTIC_PATHS,
+    ),
+    synthesisContentType: boundedMetaString(meta, "content_type"),
+    synthesisReceivedKeys: boundedMetaStringArray(meta, "received_keys", MAX_VERIFICATION_DIAGNOSTIC_KEYS),
+    synthesisExpectedKeys: boundedMetaStringArray(meta, "expected_keys", MAX_VERIFICATION_DIAGNOSTIC_KEYS),
+  };
+}
+
+export function serializeGroundingSynthesisDiagnostics(
+  diagnostics?: GroundingSynthesisDiagnostics,
+): {
+  synthesis_error_code: string | null;
+  synthesis_mode: string | null;
+  synthesis_retry_count: number | null;
+  synthesis_json_found: boolean | null;
+  synthesis_validation_issue_paths: string[];
+  synthesis_content_type: string | null;
+  synthesis_received_keys: string[];
+  synthesis_expected_keys: string[];
+} {
+  return {
+    synthesis_error_code: boundedDiagnosticString(diagnostics?.synthesisErrorCode),
+    synthesis_mode: boundedDiagnosticString(diagnostics?.synthesisMode),
+    synthesis_retry_count: typeof diagnostics?.synthesisRetryCount === "number"
+      && Number.isFinite(diagnostics.synthesisRetryCount)
+      ? diagnostics.synthesisRetryCount
+      : null,
+    synthesis_json_found: typeof diagnostics?.synthesisJsonFound === "boolean"
+      ? diagnostics.synthesisJsonFound
+      : null,
+    synthesis_validation_issue_paths: boundedDiagnosticStringArray(
+      diagnostics?.synthesisValidationIssuePaths,
+      MAX_VERIFICATION_DIAGNOSTIC_PATHS,
+    ),
+    synthesis_content_type: boundedDiagnosticString(diagnostics?.synthesisContentType),
+    synthesis_received_keys: boundedDiagnosticStringArray(
+      diagnostics?.synthesisReceivedKeys,
+      MAX_VERIFICATION_DIAGNOSTIC_KEYS,
+    ),
+    synthesis_expected_keys: boundedDiagnosticStringArray(
+      diagnostics?.synthesisExpectedKeys,
+      MAX_VERIFICATION_DIAGNOSTIC_KEYS,
+    ),
+  };
+}
+
 function v2FailureResult(
   citationMap: EvidencePackCitationMap,
   errorSafe: string,
@@ -728,6 +807,7 @@ function v2FailureResult(
     claimSupportValidationOk?: boolean;
     citationValidationFailureCodes?: CitationValidationFailureCode[];
     synthesisFailureCode?: SynthesisFailureCode;
+    synthesisDiagnostics?: GroundingSynthesisDiagnostics;
     verificationDiagnostics?: GroundingVerificationDiagnostics;
   },
 ): GroundedSynthesisResult {
@@ -745,6 +825,7 @@ function v2FailureResult(
     unknownCitationIds: [],
     citationValidationFailureCodes: metadata?.citationValidationFailureCodes ?? [],
     synthesisFailureCode: metadata?.synthesisFailureCode,
+    synthesisDiagnostics: metadata?.synthesisDiagnostics,
     citationValidationOk: metadata?.citationValidationOk ?? false,
     claimSupportValidationOk: metadata?.claimSupportValidationOk ?? false,
     synthesisProvider: metadata?.synthesisProvider ?? null,
@@ -1362,6 +1443,7 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
     return {
       ...v2FailureResult(citationMap, "EvidencePack answer synthesis failed unexpectedly.", {
         synthesisFailureCode: "unexpected_synthesis_error",
+        synthesisDiagnostics: buildSynthesisDiagnostics(undefined, "unexpected_synthesis_error"),
         synthesisLatencyMs: Date.now() - synthesisStartedAt,
       }),
       ...baseDiagnostics,
@@ -1373,17 +1455,20 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
     return {
       ...v2FailureResult(citationMap, "EvidencePack answer synthesis timed out.", {
         synthesisFailureCode: "synthesis_timeout",
+        synthesisDiagnostics: buildSynthesisDiagnostics(undefined, "synthesis_timeout"),
         synthesisLatencyMs,
       }),
       ...baseDiagnostics,
     };
   }
   if (!synthesisCall.ok) {
+    const synthesisFailureCode = synthesisCall.code === "LLM_UNAVAILABLE"
+      ? "llm_unavailable"
+      : "structured_output_failed";
     return {
       ...v2FailureResult(citationMap, "EvidencePack answer synthesis was unavailable.", {
-        synthesisFailureCode: synthesisCall.code === "LLM_UNAVAILABLE"
-          ? "llm_unavailable"
-          : "structured_output_failed",
+        synthesisFailureCode,
+        synthesisDiagnostics: buildSynthesisDiagnostics(synthesisCall.meta, synthesisCall.code),
         synthesisProvider: metaString(synthesisCall.meta, "provider"),
         synthesisModel: metaString(synthesisCall.meta, "model"),
         synthesisLatencyMs,

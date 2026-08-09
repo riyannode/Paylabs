@@ -37,7 +37,10 @@ import { randomUUID } from "node:crypto";
 import { isOfficeMacroAgentId } from "@/lib/paylabs/office/registry";
 import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
 import { attachPaymentResponseHeader } from "@/lib/paylabs/x402/seller-challenge";
-import type { GroundedSynthesisResult } from "@/lib/paylabs/sources/source-grounded-synthesis";
+import {
+  serializeGroundingSynthesisDiagnostics,
+  type GroundedSynthesisResult,
+} from "@/lib/paylabs/sources/source-grounded-synthesis";
 import type {
   EvidenceCoverage,
   EvidencePack,
@@ -1141,6 +1144,7 @@ export async function POST(req: NextRequest) {
           synthesis_provider: groundingResult?.synthesisProvider ?? groundingProvider,
           synthesis_model: groundingResult?.synthesisModel ?? groundingModel,
           synthesis_latency_ms: groundingResult?.synthesisLatencyMs ?? groundingLatencyMs,
+          ...serializeGroundingSynthesisDiagnostics(groundingResult?.synthesisDiagnostics),
           verification_provider: groundingResult?.verificationProvider ?? null,
           verification_model: groundingResult?.verificationModel ?? null,
           verification_latency_ms: groundingResult?.verificationLatencyMs ?? null,
