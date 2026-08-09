@@ -1,4 +1,4 @@
-import { ASPECT_DEFINITIONS } from "./crypto-entity-registry";
+import { ASPECT_DEFINITIONS, getProtocolEvidenceAliases } from "./crypto-entity-registry";
 
 export type StructuredEntity = {
   text: string;
@@ -63,6 +63,10 @@ function closeTokenMatch(text: string, entity: string): boolean {
 }
 
 export function matchesRequiredEntity(text: string, entity: StructuredEntity): boolean {
+  const protocolEvidenceAliases = getProtocolEvidenceAliases(entity.canonical);
+  if (protocolEvidenceAliases.length > 0) {
+    return protocolEvidenceAliases.some((alias) => matchesExactPhrase(text, alias));
+  }
   return matchesControlledAlias(text, entity) || closeTokenMatch(text, entity.canonical);
 }
 

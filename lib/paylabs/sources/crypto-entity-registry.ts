@@ -19,6 +19,8 @@ export interface ProtocolAliasEntry {
   canonical: string;
   /** All recognized aliases / alternate spellings */
   aliases: string[];
+  /** Unambiguous aliases that may qualify source evidence */
+  sourceAliases?: string[];
   /** Category tag */
   category: "lending" | "dex" | "cdp" | "amm";
   /** Brief description for context */
@@ -99,6 +101,13 @@ export const PROTOCOL_ALIASES: Record<string, ProtocolAliasEntry> = {
       "convex",
       "convex finance",
       "curve wars",
+    ],
+    sourceAliases: [
+      "Curve Finance",
+      "curve.finance",
+      "docs.curve.finance",
+      "Curve pools",
+      "Curve DEX",
     ],
     category: "amm",
     description: "DEX optimized for stablecoin/pegged asset swaps with low slippage",
@@ -941,6 +950,14 @@ export const CONTEXTUAL_SHORT_TOKENS: Record<
       disambiguation: "Curve Finance reward token",
     },
   ],
+  // "curve" is ambiguous in ordinary English; resolve it only in DeFi/DEX context
+  curve: [
+    {
+      canonical: "Curve Finance",
+      entityType: "protocol",
+      disambiguation: "Curve Finance when context mentions uniswap, decentralized exchange, dex, amm, automated market maker, liquidity, liquidity pool, lp, swap, stablecoin, stableswap",
+    },
+  ],
   // "cvx" is Convex (related to Curve)
   cvx: [
     {
@@ -1151,6 +1168,23 @@ export function resolveContextualEntity(
 
   // 3. No match
   return null;
+}
+
+/**
+ * Return only unambiguous protocol identities that may qualify source evidence.
+ * Contextual aliases such as raw "curve" are deliberately excluded.
+ */
+export function getProtocolEvidenceAliases(protocolKeyOrCanonical: string): string[] {
+  const normalized = protocolKeyOrCanonical.toLowerCase().trim();
+  const entry = PROTOCOL_ALIASES[protocolKeyOrCanonical]
+    || Object.values(PROTOCOL_ALIASES).find((candidate) => candidate.canonical.toLowerCase() === normalized);
+  if (!entry) return [];
+
+  const aliases = entry.sourceAliases || [
+    entry.canonical,
+    ...entry.aliases.filter((alias) => !contextualKeys.has(alias.toLowerCase())),
+  ];
+  return [...new Set(aliases.map((alias) => alias.trim()).filter(Boolean))];
 }
 
 // ─── Convenience: Get all protocol canonical names ────────
