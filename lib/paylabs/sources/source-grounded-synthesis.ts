@@ -1430,7 +1430,7 @@ async function verifyEvidencePackClaims(
       userPrompt: buildClaimVerifierPrompt(units, citationMap),
       schema: ClaimVerificationSchema,
       maxAttempts: 1,
-      allowRepair: false,
+      allowRepair: true,
     }),
     timeoutMs,
   );
@@ -1546,14 +1546,14 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
   }
 
   // Synthesis may make the initial request plus one bounded adapter repair.
-  // Keep claim verification on its existing independent deadline.
+  // Keep claim verification on its own independent deadline.
   const synthesisTimeoutMs = Math.max(
     1,
     Number(process.env.PAYLABS_GROUNDED_SYNTHESIS_TIMEOUT_MS) || 45000,
   );
   const claimVerifierTimeoutMs = Math.max(
     1,
-    Number(process.env.PAYLABS_GROUNDED_ANSWER_TIMEOUT_MS) || 15000,
+    Number(process.env.PAYLABS_GROUNDED_CLAIM_VERIFIER_TIMEOUT_MS) || 45000,
   );
   const synthesisStartedAt = Date.now();
   let synthesisCall: GenerateStructuredJsonResult<EvidencePackSynthesisOutput> | typeof V2_TIMEOUT;

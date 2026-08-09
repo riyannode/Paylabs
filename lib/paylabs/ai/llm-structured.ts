@@ -366,19 +366,28 @@ export async function generateStructuredJson<T>(
       const result = await (model as ChatOpenAI).invoke(strategyMessages);
       const jsonStr = extractJsonFromResponse(result);
 
-      // Safe diagnostics for brain_planner (no raw output, no secrets)
-      // Always log for brain_planner (critical paid path); other agents gated to non-production
+      // Safe diagnostics for every raw invoke (no raw output, no secrets).
+      // Console logging remains gated: always for brain_planner, otherwise only outside production.
+      const msg = result as unknown as Record<string, unknown>;
+      const content = msg?.content as string | unknown;
+      const expectedKeys = getExpectedKeys(schema);
+      let receivedKeys: string[] = [];
+      if (jsonStr) {
+        try {
+          const p = JSON.parse(jsonStr);
+          if (p && typeof p === "object" && !Array.isArray(p)) receivedKeys = Object.keys(p);
+        } catch { /* ignore */ }
+      }
+      lastDiag = {
+        ...lastDiag,
+        json_found: !!jsonStr,
+        content_type: typeof content,
+        content_length: typeof content === "string" ? content.length : null,
+        received_keys: receivedKeys,
+        expected_keys: expectedKeys,
+      };
+
       if (agentName === "brain_planner" || process.env.NODE_ENV !== "production") {
-        const msg = result as unknown as Record<string, unknown>;
-        const content = msg?.content as string | unknown;
-        const expectedKeys = getExpectedKeys(schema);
-        let receivedKeys: string[] = [];
-        if (jsonStr) {
-          try {
-            const p = JSON.parse(jsonStr);
-            if (p && typeof p === "object" && !Array.isArray(p)) receivedKeys = Object.keys(p);
-          } catch { /* ignore */ }
-        }
         console.log("[llm-structured] brain_planner invoke result:", {
           provider: modelConfig.provider,
           model: modelName,
@@ -389,14 +398,6 @@ export async function generateStructuredJson<T>(
           expected_keys: expectedKeys,
           received_keys: receivedKeys,
         });
-        lastDiag = {
-          ...lastDiag,
-          json_found: !!jsonStr,
-          content_type: typeof content,
-          content_length: typeof content === "string" ? content.length : null,
-          received_keys: receivedKeys,
-          expected_keys: expectedKeys,
-        };
       }
 
       if (!jsonStr) {
