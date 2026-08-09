@@ -1268,10 +1268,7 @@ export function getProtocolEvidenceAliases(protocolKeyOrCanonical: string): stri
     || Object.values(PROTOCOL_ALIASES).find((candidate) => candidate.canonical.toLowerCase() === normalized);
   if (!entry) return [];
 
-  const aliases = entry.sourceAliases || [
-    entry.canonical,
-    ...entry.aliases.filter((alias) => !contextualKeys.has(alias.toLowerCase())),
-  ];
+  const aliases = [entry.canonical, ...(entry.sourceAliases ?? [])];
   return [...new Set(aliases.map((alias) => alias.trim()).filter(Boolean))];
 }
 
