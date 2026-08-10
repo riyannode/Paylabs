@@ -1,4 +1,9 @@
-import { ASPECT_DEFINITIONS, getProtocolEvidenceAliases } from "./crypto-entity-registry";
+import { getEntityEvidenceAliases, getProtocolEvidenceAliases } from "./crypto-entity-registry";
+import {
+  matchesRequestedAspect,
+  normalizeAspectConstraints,
+  type RequestedAspectConstraint,
+} from "./query-requirements";
 
 export type StructuredEntity = {
   text: string;
@@ -48,7 +53,8 @@ export function matchesExactPhrase(text: string, phrase: string): boolean {
 }
 
 export function matchesControlledAlias(text: string, entity: StructuredEntity): boolean {
-  return matchesExactPhrase(text, entity.canonical) || matchesExactPhrase(text, entity.text);
+  const aliases = getEntityEvidenceAliases(entity.canonical);
+  return [entity.canonical, entity.text, ...aliases].some((alias) => matchesExactPhrase(text, alias));
 }
 
 function closeTokenMatch(text: string, entity: string): boolean {
@@ -65,7 +71,7 @@ function closeTokenMatch(text: string, entity: string): boolean {
 export function matchesRequiredEntity(text: string, entity: StructuredEntity): boolean {
   const protocolEvidenceAliases = getProtocolEvidenceAliases(entity.canonical);
   if (protocolEvidenceAliases.length > 0) {
-    return protocolEvidenceAliases.some((alias) => matchesExactPhrase(text, alias));
+    return protocolEvidenceAliases.some((alias) => matchesExactPhrase(text, alias)) || matchesControlledAlias(text, entity);
   }
   return matchesControlledAlias(text, entity) || closeTokenMatch(text, entity.canonical);
 }
@@ -184,49 +190,24 @@ export function validateCandidateRelevance(candidate: RelevanceCandidate, contex
  */
 export function getMatchedAspectsForText(
   text: string,
-  requestedAspects: string[],
+  requestedAspects: RequestedAspectConstraint[] | string[],
 ): string[] {
-  if (!requestedAspects.length) return [];
-  const matched: string[] = [];
-  for (const aspect of requestedAspects) {
-    const def = ASPECT_DEFINITIONS[aspect];
-    if (!def) {
-      // Unknown aspect — exact phrase check only
-      if (matchesExactPhrase(text, aspect.replace(/_/g, " "))) {
-        matched.push(aspect);
-      }
-      continue;
-    }
-    // Use the definition's signal terms for boundary-aware matching
-    const isMatched = def.signalTerms.some((term) => matchesExactPhrase(text, term));
-    if (isMatched) matched.push(aspect);
-  }
-  return matched;
+  const constraints = normalizeAspectConstraints(requestedAspects);
+  return constraints.filter((aspect) => matchesRequestedAspect(text, aspect)).map((aspect) => aspect.key);
 }
 
 export function computeAspectCoverage(
   sourceTexts: string[],
-  requestedAspects: string[],
+  requestedAspects: RequestedAspectConstraint[] | string[],
 ): { covered: string[]; missing: string[] } {
-  if (!requestedAspects.length) return { covered: [], missing: [] };
+  const constraints = normalizeAspectConstraints(requestedAspects);
+  if (!constraints.length) return { covered: [], missing: [] };
   const combined = sourceTexts.join(" ");
   const covered: string[] = [];
   const missing: string[] = [];
-  for (const aspect of requestedAspects) {
-    const def = ASPECT_DEFINITIONS[aspect];
-    if (!def) {
-      // Unknown aspect — treat as covered if exact phrase found
-      if (matchesExactPhrase(combined, aspect.replace(/_/g, " "))) {
-        covered.push(aspect);
-      } else {
-        missing.push(aspect);
-      }
-      continue;
-    }
-    // Use the definition's signal terms for boundary-aware matching
-    const isCovered = def.signalTerms.some((term) => matchesExactPhrase(combined, term));
-    if (isCovered) covered.push(aspect);
-    else missing.push(aspect);
+  for (const aspect of constraints) {
+    if (matchesRequestedAspect(combined, aspect)) covered.push(aspect.key);
+    else missing.push(aspect.key);
   }
   return { covered, missing };
 }

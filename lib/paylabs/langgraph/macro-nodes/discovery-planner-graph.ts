@@ -21,6 +21,12 @@ import type { ServiceName } from "../../agent-services/types";
 import type { BudgetSnapshot, DelegatedRouteTier, SafeSourceCard } from "../../delegated-runtime/types";
 import { isDelegatedRouteTier } from "../../delegated-runtime/types";
 import { DISCOVERY_PLANNER_SERVICE_PRESETS } from "../../delegated-runtime/tier-service-bundles";
+import {
+  extractQueryRequirements,
+  getRequestedAspectKeys,
+  projectRequiredSubjects,
+  type QueryRequirements,
+} from "../../sources/query-requirements";
 
 // ─── Claim Status Normalization ────────────────────────────
 // paylabs_feed_items uses 'claimed'/'unclaimed' (migration 12).
@@ -151,11 +157,35 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
   const queryEval = evals.find((e) => e.serviceName === "query_builder");
 
   if (!queryEval?.output) {
+    const queryRequirements = extractQueryRequirements(state.userGoal);
+    const primaryEntities = projectRequiredSubjects(queryRequirements);
+    const requestedAspects = getRequestedAspectKeys(queryRequirements);
     return {
       expandedQueries: [] as string[],
       entityTerms: [] as string[],
-      primaryEntities: [], secondaryEntities: [], lockedPhrases: [], negativeEntities: [], topics: [],
-      requestedAspects: [] as string[],
+      primaryEntities,
+      secondaryEntities: [],
+      lockedPhrases: [],
+      negativeEntities: [],
+      topics: [],
+      requestedAspects,
+      queryRequirements,
+      retrievalContext: {
+        originalGoal: state.userGoal,
+        normalizedGoal: state.userGoal,
+        intentType: state.intentType || "unknown",
+        primaryEntities,
+        secondaryEntities: [],
+        lockedPhrases: [],
+        negativeEntities: [],
+        topics: [],
+        requestedAspects,
+        queryRequirements,
+        entityTerms: primaryEntities.flatMap((entity) => [entity.canonical, entity.text]).slice(0, 15),
+        expandedQueries: [],
+        negativeFilters: [],
+        sourcePreferences: [],
+      },
       progressSummaries: ["Query builder returned no output — using empty queries"],
     };
   }
@@ -171,18 +201,25 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
     negative_entities?: string[];
     topics?: string[];
     requested_aspects?: string[];
+    query_requirements?: QueryRequirements;
   };
 
   const expandedQueries = data.expanded_queries ?? [];
   const entityTerms = data.entity_terms ?? [];
   const negativeFilters = data.negative_filters ?? [];
   const sourcePreferences = data.source_preferences ?? [];
-  const primaryEntities = data.primary_entities ?? [];
-  const secondaryEntities = data.secondary_entities ?? [];
+  const rawSecondaryEntities = data.secondary_entities ?? [];
   const lockedPhrases = data.locked_phrases ?? [];
   const negativeEntities = data.negative_entities ?? [];
   const topics = data.topics ?? [];
-  const requestedAspects = data.requested_aspects ?? [];
+  // The exact original goal is the authority. Service output is a compatibility
+  // projection and must not replace deterministic extraction here.
+  const queryRequirements = extractQueryRequirements(state.userGoal);
+  const primaryEntities = projectRequiredSubjects(queryRequirements);
+  const secondaryEntities = rawSecondaryEntities.filter(
+    (entity) => !primaryEntities.some((primary) => primary.canonical.toLowerCase() === entity.canonical.toLowerCase()),
+  );
+  const requestedAspects = getRequestedAspectKeys(queryRequirements);
 
   return {
     expandedQueries,
@@ -195,6 +232,7 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
     negativeEntities,
     topics,
     requestedAspects,
+    queryRequirements,
     // Canonical retrieval context — single source of truth for downstream
     retrievalContext: {
       originalGoal: state.userGoal,
@@ -206,6 +244,7 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
       negativeEntities,
       topics,
       requestedAspects,
+      queryRequirements,
       entityTerms,
       expandedQueries,
       negativeFilters,

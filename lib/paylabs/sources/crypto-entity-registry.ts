@@ -60,9 +60,7 @@ export const PROTOCOL_ALIASES: Record<string, ProtocolAliasEntry> = {
     aliases: [
       "makerdao",
       "maker dao",
-      "maker",
       "mkr",
-      "dai",
       "sky protocol",
       "sky ecosystem",
       "sky money",
@@ -906,6 +904,26 @@ export const ASPECT_DEFINITIONS: Record<string, AspectDefinition> = {
     relevantConcepts: ["mining"],
     description: "Proof-of-work block production through computational effort",
   },
+
+  // ── Cross-domain query dimensions ──
+  reserve_model: { key: "reserve_model", label: "Reserve Model", category: "protocol_mechanism", signalTerms: ["reserve model", "reserve models", "reserves"], relevantProtocols: [], relevantConcepts: ["stablecoins"], description: "How a stablecoin is backed" },
+  redemption_mechanism: { key: "redemption_mechanism", label: "Redemption Mechanism", category: "protocol_mechanism", signalTerms: ["redemption mechanism", "redemption mechanisms", "redemption"], relevantProtocols: [], relevantConcepts: ["stablecoins"], description: "How holders redeem the asset" },
+  transparency: { key: "transparency", label: "Transparency", category: "risk_factors", signalTerms: ["transparency", "transparent", "attestation", "audit"], relevantProtocols: [], relevantConcepts: ["stablecoins"], description: "Transparency of backing and disclosures" },
+  depeg_risk: { key: "depeg_risk", label: "Depeg Risk", category: "risk_factors", signalTerms: ["depeg risk", "depeg risks", "depeg", "peg risk"], relevantProtocols: [], relevantConcepts: ["stablecoins"], description: "Risk of losing the intended peg" },
+  counterparty_risk: { key: "counterparty_risk", label: "Counterparty Risk", category: "risk_factors", signalTerms: ["counterparty risk", "counterparty risks"], relevantProtocols: [], relevantConcepts: ["stablecoins"], description: "Risk from custodians and counterparties" },
+  regulatory_risk: { key: "regulatory_risk", label: "Regulatory Risk", category: "risk_factors", signalTerms: ["regulatory risk", "regulatory risks"], relevantProtocols: [], relevantConcepts: ["stablecoins"], description: "Risk from regulation and enforcement" },
+  peg_stability: { key: "peg_stability", label: "Peg-Stability Mechanisms", category: "protocol_mechanism", signalTerms: ["peg-stability", "peg stability", "peg-stability mechanism", "peg-stability mechanisms"], relevantProtocols: ["makerDAO"], relevantConcepts: ["stablecoins"], description: "Mechanisms that maintain a target peg" },
+  savings_yield: { key: "savings_yield", label: "Savings or Yield Mechanisms", category: "protocol_mechanism", signalTerms: ["savings mechanism", "savings mechanisms", "yield mechanism", "yield mechanisms", "savings", "yield"], relevantProtocols: ["makerDAO"], relevantConcepts: ["stablecoins"], description: "Savings and yield mechanisms" },
+  arbitrage: { key: "arbitrage", label: "Arbitrage", category: "risk_factors", signalTerms: ["arbitrage", "arbitrageur", "arbitrageurs"], relevantProtocols: [], relevantConcepts: ["mev"], description: "Profiting from price differences" },
+  sandwich_attack: { key: "sandwich_attack", label: "Sandwich Attacks", category: "risk_factors", signalTerms: ["sandwich attack", "sandwich attacks", "sandwich"], relevantProtocols: [], relevantConcepts: ["mev"], description: "MEV attacks that surround a victim transaction" },
+  trader_impact: { key: "trader_impact", label: "Trader Impact", category: "risk_factors", signalTerms: ["trader impact", "impact on traders", "traders"], relevantProtocols: [], relevantConcepts: ["mev"], description: "Impact on traders" },
+  lp_impact: { key: "lp_impact", label: "Liquidity-Provider Impact", category: "risk_factors", signalTerms: ["lp impact", "liquidity provider impact", "liquidity providers"], relevantProtocols: [], relevantConcepts: ["mev"], description: "Impact on liquidity providers" },
+  knowledge_freshness: { key: "knowledge_freshness", label: "Knowledge Freshness", category: "protocol_mechanism", signalTerms: ["knowledge freshness", "freshness"], relevantProtocols: [], relevantConcepts: [], description: "How quickly new knowledge is reflected" },
+  cost: { key: "cost", label: "Cost", category: "network_economics", signalTerms: ["cost", "costs"], relevantProtocols: [], relevantConcepts: [], description: "Operational or usage cost" },
+  latency: { key: "latency", label: "Latency", category: "network_economics", signalTerms: ["latency"], relevantProtocols: [], relevantConcepts: [], description: "Response or settlement delay" },
+  hallucination_risk: { key: "hallucination_risk", label: "Hallucination Risk", category: "risk_factors", signalTerms: ["hallucination risk", "hallucination risks"], relevantProtocols: [], relevantConcepts: [], description: "Risk of unsupported generated claims" },
+  maintenance: { key: "maintenance", label: "Maintenance", category: "protocol_mechanism", signalTerms: ["maintenance", "maintenance burden", "maintainability"], relevantProtocols: [], relevantConcepts: [], description: "Ongoing maintenance burden" },
+  security: { key: "security", label: "Security", category: "risk_factors", signalTerms: ["security", "security risks"], relevantProtocols: [], relevantConcepts: [], description: "Security properties and risks" },
 };
 
 // ─── Requested Aspects Type ───────────────────────────────
@@ -1022,6 +1040,22 @@ export const CONTEXTUAL_SHORT_TOKENS: Record<
   string,
   Array<{ canonical: string; entityType: EntityType; disambiguation: string }>
 > = {
+  // "compound" is also an ordinary finance/math term
+  compound: [
+    {
+      canonical: "Compound",
+      entityType: "protocol",
+      disambiguation: "DeFi lending when context mentions lending, borrowing, collateral, interest rate, protocol, oracles",
+    },
+  ],
+  // "maker" is an ordinary tools/manufacturing term
+  maker: [
+    {
+      canonical: "MakerDAO",
+      entityType: "protocol",
+      disambiguation: "MakerDAO when context mentions DeFi, DAI, vault, collateral, stablecoin, governance, or protocol",
+    },
+  ],
   // "comp" could be Compound or compression
   comp: [
     {
@@ -1044,6 +1078,14 @@ export const CONTEXTUAL_SHORT_TOKENS: Record<
       canonical: "Curve Finance",
       entityType: "protocol",
       disambiguation: "Curve Finance when context mentions uniswap, decentralized exchange, dex, amm, automated market maker, liquidity, liquidity pool, lp, swap, stablecoin, stableswap",
+    },
+  ],
+  // "balancer" can be an ordinary description of a balancing tool/system
+  balancer: [
+    {
+      canonical: "Balancer",
+      entityType: "protocol",
+      disambiguation: "Balancer when context mentions DeFi, DEX, AMM, liquidity, liquidity pool, swap, token, or protocol",
     },
   ],
   // "cvx" is Convex (related to Curve)
@@ -1076,14 +1118,6 @@ export const CONTEXTUAL_SHORT_TOKENS: Record<
       canonical: "MakerDAO",
       entityType: "protocol",
       disambiguation: "MakerDAO governance token",
-    },
-  ],
-  // "dai" is DAI (MakerDAO)
-  dai: [
-    {
-      canonical: "MakerDAO",
-      entityType: "protocol",
-      disambiguation: "DAI stablecoin from MakerDAO/Sky",
     },
   ],
   // "il" could be impermanent loss or other things
@@ -1270,6 +1304,59 @@ export function getProtocolEvidenceAliases(protocolKeyOrCanonical: string): stri
 
   const aliases = [entry.canonical, ...(entry.sourceAliases ?? [])];
   return [...new Set(aliases.map((alias) => alias.trim()).filter(Boolean))];
+}
+
+// ─── Shared entity identity universe ──────────────────────
+// Query semantics and source relevance must resolve the same aliases. Tokens
+// are deliberately separate from protocols: DAI is not MakerDAO.
+export type SharedEntityType = "protocol" | "token" | "chain" | "company" | "product" | "standard" | "concept";
+
+export interface SharedEntityIdentity {
+  canonical: string;
+  aliases: string[];
+  type: SharedEntityType;
+}
+
+const TOKEN_IDENTITIES: SharedEntityIdentity[] = [
+  { canonical: "USDC", aliases: ["USDC", "USD Coin"], type: "token" },
+  { canonical: "USDT", aliases: ["USDT", "Tether", "Tether USDt"], type: "token" },
+  { canonical: "DAI", aliases: ["DAI"], type: "token" },
+  { canonical: "USDS", aliases: ["USDS"], type: "token" },
+  { canonical: "PYUSD", aliases: ["PYUSD"], type: "token" },
+  { canonical: "FDUSD", aliases: ["FDUSD"], type: "token" },
+  { canonical: "USDe", aliases: ["USDe"], type: "token" },
+];
+
+const CHAIN_IDENTITIES: SharedEntityIdentity[] = [
+  { canonical: "Ethereum", aliases: ["Ethereum"], type: "chain" },
+  { canonical: "Solana", aliases: ["Solana"], type: "chain" },
+  { canonical: "Bitcoin", aliases: ["Bitcoin"], type: "chain" },
+];
+
+export function getSharedEntityIdentities(): SharedEntityIdentity[] {
+  const protocols = Object.values(PROTOCOL_ALIASES).map((entry) => ({
+    canonical: entry.canonical,
+    aliases: [...new Set([entry.canonical, ...entry.aliases, ...(entry.sourceAliases ?? [])])],
+    type: "protocol" as const,
+  }));
+  const concepts = Object.values(CRYPTO_CONCEPT_ENTITIES).map((entry) => ({
+    canonical: entry.canonical,
+    aliases: [entry.canonical, ...entry.aliases],
+    type: "concept" as const,
+  }));
+  const companies: SharedEntityIdentity[] = [
+    { canonical: "Circle", aliases: ["Circle"], type: "company" },
+  ];
+  return [...protocols, ...TOKEN_IDENTITIES, ...CHAIN_IDENTITIES, ...companies, ...concepts];
+}
+
+export function getEntityEvidenceAliases(canonicalOrAlias: string): string[] {
+  const normalized = canonicalOrAlias.toLowerCase().trim();
+  const identity = getSharedEntityIdentities().find((candidate) =>
+    candidate.canonical.toLowerCase() === normalized
+    || candidate.aliases.some((alias) => alias.toLowerCase() === normalized),
+  );
+  return identity ? [...new Set(identity.aliases)] : [];
 }
 
 // ─── Convenience: Get all protocol canonical names ────────

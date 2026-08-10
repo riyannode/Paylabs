@@ -24,6 +24,7 @@ import {
   passesCryptoSourceGuard,
   isGenericCatchAllSource,
 } from "@/lib/paylabs/rsshub/topic-source-guards";
+import { evaluateTemporalConstraint, extractQueryRequirements } from "./query-requirements";
 
 const CANDIDATE_SCAN_LIMIT = 20;
 const FINAL_SOURCE_LIMIT = 5;
@@ -107,12 +108,16 @@ function computeEvidenceStatus(
   entityCoverage: { covered: string[]; missing: string[] },
   aspectCoverage: { covered: string[]; missing: string[] },
   sourceCount: number,
+  requirementsValid: boolean,
+  temporalCoverageOk: boolean,
 ): "grounded" | "partially_grounded" | "insufficient_evidence" {
+  if (!requirementsValid) return "insufficient_evidence";
   if (sourceCount === 0) return "insufficient_evidence";
   // Any required primary entity missing → insufficient
   if (entityCoverage.missing.length > 0) return "insufficient_evidence";
   // All entities covered, some aspects missing → partial
   if (aspectCoverage.missing.length > 0) return "partially_grounded";
+  if (!temporalCoverageOk) return "partially_grounded";
   // All entities + aspects covered → grounded
   return "grounded";
 }
@@ -491,7 +496,11 @@ export async function resolveSources(
   const negativeEntities = rc?.negativeEntities ?? input.negativeEntities ?? [];
   const lockedPhrases = rc?.lockedPhrases ?? input.lockedPhrases ?? [];
   const topics = rc?.topics ?? input.topics ?? [];
-  const requestedAspects = rc?.requestedAspects ?? input.requestedAspects ?? [];
+  const queryRequirements = rc?.queryRequirements
+    ?? input.queryRequirements
+    ?? extractQueryRequirements(rc?.originalGoal ?? normalizedGoal);
+  const requestedAspectConstraints = queryRequirements.requestedAspects;
+  const requestedAspects = requestedAspectConstraints.map((aspect) => aspect.key);
 
   try {
     const rawSources = await enrichRankedCandidates(input.rankedCandidates, CANDIDATE_SCAN_LIMIT);
@@ -522,20 +531,20 @@ export async function resolveSources(
     const requiredEntities = primaryEntities.filter((entity) => entity.required).map((entity) => entity.canonical);
     const rankedValidated = [...validatedSources].sort((a, b) => b.relevance_score - a.relevance_score);
     const selected: SourceItem[] = [];
-    
+
     // Phase A: ensure each required primary entity is represented
     for (const entity of requiredEntities) {
       const candidate = rankedValidated.find((source) => (source.matched_primary_entities || []).includes(entity));
       if (candidate && !selected.includes(candidate)) selected.push(candidate);
     }
-    
+
     // Phase B: close remaining aspect gaps before filling by score
-    if (requestedAspects && requestedAspects.length > 0) {
+    if (requestedAspectConstraints.length > 0) {
       const missingAspects = new Set(requestedAspects);
       // Remove aspects already covered by selected sources
       for (const src of selected) {
         const text = `${src.title || ''} ${src.summary || ''}`;
-        const matched = getMatchedAspectsForText(text, [...missingAspects]);
+        const matched = getMatchedAspectsForText(text, requestedAspectConstraints.filter((aspect) => missingAspects.has(aspect.key)));
         for (const aspect of matched) missingAspects.delete(aspect);
       }
       // Select candidates that close the most missing aspects
@@ -545,7 +554,7 @@ export async function resolveSources(
         for (const src of rankedValidated) {
           if (selected.includes(src)) continue;
           const text = `${src.title || ''} ${src.summary || ''}`;
-          const matched = getMatchedAspectsForText(text, [...missingAspects]);
+          const matched = getMatchedAspectsForText(text, requestedAspectConstraints.filter((aspect) => missingAspects.has(aspect.key)));
           const coverage = matched.length;
           if (coverage > bestCoverage) {
             bestCoverage = coverage;
@@ -556,11 +565,11 @@ export async function resolveSources(
         selected.push(bestCandidate);
         // Update missing aspects
         const bestText = `${bestCandidate.title || ''} ${bestCandidate.summary || ''}`;
-        const bestMatched = getMatchedAspectsForText(bestText, [...missingAspects]);
+        const bestMatched = getMatchedAspectsForText(bestText, requestedAspectConstraints.filter((aspect) => missingAspects.has(aspect.key)));
         for (const aspect of bestMatched) missingAspects.delete(aspect);
       }
     }
-    
+
     // Phase C: fill remaining slots by relevance score
     for (const source of rankedValidated) {
       if (selected.length >= FINAL_SOURCE_LIMIT) break;
@@ -647,6 +656,19 @@ export async function resolveSources(
       });
     }
 
+    const temporalConstraint = queryRequirements.temporalConstraint;
+    const temporallyEvaluatedSources = sources.map((source) => {
+      const temporal = evaluateTemporalConstraint(source.published_at, temporalConstraint);
+      return {
+        ...source,
+        temporal_in_window: temporal.inWindow,
+        temporal_metadata_valid: temporal.usable,
+      };
+    });
+    sources = temporallyEvaluatedSources;
+    const inWindowSourceCount = sources.filter((source) => source.temporal_in_window === true).length;
+    const temporalCoverageOk = !temporalConstraint?.hard || inWindowSourceCount > 0;
+
     const sanitizedEntityCount = sanitizeEntityTerms(entityTerms).length;
     const sourceConfidence = computeSourceConfidence(sources);
 
@@ -655,7 +677,7 @@ export async function resolveSources(
 
     // Aspect coverage validation
     const sourceTexts = sources.map((s) => `${s.title} ${s.summary}`);
-    const aspectCoverage = computeAspectCoverage(sourceTexts, requestedAspects);
+    const aspectCoverage = computeAspectCoverage(sourceTexts, requestedAspectConstraints);
     if (aspectCoverage.missing.length > 0) {
       for (const aspect of aspectCoverage.missing) {
         rejectionReasons.push(`missing_requested_aspect: ${aspect}`);
@@ -663,7 +685,13 @@ export async function resolveSources(
     }
 
     // Evidence status computation (deterministic, coverage-based)
-    const evidenceStatus = computeEvidenceStatus(entityCoverage, aspectCoverage, sources.length);
+    const evidenceStatus = computeEvidenceStatus(
+      entityCoverage,
+      aspectCoverage,
+      sources.length,
+      queryRequirements.requirementsValid,
+      temporalCoverageOk,
+    );
     const sourceQuality = sourceConfidence >= 0.5 ? 'high' : sourceConfidence >= 0.3 ? 'medium' : 'low';
 
     // Safe diagnostic: entity term counts (no raw secrets)
@@ -692,6 +720,20 @@ export async function resolveSources(
         evidence_status: evidenceStatus,
         source_quality: sourceQuality,
         rejection_reasons: rejectionReasons.length > 0 ? rejectionReasons : undefined,
+        requirements_valid: queryRequirements.requirementsValid,
+        requirements_warnings: queryRequirements.extractionWarnings,
+        temporal_coverage_ok: temporalCoverageOk,
+        in_window_trusted_evidence_count: inWindowSourceCount,
+        temporal_constraint: temporalConstraint
+          ? {
+              kind: temporalConstraint.kind,
+              hard: temporalConstraint.hard,
+              value: temporalConstraint.value,
+              unit: temporalConstraint.unit,
+              start: temporalConstraint.start,
+              end: temporalConstraint.end,
+            }
+          : null,
       },
       error: null,
     };

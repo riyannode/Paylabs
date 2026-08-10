@@ -25,6 +25,7 @@ import type {
   BudgetSnapshot,
   BrainPlanningOutput,
 } from "../../delegated-runtime/types";
+import type { QueryRequirements } from "../../sources/query-requirements";
 
 // ─── Reducers ───────────────────────────────────────────────
 
@@ -134,6 +135,7 @@ export const DiscoveryPlannerState = Annotation.Root({
     reducer: replaceReducer<string>,
     default: () => [],
   }),
+  queryRequirements: Annotation<QueryRequirements | undefined>,
 
   // Accumulated state
   serviceEvaluations: Annotation<ServiceEvaluation[]>({

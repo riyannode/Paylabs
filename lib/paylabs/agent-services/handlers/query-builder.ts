@@ -19,8 +19,16 @@ import { z } from "zod";
 import type { ServiceHandler, ServiceHandlerInput, ServiceHandlerOutput } from "../types";
 import type { DelegatedRouteTier } from "@/lib/paylabs/delegated-runtime/types";
 import { shouldRunServiceAsDeterministic } from "../execution-mode";
-import { extractRequestedAspects, PROTOCOL_ALIASES, CONTEXTUAL_SHORT_TOKENS, resolveContextualEntity } from "../../sources/crypto-entity-registry";
+import { PROTOCOL_ALIASES, CONTEXTUAL_SHORT_TOKENS, resolveContextualEntity } from "../../sources/crypto-entity-registry";
 import { matchesRequiredEntity } from "../../sources/source-relevance";
+import {
+  appendHardTemporalScope,
+  extractQueryRequirements,
+  getRequestedAspectKeys,
+  queryPreservesTemporalScope,
+  type QueryRequirements,
+  type TemporalConstraint,
+} from "../../sources/query-requirements";
 
 // ─── Schemas ───────────────────────────────────────────────
 
@@ -304,26 +312,27 @@ function generateNegativeEntities(
 function buildScopedExpandedQueries(
   goal: string,
   requiredEntities: string[],
-  topics: string[]
+  topics: string[],
+  temporalConstraint: TemporalConstraint | null,
 ): string[] {
-  const queries: string[] = [goal];
+  const queries: string[] = [appendHardTemporalScope(goal, temporalConstraint)];
 
   if (requiredEntities.length === 1) {
     // Single entity: "Circle Gateway documentation"
     const e = requiredEntities[0];
-    queries.push(`${e} documentation`);
-    queries.push(`${e} developer guide`);
+    queries.push(appendHardTemporalScope(`${e} documentation`, temporalConstraint));
+    queries.push(appendHardTemporalScope(`${e} developer guide`, temporalConstraint));
   } else if (requiredEntities.length >= 2) {
     // Multiple entities: comparison style
     const joined = requiredEntities.join(" vs ");
-    queries.push(`${joined} comparison`);
-    queries.push(`${joined} documentation`);
+    queries.push(appendHardTemporalScope(`${joined} comparison`, temporalConstraint));
+    queries.push(appendHardTemporalScope(`${joined} documentation`, temporalConstraint));
   }
 
   // Topic variants — only if goal doesn't already contain the topic
   for (const topic of topics.slice(0, 2)) {
     if (!goal.toLowerCase().includes(topic.toLowerCase())) {
-      queries.push(`${goal} ${topic}`);
+      queries.push(appendHardTemporalScope(`${goal} ${topic}`, temporalConstraint));
     }
   }
 
@@ -332,13 +341,13 @@ function buildScopedExpandedQueries(
   const lowerGoal = goal.toLowerCase();
   for (const term of domainTerms) {
     if (!lowerGoal.includes(term)) {
-      queries.push(`${goal} ${term}`);
+      queries.push(appendHardTemporalScope(`${goal} ${term}`, temporalConstraint));
       break;
     }
   }
 
   // NEVER produce queries that drop required entities
-  return [...new Set(queries)].slice(0, 7);
+  return [...new Set(queries)].filter((query) => queryPreservesTemporalScope(query, temporalConstraint)).slice(0, 7);
 }
 
 /**
@@ -391,10 +400,12 @@ export function runDeterministicQueryBuilder(
   negative_entities: string[];
   negative_filters: string[];
   source_preferences: string[];
+  query_requirements: QueryRequirements;
 } {
   const goal = normalizedGoal.trim().toLowerCase();
   const words = normalizedGoal.split(/\s+/);
   const goalLower = normalizedGoal.toLowerCase();
+  const queryRequirements = extractQueryRequirements(normalizedGoal);
 
   // ── Step 1: Extract locked phrases (source of truth) ──
   const lockedPhrases = extractLockedPhrases(normalizedGoal);
@@ -514,15 +525,6 @@ export function runDeterministicQueryBuilder(
     }
   }
 
-  // Named protocols/chains/products are the comparison subjects. Keep
-  // concepts/mechanisms searchable, but optional, when a stronger named
-  // subject exists (e.g. AMM/MEV in a Uniswap-vs-Curve comparison).
-  // Concept-only queries retain required concept subjects.
-  if (primaryEntities.some((entity) => entity.type !== "concept")) {
-    for (const entity of primaryEntities) {
-      if (entity.type === "concept") entity.required = false;
-    }
-  }
 
   // ── Step 4: Individual tokens from non-phrase regions (optional) ──
   const secondaryEntities: Array<{ text: string; canonical: string; type: string; required: boolean }> = [];
@@ -583,7 +585,19 @@ export function runDeterministicQueryBuilder(
   }
 
   // ── Step 6: Dedup by canonical ──
-  const dedupedPrimary = deduplicateEntities(primaryEntities);
+  // The exact original goal is authoritative. Preserve explicit subjects
+  // even when the registry does not know them; inferred concepts are only
+  // retained as optional search dimensions.
+  const authoritativeSubjects = queryRequirements.explicitSubjects.map((subject) => ({
+    text: subject.text,
+    canonical: subject.canonical,
+    type: subject.type,
+    required: subject.required,
+  }));
+  const optionalConcepts = primaryEntities.filter((entity) =>
+    entity.type === "concept" && ["amm", "mev", "mining"].includes(entity.canonical.toLowerCase()),
+  ).map((entity) => ({ ...entity, required: false }));
+  const dedupedPrimary = deduplicateEntities([...authoritativeSubjects, ...optionalConcepts]);
   const dedupedSecondary = deduplicateEntities(
     secondaryEntities.filter(
       (se) => !dedupedPrimary.some((pe) => pe.canonical.toLowerCase() === se.canonical.toLowerCase())
@@ -601,7 +615,7 @@ export function runDeterministicQueryBuilder(
   const requiredTerms = dedupedPrimary
     .filter((entity) => entity.required)
     .map((entity) => entity.canonical);
-  const expandedQueries = buildScopedExpandedQueries(normalizedGoal, requiredTerms, topics);
+  const expandedQueries = buildScopedExpandedQueries(normalizedGoal, requiredTerms, topics, queryRequirements.temporalConstraint);
 
   // ── Step 9: Negative filters (generic noise) ──
   const negativeFilters: string[] = [];
@@ -637,6 +651,7 @@ export function runDeterministicQueryBuilder(
     negative_entities: negativeEntities,
     negative_filters: negativeFilters,
     source_preferences: sourcePreferences,
+    query_requirements: queryRequirements,
   };
 }
 
@@ -667,9 +682,11 @@ function mergeValidatedExpandedQueries(
   candidateQueries: string[],
   deterministicQueries: string[],
   requiredEntities: StructuredEntity[],
+  temporalConstraint: TemporalConstraint | null = null,
 ): string[] {
   const preservesRequired = (query: string) =>
-    requiredEntities.length === 0 || queryPreservesRequiredEntities(query, requiredEntities);
+    (requiredEntities.length === 0 || queryPreservesRequiredEntities(query, requiredEntities))
+    && queryPreservesTemporalScope(query, temporalConstraint);
   const validCandidates = candidateQueries.filter(preservesRequired);
   const validDeterministic = deterministicQueries.filter(preservesRequired);
   const fallbackQueries = validDeterministic.length > 0 ? validDeterministic : deterministicQueries;
@@ -711,10 +728,12 @@ export function buildAuthoritativeLlmQueryBuilderData(
       llm.expanded_queries,
       deterministic.expanded_queries,
       requiredEntities,
+      deterministic.query_requirements.temporalConstraint,
     ),
     negative_filters: llm.negative_filters,
     source_preferences: llm.source_preferences,
     requested_aspects: requestedAspects,
+    query_requirements: deterministic.query_requirements,
     safe_query_summary: llm.safe_summary,
   };
 }
@@ -741,13 +760,14 @@ export const queryBuilderHandler: ServiceHandler = async (
   const brainVariants = (brain_query_variants || []).map((q: string) => q.trim()).filter(Boolean);
 
   // Extract requested aspects from the authoritative goal
-  const requestedAspects = extractRequestedAspects(baseGoal).map((a) => a.aspectKey);
+  const requestedAspects = getRequestedAspectKeys(det.query_requirements);
 
   // ── Deterministic mode: Brain variants primary, deterministic second ──
   if (shouldRunServiceAsDeterministic("query_builder")) {
     const requiredEntities = det.primary_entities.filter((entity) => entity.required);
     const invalidBrainVariants = brainVariants.filter(
-      (query) => !queryPreservesRequiredEntities(query, requiredEntities),
+      (query) => !queryPreservesRequiredEntities(query, requiredEntities)
+        || !queryPreservesTemporalScope(query, det.query_requirements.temporalConstraint),
     );
     if (invalidBrainVariants.length > 0) {
       console.log("[query-builder] Brain variants dropped required entities, replaced", {
@@ -759,6 +779,7 @@ export const queryBuilderHandler: ServiceHandler = async (
       brainVariants,
       det.expanded_queries,
       requiredEntities,
+      det.query_requirements.temporalConstraint,
     );
 
     // Derive negative_filters and source_preferences from constraints
@@ -794,6 +815,7 @@ export const queryBuilderHandler: ServiceHandler = async (
         negative_filters: negativeFilters,
         source_preferences: sourcePreferences,
         requested_aspects: requestedAspects,
+        query_requirements: det.query_requirements,
         safe_query_summary: `Built ${finalQueries.length} queries${brainVariants.length > 0 ? ` (${brainVariants.length} from Brain)` : ""}, ${det.primary_entities.length + det.secondary_entities.length} entities, ${negativeFilters.length} filters, ${requestedAspects.length} aspects. Deterministic expansion.`,
       },
       safeSummary: `Built ${finalQueries.length} queries, ${det.primary_entities.length + det.secondary_entities.length} entities, ${negativeFilters.length} filters. Deterministic expansion.`,
@@ -892,6 +914,7 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
       brainVariants,
       det.expanded_queries,
       det.primary_entities.filter((entity) => entity.required),
+      det.query_requirements.temporalConstraint,
     );
 
     // Log degraded state (always-on for query_builder — critical discovery path)
@@ -917,6 +940,7 @@ Return JSON only. No markdown. No commentary. No extra keys. The first character
         negative_filters: det.negative_filters,
         source_preferences: det.source_preferences,
         requested_aspects: requestedAspects,
+        query_requirements: det.query_requirements,
         safe_query_summary: `Built ${fallbackQueries.length} queries (LLM failed, ${brainVariants.length > 0 ? "Brain variants + " : ""}deterministic fallback).`,
         degraded: true,
         fallback_reason: "LLM structured output failed; deterministic fallback used",

@@ -1,3 +1,5 @@
+import type { QueryRequirements } from "./query-requirements";
+
 /**
  * Source Discovery Types
  *
@@ -30,6 +32,9 @@ export interface SourceItem {
   matched_secondary_entities?: string[];
   matched_locked_phrases?: string[];
   selection_reason?: string;
+  /** Safe temporal evaluation for the canonical hard requirement, if present. */
+  temporal_in_window?: boolean;
+  temporal_metadata_valid?: boolean;
 }
 
 // ─── Source Context ────────────────────────────────────────
@@ -63,6 +68,19 @@ export interface SourceContext {
   source_quality?: 'high' | 'medium' | 'low';
   /** Per-source rejection reasons collected during resolution */
   rejection_reasons?: string[];
+  /** Canonical requirement diagnostics for downstream consumers */
+  requirements_valid?: boolean;
+  requirements_warnings?: string[];
+  temporal_coverage_ok?: boolean;
+  in_window_trusted_evidence_count?: number;
+  temporal_constraint?: {
+    kind: string;
+    hard: boolean;
+    value?: number;
+    unit?: string;
+    start?: string;
+    end?: string;
+  } | null;
 }
 
 
@@ -102,6 +120,8 @@ export type RetrievalContext = {
   topics: string[];
   /** Aspects the user wants covered. */
   requestedAspects: string[];
+  /** Canonical structured requirements from the exact original goal. */
+  queryRequirements: QueryRequirements;
 
   /** Flat entity terms for keyword matching. */
   entityTerms: string[];
@@ -142,6 +162,8 @@ export interface SourceResolverInput {
   topics?: string[];
   /** Aspects the user wants covered (e.g. "pricing", "api-reference", "getting-started") */
   requestedAspects?: string[];
+  /** Canonical structured requirements; preferred over flat compatibility fields. */
+  queryRequirements?: QueryRequirements;
   /** Canonical retrieval context — preferred over individual fields when present */
   retrievalContext?: RetrievalContext;
 }

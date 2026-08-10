@@ -33,6 +33,11 @@ import {
   FIXED_FEES_USDC,
 } from "./quote-engine";
 import { randomUUID } from "node:crypto";
+import {
+  extractQueryRequirements,
+  getRequestedAspectKeys,
+  projectRequiredSubjects,
+} from "../sources/query-requirements";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -404,16 +409,20 @@ export async function executeLockedMacroNodePipeline(
             );
             if (qbEval?.output) {
               // Build a retrievalContext from QB output as fallback
+              const queryRequirements = extractQueryRequirements(userGoal);
+              const primaryEntities = projectRequiredSubjects(queryRequirements);
+              const requestedAspects = getRequestedAspectKeys(queryRequirements);
               const rcFallback: import("../sources/types").RetrievalContext = {
                 originalGoal: userGoal,
                 normalizedGoal: String(brainData?.normalized_goal || userGoal),
                 intentType: "unknown",
-                primaryEntities: (qbEval.output.primary_entities as import("../sources/types").RetrievalContext["primaryEntities"]) || [],
+                primaryEntities,
                 secondaryEntities: (qbEval.output.secondary_entities as import("../sources/types").RetrievalContext["secondaryEntities"]) || [],
                 lockedPhrases: (qbEval.output.locked_phrases as string[]) || [],
                 negativeEntities: (qbEval.output.negative_entities as string[]) || [],
                 topics: (qbEval.output.topics as string[]) || [],
-                requestedAspects: (qbEval.output.requested_aspects as string[]) || [],
+                requestedAspects,
+                queryRequirements,
                 entityTerms: (qbEval.output.entity_terms as string[]) || [],
                 expandedQueries: (qbEval.output.expanded_queries as string[]) || [],
                 negativeFilters: (qbEval.output.negative_filters as string[]) || [],
@@ -422,6 +431,28 @@ export async function executeLockedMacroNodePipeline(
               (dData as Record<string, unknown>).retrievalContext = rcFallback;
             }
           }
+        }
+
+        if (!(dData as Record<string, unknown>).retrievalContext) {
+          const queryRequirements = extractQueryRequirements(userGoal);
+          const primaryEntities = projectRequiredSubjects(queryRequirements);
+          const requestedAspects = getRequestedAspectKeys(queryRequirements);
+          (dData as Record<string, unknown>).retrievalContext = {
+            originalGoal: userGoal,
+            normalizedGoal: String(brainData?.normalized_goal || userGoal),
+            intentType: "unknown",
+            primaryEntities,
+            secondaryEntities: [],
+            lockedPhrases: [],
+            negativeEntities: [],
+            topics: [],
+            requestedAspects,
+            queryRequirements,
+            entityTerms: primaryEntities.flatMap((entity) => [entity.canonical, entity.text]).slice(0, 15),
+            expandedQueries: [],
+            negativeFilters: [],
+            sourcePreferences: [],
+          } satisfies import("../sources/types").RetrievalContext;
         }
 
         const rc = dData.retrievalContext as import("../sources/types").RetrievalContext | undefined;

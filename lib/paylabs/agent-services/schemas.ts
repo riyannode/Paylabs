@@ -46,6 +46,22 @@ const StructuredEntityOutput = z.object({
   required: z.boolean(),
 });
 
+const QueryRequirementsOutput = z.object({
+  comparisonLike: z.boolean(),
+  explicitSubjects: z.array(z.object({
+    text: z.string(), canonical: z.string(), type: z.string(), required: z.boolean(), explicit: z.boolean(),
+  })),
+  requestedAspects: z.array(z.object({
+    key: z.string(), label: z.string(), sourceText: z.string(), matchTerms: z.array(z.string()), knownDefinitionKey: z.string().optional(),
+  })),
+  temporalConstraint: z.object({
+    kind: z.enum(["last_days", "last_weeks", "last_months", "since", "year", "between"]),
+    hard: z.boolean(), start: z.string().optional(), end: z.string().optional(), value: z.number().optional(), unit: z.string().optional(), sourceText: z.string(),
+  }).nullable(),
+  requirementsValid: z.boolean(),
+  extractionWarnings: z.array(z.string()),
+});
+
 export const QueryBuilderOutput = z.object({
   primary_entities: z.array(StructuredEntityOutput),
   secondary_entities: z.array(StructuredEntityOutput),
@@ -57,6 +73,7 @@ export const QueryBuilderOutput = z.object({
   negative_filters: z.array(z.string()),
   source_preferences: z.array(z.string()),
   requested_aspects: z.array(z.string()),
+  query_requirements: QueryRequirementsOutput.optional(),
   safe_query_summary: z.string(),
 });
 type QueryBuilderOutput = z.infer<typeof QueryBuilderOutput>;
