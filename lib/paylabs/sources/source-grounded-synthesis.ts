@@ -1194,8 +1194,32 @@ function buildCoveredAspectPrompt(goal: string, pack: EvidencePack): string {
 
 type AnswerRequirementCoverage = {
   complete: boolean;
-  missingAspectKeys: string[];
+  missingRequirementLabels: string[];
 };
+
+function normalizeCanonicalEntity(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[_/]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getCoveredComparisonPairs(pack: EvidencePack): Array<{ entity: string; aspectKey: string }> {
+  const coveredAspectKeys = new Set(pack.packCoverage.coveredAspects);
+  const matrixByEntity = new Map(
+    pack.packCoverage.entityAspectCoverage.map((entry) => [normalizeCanonicalEntity(entry.entity), entry]),
+  );
+  const pairs: Array<{ entity: string; aspectKey: string }> = [];
+  for (const entity of pack.packCoverage.requiredEntities) {
+    const entry = matrixByEntity.get(normalizeCanonicalEntity(entity));
+    for (const aspectKey of entry?.coveredAspects ?? []) {
+      if (coveredAspectKeys.has(aspectKey)) pairs.push({ entity, aspectKey });
+    }
+  }
+  return pairs;
+}
 
 function validateAnswerRequirementCoverage(input: {
   goal: string;
@@ -1204,21 +1228,45 @@ function validateAnswerRequirementCoverage(input: {
   citationMap: EvidencePackCitationMap;
 }): AnswerRequirementCoverage {
   const { constraints, missingConstraintKeys } = getCoveredRequestedAspects(input.goal, input.pack);
-  const missingAspectKeys = [...missingConstraintKeys];
+  const constraintsByKey = new Map(constraints.map((aspect) => [aspect.key, aspect]));
+  const missingRequirementLabels = [...missingConstraintKeys];
 
-  for (const aspect of constraints) {
-    const answered = input.units.some((unit) => {
-      if (!matchesRequestedAspect(unit.text, aspect)) return false;
-      return unit.citationIds.some((citationId) =>
-        input.citationMap.byCitationId.get(citationId)?.chunk.aspectSupport.includes(aspect.key),
-      );
-    });
-    if (!answered) missingAspectKeys.push(aspect.key);
+  if (input.pack.packCoverage.comparisonLike) {
+    for (const pair of getCoveredComparisonPairs(input.pack)) {
+      const aspect = constraintsByKey.get(pair.aspectKey);
+      if (!aspect) {
+        missingRequirementLabels.push(`${pair.entity}:${pair.aspectKey}`);
+        continue;
+      }
+      const answered = input.units.some((unit) => {
+        if (!matchesRequestedAspect(unit.text, aspect) || unit.citationIds.length === 0) return false;
+        return unit.citationIds.some((citationId) => {
+          const citation = input.citationMap.byCitationId.get(citationId);
+          if (!citation) return false;
+          return citation.chunk.aspectSupport.includes(pair.aspectKey)
+            && citation.chunk.entitySupport.some((entity) =>
+              normalizeCanonicalEntity(entity) === normalizeCanonicalEntity(pair.entity),
+            );
+        });
+      });
+      if (!answered) missingRequirementLabels.push(`${pair.entity}:${pair.aspectKey}`);
+    }
+  } else {
+    for (const aspect of constraints) {
+      const answered = input.units.some((unit) => {
+        if (!matchesRequestedAspect(unit.text, aspect)) return false;
+        return unit.citationIds.some((citationId) =>
+          input.citationMap.byCitationId.get(citationId)?.chunk.aspectSupport.includes(aspect.key),
+        );
+      });
+      if (!answered) missingRequirementLabels.push(aspect.key);
+    }
   }
 
+  const boundedMissingRequirementLabels = [...new Set(missingRequirementLabels)].slice(0, 8);
   return {
-    complete: missingAspectKeys.length === 0,
-    missingAspectKeys: [...new Set(missingAspectKeys)],
+    complete: boundedMissingRequirementLabels.length === 0,
+    missingRequirementLabels: boundedMissingRequirementLabels,
   };
 }
 
@@ -1463,7 +1511,7 @@ function validateEvidencePackModelOutput(
       result: {
         ...v2FailureResult(
           citationMap,
-          `answer_requirement_coverage_incomplete: ${answerRequirementCoverage.missingAspectKeys.join(",")}`,
+          `answer_requirement_coverage_incomplete: ${answerRequirementCoverage.missingRequirementLabels.join(",")}`,
           { citationValidationFailureCodes: ["answer_requirement_coverage_incomplete"] },
         ),
         unknownCitationIds: [],
