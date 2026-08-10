@@ -197,6 +197,21 @@ export type EvidenceCoverage = {
     coveredAspects: string[];
     missingAspects: string[];
   }>;
+
+  /** Hard temporal requirement coverage */
+  temporalCoverageOk: boolean;
+  inWindowTrustedEvidenceCount: number;
+  temporalConstraint: {
+    kind: string;
+    hard: boolean;
+    value?: number;
+    unit?: string;
+    start?: string;
+    end?: string;
+  } | null;
+  /** Canonical requirements integrity status */
+  requirementsValid: boolean;
+  requirementsWarnings: string[];
 };
 
 /**

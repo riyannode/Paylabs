@@ -24,6 +24,7 @@ import type {
 } from "./types";
 import { computeEvidenceCoverage } from "./evidence-retrieval";
 import { canonicalizeUrl } from "../sources/source-resolver";
+import { extractQueryRequirements } from "../sources/query-requirements";
 
 // ─── Pack Constants ──────────────────────────────────────
 
@@ -351,17 +352,21 @@ function compareReservationCandidates(
 function recomputePackCoverage(
   packChunks: GradedEvidenceChunk[],
   retrievalContext: RetrievalContext,
+  now: Date,
 ): EvidenceCoverage {
-  return computeEvidenceCoverage(packChunks, retrievalContext);
+  return computeEvidenceCoverage(packChunks, retrievalContext, now);
 }
 
 function derivePackStatus(
   packCoverage: EvidenceCoverage,
   packChunkCount: number,
 ): EvidencePackStatus {
+  if (!packCoverage.requirementsValid) return "insufficient_evidence";
   if (packChunkCount === 0) return "insufficient_evidence";
+  if (packCoverage.trustedEvidenceCount === 0) return "insufficient_evidence";
   if (packCoverage.missingEntities.length > 0) return "insufficient_evidence";
   if (packCoverage.missingAspects.length > 0) return "partially_grounded";
+  if (!packCoverage.temporalCoverageOk) return "partially_grounded";
 
   if (packCoverage.comparisonLike) {
     for (const entityAspect of packCoverage.entityAspectCoverage) {
@@ -549,8 +554,9 @@ function enforceUpgradeGuard(
 export function buildEvidencePack(params: {
   retrievalContext: RetrievalContext;
   evidenceRetrieval: EvidenceRetrievalResult;
+  now?: Date;
 }): EvidencePack {
-  const { retrievalContext, evidenceRetrieval } = params;
+  const { retrievalContext, evidenceRetrieval, now = new Date() } = params;
   const {
     gradedChunks,
     resolvedSources,
@@ -558,16 +564,18 @@ export function buildEvidencePack(params: {
   } = evidenceRetrieval;
 
   const trustedCandidates = filterTrustedCandidates(gradedChunks);
+  const requirements = retrievalContext.queryRequirements
+    ?? extractQueryRequirements(retrievalContext.originalGoal);
   const selected: GradedEvidenceChunk[] = [];
   const remainingCandidates = [...trustedCandidates];
   const sourceChunkCounts = new Map<string, number>();
   const selectionReasons = new Map<string, string[]>();
   const requiredEntitySet = new Set(
-    retrievalContext.primaryEntities
+    requirements.explicitSubjects
       .filter((entity) => entity.required)
       .map((entity) => entity.canonical.toLowerCase()),
   );
-  const requiredAspectSet = new Set(retrievalContext.requestedAspects);
+  const requiredAspectSet = new Set(requirements.requestedAspects.map((aspect) => aspect.key));
   const comparisonLike = retrievalCoverage.comparisonLike;
   const resolvedSourceMap = buildResolverSourceMap(resolvedSources);
 
@@ -747,7 +755,7 @@ export function buildEvidencePack(params: {
     (total, chunk) => total + chunk.chunk.text.length,
     0,
   );
-  let packCoverage = recomputePackCoverage(finalSelected, retrievalContext);
+  let packCoverage = recomputePackCoverage(finalSelected, retrievalContext, now);
   packCoverage = enforceUpgradeGuard(packCoverage, retrievalCoverage);
   const status = derivePackStatus(packCoverage, finalSelected.length);
   const sources = buildPackSourceSet(finalSelected, resolvedSourceMap);

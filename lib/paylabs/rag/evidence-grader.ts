@@ -29,6 +29,7 @@ import type {
 } from "./types";
 import { generateStructuredJson } from "../ai/llm-structured";
 import type { RouteTier } from "@/lib/paylabs/route-tier";
+import { extractQueryRequirements, type QueryRequirements } from "../sources/query-requirements";
 
 // ─── Configuration ─────────────────────────────────────────
 
@@ -47,6 +48,11 @@ const GRADING_CONFIG = {
   gradingTimeoutMs: 20_000,
 } as const;
 
+function getCanonicalRequirements(retrievalContext: RetrievalContext): QueryRequirements {
+  return retrievalContext.queryRequirements
+    ?? extractQueryRequirements(retrievalContext.originalGoal);
+}
+
 // ─── Deterministic Rejection Rules ─────────────────────────
 
 /**
@@ -59,8 +65,9 @@ function deterministicReject(
   retrievalContext: RetrievalContext,
 ): EvidenceGrade | null {
   const { relevance, chunk } = ranked;
-  const hasRequiredEntities = retrievalContext.primaryEntities.some((e) => e.required);
-  const hasRequestedAspects = retrievalContext.requestedAspects.length > 0;
+  const requirements = getCanonicalRequirements(retrievalContext);
+  const hasRequiredEntities = requirements.explicitSubjects.some((e) => e.required);
+  const hasRequestedAspects = requirements.requestedAspects.length > 0;
 
   // Already rejected by hybrid ranker
   if (relevance.rejectionReason === "missing_required_entity") {
@@ -142,7 +149,8 @@ function deterministicFallback(
   retrievalContext: RetrievalContext,
 ): EvidenceGrade {
   const { relevance } = ranked;
-  const hasRequestedAspects = retrievalContext.requestedAspects.length > 0;
+  const requirements = getCanonicalRequirements(retrievalContext);
+  const hasRequestedAspects = requirements.requestedAspects.length > 0;
   const hasEntitySupport = relevance.entitySupport.length > 0;
   const hasAspectSupport = relevance.aspectSupport.length > 0;
 
@@ -218,11 +226,14 @@ function buildBatchPrompt(
   retrievalContext: RetrievalContext,
   batch: RankedEvidenceChunk[],
 ): string {
+  const requirements = getCanonicalRequirements(retrievalContext);
   const parts: string[] = [
     `User question: ${retrievalContext.originalGoal}`,
     `Intent: ${retrievalContext.intentType || "unknown"}`,
-    `Required entities: ${retrievalContext.primaryEntities.filter((e) => e.required).map((e) => e.canonical).join(", ") || "none"}`,
-    `Requested aspects: ${retrievalContext.requestedAspects.join(", ") || "none"}`,
+    `Required subjects: ${requirements.explicitSubjects.filter((e) => e.required).map((e) => e.canonical).join(", ") || "none"}`,
+    `Requested aspect keys: ${requirements.requestedAspects.map((a) => a.key).join(", ") || "none"}`,
+    `Requested aspect labels: ${requirements.requestedAspects.map((a) => a.label).join(", ") || "none"}`,
+    `Temporal constraint: ${requirements.temporalConstraint?.sourceText || "none"}`,
     "",
   ];
 
@@ -323,10 +334,11 @@ function enforcePostIntersectionConsistency(
   grade: EvidenceGrade,
   retrievalContext: RetrievalContext,
 ): EvidenceGrade {
+  const requirements = getCanonicalRequirements(retrievalContext);
   if (!grade.relevant) return grade;
 
-  const hasRequiredEntities = retrievalContext.primaryEntities.some((e) => e.required);
-  const hasRequestedAspects = retrievalContext.requestedAspects.length > 0;
+  const hasRequiredEntities = requirements.explicitSubjects.some((e) => e.required);
+  const hasRequestedAspects = requirements.requestedAspects.length > 0;
 
   // If required primary entities exist but final trusted entitySupport is empty
   if (hasRequiredEntities && grade.entitySupport.length === 0) {

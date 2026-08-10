@@ -27,6 +27,11 @@ import { chunkEvidenceDocuments } from "./chunker";
 import { rankEvidenceChunks } from "./hybrid-ranker";
 import { gradeEvidenceChunks } from "./evidence-grader";
 import { ASPECT_DEFINITIONS } from "../sources/crypto-entity-registry";
+import {
+  appendHardTemporalScope,
+  evaluateTemporalConstraint,
+  extractQueryRequirements,
+} from "../sources/query-requirements";
 import { canonicalizeUrl } from "../sources/source-resolver";
 
 // ─── Configuration ─────────────────────────────────────────
@@ -53,6 +58,7 @@ const RETRIEVAL_CONFIG = {
  * No LLM involved.
  */
 function detectComparisonLike(retrievalContext: RetrievalContext): boolean {
+  if (retrievalContext.queryRequirements?.comparisonLike) return true;
   const intent = retrievalContext.intentType?.toLowerCase() || "";
   if (intent.includes("comparison") || intent.includes("compare")) return true;
 
@@ -77,12 +83,14 @@ function detectComparisonLike(retrievalContext: RetrievalContext): boolean {
 export function computeEvidenceCoverage(
   gradedChunks: GradedEvidenceChunk[],
   retrievalContext: RetrievalContext,
+  now: Date = new Date(),
 ): EvidenceCoverage {
-  const requiredEntities = retrievalContext.primaryEntities
-    .filter((e) => e.required)
-    .map((e) => e.canonical);
-  const requiredAspects = retrievalContext.requestedAspects;
-  const comparisonLike = detectComparisonLike(retrievalContext);
+  const requirements = retrievalContext.queryRequirements ?? extractQueryRequirements(retrievalContext.originalGoal);
+  const requiredEntities = requirements.explicitSubjects
+    .filter((subject) => subject.required)
+    .map((subject) => subject.canonical);
+  const requiredAspects = requirements.requestedAspects.map((aspect) => aspect.key);
+  const comparisonLike = requirements.comparisonLike;
 
   const coveredEntitySet = new Set<string>();
   const coveredAspectSet = new Set<string>();
@@ -92,6 +100,7 @@ export function computeEvidenceCoverage(
 
   // Count trusted evidence chunks
   let trustedEvidenceCount = 0;
+  let inWindowTrustedEvidenceCount = 0;
 
   for (const gc of gradedChunks) {
     if (!gc.grade.relevant) continue;
@@ -99,6 +108,9 @@ export function computeEvidenceCoverage(
 
     // This chunk qualifies as trusted evidence
     trustedEvidenceCount++;
+    if (evaluateTemporalConstraint(gc.chunk.metadata.publishedAt, requirements.temporalConstraint, now).inWindow) {
+      inWindowTrustedEvidenceCount++;
+    }
 
     // Entity coverage
     for (const entity of gc.grade.entitySupport) {
@@ -164,6 +176,20 @@ export function computeEvidenceCoverage(
     missingAspects,
     comparisonLike,
     entityAspectCoverage,
+    temporalCoverageOk: !requirements.temporalConstraint?.hard || inWindowTrustedEvidenceCount > 0,
+    inWindowTrustedEvidenceCount,
+    temporalConstraint: requirements.temporalConstraint
+      ? {
+          kind: requirements.temporalConstraint.kind,
+          hard: requirements.temporalConstraint.hard,
+          value: requirements.temporalConstraint.value,
+          unit: requirements.temporalConstraint.unit,
+          start: requirements.temporalConstraint.start,
+          end: requirements.temporalConstraint.end,
+        }
+      : null,
+    requirementsValid: requirements.requirementsValid,
+    requirementsWarnings: requirements.extractionWarnings,
     trustedEvidenceCount,
   };
 }
@@ -176,7 +202,9 @@ function isCoverageComplete(
   coverage: EvidenceCoverage,
   retrievalContext: RetrievalContext,
 ): boolean {
-  // Zero trusted evidence → coverage not complete
+  const requirements = retrievalContext.queryRequirements ?? extractQueryRequirements(retrievalContext.originalGoal);
+  if (!requirements.requirementsValid) return false;
+  if (!coverage.temporalCoverageOk) return false;
   if (coverage.trustedEvidenceCount === 0) return false;
 
   if (coverage.missingEntities.length > 0) return false;
@@ -232,6 +260,7 @@ function extractFreshnessSignals(originalGoal: string): string {
 function generateTargetedRetryQueries(
   coverage: EvidenceCoverage,
   originalGoal: string,
+  temporalConstraint: ReturnType<typeof extractQueryRequirements>["temporalConstraint"],
   maxQueries: number,
 ): string[] {
   const queries: string[] = [];
@@ -242,7 +271,7 @@ function generateTargetedRetryQueries(
     if (queries.length >= maxQueries) break;
     const q = [entity, ...coverage.missingAspects.map(humanizeAspect)];
     if (freshness) q.push(freshness);
-    queries.push(q.join(" "));
+    queries.push(appendHardTemporalScope(q.join(" "), temporalConstraint));
   }
 
   // Priority B: Missing entity/aspect pair in comparison
@@ -256,7 +285,7 @@ function generateTargetedRetryQueries(
         if (queries.length >= maxQueries) break;
         const q = [eac.entity, humanizeAspect(aspect)];
         if (freshness) q.push(freshness);
-        queries.push(q.join(" "));
+        queries.push(appendHardTemporalScope(q.join(" "), temporalConstraint));
       }
     }
   }
@@ -270,7 +299,7 @@ function generateTargetedRetryQueries(
 
     const q = [...coverage.requiredEntities.slice(0, 2), aspectPhrase];
     if (freshness) q.push(freshness);
-    queries.push(q.join(" "));
+    queries.push(appendHardTemporalScope(q.join(" "), temporalConstraint));
   }
 
   return queries.slice(0, maxQueries);
@@ -280,7 +309,10 @@ function generateTargetedRetryQueries(
  * Generate one bounded retry query for unconstrained queries with zero trusted evidence.
  * Derives a compact query from the original goal — no LLM rewrite.
  */
-function generateZeroEvidenceFallbackQuery(originalGoal: string): string {
+function generateZeroEvidenceFallbackQuery(
+  originalGoal: string,
+  temporalConstraint: ReturnType<typeof extractQueryRequirements>["temporalConstraint"],
+): string {
   const freshness = extractFreshnessSignals(originalGoal);
   // Extract the most meaningful words from the goal
   const words = originalGoal
@@ -290,7 +322,7 @@ function generateZeroEvidenceFallbackQuery(originalGoal: string): string {
     .slice(0, 6);
   const q = [...words];
   if (freshness) q.push(freshness);
-  return q.join(" ");
+  return appendHardTemporalScope(q.join(" "), temporalConstraint);
 }
 
 // ─── Topic Detection for Tavily ────────────────────────────
@@ -503,6 +535,11 @@ export async function runEvidenceRetrievalWithCoverage(params: {
         missingAspects: [],
         comparisonLike: false,
         entityAspectCoverage: [],
+        temporalCoverageOk: false,
+        inWindowTrustedEvidenceCount: 0,
+        temporalConstraint: null,
+        requirementsValid: false,
+        requirementsWarnings: ["no_retrieval_context"],
         trustedEvidenceCount: 0,
       },
       retryRounds: [],
@@ -610,14 +647,20 @@ export async function runEvidenceRetrievalWithCoverage(params: {
       coverage.requiredEntities.length === 0 &&
       coverage.requiredAspects.length === 0;
 
+    const canonicalRequirements = retrievalContext.queryRequirements
+      ?? extractQueryRequirements(retrievalContext.originalGoal);
     let queries: string[];
     if (isZeroEvidenceUnconstrained) {
       // Zero trusted evidence + no constraints → one originalGoal-derived fallback query
-      queries = [generateZeroEvidenceFallbackQuery(retrievalContext.originalGoal)];
+      queries = [generateZeroEvidenceFallbackQuery(
+        retrievalContext.originalGoal,
+        canonicalRequirements.temporalConstraint,
+      )];
     } else {
       queries = generateTargetedRetryQueries(
         coverage,
         retrievalContext.originalGoal,
+        canonicalRequirements.temporalConstraint,
         RETRIEVAL_CONFIG.maxQueriesPerRound,
       );
     }
@@ -714,7 +757,7 @@ export async function runEvidenceRetrievalWithCoverage(params: {
         negativeEntities: retrievalContext.negativeEntities,
         lockedPhrases: retrievalContext.lockedPhrases,
         topics: retrievalContext.topics,
-        requestedAspects: retrievalContext.requestedAspects,
+        requestedAspects: canonicalRequirements.requestedAspects.map((aspect) => aspect.key),
         maxSources: Math.min(remainingSourceBudget, 5),
       });
 

@@ -13,27 +13,15 @@
 
 import type { EvidenceChunk, ChunkRelevance, RankedEvidenceChunk } from "./types";
 import type { RetrievalContext } from "../sources/types";
-
-// ─── Reuse Existing Canonical Helpers ───────────────────────
-
-let _matchesExactPhrase: ((text: string, phrase: string) => boolean) | null = null;
-let _getMatchedAspectsForText: ((text: string, aspects: string[]) => string[]) | null = null;
-
-async function getMatchesExactPhrase() {
-  if (!_matchesExactPhrase) {
-    const mod = await import("../sources/source-relevance");
-    _matchesExactPhrase = mod.matchesExactPhrase;
-  }
-  return _matchesExactPhrase!;
-}
-
-async function getMatchedAspectsForText() {
-  if (!_getMatchedAspectsForText) {
-    const mod = await import("../sources/source-relevance");
-    _getMatchedAspectsForText = mod.getMatchedAspectsForText;
-  }
-  return _getMatchedAspectsForText!;
-}
+import {
+  getMatchedAspectsForText,
+  matchesExactPhrase,
+  matchesRequiredEntity,
+} from "../sources/source-relevance";
+import {
+  extractQueryRequirements,
+  type QueryRequirements,
+} from "../sources/query-requirements";
 
 // ─── Score Weights ─────────────────────────────────────────
 
@@ -326,15 +314,14 @@ export async function rankEvidenceChunks(
   const enableSemantic = options?.enableSemantic !== false;
   const maxSemanticChunks = options?.maxSemanticChunks ?? 35;
 
-  const matchesExactPhrase = await getMatchesExactPhrase();
-  const getMatchedAspects = await getMatchedAspectsForText();
-
   const queryText = retrievalContext.originalGoal;
   const normalizedGoal = retrievalContext.normalizedGoal;
-  const requiredEntities = retrievalContext.primaryEntities.filter((e) => e.required);
-  const requestedAspects = retrievalContext.requestedAspects;
+  const requirements: QueryRequirements = retrievalContext.queryRequirements
+    ?? extractQueryRequirements(retrievalContext.originalGoal);
+  const requiredEntities = requirements.explicitSubjects.filter((e) => e.required);
+  const requestedAspects = requirements.requestedAspects;
   const lockedPhrases = retrievalContext.lockedPhrases;
-  const entityTerms = retrievalContext.entityTerms;
+  const entityTerms = [...new Set(requiredEntities.flatMap((entity) => [entity.canonical, entity.text]))];
 
   // Pre-compute which dimensions are active (have actual constraints)
   const hasRequiredEntities = requiredEntities.length > 0;
@@ -347,14 +334,22 @@ export async function rankEvidenceChunks(
 
     // Entity support (boundary-aware, from canonical matching)
     const entitySupport: string[] = [];
-    for (const entity of retrievalContext.primaryEntities) {
-      if (matchesExactPhrase(text, entity.canonical) || matchesExactPhrase(text, entity.text)) {
+    for (const entity of requiredEntities) {
+      const supportsEntity = entity.type === "named_subject"
+        ? matchesExactPhrase(text, entity.canonical)
+        : matchesRequiredEntity(text, {
+          text: entity.text,
+          canonical: entity.canonical,
+          type: entity.type,
+          required: entity.required,
+        });
+      if (supportsEntity) {
         entitySupport.push(entity.canonical);
       }
     }
 
-    // Aspect support (uses ASPECT_DEFINITIONS signal terms)
-    const aspectSupport = getMatchedAspects(text, requestedAspects);
+    // Aspect support is the shared RequestedAspectConstraint matcher.
+    const aspectSupport = getMatchedAspectsForText(text, requestedAspects);
 
     // Locked phrase support
     const lockedPhraseSupport = lockedPhrases.filter(
@@ -373,7 +368,7 @@ export async function rankEvidenceChunks(
     // ── Component scores (0..1 each) ──
     const requiredEntityScore = hasRequiredEntities
       ? (hasRequiredEntity
-        ? entitySupport.filter((e: string) => requiredEntities.some((re: { canonical: string }) => re.canonical === e)).length / requiredEntities.length
+        ? entitySupport.filter((e: string) => requiredEntities.some((re) => re.canonical === e)).length / requiredEntities.length
         : 0)
       : 0; // INACTIVE → 0, not 1.0
 

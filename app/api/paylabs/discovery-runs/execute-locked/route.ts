@@ -65,6 +65,11 @@ function serializeRagCoverage(coverage: EvidenceCoverage) {
         missing_aspects: row.missingAspects.slice(0, MAX_RAG_COVERAGE_LABELS),
       })),
     trusted_evidence_count: coverage.trustedEvidenceCount,
+    requirements_valid: coverage.requirementsValid,
+    requirements_warnings: coverage.requirementsWarnings.slice(0, MAX_RAG_COVERAGE_LABELS),
+    temporal_coverage_ok: coverage.temporalCoverageOk,
+    in_window_trusted_evidence_count: coverage.inWindowTrustedEvidenceCount,
+    temporal_constraint: coverage.temporalConstraint,
   };
 }
 
@@ -82,9 +87,14 @@ function buildRagDiagnostics(params: {
     diagnostics.rag_retrieval = {
       stopped_reason: ragEvidence.stoppedReason,
       retrieval_context: {
-        required_entities: ragEvidence.coverage.requiredEntities.slice(0, MAX_RAG_COVERAGE_LABELS),
-        requested_aspects: ragEvidence.coverage.requiredAspects.slice(0, MAX_RAG_COVERAGE_LABELS),
+        required_subjects: ragEvidence.coverage.requiredEntities.slice(0, MAX_RAG_COVERAGE_LABELS),
+        requested_aspect_keys: ragEvidence.coverage.requiredAspects.slice(0, MAX_RAG_COVERAGE_LABELS),
         comparison_like: ragEvidence.coverage.comparisonLike,
+        requirements_valid: ragEvidence.coverage.requirementsValid,
+        requirements_warnings: ragEvidence.coverage.requirementsWarnings.slice(0, MAX_RAG_COVERAGE_LABELS),
+        temporal_constraint: ragEvidence.coverage.temporalConstraint,
+        temporal_coverage_ok: ragEvidence.coverage.temporalCoverageOk,
+        in_window_trusted_evidence_count: ragEvidence.coverage.inWindowTrustedEvidenceCount,
       },
       retry_queries: ragEvidence.retryQueries.slice(
         0,
