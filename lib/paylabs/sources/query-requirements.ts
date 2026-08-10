@@ -168,11 +168,34 @@ function keyForAspect(phrase: string): { key: string; knownDefinitionKey?: strin
   return { key: normalized.replace(/\s+/g, "_") };
 }
 
+function deriveImpactMatchTerms(sourceText: string): string[] {
+  const normalized = normalizeKey(sourceText);
+  const actorMatch = normalized.match(/^(.+?)\s+impact$/);
+  if (!actorMatch) return [];
+
+  const actorVariants = phraseVariants(actorMatch[1]);
+  const variants = new Set<string>();
+  for (const actor of actorVariants) {
+    variants.add(actor);
+    variants.add(`${actor} impact`);
+    variants.add(`impact on ${actor}`);
+    variants.add(`effect on ${actor}`);
+    variants.add(`effects on ${actor}`);
+    variants.add(`affect ${actor}`);
+    variants.add(`affects ${actor}`);
+  }
+  return [...variants];
+}
+
 function buildAspectConstraint(sourceText: string): RequestedAspectConstraint {
   const cleanSource = normalizeText(sourceText).toLowerCase();
   const { key, knownDefinitionKey } = keyForAspect(cleanSource);
   const definition = knownDefinitionKey ? ASPECT_DEFINITIONS[knownDefinitionKey] : undefined;
-  const matchTerms = new Set<string>([cleanSource, singularizeLastWord(cleanSource)]);
+  const matchTerms = new Set<string>([
+    cleanSource,
+    singularizeLastWord(cleanSource),
+    ...deriveImpactMatchTerms(cleanSource),
+  ]);
   if (definition) {
     for (const term of definition.signalTerms) matchTerms.add(term);
   }
@@ -214,7 +237,7 @@ function extractExplicitAspectPhrases(goal: string): string[] {
     /\bhow\s+do\s+(.+?)\s+differ\b/gi,
     /\b(?:differ|differs|differences?)\s+in\s+([^.!?]+)/gi,
 
-    /\b(?:regarding|concerning|in terms of|with respect to)\s+([^.!?]+)/gi,
+    /\b(?:regarding|concerning|in terms of|with respect to)\s+(?!how\b)([^.!?]+)/gi,
     /\b(?:cover|covering)\s+([^.!?]+)/gi,
     /\bexplain\s+(?!how\b)([^.!?]+)/gi,
   ];
@@ -235,7 +258,12 @@ function extractExplicitAspectPhrases(goal: string): string[] {
     if (comparison) {
       const secondSubject = trimSubjectCandidate(comparison[1]);
       const trailingDimensions = comparison[1].slice(secondSubject.length).trim();
-      if (trailingDimensions && !/^as\b/i.test(trailingDimensions)) {
+      if (
+        trailingDimensions
+        && !/^as\b/i.test(trailingDimensions)
+        && !/^(?:regarding|concerning|in terms of|with respect to)\b/i.test(trailingDimensions)
+        && !/\baffects?\b/i.test(trailingDimensions)
+      ) {
         phrases.push(...splitCoordinatedDimensions(trailingDimensions));
       }
     }
@@ -244,8 +272,10 @@ function extractExplicitAspectPhrases(goal: string): string[] {
   const impact = goal.match(/\baffects?\s+([^.!?]+)/i)?.[1];
   if (impact) {
     for (const part of splitCoordinatedDimensions(impact)) {
-      if (/\btrader\b/i.test(part)) phrases.push("trader impact");
-      if (/\bliquidity provider|\bLP\b/i.test(part)) phrases.push("lp impact");
+      const actor = singularizeLastWord(
+        normalizeKey(part).replace(/^(?:the|their|these|those|respective)\s+/i, ""),
+      );
+      if (actor) phrases.push(`${actor} impact`);
     }
   }
 

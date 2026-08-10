@@ -11,6 +11,11 @@ import type { RouteTier } from "@/lib/paylabs/route-tier";
 import { generateStructuredJson, type GenerateStructuredJsonResult } from "@/lib/paylabs/ai/llm-structured";
 import type { SourceItem } from "./types";
 import type { EvidencePack, EvidencePackChunk } from "../rag/types";
+import {
+  extractQueryRequirements,
+  matchesRequestedAspect,
+  type RequestedAspectConstraint,
+} from "./query-requirements";
 
 export type GroundingEvidence = {
   sourceId: string;
@@ -109,6 +114,7 @@ export const CITATION_VALIDATION_FAILURE_CODES = [
   "too_many_factual_units",
   "uncited_factual_unit",
   "partial_missing_coverage_not_explicit",
+  "answer_requirement_coverage_incomplete",
 ] as const;
 
 export type CitationValidationFailureCode = typeof CITATION_VALIDATION_FAILURE_CODES[number];
@@ -1161,6 +1167,61 @@ function splitV2FactualUnits(answer: string): V2FactualUnit[] {
   return units;
 }
 
+type CoveredRequestedAspects = {
+  constraints: RequestedAspectConstraint[];
+  missingConstraintKeys: string[];
+};
+
+function getCoveredRequestedAspects(goal: string, pack: EvidencePack): CoveredRequestedAspects {
+  const requirements = extractQueryRequirements(goal);
+  const coveredKeys = [...new Set(pack.packCoverage.coveredAspects)];
+  const constraintsByKey = new Map(requirements.requestedAspects.map((aspect) => [aspect.key, aspect]));
+  const constraints = coveredKeys
+    .map((key) => constraintsByKey.get(key))
+    .filter((aspect): aspect is RequestedAspectConstraint => Boolean(aspect));
+  const missingConstraintKeys = coveredKeys.filter((key) => !constraintsByKey.has(key));
+  return { constraints, missingConstraintKeys };
+}
+
+function buildCoveredAspectPrompt(goal: string, pack: EvidencePack): string {
+  const { constraints, missingConstraintKeys } = getCoveredRequestedAspects(goal, pack);
+  const labels = [
+    ...constraints.map((aspect) => aspect.label),
+    ...missingConstraintKeys.map((key) => humanizeCoverageLabel(key)),
+  ];
+  return labels.length > 0 ? labels.map((label) => `- ${label}`).join("\n") : "- none";
+}
+
+type AnswerRequirementCoverage = {
+  complete: boolean;
+  missingAspectKeys: string[];
+};
+
+function validateAnswerRequirementCoverage(input: {
+  goal: string;
+  pack: EvidencePack;
+  units: V2FactualUnit[];
+  citationMap: EvidencePackCitationMap;
+}): AnswerRequirementCoverage {
+  const { constraints, missingConstraintKeys } = getCoveredRequestedAspects(input.goal, input.pack);
+  const missingAspectKeys = [...missingConstraintKeys];
+
+  for (const aspect of constraints) {
+    const answered = input.units.some((unit) => {
+      if (!matchesRequestedAspect(unit.text, aspect)) return false;
+      return unit.citationIds.some((citationId) =>
+        input.citationMap.byCitationId.get(citationId)?.chunk.aspectSupport.includes(aspect.key),
+      );
+    });
+    if (!answered) missingAspectKeys.push(aspect.key);
+  }
+
+  return {
+    complete: missingAspectKeys.length === 0,
+    missingAspectKeys: [...new Set(missingAspectKeys)],
+  };
+}
+
 function citationSetsMatch(left: string[], right: string[]): boolean {
   const a = new Set(left);
   const b = new Set(right);
@@ -1345,6 +1406,7 @@ function validateEvidencePackModelOutput(
   output: EvidencePackValidatorInput,
   pack: EvidencePack,
   citationMap: EvidencePackCitationMap,
+  goal: string,
 ): {
   ok: true;
   status: EvidencePackSynthesisOutput["status"];
@@ -1385,6 +1447,26 @@ function validateEvidencePackModelOutput(
           { citationValidationFailureCodes },
         ),
         unknownCitationIds: [...new Set([...unknownCitationIds, ...unknownDeclaredIds])],
+      },
+    };
+  }
+
+  const answerRequirementCoverage = validateAnswerRequirementCoverage({
+    goal,
+    pack,
+    units,
+    citationMap,
+  });
+  if (!answerRequirementCoverage.complete) {
+    return {
+      ok: false,
+      result: {
+        ...v2FailureResult(
+          citationMap,
+          `answer_requirement_coverage_incomplete: ${answerRequirementCoverage.missingAspectKeys.join(",")}`,
+          { citationValidationFailureCodes: ["answer_requirement_coverage_incomplete"] },
+        ),
+        unknownCitationIds: [],
       },
     };
   }
@@ -1708,6 +1790,9 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
         userPrompt: [
           `User goal: ${cap(input.goal, 4000)}`,
           `EvidencePack status: ${pack.status}`,
+          "Covered requested aspects that must be addressed in the answer (structural requirements only; not factual evidence):",
+          buildCoveredAspectPrompt(input.goal, pack),
+          "Address multiple aspects in one paragraph when natural; do not force one paragraph per aspect, require internal keys in prose, or invent unsupported information.",
           ...(pack.status === "partially_grounded" ? [
             "Partial coverage contract: generate only supported factual paragraphs with exact chunk citations. Do not write missing-coverage or uncertainty disclosure; PayLabs appends it deterministically after generation.",
           ] : []),
@@ -1797,7 +1882,7 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
     used_citation_ids: renderedParagraphs.value.usedCitationIds,
     unsupported_claims: synthesisCall.data.unsupported_claims,
   };
-  const validated = validateEvidencePackModelOutput(modelOutput, pack, citationMap);
+  const validated = validateEvidencePackModelOutput(modelOutput, pack, citationMap, input.goal);
   if (!validated.ok) {
     return {
       ...validated.result,
