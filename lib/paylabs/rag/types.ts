@@ -201,6 +201,8 @@ export type EvidenceCoverage = {
   /** Hard temporal requirement coverage */
   temporalCoverageOk: boolean;
   inWindowTrustedEvidenceCount: number;
+  /** Trusted chunks eligible to prove the requested time window. */
+  temporalEligibleTrustedEvidenceCount: number;
   temporalConstraint: {
     kind: string;
     hard: boolean;

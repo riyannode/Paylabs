@@ -101,6 +101,7 @@ export function computeEvidenceCoverage(
   // Count trusted evidence chunks
   let trustedEvidenceCount = 0;
   let inWindowTrustedEvidenceCount = 0;
+  let temporalEligibleTrustedEvidenceCount = 0;
 
   for (const gc of gradedChunks) {
     if (!gc.grade.relevant) continue;
@@ -108,9 +109,17 @@ export function computeEvidenceCoverage(
 
     // This chunk qualifies as trusted evidence
     trustedEvidenceCount++;
-    if (evaluateTemporalConstraint(gc.chunk.metadata.publishedAt, requirements.temporalConstraint, now).inWindow) {
+    const temporal = evaluateTemporalConstraint(
+      gc.chunk.metadata.publishedAt,
+      requirements.temporalConstraint,
+      now,
+    );
+    const coverageEligible = !requirements.temporalConstraint?.hard || temporal.inWindow;
+    if (temporal.inWindow) {
       inWindowTrustedEvidenceCount++;
     }
+    if (coverageEligible) temporalEligibleTrustedEvidenceCount++;
+    if (!coverageEligible) continue;
 
     // Entity coverage
     for (const entity of gc.grade.entitySupport) {
@@ -178,6 +187,7 @@ export function computeEvidenceCoverage(
     entityAspectCoverage,
     temporalCoverageOk: !requirements.temporalConstraint?.hard || inWindowTrustedEvidenceCount > 0,
     inWindowTrustedEvidenceCount,
+    temporalEligibleTrustedEvidenceCount,
     temporalConstraint: requirements.temporalConstraint
       ? {
           kind: requirements.temporalConstraint.kind,
@@ -196,7 +206,8 @@ export function computeEvidenceCoverage(
 
 /**
  * Check if coverage is complete for the given retrieval context.
- * Requires trustedEvidenceCount > 0 — zero trusted evidence means coverage is not complete.
+ * Requires temporal-eligible trusted evidence > 0 — old/undated evidence
+ * cannot make a hard temporal query complete.
  */
 function isCoverageComplete(
   coverage: EvidenceCoverage,
@@ -205,7 +216,7 @@ function isCoverageComplete(
   const requirements = retrievalContext.queryRequirements ?? extractQueryRequirements(retrievalContext.originalGoal);
   if (!requirements.requirementsValid) return false;
   if (!coverage.temporalCoverageOk) return false;
-  if (coverage.trustedEvidenceCount === 0) return false;
+  if (coverage.temporalEligibleTrustedEvidenceCount === 0) return false;
 
   if (coverage.missingEntities.length > 0) return false;
   if (coverage.missingAspects.length > 0) return false;
@@ -537,6 +548,7 @@ export async function runEvidenceRetrievalWithCoverage(params: {
         entityAspectCoverage: [],
         temporalCoverageOk: false,
         inWindowTrustedEvidenceCount: 0,
+        temporalEligibleTrustedEvidenceCount: 0,
         temporalConstraint: null,
         requirementsValid: false,
         requirementsWarnings: ["no_retrieval_context"],

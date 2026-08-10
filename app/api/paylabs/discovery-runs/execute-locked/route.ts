@@ -69,6 +69,7 @@ function serializeRagCoverage(coverage: EvidenceCoverage) {
     requirements_warnings: coverage.requirementsWarnings.slice(0, MAX_RAG_COVERAGE_LABELS),
     temporal_coverage_ok: coverage.temporalCoverageOk,
     in_window_trusted_evidence_count: coverage.inWindowTrustedEvidenceCount,
+    temporal_eligible_trusted_evidence_count: coverage.temporalEligibleTrustedEvidenceCount,
     temporal_constraint: coverage.temporalConstraint,
   };
 }
@@ -95,6 +96,7 @@ function buildRagDiagnostics(params: {
         temporal_constraint: ragEvidence.coverage.temporalConstraint,
         temporal_coverage_ok: ragEvidence.coverage.temporalCoverageOk,
         in_window_trusted_evidence_count: ragEvidence.coverage.inWindowTrustedEvidenceCount,
+        temporal_eligible_trusted_evidence_count: ragEvidence.coverage.temporalEligibleTrustedEvidenceCount,
       },
       retry_queries: ragEvidence.retryQueries.slice(
         0,

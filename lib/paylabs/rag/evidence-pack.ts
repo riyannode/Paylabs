@@ -24,7 +24,10 @@ import type {
 } from "./types";
 import { computeEvidenceCoverage } from "./evidence-retrieval";
 import { canonicalizeUrl } from "../sources/source-resolver";
-import { extractQueryRequirements } from "../sources/query-requirements";
+import {
+  evaluateTemporalConstraint,
+  extractQueryRequirements,
+} from "../sources/query-requirements";
 
 // ─── Pack Constants ──────────────────────────────────────
 
@@ -563,9 +566,16 @@ export function buildEvidencePack(params: {
     coverage: retrievalCoverage,
   } = evidenceRetrieval;
 
-  const trustedCandidates = filterTrustedCandidates(gradedChunks);
   const requirements = retrievalContext.queryRequirements
     ?? extractQueryRequirements(retrievalContext.originalGoal);
+  const trustedCandidates = filterTrustedCandidates(gradedChunks).filter((candidate) => {
+    if (!requirements.temporalConstraint?.hard) return true;
+    return evaluateTemporalConstraint(
+      candidate.chunk.metadata.publishedAt,
+      requirements.temporalConstraint,
+      now,
+    ).inWindow;
+  });
   const selected: GradedEvidenceChunk[] = [];
   const remainingCandidates = [...trustedCandidates];
   const sourceChunkCounts = new Map<string, number>();
