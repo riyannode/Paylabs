@@ -23,6 +23,7 @@ import {
   validateAndLockExecutionPlan,
 } from "../../delegated-runtime/state";
 import { z } from "zod";
+import { isSubstantiveBrainAnswer } from "../../../../components/paylabs/chat/answer-selection";
 
 // ─── Zod Schema for Brain Planning ──────────────────────────
 
@@ -42,6 +43,10 @@ const BrainPlanningSchema = z.object({
     max_registry_checks: z.number().int().min(0).max(50),
     max_source_accesses: z.number().int().min(0).max(50),
   });
+
+const BrainAnswerRepairSchema = z.object({
+  assistant_response: z.string(),
+});
 
 const BRAIN_SYSTEM_PROMPT = `
 You are PayLabs Brain — the planning intelligence. You analyze the user goal, recommend a route tier, build search query variants, and produce a structured execution plan.
@@ -121,12 +126,12 @@ assistant_response:
 - MUST directly answer the same normalized_goal and MUST NOT switch to an adjacent or broader topic.
 - MUST NOT contain placeholders, bracketed instructions, phrases such as "insert current price", example values presented as current facts, or unfinished template text.
 - MUST be substantive — exactly 6 sentences that actually inform the reader. Generic filler like "news changes quickly" is NOT an answer.
-- MUST NOT be a planning/status sentence (no "I will find", "I will search", "Let me look").
+- MUST NOT be a planning/status sentence or a promise to answer (for example, "I will provide...", "I will compare...", "I will explain...", "I can provide...", "I'll provide...", "Let me compare...", "This analysis will...", or equivalent Indonesian wording). The answer itself must contain the factual explanation; do not describe what the answer will do.
 - MUST NOT mention internal nodes, x402 internals, wallet addresses, Gateway, settlement, quote engine, or service fees unless the user explicitly asked about them.
 - MUST NOT output a numbered source list [1]/[2]/[3] with titles, domains, or URLs. Source links are rendered separately by the frontend. Your job is to ANSWER the question, not list sources.
 - If live RSSHub sources are not attached to this run, answer from general knowledge but DO NOT claim it is source-backed. Add: "Live source links may be available below if PayLabs found matching feeds."
 - For latest/news queries: provide a substantive overview of the current landscape, key developments, major players, and what to watch. Do NOT just say "news changes quickly."
-- MUST NEVER start with or contain these planning phrases:
+- MUST NOT start with or contain these planning phrases:
   "I will find", "I will search", "I am processing", "Let me find",
   "I'll look", "I'll search", "Saya akan mencari", "Saya sedang",
   "Mohon tunggu", "I'm gathering", "Searching for", "I need to find".
@@ -340,6 +345,36 @@ Analyze this goal and produce a structured execution plan.`,
       };
     }
 
+    let assistantResponse = data.assistant_response;
+    if (!isSubstantiveBrainAnswer(assistantResponse)) {
+      const repairResult = await generateStructuredJson<{ assistant_response: string }>({
+        agentName: "brain_planner",
+        routeTier: "normal",
+        systemPrompt: `You are repairing only the user-facing answer from PayLabs Brain.
+
+Answer the user's actual question directly. Return the answer itself, not a plan or promise.
+Do not describe what you will do. Do not say "I will provide", "I will compare", "I will explain", "I will analyze", "I can provide", "Let me", "This answer will", "The answer will", "This analysis will", or "The following answer will".
+Use the same language as the user's query.
+Do not claim source verification. Do not invent citations, URLs, source IDs, or EvidencePack IDs.
+Do not mention internal PayLabs routing or payment internals unless the user explicitly asked about them.
+Keep the response substantive and concise.
+Return only JSON matching the requested schema.`,
+        userPrompt: `User goal: "${state.userGoal}"
+Normalized goal: "${data.normalized_goal}"
+Brain assistant_response to repair: "${assistantResponse}"
+
+Return a direct substantive answer for the user goal.`,
+        schema: BrainAnswerRepairSchema,
+        maxAttempts: 1,
+        allowRepair: false,
+        throwOnRequiredFailure: false,
+      });
+
+      if (repairResult.ok && isSubstantiveBrainAnswer(repairResult.data.assistant_response)) {
+        assistantResponse = repairResult.data.assistant_response;
+      }
+    }
+
     return {
       normalizedGoal: data.normalized_goal,
       routeTierHint: data.route_tier_hint as DelegatedRouteTier,
@@ -358,7 +393,7 @@ Analyze this goal and produce a structured execution plan.`,
         suggested_query_variants: data.suggested_query_variants,
         service_execution_plan: data.service_execution_plan,
         safe_brain_summary: data.safe_brain_summary,
-        assistant_response: data.assistant_response,
+        assistant_response: assistantResponse,
         user_visible_reasoning: data.user_visible_reasoning,
         tier_decision_reason: data.tier_decision_reason,
         plan_rationale: data.plan_rationale,

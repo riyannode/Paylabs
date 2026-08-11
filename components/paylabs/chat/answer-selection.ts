@@ -10,12 +10,13 @@ const INSUFFICIENT_EVIDENCE_MSG = "PayLabs could not find enough relevant eviden
 const SYNTHESIS_FAILED_MSG = "PayLabs found relevant sources but could not complete evidence verification for this answer.";
 const BRAIN_FALLBACK_NOTE = "Evidence verification could not be completed for this run.";
 
-// Brain planning text is useful only when it is an actual answer, not a progress update.
-const GENERIC_ANSWER_RE = /^(i will find|i will search|i am processing|let me find|i'll look|i'll search|saya akan mencari|saya sedang memproses|mohon tunggu sebentar|gathering information|i'm searching for|i'm looking for|saya sedang mencari)/i;
+// Brain planning text is useful only when it is an actual answer, not a promise/status update.
+// Keep this opening-focused: legitimate answers may contain future-tense wording later.
+const PLANNING_ANSWER_OPENING_RE = /^(?:(?:i\s+will\s+(?:provide|compare|explain|analy[sz]e|find|search|look\s+for|gather|review|summari[sz]e)|i\s+can\s+(?:provide|compare|explain|analy[sz]e)|i['’]?ll\s+(?:provide|compare|explain|analy[sz]e|find|search|look\s+for|gather|review|summari[sz]e)|i\s+am\s+(?:processing|searching|looking\s+for|gathering|analy[sz]ing)|let\s+me\s+(?:provide|compare|explain|analy[sz]e|find|search|look\s+for|gather|review|summari[sz]e)|this\s+(?:analysis|answer|response)\s+will\s+(?:provide|compare|explain|cover|show|address)|the\s+(?:following\s+)?answer\s+will\s+(?:provide|compare|explain|cover|show)|saya\s+(?:akan|sedang)\s+(?:memberikan|membandingkan|menjelaskan|menganalisis|mencari|menelusuri|mengumpulkan|memproses)|saya\s+akan\s+(?:memberi|menyajikan|membahas|mengulas)|mohon\s+tunggu(?:\s+sebentar)?|gathering\s+information|searching\s+for)(?:[\s,:—-]|$))/i;
 
 export function isSubstantiveBrainAnswer(value: string | null | undefined): value is string {
   const answer = typeof value === "string" ? value.trim() : "";
-  return answer.length > 0 && !(GENERIC_ANSWER_RE.test(answer) && answer.length < 200);
+  return answer.length > 0 && !PLANNING_ANSWER_OPENING_RE.test(answer);
 }
 
 function deterministicFailureAnswer(status: GroundingStatus | null, fallbackAnswer: string): string {
