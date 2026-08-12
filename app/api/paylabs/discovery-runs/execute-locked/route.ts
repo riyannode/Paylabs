@@ -36,7 +36,6 @@ import { resolvePaylabsAppUrl, resolvePublicAppUrl } from "@/lib/paylabs/runtime
 import { randomUUID } from "node:crypto";
 import { isOfficeMacroAgentId } from "@/lib/paylabs/office/registry";
 import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
-import { selectAuthoritativeAnswerCore } from "@/lib/paylabs/chat/answer-selection-core";
 import { attachPaymentResponseHeader } from "@/lib/paylabs/x402/seller-challenge";
 import {
   serializeGroundingSynthesisDiagnostics,
@@ -627,9 +626,7 @@ export async function POST(req: NextRequest) {
     const routingPayment = preflight.routing_payment as Record<string, unknown>;
     const brainPayment = preflight.brain_payment as Record<string, unknown> | null;
     const brainLlmDiag = preflight.brain_llm_diag as Record<string, unknown> | null;
-    const brainAssistantResponse = typeof brainFields?.assistant_response === "string"
-      ? brainFields.assistant_response
-      : null;
+
     // Reconstruct safe brain planning from preflight brain_fields (full parity with inline)
     const safeBrainPlanning = brainFields
       ? {
@@ -1147,23 +1144,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const selectedForProvenance = selectAuthoritativeAnswerCore({
-      groundingVersion: groundedEnabled ? "grounded_answer_v2" : null,
-      groundingStatus: groundingResult?.status ?? null,
-      groundingCitationValidationOk: groundingResult?.citationValidationOk === true,
-      groundingClaimSupportValidationOk: groundingResult?.claimSupportValidationOk === true,
-      rawFinalAnswer: finalAnswer,
-      brainAssistantResponse,
-      fallbackAnswer: "PayLabs found relevant sources but could not complete evidence verification for this answer.",
-    });
-    const finalProvenance = selectedForProvenance.provenance;
-
     const groundingDiagnostics = groundedEnabled
       ? {
           authoritative: true as const,
           version: "grounded_answer_v2" as const,
           status: groundingResult?.status ?? "synthesis_failed",
-          provenance: finalProvenance,
+          provenance: groundingResult?.citationValidationOk === true && groundingResult?.claimSupportValidationOk === true
+            ? "evidence_verified"
+            : groundedEnabled
+              ? "deterministic_failure_fallback"
+              : "brain_unverified",
           source_ids_available: groundingResult?.availableSourceIds ?? groundingSourceIds,
           source_ids_used: groundingResult?.usedSourceIds ?? [],
           chunk_citation_ids_available: groundingResult?.availableChunkCitationIds ?? [],
@@ -1231,7 +1221,6 @@ export async function POST(req: NextRequest) {
             source_context: sourceContextTrace,
             source_availability_note: sourceAvailabilityNote,
             final_answer: finalAnswer,
-            final_provenance: finalProvenance,
             ...(groundingDiagnostics
               ? {
                   grounding_authoritative: true,
@@ -1272,7 +1261,6 @@ export async function POST(req: NextRequest) {
     const successResponse = NextResponse.json({
       ok: result.status === "completed",
       final_answer: finalAnswer,
-      final_provenance: finalProvenance,
       source_availability_note: sourceAvailabilityNote,
       ...(groundedEnabled && groundingDiagnostics
         ? {
