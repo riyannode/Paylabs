@@ -239,7 +239,8 @@ function extractExplicitAspectPhrases(goal: string): string[] {
 
     /\b(?:regarding|concerning|in terms of|with respect to)\s+(?!how\b)([^.!?]+)/gi,
     /\b(?:cover|covering)\s+([^.!?]+)/gi,
-    /\bexplain\s+(?!how\b)([^.!?]+)/gi,
+    /\bexplain\s+(?:.+?\s+including\s+)([^.!?]+)/gi,
+    /\bexplain\s+(?!how\b)(?![^.!?]*\sincluding\s)([^.!?]+)/gi,
   ];
 
   for (const pattern of patterns) {

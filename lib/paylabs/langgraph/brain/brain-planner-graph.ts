@@ -24,6 +24,7 @@ import {
 } from "../../delegated-runtime/state";
 import { z } from "zod";
 import { isSubstantiveBrainAnswer } from "../../../../components/paylabs/chat/answer-selection";
+import { evaluateBrainAnswer, type BrainAnswerCoverage } from "../../sources/brain-answer-coverage";
 
 // ─── Zod Schema for Brain Planning ──────────────────────────
 
@@ -346,33 +347,56 @@ Analyze this goal and produce a structured execution plan.`,
     }
 
     let assistantResponse = data.assistant_response;
-    if (!isSubstantiveBrainAnswer(assistantResponse)) {
+    let answerQuality: BrainAnswerCoverage = isSubstantiveBrainAnswer(assistantResponse)
+      ? evaluateBrainAnswer(assistantResponse, state.userGoal)
+      : { quality: "planning", complete: false, missingRequirements: [] };
+    if (!answerQuality.complete) {
+      const failureReasons = [
+        answerQuality.quality === "planning" ? "direct-answer quality: the response is a plan, promise, or empty" : null,
+        answerQuality.quality === "generic_meta" ? "direct-answer quality: the response is a generic meta-answer" : null,
+        answerQuality.missingRequirements.length > 0
+          ? `missing requirements: ${answerQuality.missingRequirements.slice(0, 24).join(", ")}`
+          : null,
+      ].filter((reason): reason is string => !!reason);
       const repairResult = await generateStructuredJson<{ assistant_response: string }>({
         agentName: "brain_planner",
         routeTier: "normal",
         systemPrompt: `You are repairing only the user-facing answer from PayLabs Brain.
 
-Answer the user's actual question directly. Return the answer itself, not a plan or promise.
-Do not describe what you will do. Do not say "I will provide", "I will compare", "I will explain", "I will analyze", "I can provide", "Let me", "This answer will", "The answer will", "This analysis will", or "The following answer will".
+Rewrite the answer so it directly and materially answers the user's actual question. Return the answer itself, not a plan, promise, or description of the answer.
+Fix every listed quality problem in one rewrite. For comparisons, explicitly compare every required entity across every requested dimension; nearby prose may be concise but each relationship must be materially addressed.
 Use the same language as the user's query.
 Do not claim source verification. Do not invent citations, URLs, source IDs, or EvidencePack IDs.
 Do not mention internal PayLabs routing or payment internals unless the user explicitly asked about them.
-Keep the response substantive and concise.
+Keep already useful content, add what is missing, and remain concise.
 Return only JSON matching the requested schema.`,
-        userPrompt: `User goal: "${state.userGoal}"
+        userPrompt: `Exact original user goal: "${state.userGoal}"
 Normalized goal: "${data.normalized_goal}"
-Brain assistant_response to repair: "${assistantResponse}"
+Current Brain assistant_response: "${assistantResponse}"
+Detected quality problems:
+- ${failureReasons.join("\n- ")}
 
-Return a direct substantive answer for the user goal.`,
+Return one complete direct answer that fixes all detected problems.`,
         schema: BrainAnswerRepairSchema,
         maxAttempts: 1,
         allowRepair: false,
         throwOnRequiredFailure: false,
       });
 
-      if (repairResult.ok && isSubstantiveBrainAnswer(repairResult.data.assistant_response)) {
-        assistantResponse = repairResult.data.assistant_response;
+      if (repairResult.ok) {
+        const repaired = repairResult.data.assistant_response;
+        const repairedQuality = isSubstantiveBrainAnswer(repaired)
+          ? evaluateBrainAnswer(repaired, state.userGoal)
+          : { quality: "planning", complete: false, missingRequirements: [] } as BrainAnswerCoverage;
+        if (repairedQuality.complete) {
+          assistantResponse = repaired;
+          answerQuality = repairedQuality;
+        }
       }
+    }
+
+    if (!answerQuality.complete) {
+      assistantResponse = "";
     }
 
     return {
