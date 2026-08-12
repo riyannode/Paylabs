@@ -24,6 +24,7 @@ import type {
 } from "./types";
 import { computeEvidenceCoverage } from "./evidence-retrieval";
 import { canonicalizeUrl } from "../sources/source-resolver";
+import { evaluateAuthoritativeCoverage } from "./coverage-authority";
 import {
   evaluateTemporalConstraint,
   extractQueryRequirements,
@@ -367,17 +368,17 @@ function derivePackStatus(
   if (!packCoverage.requirementsValid) return "insufficient_evidence";
   if (packChunkCount === 0) return "insufficient_evidence";
   if (packCoverage.trustedEvidenceCount === 0) return "insufficient_evidence";
-  if (packCoverage.missingEntities.length > 0) return "insufficient_evidence";
-  if (packCoverage.missingAspects.length > 0) return "partially_grounded";
+  const authority = evaluateAuthoritativeCoverage({
+    requiredEntities: packCoverage.requiredEntities,
+    requestedAspects: packCoverage.requiredAspects,
+    comparisonLike: packCoverage.comparisonLike,
+    rows: packCoverage.entityAspectCoverage.map((row) => ({ entity: row.entity, coveredAspects: row.coveredAspects })),
+  });
+  if (authority.missingEntities.length > 0) return "insufficient_evidence";
+  if (authority.missingAspects.length > 0) return "partially_grounded";
   if (!packCoverage.temporalCoverageOk) return "partially_grounded";
 
-  if (packCoverage.comparisonLike) {
-    for (const entityAspect of packCoverage.entityAspectCoverage) {
-      if (entityAspect.missingAspects.length > 0) {
-        return "partially_grounded";
-      }
-    }
-  }
+  if (!authority.complete) return "partially_grounded";
 
   return "grounded";
 }

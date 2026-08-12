@@ -11,6 +11,7 @@ import type { RouteTier } from "@/lib/paylabs/route-tier";
 import { generateStructuredJson, type GenerateStructuredJsonResult } from "@/lib/paylabs/ai/llm-structured";
 import type { SourceItem } from "./types";
 import type { EvidencePack, EvidencePackChunk } from "../rag/types";
+import { evaluateAuthoritativeCoverage } from "../rag/coverage-authority";
 import {
   extractQueryRequirements,
   matchesRequestedAspect,
@@ -1940,10 +1941,17 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
   const validated = validateEvidencePackModelOutput(modelOutput, pack, citationMap, input.goal);
   if (!validated.ok) {
     const requirementFailure = validated.result.citationValidationFailureCodes?.includes("answer_requirement_coverage_incomplete");
-    const packHasAllRequiredCells = pack.packCoverage.missingEntities.length === 0
-      && pack.packCoverage.missingAspects.length === 0
-      && pack.packCoverage.entityAspectCoverage.every((row) => row.missingAspects.length === 0);
-    if (requirementFailure && packHasAllRequiredCells) {
+    const packRequirements = pack.packCoverage;
+    const packAuthority = evaluateAuthoritativeCoverage({
+      requiredEntities: packRequirements.requiredEntities,
+      requestedAspects: packRequirements.requiredAspects,
+      comparisonLike: packRequirements.comparisonLike,
+      rows: packRequirements.entityAspectCoverage.map((row) => ({
+        entity: row.entity,
+        coveredAspects: row.coveredAspects,
+      })),
+    });
+    if (requirementFailure && packAuthority.complete) {
       const missingLabels = (validated.result.errorSafe || "answer requirement coverage incomplete")
         .replace(/^.*?:\s*/, "")
         .slice(0, 500);

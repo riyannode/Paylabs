@@ -34,6 +34,7 @@ import {
   extractQueryRequirements,
 } from "../sources/query-requirements";
 import { canonicalizeUrl } from "../sources/source-resolver";
+import { buildBalancedMissingCells, evaluateAuthoritativeCoverage } from "./coverage-authority";
 
 // ─── Configuration ─────────────────────────────────────────
 
@@ -177,19 +178,27 @@ export function computeEvidenceCoverage(
     }
   }
 
+  const authority = evaluateAuthoritativeCoverage({
+    requiredEntities,
+    requestedAspects: requiredAspects,
+    comparisonLike,
+    rows: comparisonLike
+      ? entityAspectCoverage.map((row) => ({ entity: row.entity, coveredAspects: row.coveredAspects }))
+      : coveredEntities.map((entity) => ({ entity, coveredAspects: coveredAspects })),
+  });
   const temporalCoverageOk = !requirements.temporalConstraint?.hard || inWindowTrustedEvidenceCount > 0;
   const failureReasonCodes: RetrievalFailureReasonCode[] = [];
-  if (missingEntities.length > 0 || missingAspects.length > 0) failureReasonCodes.push("retrieval_requirement_coverage_missing");
-  if (comparisonLike && entityAspectCoverage.some((row) => row.coveredAspects.length === 0)) failureReasonCodes.push("retrieval_entity_imbalance");
+  if (!authority.complete) failureReasonCodes.push("retrieval_requirement_coverage_missing");
+  if (authority.comparisonMatrixRequired && authority.missingEntityAspectCells.length > 0) failureReasonCodes.push("retrieval_entity_imbalance");
   if (requirements.temporalConstraint?.hard && !temporalCoverageOk) failureReasonCodes.push("retrieval_temporal_mismatch");
 
   return {
     requiredEntities,
-    coveredEntities,
-    missingEntities,
+    coveredEntities: authority.coveredEntities,
+    missingEntities: authority.missingEntities,
     requiredAspects,
-    coveredAspects,
-    missingAspects,
+    coveredAspects: authority.coveredAspects,
+    missingAspects: authority.missingAspects,
     comparisonLike,
     entityAspectCoverage,
     temporalCoverageOk,
@@ -226,17 +235,12 @@ function isCoverageComplete(
   if (!coverage.temporalCoverageOk) return false;
   if (coverage.temporalEligibleTrustedEvidenceCount === 0) return false;
 
-  if (coverage.missingEntities.length > 0) return false;
-  if (coverage.missingAspects.length > 0) return false;
-
-  // For comparison queries, also check entity × aspect matrix
-  if (coverage.comparisonLike) {
-    for (const eac of coverage.entityAspectCoverage) {
-      if (eac.missingAspects.length > 0) return false;
-    }
-  }
-
-  return true;
+  return evaluateAuthoritativeCoverage({
+    requiredEntities: coverage.requiredEntities,
+    requestedAspects: coverage.requiredAspects,
+    comparisonLike: coverage.comparisonLike,
+    rows: coverage.entityAspectCoverage.map((row) => ({ entity: row.entity, coveredAspects: row.coveredAspects })),
+  }).complete;
 }
 
 // ─── Targeted Query Generation ─────────────────────────────
@@ -285,27 +289,23 @@ function generateTargetedRetryQueries(
   const queries: string[] = [];
   const freshness = extractFreshnessSignals(originalGoal);
 
-  // Priority A: Missing required entity (global)
-  for (const entity of coverage.missingEntities) {
-    if (queries.length >= maxQueries) break;
-    const q = [entity, ...coverage.missingAspects.map(humanizeAspect)];
-    if (freshness) q.push(freshness);
-    queries.push(appendHardTemporalScope(q.join(" "), temporalConstraint));
-  }
-
-  // Priority B: Missing entity/aspect pair in comparison
-  if (coverage.comparisonLike && coverage.entityAspectCoverage.length > 0) {
-    for (const eac of coverage.entityAspectCoverage) {
-      if (queries.length >= maxQueries) break;
-      if (eac.missingAspects.length === 0) continue;
-
-      // Generate one query per missing aspect for this entity
-      for (const aspect of eac.missingAspects) {
-        if (queries.length >= maxQueries) break;
-        const q = [eac.entity, humanizeAspect(aspect)];
-        if (freshness) q.push(freshness);
-        queries.push(appendHardTemporalScope(q.join(" "), temporalConstraint));
-      }
+  const authority = evaluateAuthoritativeCoverage({
+    requiredEntities: coverage.requiredEntities,
+    requestedAspects: coverage.requiredAspects,
+    comparisonLike: coverage.comparisonLike,
+    rows: coverage.entityAspectCoverage.map((row) => ({ entity: row.entity, coveredAspects: row.coveredAspects })),
+  });
+  if (authority.comparisonMatrixRequired) {
+    const cells = buildBalancedMissingCells({
+      requiredEntities: coverage.requiredEntities,
+      requestedAspects: coverage.requiredAspects,
+      coverage: authority,
+      maxCells: maxQueries,
+    });
+    for (const cell of cells) {
+      const q = [cell.entity, humanizeAspect(cell.aspect)];
+      if (freshness) q.push(freshness);
+      queries.push(appendHardTemporalScope(q.join(" "), temporalConstraint));
     }
   }
 

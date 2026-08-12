@@ -57,6 +57,12 @@ function serializeRagCoverage(coverage: EvidenceCoverage) {
     missing_entities: coverage.missingEntities.slice(0, MAX_RAG_COVERAGE_LABELS),
     covered_aspects: coverage.coveredAspects.slice(0, MAX_RAG_COVERAGE_LABELS),
     missing_aspects: coverage.missingAspects.slice(0, MAX_RAG_COVERAGE_LABELS),
+    missing_entity_rows: coverage.requiredEntities.filter(
+      (entity) => !coverage.entityAspectCoverage.some((row) => row.entity.toLowerCase() === entity.toLowerCase()),
+    ).slice(0, MAX_RAG_COVERAGE_LABELS),
+    missing_entity_aspect_cells: coverage.entityAspectCoverage.flatMap((row) =>
+      row.missingAspects.slice(0, MAX_RAG_COVERAGE_LABELS).map((aspect) => ({ entity: row.entity, aspect })),
+    ).slice(0, MAX_RAG_COVERAGE_LABELS),
     entity_aspect_coverage: coverage.entityAspectCoverage
       .slice(0, MAX_RAG_COVERAGE_LABELS)
       .map((row) => ({
@@ -1145,7 +1151,9 @@ export async function POST(req: NextRequest) {
           status: groundingResult?.status ?? "synthesis_failed",
           provenance: groundingResult?.citationValidationOk === true && groundingResult?.claimSupportValidationOk === true
             ? "evidence_verified"
-            : "deterministic_failure_fallback",
+            : groundedEnabled
+              ? "deterministic_failure_fallback"
+              : "brain_unverified",
           source_ids_available: groundingResult?.availableSourceIds ?? groundingSourceIds,
           source_ids_used: groundingResult?.usedSourceIds ?? [],
           chunk_citation_ids_available: groundingResult?.availableChunkCitationIds ?? [],
