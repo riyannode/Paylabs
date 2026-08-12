@@ -1143,6 +1143,9 @@ export async function POST(req: NextRequest) {
           authoritative: true as const,
           version: "grounded_answer_v2" as const,
           status: groundingResult?.status ?? "synthesis_failed",
+          provenance: groundingResult?.citationValidationOk === true && groundingResult?.claimSupportValidationOk === true
+            ? "evidence_verified"
+            : "deterministic_failure_fallback",
           source_ids_available: groundingResult?.availableSourceIds ?? groundingSourceIds,
           source_ids_used: groundingResult?.usedSourceIds ?? [],
           chunk_citation_ids_available: groundingResult?.availableChunkCitationIds ?? [],

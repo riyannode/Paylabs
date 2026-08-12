@@ -170,6 +170,11 @@ export type EvidenceGradingResult = {
  * Evidence coverage across graded chunks.
  * Computed ONLY from trusted grade-level support (not raw relevance).
  */
+export type RetrievalFailureReasonCode =
+  | "retrieval_requirement_coverage_missing"
+  | "retrieval_entity_imbalance"
+  | "retrieval_temporal_mismatch";
+
 export type EvidenceCoverage = {
   /** Required primary entities from retrievalContext */
   requiredEntities: string[];
@@ -214,6 +219,8 @@ export type EvidenceCoverage = {
   /** Canonical requirements integrity status */
   requirementsValid: boolean;
   requirementsWarnings: string[];
+  /** Bounded observational reasons explaining incomplete retrieval coverage. */
+  failureReasonCodes?: RetrievalFailureReasonCode[];
 };
 
 /**

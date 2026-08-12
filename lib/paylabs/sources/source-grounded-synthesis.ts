@@ -60,6 +60,8 @@ export type GroundingSynthesisDiagnostics = {
   synthesisErrorCode?: string | null;
   synthesisMode?: string | null;
   synthesisRetryCount?: number | null;
+  correctiveSynthesisAttempted?: boolean;
+  correctiveSynthesisOutcome?: "passed" | "failed" | null;
   synthesisJsonFound?: boolean | null;
   synthesisValidationIssuePaths?: string[];
   synthesisContentType?: string | null;
@@ -87,7 +89,8 @@ export type GroundedSynthesisResult = {
   /** Safe diagnostic for failures during the EvidencePack synthesis call. */
   synthesisFailureCode?: SynthesisFailureCode;
   synthesisDiagnostics?: GroundingSynthesisDiagnostics;
-  /** V2 diagnostics use chunk citation IDs while retaining source labels. */
+  /** Observational provenance only; never used for answer selection. */
+  provenance?: "evidence_verified" | "brain_unverified" | "deterministic_failure_fallback";
   usedChunkCitationIds?: string[];
   availableSourceIds?: string[];
   availableChunkCitationIds?: string[];
@@ -922,6 +925,8 @@ export function serializeGroundingSynthesisDiagnostics(
   synthesis_content_type: string | null;
   synthesis_received_keys: string[];
   synthesis_expected_keys: string[];
+  corrective_synthesis_attempted: boolean;
+  corrective_synthesis_outcome: "passed" | "failed" | null;
 } {
   return {
     synthesis_error_code: boundedDiagnosticString(diagnostics?.synthesisErrorCode),
@@ -946,6 +951,8 @@ export function serializeGroundingSynthesisDiagnostics(
       diagnostics?.synthesisExpectedKeys,
       MAX_VERIFICATION_DIAGNOSTIC_KEYS,
     ),
+    corrective_synthesis_attempted: diagnostics?.correctiveSynthesisAttempted === true,
+    corrective_synthesis_outcome: diagnostics?.correctiveSynthesisOutcome ?? null,
   };
 }
 
@@ -1932,6 +1939,113 @@ export async function synthesizeGroundedAnswerFromEvidencePack(input: {
   };
   const validated = validateEvidencePackModelOutput(modelOutput, pack, citationMap, input.goal);
   if (!validated.ok) {
+    const requirementFailure = validated.result.citationValidationFailureCodes?.includes("answer_requirement_coverage_incomplete");
+    const packHasAllRequiredCells = pack.packCoverage.missingEntities.length === 0
+      && pack.packCoverage.missingAspects.length === 0
+      && pack.packCoverage.entityAspectCoverage.every((row) => row.missingAspects.length === 0);
+    if (requirementFailure && packHasAllRequiredCells) {
+      const missingLabels = (validated.result.errorSafe || "answer requirement coverage incomplete")
+        .replace(/^.*?:\s*/, "")
+        .slice(0, 500);
+      const correctiveStartedAt = Date.now();
+      const correctiveCall = await withV2Timeout(
+        generateStructuredJson<EvidencePackSynthesisOutput>({
+          agentName: "brain_planner",
+          routeTier: "normal" as RouteTier,
+          systemPrompt: EVIDENCE_PACK_SYSTEM_PROMPT,
+          userPrompt: [
+            `User goal: ${cap(input.goal, 4000)}`,
+            "Corrective grounded synthesis: the initial answer omitted required requested-answer coverage.",
+            `Missing requirement labels: ${missingLabels}`,
+            "Rewrite the answer to express every supported requirement, using only the same EvidencePack and exact allowed citation IDs.",
+            "Do not add facts, sources, citations, or claims absent from the EvidencePack.",
+            "Previous synthesis (rewrite only; not evidence):",
+            renderedParagraphs.value.answer.slice(0, 6000),
+            `EvidencePack status: ${pack.status}`,
+            "Allowed citation IDs — copy values exactly, without brackets:",
+            citationMap.availableChunkCitationIds.join(", ") || "none",
+            "Selected EvidencePack blocks:",
+            buildEvidencePackBlocks(citationMap.citations),
+          ].join("\n"),
+          schema: EvidencePackSynthesisSchema,
+          maxAttempts: 1,
+          allowRepair: false,
+          throwOnRequiredFailure: false,
+        }),
+        synthesisTimeoutMs,
+      );
+      if (correctiveCall !== V2_TIMEOUT && correctiveCall.ok) {
+        const correctiveRendered = renderEvidencePackParagraphs({ paragraphs: correctiveCall.data.paragraphs, citationMap });
+        if (correctiveRendered.ok) {
+          const correctiveOutput: EvidencePackValidatorInput = {
+            status: correctiveCall.data.status,
+            answer: correctiveRendered.value.answer,
+            used_citation_ids: correctiveRendered.value.usedCitationIds,
+            unsupported_claims: correctiveCall.data.unsupported_claims,
+          };
+          const correctiveValidated = validateEvidencePackModelOutput(correctiveOutput, pack, citationMap, input.goal);
+          if (correctiveValidated.ok) {
+            const correctiveUnits = await verifyEvidencePackClaims(
+              correctiveValidated.units,
+              citationMap,
+              claimVerifierTimeoutMs,
+            );
+            if (!correctiveUnits.ok) {
+              const failedDiagnostics = buildSynthesisDiagnostics(undefined, "corrective_synthesis_failed");
+              failedDiagnostics.correctiveSynthesisAttempted = true;
+              failedDiagnostics.correctiveSynthesisOutcome = "failed";
+              failedDiagnostics.synthesisRetryCount = 1;
+              return {
+                ...v2FailureResult(citationMap, correctiveUnits.errorSafe, {
+                  citationValidationOk: true,
+                  claimSupportValidationOk: false,
+                  synthesisDiagnostics: failedDiagnostics,
+                  verificationDiagnostics: correctiveUnits.verificationDiagnostics,
+                }),
+                ...baseDiagnostics,
+              };
+            }
+            const correctiveDiagnostics = buildSynthesisDiagnostics(correctiveCall.meta, null);
+            correctiveDiagnostics.correctiveSynthesisAttempted = true;
+            correctiveDiagnostics.correctiveSynthesisOutcome = "passed";
+            correctiveDiagnostics.synthesisRetryCount = 1;
+            return {
+              status: correctiveValidated.status,
+              answer: correctiveValidated.answer,
+              citations: correctiveValidated.citations,
+              unsupportedClaims: correctiveValidated.unsupportedClaims,
+              unsupportedClaimCount: correctiveValidated.unsupportedClaims.length,
+              usedSourceIds: correctiveValidated.usedSourceIds,
+              usedChunkCitationIds: correctiveValidated.citations,
+              ...baseDiagnostics,
+              errorSafe: null,
+              unknownCitationIds: [],
+              citationValidationOk: true,
+              claimSupportValidationOk: true,
+              synthesisProvider: metaString(correctiveCall.meta, "provider"),
+              synthesisModel: metaString(correctiveCall.meta, "model"),
+              synthesisLatencyMs: Date.now() - correctiveStartedAt,
+              synthesisDiagnostics: correctiveDiagnostics,
+              verificationProvider: null,
+              verificationModel: null,
+              verificationLatencyMs: 0,
+            };
+          }
+        }
+      }
+      const failedDiagnostics = buildSynthesisDiagnostics(undefined, "corrective_synthesis_failed");
+      failedDiagnostics.correctiveSynthesisAttempted = true;
+      failedDiagnostics.correctiveSynthesisOutcome = "failed";
+      failedDiagnostics.synthesisRetryCount = 1;
+      return {
+        ...validated.result,
+        ...baseDiagnostics,
+        synthesisDiagnostics: failedDiagnostics,
+        synthesisProvider,
+        synthesisModel,
+        synthesisLatencyMs: synthesisLatencyMs + (Date.now() - correctiveStartedAt),
+      };
+    }
     return {
       ...validated.result,
       ...baseDiagnostics,

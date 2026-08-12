@@ -40,8 +40,11 @@ export type TemporalConstraint = {
   sourceText: string;
 };
 
+export type QueryOperation = "explain" | "compare" | "current" | "factual" | "unknown";
+
 export type QueryRequirements = {
   comparisonLike: boolean;
+  operation: QueryOperation;
   explicitSubjects: QuerySubjectConstraint[];
   requestedAspects: RequestedAspectConstraint[];
   temporalConstraint: TemporalConstraint | null;
@@ -462,6 +465,14 @@ function extractTemporalConstraint(goal: string): TemporalConstraint | null {
   return null;
 }
 
+export function deriveQueryOperation(goal: string, comparisonLike = false): QueryOperation {
+  if (comparisonLike || /\bcompare|comparison|versus|\bvs\.?\b|differences?\b/i.test(goal)) return "compare";
+  if (/\b(today|currently|current|latest|recent|now|this week|this month)\b/i.test(goal)) return "current";
+  if (/\b(explain|how does|how do|how .* work|fundamentals?|mechanism|understand)\b/i.test(goal)) return "explain";
+  if (/\b(what is|what are|who is|status|define|when did|which)\b/i.test(goal)) return "factual";
+  return "unknown";
+}
+
 export function extractQueryRequirements(originalGoal: string): QueryRequirements {
   const goal = originalGoal.trim();
   const comparison = comparisonSubjectCandidates(goal);
@@ -495,6 +506,7 @@ export function extractQueryRequirements(originalGoal: string): QueryRequirement
 
   return {
     comparisonLike: comparison.comparisonLike,
+    operation: deriveQueryOperation(goal, comparison.comparisonLike),
     explicitSubjects,
     requestedAspects,
     temporalConstraint,

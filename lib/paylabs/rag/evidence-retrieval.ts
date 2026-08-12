@@ -21,6 +21,7 @@ import type {
   EvidenceRetrievalResult,
   GradedEvidenceChunk,
   RankedEvidenceChunk,
+  RetrievalFailureReasonCode,
 } from "./types";
 import { buildEvidenceDocuments } from "./document-builder";
 import { chunkEvidenceDocuments } from "./chunker";
@@ -176,6 +177,12 @@ export function computeEvidenceCoverage(
     }
   }
 
+  const temporalCoverageOk = !requirements.temporalConstraint?.hard || inWindowTrustedEvidenceCount > 0;
+  const failureReasonCodes: RetrievalFailureReasonCode[] = [];
+  if (missingEntities.length > 0 || missingAspects.length > 0) failureReasonCodes.push("retrieval_requirement_coverage_missing");
+  if (comparisonLike && entityAspectCoverage.some((row) => row.coveredAspects.length === 0)) failureReasonCodes.push("retrieval_entity_imbalance");
+  if (requirements.temporalConstraint?.hard && !temporalCoverageOk) failureReasonCodes.push("retrieval_temporal_mismatch");
+
   return {
     requiredEntities,
     coveredEntities,
@@ -185,7 +192,8 @@ export function computeEvidenceCoverage(
     missingAspects,
     comparisonLike,
     entityAspectCoverage,
-    temporalCoverageOk: !requirements.temporalConstraint?.hard || inWindowTrustedEvidenceCount > 0,
+    temporalCoverageOk,
+    failureReasonCodes,
     inWindowTrustedEvidenceCount,
     temporalEligibleTrustedEvidenceCount,
     temporalConstraint: requirements.temporalConstraint

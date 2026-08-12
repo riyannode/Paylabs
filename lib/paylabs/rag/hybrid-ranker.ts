@@ -101,7 +101,26 @@ function computeQualityScore(chunk: EvidenceChunk): number {
   return Math.min(score, 1.0);
 }
 
-// ─── Generic Boilerplate Detection ─────────────────────────
+const OPERATION_PENALTY = {
+  explainIncidental: 0.18,
+  currentStale: 0.20,
+} as const;
+
+function isIncidentalExplainEvidence(text: string, requirements: QueryRequirements): boolean {
+  if (requirements.operation !== "explain" || requirements.requestedAspects.length === 0) return false;
+  const lower = text.toLowerCase();
+  const hasAspect = requirements.requestedAspects.some((aspect) => aspect.matchTerms.some((term) => lower.includes(term.toLowerCase())));
+  const hasNewsFrame = /\b(deal|partnership|investment|acquire|acquisition|company|shares|stock|funding|announced)\b/i.test(text);
+  return !hasAspect && hasNewsFrame;
+}
+
+function isStaleCurrentEvidence(chunk: EvidenceChunk, requirements: QueryRequirements): boolean {
+  if (requirements.operation !== "current") return false;
+  if (!requirements.temporalConstraint?.hard) return false;
+  return chunk.metadata.publishedAt == null;
+}
+
+// ─── Generic Boilerplate Detection ──────────────────────────────
 
 const BOILERPLATE_PATTERNS = [
   /\b(breaking news|market update|today'?s market|crypto market today)\b/i,
@@ -428,6 +447,13 @@ export async function rankEvidenceChunks(
 
     if (isGenericBoilerplate(text)) {
       penalty += PENALTY.genericBoilerplate;
+    }
+
+    if (isIncidentalExplainEvidence(text, requirements)) {
+      penalty += OPERATION_PENALTY.explainIncidental;
+    }
+    if (isStaleCurrentEvidence(chunk, requirements)) {
+      penalty += OPERATION_PENALTY.currentStale;
     }
 
     penalty += GRANULARITY_PENALTY[chunk.metadata.evidenceGranularity] || 0;
