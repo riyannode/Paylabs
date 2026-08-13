@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/paylabs/auth/session";
-import { isUuid } from "@/lib/paylabs/x402/payment-links";
+import { isEip3009Nonce, isEvmTxHash, isUuid } from "@/lib/paylabs/x402/payment-links";
 
 const GATEWAY_API =
   process.env.CIRCLE_GATEWAY_API_URL ||
@@ -59,6 +59,8 @@ export async function GET(
       amount: typeof gwData?.amount === "string" ? gwData.amount : null,
       createdAt: typeof gwData?.createdAt === "string" ? gwData.createdAt : null,
       updatedAt: typeof gwData?.updatedAt === "string" ? gwData.updatedAt : null,
+      nonce: isEip3009Nonce(gwData?.nonce) ? gwData.nonce : null,
+      txHash: isEvmTxHash(gwData?.txHash) ? gwData.txHash : null,
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

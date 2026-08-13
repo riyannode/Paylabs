@@ -193,6 +193,7 @@ export async function GET(
     let gatewayStatus: string;
     let gatewayUpdatedAt: string | null = null;
     let gatewayTxHash: string | null = null;
+    let officialTxHashMalformed = false;
 
     try {
       const gwResp = await fetch(
@@ -226,11 +227,15 @@ export async function GET(
         typeof gwData?.status === "string" ? gwData.status.toLowerCase() : "unknown";
       gatewayUpdatedAt =
         typeof gwData?.updatedAt === "string" ? gwData.updatedAt : null;
-      // Some Gateway responses include txHash directly
-      const candidateTx =
-        gwData?.transaction?.txHash ?? gwData?.txHash ?? gwData?.transaction;
-      if (typeof candidateTx === "string" && isEvmTxHash(candidateTx)) {
-        gatewayTxHash = candidateTx;
+      // Circle's official top-level txHash is authoritative. Compatibility
+      // shapes are considered only when the official field is absent/null.
+      const officialTxHashPresent = Object.prototype.hasOwnProperty.call(gwData ?? {}, "txHash");
+      if (officialTxHashPresent && gwData?.txHash !== null) {
+        if (isEvmTxHash(gwData.txHash)) gatewayTxHash = gwData.txHash;
+        else officialTxHashMalformed = true;
+      } else {
+        const legacyTxHash = gwData?.transaction?.txHash ?? gwData?.transaction;
+        if (isEvmTxHash(legacyTxHash)) gatewayTxHash = legacyTxHash;
       }
     } catch (e) {
       console.log("[batch-tx-resolver] gateway fetch error", {
@@ -295,7 +300,7 @@ export async function GET(
     let matchedBy = "gateway_txhash_field";
 
     // If Gateway didn't expose txHash, scan Arc explorer (paginated)
-    if (!batchTxHash) {
+    if (!batchTxHash && !officialTxHashMalformed) {
       try {
         const updatedAtMs = gatewayUpdatedAt
           ? new Date(gatewayUpdatedAt).getTime()

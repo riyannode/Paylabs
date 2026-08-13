@@ -86,6 +86,8 @@ export async function GET(
     const fromAddress = typeof gwData?.fromAddress === "string" ? gwData.fromAddress : null;
     const toAddress = typeof gwData?.toAddress === "string" ? gwData.toAddress : null;
     const amount = typeof gwData?.amount === "string" ? gwData.amount : null;
+    const officialTxHashPresent = Object.prototype.hasOwnProperty.call(gwData ?? {}, "txHash");
+    const officialTxHash = isEvmTxHash(gwData?.txHash) ? gwData.txHash : null;
 
     // ── 2. If not completed/confirmed, return no batch link ──
     const completedStatuses = new Set(["completed", "confirmed"]);
@@ -101,13 +103,19 @@ export async function GET(
       });
     }
 
-    // ── 3. Scan Arc explorer for submitBatch txs (paginated, canteen-style) ──
-    const settlementUpdatedAtMs = updatedAt ? new Date(updatedAt).getTime() : Date.now();
-    let finalHash: string | null = null;
+    // ── 3. Prefer Circle's authoritative top-level txHash mapping. ──
+    let finalHash: string | null = officialTxHash;
     let bestTs = Infinity;
-    let matchedBy: string | null = null;
+    let matchedBy: string | null = officialTxHash ? "gateway_txhash_field" : null;
 
-    try {
+    // A non-null malformed official field must not be replaced by an explorer guess.
+    if (officialTxHashPresent && gwData?.txHash !== null && !officialTxHash) {
+      return NextResponse.json({ ok: true, settlementId, status: "unresolved", batchTxHash: null, batchExplorerUrl: null, matchedBy: null, updatedAt: new Date().toISOString() });
+    }
+
+    if (!finalHash) {
+      const settlementUpdatedAtMs = updatedAt ? new Date(updatedAt).getTime() : Date.now();
+      try {
       let nextPage: Record<string, string> | null = null;
 
       for (let page = 0; page < 10; page++) {
@@ -150,6 +158,7 @@ export async function GET(
       }
     } catch (e: unknown) {
       console.error("[batch-tx-resolver] explorer scan error:", e instanceof Error ? e.message : e);
+    }
     }
 
     const batchExplorerUrl = buildTxExplorerUrl(finalHash);
