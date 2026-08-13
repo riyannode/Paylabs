@@ -193,6 +193,7 @@ export async function GET(
     let gatewayStatus: string;
     let gatewayUpdatedAt: string | null = null;
     let gatewayTxHash: string | null = null;
+    let gatewayTxHashSource: "official" | "legacy" | null = null;
     let officialTxHashMalformed = false;
 
     try {
@@ -231,11 +232,17 @@ export async function GET(
       // shapes are considered only when the official field is absent/null.
       const officialTxHashPresent = Object.prototype.hasOwnProperty.call(gwData ?? {}, "txHash");
       if (officialTxHashPresent && gwData?.txHash !== null) {
-        if (isEvmTxHash(gwData.txHash)) gatewayTxHash = gwData.txHash;
+        if (isEvmTxHash(gwData.txHash)) {
+          gatewayTxHash = gwData.txHash;
+          gatewayTxHashSource = "official";
+        }
         else officialTxHashMalformed = true;
       } else {
         const legacyTxHash = gwData?.transaction?.txHash ?? gwData?.transaction;
-        if (isEvmTxHash(legacyTxHash)) gatewayTxHash = legacyTxHash;
+        if (isEvmTxHash(legacyTxHash)) {
+          gatewayTxHash = legacyTxHash;
+          gatewayTxHashSource = "legacy";
+        }
       }
     } catch (e) {
       console.log("[batch-tx-resolver] gateway fetch error", {
@@ -297,7 +304,9 @@ export async function GET(
     }
 
     let batchTxHash: string | null = gatewayTxHash;
-    let matchedBy = "gateway_txhash_field";
+    let matchedBy = gatewayTxHashSource === "legacy"
+      ? "gateway_legacy_txhash_field"
+      : "gateway_txhash_field";
 
     // If Gateway didn't expose txHash, scan Arc explorer (paginated)
     if (!batchTxHash && !officialTxHashMalformed) {
