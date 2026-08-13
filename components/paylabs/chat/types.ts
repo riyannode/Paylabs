@@ -13,7 +13,16 @@ export type SourceLink = {
   summary: string;
   rank: number;
   relevance_score: number;
+  citationLabel?: string | null;
 };
+
+export type GroundingStatus =
+  | "grounded"
+  | "partially_grounded"
+  | "insufficient_evidence"
+  | "synthesis_failed";
+
+export type AnswerProvenance = "evidence_verified" | "brain_unverified" | "fallback";
 
 export type SafeRunResult = {
   ok: boolean;
@@ -30,9 +39,19 @@ export type SafeRunResult = {
   receiptReady: boolean;
   safeSummary: string;
   assistantResponse: string | null;
+  answerProvenance: AnswerProvenance;
+  groundingFailureMessage: string | null;
   userVisibleReasoning: string | null;
   brainRationale: string | null;
   sourceFinalAnswer: string | null;
+  sourceAvailabilityNote: string | null;
+  groundingAuthoritative: boolean;
+  groundingVersion: string | null;
+  groundingStatus: GroundingStatus | null;
+  groundingSourceIds: string[];
+  groundingChunkCitationIds: string[];
+  groundingCitationValidationOk: boolean | null;
+  groundingClaimSupportValidationOk: boolean | null;
   lockedNodes: string[];
   lockedServices: string[];
   tierDecisionReason: string | null;

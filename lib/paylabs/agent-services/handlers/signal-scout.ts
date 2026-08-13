@@ -25,6 +25,7 @@ import {
   passesCryptoSourceGuard,
   isGenericCatchAllSource,
 } from "@/lib/paylabs/rsshub/topic-source-guards";
+import { matchesExactPhrase, computeAspectCoverage } from "@/lib/paylabs/sources/source-relevance";
 
 const SignalScoutSchema = z.object({
   ranked_sources: z.array(z.object({
@@ -196,7 +197,7 @@ function runDeterministicSignalScout(
   // Normalize scores to 0-1 range
   const maxScore = Math.max(scored[0]?.score || 1, 1);
 
-  return scored.slice(0, limit).map((entry, i) => ({
+  return scored.filter((entry) => entry.score > 0).slice(0, limit).map((entry, i) => ({
     feed_item_id: String(entry.item.id || ""),
     title: String(entry.item.title || ""),
     publisher: String(entry.item.publisher || ""),
@@ -212,9 +213,7 @@ function runDeterministicSignalScout(
     docs_url: null,
     rank: i + 1,
     relevance_score: Math.min(entry.score / maxScore, 1),
-    reason: entry.score > 0
-      ? `Keyword/entity match (score: ${entry.score})`
-      : "Recency fallback",
+    reason: `Keyword/entity match (score: ${entry.score})`,
   }));
 }
 
@@ -294,7 +293,7 @@ async function runLiveSearch(
 export const signalScoutHandler: ServiceHandler = async (
   input: ServiceHandlerInput
 ): Promise<ServiceHandlerOutput> => {
-  const { expanded_queries, entity_terms, negative_filters, source_preferences, routeTier, primary_entities, secondary_entities, negative_entities } = input.payload as {
+  const { expanded_queries, entity_terms, negative_filters, source_preferences, routeTier, primary_entities, secondary_entities, negative_entities, requestedAspects } = input.payload as {
     expanded_queries: string[];
     entity_terms: string[];
     negative_filters?: string[];
@@ -303,6 +302,7 @@ export const signalScoutHandler: ServiceHandler = async (
     primary_entities?: Array<{ text: string; canonical: string; type: string; required: boolean }>;
     secondary_entities?: Array<{ text: string; canonical: string; type: string; required: boolean }>;
     negative_entities?: string[];
+    requestedAspects?: string[];
   };
 
   // Phase 3A: extract primary entity canonicals for scoring weight
@@ -430,9 +430,6 @@ export const signalScoutHandler: ServiceHandler = async (
   // Re-rank merged candidates: sort by relevance_score descending, assign rank 1..N
   // Topic candidates get priority over non-topic candidates
   mergedLive.sort((a, b) => {
-    // Topic candidates first
-    if (a._isTopicCandidate && !b._isTopicCandidate) return -1;
-    if (!a._isTopicCandidate && b._isTopicCandidate) return 1;
     if (b.relevance_score !== a.relevance_score) return b.relevance_score - a.relevance_score;
     return 0;
   });
@@ -447,25 +444,67 @@ export const signalScoutHandler: ServiceHandler = async (
       ? "rsshub_topic_live"
       : "rsshub_live";
 
-  // ── Step 3: If merged live results exist, use them ──
+  // ── Step 3: If merged live results exist, check entity coverage ──
   if (mergedLive.length > 0) {
-    return {
-      ok: true,
-      serviceName: "signal_scout",
-      data: {
-        ranked_candidates: mergedLive,
-        top_candidates: mergedLive.slice(0, 3).map((r) => r.feed_item_id),
-        quick_relevance_notes: mergedLive.slice(0, 5).map((r) => r.reason),
-        safe_signal_summary: `Live RSSHub: ${mergedLive.length} source(s) found${hasTopicResults ? `, ${topicResult.candidates.length} from topic routes` : ""}.`,
-        retrieval_mode: "rsshub_live",
-        source_strategy: sourceStrategy,
-        topic_routes_count: topicResult.diagnostics.topic_routes_count,
-        topic_candidates_count: topicResult.candidates.length,
-      },
-      safeSummary: `Live RSSHub: ${mergedLive.length} source(s) found.`,
-      settled: false,
-      error: null,
-    };
+    // Check if merged live results cover all required primary entities
+    const requiredPrimaryEntities = (primary_entities || [])
+      .filter((e) => e.required)
+      .map((e) => e.canonical.toLowerCase());
+    const coveredEntities = new Set<string>();
+    for (const item of mergedLive) {
+      const title = (item.title || "").toLowerCase();
+      const summary = (item.summary || "").toLowerCase();
+      const url = (item.source_url || "").toLowerCase();
+      const combined = `${title} ${summary} ${url}`;
+      for (const entity of requiredPrimaryEntities) {
+        if (matchesExactPhrase(combined, entity)) coveredEntities.add(entity);
+      }
+    }
+    const missingEntities = requiredPrimaryEntities.filter(
+      (e) => !coveredEntities.has(e)
+    );
+
+    // Check aspect coverage using shared computeAspectCoverage
+    const mergedTexts = mergedLive.map((r) => `${r.title || ""} ${r.summary || ""}`);
+    const aspectCoverage = computeAspectCoverage(mergedTexts, requestedAspects || []);
+    const missingAspectKeys = aspectCoverage.missing;
+
+    // Return live RSSHub immediately ONLY when:
+    //   - all required entities covered AND
+    //   - all requested aspects covered
+    if (missingEntities.length === 0 && missingAspectKeys.length === 0) {
+      return {
+        ok: true,
+        serviceName: "signal_scout",
+        data: {
+          ranked_candidates: mergedLive,
+          top_candidates: mergedLive.slice(0, 3).map((r) => r.feed_item_id),
+          quick_relevance_notes: mergedLive.slice(0, 5).map((r) => r.reason),
+          safe_signal_summary: `Live RSSHub: ${mergedLive.length} source(s) found${hasTopicResults ? `, ${topicResult.candidates.length} from topic routes` : ""}.`,
+          retrieval_mode: "rsshub_live",
+          source_strategy: sourceStrategy,
+          topic_routes_count: topicResult.diagnostics.topic_routes_count,
+          topic_candidates_count: topicResult.candidates.length,
+        },
+        safeSummary: `Live RSSHub: ${mergedLive.length} source(s) found.`,
+        settled: false,
+        error: null,
+      };
+    }
+    // Entities or aspects missing: log and fall through to DB fallback
+    console.log(JSON.stringify({
+      log: "[signal_scout] coverage_gap",
+      merged_count: mergedLive.length,
+      required_entities: requiredPrimaryEntities,
+      covered_entities: [...coveredEntities],
+      missing_entities: missingEntities,
+      requested_aspects: requestedAspects || [],
+      covered_aspects: aspectCoverage.covered,
+      missing_aspects: missingAspectKeys,
+      fallback_reason: missingEntities.length > 0
+        ? "DB fallback triggered due to entity coverage gap"
+        : "DB fallback triggered due to aspect coverage gap",
+    }));
   }
 
   // ── Step 2c: If live-only mode, do NOT fallback to DB ──

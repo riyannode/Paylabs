@@ -7,7 +7,8 @@ import MobileNav from "@/components/paylabs/MobileNav";
 import type { WalletState, WalletInfo, PayLabsWalletBalance } from "@/components/paylabs/wallet-types";
 import DcwModal from "@/components/paylabs/DcwModal";
 import { safeExplorerUrl as validateExplorerUrl } from "@/lib/paylabs/x402/payment-links";
-import type { SafeRunResult, SourceLink, ChatMessage } from "@/components/paylabs/chat/types";
+import type { SafeRunResult, SourceLink, ChatMessage, AnswerProvenance } from "@/components/paylabs/chat/types";
+import { selectAuthoritativeAnswer, isSubstantiveBrainAnswer } from "@/components/paylabs/chat/answer-selection";
 import { BrainIcon } from "@/components/paylabs/chat/BrainIcon";
 import { ChatResultCard } from "@/components/paylabs/chat/ChatResultCard";
 import { ChatTypingIndicator } from "@/components/paylabs/chat/ChatTypingIndicator";
@@ -176,37 +177,69 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
   const tieredSummaries = data?.tiered_summaries as Record<string, string> | undefined;
   const brainPlanning = data?.brain_planning as Record<string, unknown> | undefined;
   const agentTraceBrain = (data?.agent_trace as Record<string, unknown>)?.brain_planning as Record<string, unknown> | undefined;
+  const groundingAuthoritative = data?.grounding_authoritative === true;
+  const groundingVersion = typeof data?.grounding_version === "string" ? data.grounding_version : null;
 
-  const rawFinalAnswer =
-    (data?.final_answer as string) ??
-    (exitOutput?.final_answer as string) ??
+  const SYNTHESIS_FAILED_MSG = "PayLabs found relevant sources but could not complete evidence verification for this answer.";
+
+  const rawFinalAnswerValue = data?.final_answer ?? exitOutput?.final_answer;
+  const rawFinalAnswer = typeof rawFinalAnswerValue === "string" ? rawFinalAnswerValue : null;
+  const rawGroundingStatus = data?.grounding_status;
+  const groundingStatus =
+    rawGroundingStatus === "grounded" ||
+    rawGroundingStatus === "partially_grounded" ||
+    rawGroundingStatus === "insufficient_evidence" ||
+    rawGroundingStatus === "synthesis_failed"
+      ? rawGroundingStatus
+      : null;
+  const sourceAvailabilityNote =
+    (data?.source_availability_note as string) ??
+    ((data?.agent_trace as Record<string, unknown>)?.source_availability_note as string) ??
     null;
 
-  // Prioritize Brain LLM answer over deterministic source-grounded answer.
-  // brainAssistantResponse is a natural LLM answer; rawFinalAnswer is a deterministic source list.
   const isNoSourceFallback = /no sufficiently relevant sources found|no relevant sources found|no matching live rsshub sources|no sufficiently relevant live sources were found|did not attach source links/i.test(rawFinalAnswer || "");
+  const brainResponseCandidates = [
+    brainPlanning?.assistant_response,
+    agentTraceBrain?.assistant_response,
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
   const brainAssistantResponse =
-    (brainPlanning?.assistant_response as string) ??
-    (agentTraceBrain?.assistant_response as string) ??
-    (brainPlanning?.plan_rationale as string) ??
-    (agentTraceBrain?.plan_rationale as string) ??
+    brainResponseCandidates.find((value) => isSubstantiveBrainAnswer(value)) ??
+    brainResponseCandidates[0] ??
     null;
-
-  // Block generic Brain planning text from being shown as the Answer
-  // Anchored to sentence-start or preceded by planning indicators to avoid
-  // matching legitimate answers like "binary searching for" or "looking for jobs"
-  const GENERIC_ANSWER_RE = /^(i will find|i will search|i am processing|let me find|i'll look|i'll search|saya akan mencari|saya sedang memproses|mohon tunggu sebentar|gathering information|i'm searching for|i'm looking for|saya sedang mencari)/i;
-  const isGenericBrainAnswer = !!brainAssistantResponse && GENERIC_ANSWER_RE.test(brainAssistantResponse) && brainAssistantResponse.length < 200;
+  const isGenericBrainAnswer = !!brainAssistantResponse && !isSubstantiveBrainAnswer(brainAssistantResponse);
 
   const NO_SOURCE_FALLBACK_MSG = "No sufficiently relevant live sources were found for this query. The route completed with basic discovery, but PayLabs did not attach source links because no source passed the relevance gate.";
+  let assistantResponse: string;
+  let answerProvenance: AnswerProvenance;
+  let groundingFailureMessage: string | null = null;
+  if (groundingAuthoritative) {
+    const selectedAnswer = selectAuthoritativeAnswer({
+      groundingVersion,
+      groundingStatus,
+      groundingCitationValidationOk: data?.grounding_citation_validation_ok === true,
+      groundingClaimSupportValidationOk: data?.grounding_claim_support_validation_ok === true,
+      rawFinalAnswer,
+      brainAssistantResponse,
+      fallbackAnswer: SYNTHESIS_FAILED_MSG,
+    });
+    assistantResponse = selectedAnswer.assistantResponse;
+    answerProvenance = selectedAnswer.answerProvenance;
+    groundingFailureMessage = selectedAnswer.groundingFailureMessage;
+  } else {
+    const groundedResponse = groundingStatus
+      ? (rawFinalAnswer?.trim() || (groundingStatus === "synthesis_failed" ? SYNTHESIS_FAILED_MSG : NO_SOURCE_FALLBACK_MSG))
+      : null;
 
-  const assistantResponse =
-    (brainAssistantResponse && !isGenericBrainAnswer ? brainAssistantResponse : null) ??
-    (rawFinalAnswer && !isNoSourceFallback ? rawFinalAnswer : null) ??
-    (isNoSourceFallback || isGenericBrainAnswer ? NO_SOURCE_FALLBACK_MSG : null) ??
-    (exitOutput?.final_summary as string) ??
-    tieredSummaries?.final_summary ??
-    "Run completed.";
+    assistantResponse =
+      groundedResponse ??
+      (brainAssistantResponse && !isGenericBrainAnswer ? brainAssistantResponse : null) ??
+      (rawFinalAnswer && !isNoSourceFallback ? rawFinalAnswer : null) ??
+      (isNoSourceFallback || isGenericBrainAnswer ? NO_SOURCE_FALLBACK_MSG : null) ??
+      (exitOutput?.final_summary as string) ??
+      tieredSummaries?.final_summary ??
+      "Run completed.";
+    answerProvenance = "fallback";
+  }
   const userVisibleReasoning =
     (brainPlanning?.user_visible_reasoning as string) ??
     (agentTraceBrain?.user_visible_reasoning as string) ??
@@ -221,13 +254,16 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     (agentTraceBrain?.plan_rationale as string) ??
     null;
 
-  // Extract sources from source_context.sources_used or fallback to exit_output.sources_used
+  // Grounded mode has one authoritative source set. Legacy mode keeps the
+  // existing retrieval-diagnostics parsing and ordering behavior.
   const sourceContext = data?.source_context as Record<string, unknown> | undefined;
   const rawSources: unknown[] =
-    (sourceContext?.sources_used as unknown[]) ??
-    (exitOutput?.sources_used as unknown[]) ??
-    [];
-  const sourcesUsed: SourceLink[] = Array.isArray(rawSources)
+    groundingAuthoritative
+      ? ((data?.grounded_sources as unknown[]) ?? [])
+      : ((sourceContext?.sources_used as unknown[]) ??
+        (exitOutput?.sources_used as unknown[]) ??
+        []);
+  const parsedSources: SourceLink[] = Array.isArray(rawSources)
     ? rawSources
         .filter((s): s is Record<string, unknown> => !!s && typeof s === "object")
         .map((s) => {
@@ -244,10 +280,25 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
             summary: typeof s.summary === "string" ? s.summary : "",
             rank: typeof s.rank === "number" ? s.rank : 0,
             relevance_score: typeof s.relevance_score === "number" ? s.relevance_score : 0,
+            citationLabel:
+              answerProvenance === "evidence_verified"
+                ? typeof s.source_label === "string"
+                  ? s.source_label
+                  : null
+                : null,
           };
         })
         .filter((s) => /^https?:\/\//.test(s.url))
     : [];
+  const sourcesUsed = groundingAuthoritative
+    ? parsedSources
+    : parsedSources
+        .sort((a, b) => {
+          const rankA = a.rank > 0 ? a.rank : Number.MAX_SAFE_INTEGER;
+          const rankB = b.rank > 0 ? b.rank : Number.MAX_SAFE_INTEGER;
+          return rankA - rankB;
+        })
+        .slice(0, 5);
 
   // Extract entry payment link fields (safe URLs only, never settlement UUID)
   const entryPayment = data?.entry_payment as Record<string, unknown> | undefined;
@@ -271,9 +322,29 @@ function toSafeRunResult(data: Record<string, unknown>): SafeRunResult {
     receiptReady: (data?.receipt_ready as boolean) ?? (exitOutput?.receipt_ready as boolean) ?? false,
     safeSummary: (exitOutput?.final_summary as string) ?? tieredSummaries?.final_summary ?? "Run completed.",
     assistantResponse,
+    answerProvenance,
+    groundingFailureMessage,
     userVisibleReasoning,
     brainRationale,
-    sourceFinalAnswer: rawFinalAnswer,
+    sourceFinalAnswer: groundingAuthoritative ? null : sourceAvailabilityNote ?? rawFinalAnswer,
+    sourceAvailabilityNote,
+    groundingAuthoritative,
+    groundingVersion,
+    groundingStatus,
+    groundingSourceIds: Array.isArray(data?.grounding_source_ids)
+      ? (data.grounding_source_ids as unknown[]).filter((id): id is string => typeof id === "string")
+      : [],
+    groundingCitationValidationOk:
+      typeof data?.grounding_citation_validation_ok === "boolean"
+        ? data.grounding_citation_validation_ok
+        : null,
+    groundingChunkCitationIds: Array.isArray(data?.grounding_chunk_citation_ids)
+      ? (data.grounding_chunk_citation_ids as unknown[]).filter((id): id is string => typeof id === "string")
+      : [],
+    groundingClaimSupportValidationOk:
+      typeof data?.grounding_claim_support_validation_ok === "boolean"
+        ? data.grounding_claim_support_validation_ok
+        : null,
     lockedNodes: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_macro_nodes as string[]) ?? [],
     lockedServices: ((data?.locked_execution_plan as Record<string, unknown>)?.selected_services as string[]) ?? [],
     tierDecisionReason: (brainPlanning?.tier_decision_reason as string) ?? null,

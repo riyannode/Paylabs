@@ -26,6 +26,12 @@ export interface GenerateStructuredJsonInput {
   systemPrompt: string;
   userPrompt: string;
   schema: z.ZodType<unknown>;
+  /** Optional single-attempt override for bounded post-processing calls. */
+  maxAttempts?: number;
+  /** Disable repair calls when the caller has a hard outer deadline. */
+  allowRepair?: boolean;
+  /** Opt out of the required brain failure throw for post-processing callers. */
+  throwOnRequiredFailure?: boolean;
 }
 
 export interface GenerateStructuredJsonOk<T> {
@@ -42,6 +48,13 @@ export interface GenerateStructuredJsonError {
 }
 
 export type GenerateStructuredJsonResult<T> = GenerateStructuredJsonOk<T> | GenerateStructuredJsonError;
+
+type StructuredFailureKind =
+  | "no_json"
+  | "json_parse"
+  | "schema_validation"
+  | "invoke_error"
+  | "unavailable";
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -195,15 +208,20 @@ function supportsNativeStructured(provider: string): boolean {
 /**
  * Extract expected top-level keys from a Zod schema for instruction hints.
  */
-function getExpectedKeys(schema: z.ZodType<unknown>): string[] {
+function getJsonSchemaObject(schema: z.ZodType<unknown>): Record<string, unknown> | null {
   try {
     const jsonSchema = zodToJsonSchema(schema, { target: "openApi3" });
-    const schemaObj = (jsonSchema as Record<string, unknown>)?.schema as Record<string, unknown> || jsonSchema;
-    const props = schemaObj?.properties as Record<string, unknown> | undefined;
-    if (props) return Object.keys(props);
+    return ((jsonSchema as Record<string, unknown>)?.schema as Record<string, unknown> || jsonSchema) as Record<string, unknown>;
   } catch {
-    // Fallback — try Zod shape
+    return null;
   }
+}
+
+function getExpectedKeys(schema: z.ZodType<unknown>): string[] {
+  const schemaObj = getJsonSchemaObject(schema);
+  const props = schemaObj?.properties as Record<string, unknown> | undefined;
+  if (props) return Object.keys(props);
+
   try {
     const shape = (schema as unknown as { _def?: { shape?: () => Record<string, unknown> } })._def?.shape?.();
     if (shape) return Object.keys(shape);
@@ -213,6 +231,62 @@ function getExpectedKeys(schema: z.ZodType<unknown>): string[] {
   return [];
 }
 
+function getSchemaContract(schema: z.ZodType<unknown>): string | null {
+  const schemaObj = getJsonSchemaObject(schema);
+  return schemaObj ? JSON.stringify(schemaObj, null, 2) : null;
+}
+
+function isProviderUnavailableError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const record = error as Record<string, unknown>;
+  const response = record.response as Record<string, unknown> | undefined;
+  const status = record.status ?? response?.status;
+  return typeof status === "number" && [401, 403, 404, 408, 429, 500, 502, 503, 504].includes(status);
+}
+
+function extractRepairText(response: unknown): string {
+  const msg = response as Record<string, unknown>;
+  const rawContent = msg?.content;
+  if (typeof rawContent === "string" && rawContent.trim()) return rawContent.trim().slice(0, 2000);
+  if (Array.isArray(rawContent)) {
+    for (const part of rawContent) {
+      if (typeof part === "string" && part.trim()) return part.trim().slice(0, 2000);
+      if (typeof part === "object" && part !== null) {
+        const text = (part as Record<string, unknown>).text;
+        if (typeof text === "string" && text.trim()) return text.trim().slice(0, 2000);
+      }
+    }
+  }
+  return "";
+}
+
+function getSafeTopLevelKeys(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  return Object.keys(value).slice(0, 12);
+}
+
+function buildSuccessMeta(
+  agentName: string,
+  routeTier: RouteTier,
+  modelConfig: { provider: string; model: string; baseUrl?: string; apiKeyPresent: boolean; agentKey: string; timeoutMs: number; maxTokens: number; streaming?: boolean; forceNonStreamingBody?: boolean; responseFormatJson?: boolean },
+  modelName: string,
+  promptHash: string,
+  retryCount: number,
+  mode: string,
+  schema: z.ZodType<unknown>,
+  data: unknown,
+  diagnostics?: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, retryCount, mode),
+    ...diagnostics,
+    json_found: true,
+    received_keys: getSafeTopLevelKeys(data),
+    expected_keys: getExpectedKeys(schema).slice(0, 12),
+    validation_ok: true,
+  };
+}
+
 // ─── Main API ───────────────────────────────────────────────────
 
 export async function generateStructuredJson<T>(
@@ -220,11 +294,22 @@ export async function generateStructuredJson<T>(
 ): Promise<GenerateStructuredJsonResult<T>> {
   const { agentName, routeTier, systemPrompt, userPrompt, schema } = input;
   const required = isLlmRequired();
+  const allowRepair = input.allowRepair !== false;
+  const throwOnRequiredFailure = input.throwOnRequiredFailure !== false;
 
-  const model = getTutorModel(agentName);
   const modelConfig = getTutorModelConfig(agentName);
   const modelName = getTutorModelName(agentName);
   const promptHash = hashPrompt(systemPrompt);
+  let model: ReturnType<typeof getTutorModel>;
+  try {
+    model = getTutorModel(agentName);
+  } catch {
+    const meta = buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, 0, "llm_unavailable");
+    if (required && agentName === "brain_planner" && throwOnRequiredFailure) {
+      throw new Error(`PAYLABS_LLM_REQUIRED=true but ${agentName} is unavailable.`);
+    }
+    return { ok: false, code: "LLM_UNAVAILABLE", error: "LLM model initialization failed", meta };
+  }
 
   if (!model) {
     const meta = buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, 0, "llm_unavailable");
@@ -238,6 +323,7 @@ export async function generateStructuredJson<T>(
   // brain_planner defaults to 3 (critical path — paid request, must retry internally)
   const defaultMax = agentName === "brain_planner" ? 3 : 1;
   const rawMaxAttempts = Number(
+    input.maxAttempts ??
     process.env[`PAYLABS_LLM_MAX_ATTEMPTS_${modelConfig.agentKey}`] ??
     process.env.PAYLABS_LLM_MAX_ATTEMPTS_DEFAULT ??
     process.env.PAYLABS_LLM_MAX_ATTEMPTS ??
@@ -255,6 +341,7 @@ export async function generateStructuredJson<T>(
   ];
 
   let lastError = "";
+  let lastFailureKind: StructuredFailureKind = "invoke_error";
   let lastDiag: Record<string, unknown> = {};
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -265,11 +352,23 @@ export async function generateStructuredJson<T>(
         const result = await structuredModel.invoke(messages);
         const parsed = schema.safeParse(result);
         if (parsed.success) {
-          const meta = buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, attempt, "llm_structured_native");
+          const meta = buildSuccessMeta(
+            agentName,
+            routeTier,
+            modelConfig,
+            modelName,
+            promptHash,
+            attempt,
+            "llm_structured_native",
+            schema,
+            parsed.data,
+          );
           return { ok: true, data: parsed.data as T, meta };
         }
+        lastFailureKind = "schema_validation";
         lastError = `Native structured output Zod validation failed: ${parsed.error.issues.map(i => i.message).join("; ")}`;
       } catch (e: unknown) {
+        lastFailureKind = isProviderUnavailableError(e) ? "unavailable" : "invoke_error";
         lastError = `Native structured output failed: ${e instanceof Error ? e.message : String(e)}`;
         // Fall through to raw invoke
       }
@@ -281,15 +380,13 @@ export async function generateStructuredJson<T>(
       const strategyMessages: BaseMessage[] = [...messages];
       if (!supportsNativeStructured(modelConfig.provider)) {
         try {
-          const jsonSchema = zodToJsonSchema(schema, { target: "openApi3" });
-          const schemaObj = (jsonSchema as Record<string, unknown>)?.schema as Record<string, unknown> || jsonSchema;
-          const schemaStr = JSON.stringify(schemaObj, null, 2);
+          const schemaStr = getSchemaContract(schema);
           const expectedKeys = getExpectedKeys(schema);
           const keyHint = expectedKeys.length > 0
             ? `\nRequired top-level keys: ${expectedKeys.join(", ")}`
             : "";
           const enhancedSystemPrompt = systemPrompt
-            + "\n\nYou MUST respond with valid JSON matching this exact schema:\n```json\n" + schemaStr + "\n```\n"
+            + (schemaStr ? "\n\nYou MUST respond with valid JSON matching this exact schema:\n```json\n" + schemaStr + "\n```\n" : "")
             + "Return exactly one JSON object."
             + keyHint
             + "\nDo not use synonyms."
@@ -306,19 +403,28 @@ export async function generateStructuredJson<T>(
       const result = await (model as ChatOpenAI).invoke(strategyMessages);
       const jsonStr = extractJsonFromResponse(result);
 
-      // Safe diagnostics for brain_planner (no raw output, no secrets)
-      // Always log for brain_planner (critical paid path); other agents gated to non-production
+      // Safe diagnostics for every raw invoke (no raw output, no secrets).
+      // Console logging remains gated: always for brain_planner, otherwise only outside production.
+      const msg = result as unknown as Record<string, unknown>;
+      const content = msg?.content as string | unknown;
+      const expectedKeys = getExpectedKeys(schema);
+      let receivedKeys: string[] = [];
+      if (jsonStr) {
+        try {
+          const p = JSON.parse(jsonStr);
+          if (p && typeof p === "object" && !Array.isArray(p)) receivedKeys = Object.keys(p);
+        } catch { /* ignore */ }
+      }
+      lastDiag = {
+        ...lastDiag,
+        json_found: !!jsonStr,
+        content_type: typeof content,
+        content_length: typeof content === "string" ? content.length : null,
+        received_keys: receivedKeys,
+        expected_keys: expectedKeys,
+      };
+
       if (agentName === "brain_planner" || process.env.NODE_ENV !== "production") {
-        const msg = result as unknown as Record<string, unknown>;
-        const content = msg?.content as string | unknown;
-        const expectedKeys = getExpectedKeys(schema);
-        let receivedKeys: string[] = [];
-        if (jsonStr) {
-          try {
-            const p = JSON.parse(jsonStr);
-            if (p && typeof p === "object" && !Array.isArray(p)) receivedKeys = Object.keys(p);
-          } catch { /* ignore */ }
-        }
         console.log("[llm-structured] brain_planner invoke result:", {
           provider: modelConfig.provider,
           model: modelName,
@@ -329,17 +435,10 @@ export async function generateStructuredJson<T>(
           expected_keys: expectedKeys,
           received_keys: receivedKeys,
         });
-        lastDiag = {
-          ...lastDiag,
-          json_found: !!jsonStr,
-          content_type: typeof content,
-          content_length: typeof content === "string" ? content.length : null,
-          received_keys: receivedKeys,
-          expected_keys: expectedKeys,
-        };
       }
 
       if (!jsonStr) {
+        lastFailureKind = "no_json";
         // Check for MiMo empty content + reasoning_content
         const msg = result as unknown as Record<string, unknown>;
         const content = msg?.content as string | unknown;
@@ -360,40 +459,24 @@ export async function generateStructuredJson<T>(
             json_found: false,
           });
           lastDiag = { ...lastDiag, json_found: false, parse_ok: false, error_code: "MIMO_EMPTY_CONTENT" };
+          lastFailureKind = "no_json";
           lastError = "MiMo returned reasoning_content with empty content — no JSON extractable";
           break;
         }
 
         // ── No-JSON repair: ask model to reformat raw output as JSON ──
-        if (attempt === 0) {
+        if (allowRepair && attempt === 0) {
           try {
-            // Extract raw text content for repair prompt (safe — no secrets)
-            const rawMsg = result as unknown as Record<string, unknown>;
-            const rawContent = rawMsg?.content;
-            let rawText = "";
-            if (typeof rawContent === "string" && rawContent.trim()) {
-              rawText = rawContent.trim().slice(0, 2000); // cap for safety
-            } else if (Array.isArray(rawContent)) {
-              for (const part of rawContent) {
-                if (typeof part === "string" && part.trim()) {
-                  rawText = part.trim().slice(0, 2000);
-                  break;
-                }
-                if (typeof part === "object" && part !== null) {
-                  const tp = part as Record<string, unknown>;
-                  if (typeof tp.text === "string" && tp.text.trim()) {
-                    rawText = tp.text.trim().slice(0, 2000);
-                    break;
-                  }
-                }
-              }
-            }
+            // Keep the malformed response transient and bounded; never log or persist it.
+            const rawText = extractRepairText(result);
 
             if (rawText.length > 0) {
               const expectedKeys = getExpectedKeys(schema);
+              const schemaContract = getSchemaContract(schema);
               const repairSystemPrompt = "The previous response was not valid JSON. Rewrite it as JSON only, matching the required schema. Do not include markdown, comments, explanation, or code fences. Return ONLY the JSON object."
+                + (schemaContract ? "\n\nRequired JSON schema:\n```json\n" + schemaContract + "\n```\n" : "")
                 + (expectedKeys.length > 0 ? `\nRequired top-level keys: ${expectedKeys.join(", ")}` : "");
-              const repairUserPrompt = `The model returned this text, which is not valid JSON:\n\n${rawText}\n\nRewrite it as a single valid JSON object matching the schema. Do not add fields outside the schema. Return ONLY the JSON, no other text.`;
+              const repairUserPrompt = `The model returned this text, which is not valid JSON:\n\n${rawText}\n\nRewrite it as a single valid JSON object matching the schema, including all nested object and array fields. Do not add fields outside the schema. Return ONLY the JSON, no other text.`;
               const repairMessages: BaseMessage[] = [
                 new SystemMessage(repairSystemPrompt),
                 new HumanMessage(repairUserPrompt),
@@ -403,28 +486,52 @@ export async function generateStructuredJson<T>(
               const repairJsonStr = extractJsonFromResponse(repairResult);
 
               if (repairJsonStr) {
-                const repairParsed = schema.safeParse(JSON.parse(repairJsonStr));
-                if (repairParsed.success) {
+                let repairParsed: ReturnType<typeof schema.safeParse> | null = null;
+                try {
+                  repairParsed = schema.safeParse(JSON.parse(repairJsonStr));
+                } catch {
+                  lastFailureKind = "json_parse";
+                  console.log("[llm-structured] no-JSON repair returned invalid JSON", {
+                    agent_name: agentName,
+                  });
+                }
+                if (repairParsed?.success) {
                   console.log("[llm-structured] no-JSON repair succeeded", {
                     agent_name: agentName,
                     provider: modelConfig.provider,
                     model: modelName,
                     attempt: attempt + 1,
                   });
-                  const meta = buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, attempt + 1, "llm_structured_no_json_repair");
+                  const meta = buildSuccessMeta(
+                    agentName,
+                    routeTier,
+                    modelConfig,
+                    modelName,
+                    promptHash,
+                    attempt + 1,
+                    "llm_structured_no_json_repair",
+                    schema,
+                    repairParsed.data,
+                    lastDiag,
+                  );
                   return { ok: true, data: repairParsed.data as T, meta };
                 }
-                console.log("[llm-structured] no-JSON repair also failed Zod", {
+                if (repairParsed && !repairParsed.success) {
+                  lastFailureKind = "schema_validation";
+                  console.log("[llm-structured] no-JSON repair also failed Zod", {
                   agent_name: agentName,
-                  repair_issue_paths: repairParsed.error.issues.map(i => i.path.join(".")),
-                });
+                    repair_issue_paths: repairParsed.error.issues.map(i => i.path.join(".")),
+                  });
+                }
               } else {
+                lastFailureKind = "no_json";
                 console.log("[llm-structured] no-JSON repair: still no JSON extractable", {
                   agent_name: agentName,
                 });
               }
             }
           } catch (repairErr: unknown) {
+            lastFailureKind = isProviderUnavailableError(repairErr) ? "unavailable" : "invoke_error";
             console.log("[llm-structured] no-JSON repair attempt error:", {
               agent_name: agentName,
               error: repairErr instanceof Error ? repairErr.message.slice(0, 100) : String(repairErr).slice(0, 100),
@@ -432,6 +539,11 @@ export async function generateStructuredJson<T>(
           }
         }
 
+        if (lastFailureKind !== "schema_validation"
+          && lastFailureKind !== "unavailable"
+          && lastFailureKind !== "invoke_error") {
+          lastFailureKind = "no_json";
+        }
         lastError = "No JSON extractable from LLM response";
         if (attempt < maxAttempts - 1) continue;
         break;
@@ -441,6 +553,7 @@ export async function generateStructuredJson<T>(
       try {
         parsedJson = JSON.parse(jsonStr);
       } catch (e: unknown) {
+        lastFailureKind = "json_parse";
         lastError = `JSON parse failed: ${e instanceof Error ? e.message : String(e)}`;
         if (attempt < maxAttempts - 1) continue;
         break;
@@ -448,6 +561,7 @@ export async function generateStructuredJson<T>(
 
       const parsed = schema.safeParse(parsedJson);
       if (!parsed.success) {
+        lastFailureKind = "schema_validation";
         const issuePaths = parsed.error.issues.map(i => i.path.join("."));
         const expectedKeys = getExpectedKeys(schema);
         let receivedKeys: string[] = [];
@@ -488,7 +602,7 @@ export async function generateStructuredJson<T>(
         };
 
         // ── Repair attempt: ask model to fix the JSON for the failing paths ──
-        if (attempt === 0) {
+        if (allowRepair && attempt === 0) {
           try {
             const repairSystemPrompt = "You must return valid JSON matching the schema exactly. Fix the validation errors below. Return ONLY the corrected JSON object. No markdown. No commentary. No extra keys.";
             const repairUserPrompt = `The previous JSON response failed Zod validation.\n\nReceived keys: ${JSON.stringify(receivedKeys)}\nExpected keys: ${JSON.stringify(expectedKeys)}\nValidation errors: ${parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join("; ")}\n\nReturn the corrected JSON matching the schema exactly. Do not omit any required fields. Do not add fields outside the schema.`;
@@ -509,7 +623,18 @@ export async function generateStructuredJson<T>(
                   model: modelName,
                   attempt: attempt + 1,
                 });
-                const meta = buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, attempt + 1, "llm_structured_repair");
+                const meta = buildSuccessMeta(
+                  agentName,
+                  routeTier,
+                  modelConfig,
+                  modelName,
+                  promptHash,
+                  attempt + 1,
+                  "llm_structured_repair",
+                  schema,
+                  repairParsed.data,
+                  lastDiag,
+                );
                 return { ok: true, data: repairParsed.data as T, meta };
               }
               console.log("[llm-structured] repair also failed Zod", {
@@ -534,10 +659,22 @@ export async function generateStructuredJson<T>(
         break;
       }
 
-      const meta = buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, attempt, "llm_structured_json_extract");
+      const meta = buildSuccessMeta(
+        agentName,
+        routeTier,
+        modelConfig,
+        modelName,
+        promptHash,
+        attempt,
+        "llm_structured_json_extract",
+        schema,
+        parsed.data,
+        lastDiag,
+      );
       return { ok: true, data: parsed.data as T, meta };
 
     } catch (e: unknown) {
+      lastFailureKind = isProviderUnavailableError(e) ? "unavailable" : "invoke_error";
       lastError = `LLM invoke failed: ${e instanceof Error ? e.message : String(e)}`;
 
       // Timeout retry skip: MiMo timeouts should not retry unless explicitly enabled
@@ -556,17 +693,19 @@ export async function generateStructuredJson<T>(
   // All attempts failed
   const meta = buildMeta(agentName, routeTier, modelConfig, modelName, promptHash, maxAttempts, "llm_error");
 
-  // Determine error code
-  const code = lastError.includes("empty content") || lastError.includes("no JSON extractable")
+  // Map the explicit internal failure kind to the stable public error union.
+  const code = lastFailureKind === "no_json" || lastFailureKind === "json_parse"
     ? "LLM_STRUCTURED_OUTPUT_PARSE_FAILED"
-    : "LLM_VALIDATION_FAILED";
+    : lastFailureKind === "unavailable" || lastFailureKind === "invoke_error"
+      ? "LLM_UNAVAILABLE"
+      : "LLM_VALIDATION_FAILED";
 
   // Merge lastDiag into meta for diagnostic propagation
   const metaWithDiag = { ...meta, ...lastDiag, error_code: code, error_safe: lastError.slice(0, 220) };
 
   if (required) {
     // brain_planner: throw on failure (fail-closed for paid path)
-    if (agentName === "brain_planner") {
+    if (agentName === "brain_planner" && throwOnRequiredFailure) {
       throw new Error(`PAYLABS_LLM_REQUIRED=true but ${agentName} failed after ${maxAttempts} attempts: ${lastError}`);
     }
     // Non-brain agents (query_builder, signal_scout, etc.): return ok:false

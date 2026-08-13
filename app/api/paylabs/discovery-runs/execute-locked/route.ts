@@ -21,7 +21,7 @@ export const maxDuration = 300;
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/paylabs/db/server";
-import { isAutoTierPreflightEnabled } from "@/lib/paylabs/feature-flags";
+import { isAutoTierPreflightEnabled, isGroundedAnswerEnabled } from "@/lib/paylabs/feature-flags";
 import type { DelegatedRouteTier, ExecutionPlan } from "@/lib/paylabs/delegated-runtime/types";
 import type { OrchestratorOutput, PaymentGraphEdge } from "@/lib/paylabs/delegated-runtime/types";
 import { TIER_PHASE_MAP } from "@/lib/paylabs/delegated-runtime/state";
@@ -37,6 +37,113 @@ import { randomUUID } from "node:crypto";
 import { isOfficeMacroAgentId } from "@/lib/paylabs/office/registry";
 import { safeEmitOfficeEvent } from "@/lib/paylabs/office/server";
 import { attachPaymentResponseHeader } from "@/lib/paylabs/x402/seller-challenge";
+import {
+  serializeGroundingSynthesisDiagnostics,
+  type GroundedSynthesisResult,
+} from "@/lib/paylabs/sources/source-grounded-synthesis";
+import type {
+  EvidenceCoverage,
+  EvidencePack,
+  EvidenceRetrievalResult,
+} from "@/lib/paylabs/rag/types";
+
+const MAX_RAG_RETRY_ROUNDS = 2;
+const MAX_RAG_RETRY_QUERIES_PER_ROUND = 3;
+const MAX_RAG_COVERAGE_LABELS = 20;
+
+function serializeRagCoverage(coverage: EvidenceCoverage) {
+  return {
+    covered_entities: coverage.coveredEntities.slice(0, MAX_RAG_COVERAGE_LABELS),
+    missing_entities: coverage.missingEntities.slice(0, MAX_RAG_COVERAGE_LABELS),
+    covered_aspects: coverage.coveredAspects.slice(0, MAX_RAG_COVERAGE_LABELS),
+    missing_aspects: coverage.missingAspects.slice(0, MAX_RAG_COVERAGE_LABELS),
+    missing_entity_rows: coverage.requiredEntities.filter(
+      (entity) => !coverage.entityAspectCoverage.some((row) => row.entity.toLowerCase() === entity.toLowerCase()),
+    ).slice(0, MAX_RAG_COVERAGE_LABELS),
+    missing_entity_aspect_cells: coverage.entityAspectCoverage.flatMap((row) =>
+      row.missingAspects.slice(0, MAX_RAG_COVERAGE_LABELS).map((aspect) => ({ entity: row.entity, aspect })),
+    ).slice(0, MAX_RAG_COVERAGE_LABELS),
+    entity_aspect_coverage: coverage.entityAspectCoverage
+      .slice(0, MAX_RAG_COVERAGE_LABELS)
+      .map((row) => ({
+        entity: row.entity,
+        covered_aspects: row.coveredAspects.slice(0, MAX_RAG_COVERAGE_LABELS),
+        missing_aspects: row.missingAspects.slice(0, MAX_RAG_COVERAGE_LABELS),
+      })),
+    trusted_evidence_count: coverage.trustedEvidenceCount,
+    requirements_valid: coverage.requirementsValid,
+    requirements_warnings: coverage.requirementsWarnings.slice(0, MAX_RAG_COVERAGE_LABELS),
+    temporal_coverage_ok: coverage.temporalCoverageOk,
+    in_window_trusted_evidence_count: coverage.inWindowTrustedEvidenceCount,
+    temporal_eligible_trusted_evidence_count: coverage.temporalEligibleTrustedEvidenceCount,
+    temporal_constraint: coverage.temporalConstraint,
+  };
+}
+
+function buildRagDiagnostics(params: {
+  ragEvidence?: EvidenceRetrievalResult;
+  ragEvidencePack?: EvidencePack;
+}) {
+  const { ragEvidence, ragEvidencePack } = params;
+  const diagnostics: {
+    rag_retrieval?: Record<string, unknown>;
+    rag_pack?: Record<string, unknown>;
+  } = {};
+
+  if (ragEvidence) {
+    diagnostics.rag_retrieval = {
+      stopped_reason: ragEvidence.stoppedReason,
+      retrieval_context: {
+        required_subjects: ragEvidence.coverage.requiredEntities.slice(0, MAX_RAG_COVERAGE_LABELS),
+        requested_aspect_keys: ragEvidence.coverage.requiredAspects.slice(0, MAX_RAG_COVERAGE_LABELS),
+        comparison_like: ragEvidence.coverage.comparisonLike,
+        requirements_valid: ragEvidence.coverage.requirementsValid,
+        requirements_warnings: ragEvidence.coverage.requirementsWarnings.slice(0, MAX_RAG_COVERAGE_LABELS),
+        temporal_constraint: ragEvidence.coverage.temporalConstraint,
+        temporal_coverage_ok: ragEvidence.coverage.temporalCoverageOk,
+        in_window_trusted_evidence_count: ragEvidence.coverage.inWindowTrustedEvidenceCount,
+        temporal_eligible_trusted_evidence_count: ragEvidence.coverage.temporalEligibleTrustedEvidenceCount,
+      },
+      retry_queries: ragEvidence.retryQueries.slice(
+        0,
+        MAX_RAG_RETRY_ROUNDS * MAX_RAG_RETRY_QUERIES_PER_ROUND,
+      ),
+      retry_rounds: ragEvidence.retryRounds
+        .slice(0, MAX_RAG_RETRY_ROUNDS)
+        .map((round) => ({
+          round: round.round,
+          queries: round.queries.slice(0, MAX_RAG_RETRY_QUERIES_PER_ROUND),
+          candidate_count: round.candidateCount,
+          resolved_source_count: round.resolvedSourceCount,
+          new_source_count: round.newSourceCount,
+          coverage_before: serializeRagCoverage(round.coverageBefore),
+          coverage_after: serializeRagCoverage(round.coverageAfter),
+        })),
+      final_retrieval_coverage: serializeRagCoverage(ragEvidence.coverage),
+    };
+  }
+
+  if (ragEvidencePack) {
+    const selectedSourceCount = Math.min(
+      ragEvidencePack.sources.length,
+      ragEvidencePack.selectionDiagnostics.selectedSourceCount,
+    );
+    diagnostics.rag_pack = {
+      status: ragEvidencePack.status,
+      pack_coverage: serializeRagCoverage(ragEvidencePack.packCoverage),
+      selected_source_count: ragEvidencePack.selectionDiagnostics.selectedSourceCount,
+      selected_chunk_count: ragEvidencePack.selectionDiagnostics.selectedChunkCount,
+      selected_sources: ragEvidencePack.sources.slice(0, selectedSourceCount).map((source) => ({
+        source_id: source.feed_item_id,
+        title: source.title,
+        url: source.url,
+        domain: source.domain,
+      })),
+    };
+  }
+
+  return diagnostics;
+}
 
 // ─── Local helpers (same as inline/route.ts) ─────────────────
 
@@ -726,8 +833,10 @@ export async function POST(req: NextRequest) {
 
     // ── Run locked macro-node pipeline ──────────────────────
     let result: import("@/lib/paylabs/delegated-runtime/types").OrchestratorOutput;
+    let ragEvidence: EvidenceRetrievalResult | undefined;
+    let ragEvidencePack: EvidencePack | undefined;
     try {
-      ({ output: result } = await executeLockedMacroNodePipeline({
+      const lockedExecution = await executeLockedMacroNodePipeline({
         discoveryRunId,
         userGoal: resolvedGoal,
         userWallet: resolvedWallet,
@@ -738,7 +847,10 @@ export async function POST(req: NextRequest) {
         dcwSigner,
         callMacroNode: callMacroNodeX402,
         buildOutput: buildLockedOutput,
-      }));
+      });
+      result = lockedExecution.output;
+      ragEvidence = lockedExecution._ragEvidence;
+      ragEvidencePack = lockedExecution._ragEvidencePack;
     } catch (pipelineError) {
       // Emit Brain failed terminal event, then re-throw
       await emitBrainTerminalOnce(
@@ -946,6 +1058,7 @@ export async function POST(req: NextRequest) {
     // ── Build exit output ───────────────────────────────────
     const { buildExitOutput } = await import("@/lib/paylabs/delegated-runtime/exit-output");
     const exitOutput = buildExitOutput(result);
+    const groundedEnabled = isGroundedAnswerEnabled();
 
     // Source context
     if (result.sourceContext) {
@@ -956,12 +1069,39 @@ export async function POST(req: NextRequest) {
       exitOutput.source_retrieval_mode = result.sourceContext.retrieval_mode;
     }
 
-    // Final answer
+    const groundedSources = groundedEnabled
+      ? (ragEvidencePack?.sources ?? []).map((source, index) => ({
+          source_label: `S${index + 1}`,
+          title: source.title,
+          url: source.url,
+          domain: source.domain,
+          rank: source.rank,
+          source_kind: source.source_kind,
+          provider: source.provider,
+        }))
+      : [];
+
+    if (groundedEnabled) {
+      // The EvidencePack source set is the final presentation set. Keep
+      // result.sourceContext as retrieval diagnostics only.
+      exitOutput.sources_used = ragEvidencePack?.sources ?? [];
+      exitOutput.source_count = exitOutput.sources_used.length;
+    }
+
+    // ── Final answer: optional post-retrieval grounded synthesis ──
     let finalAnswer: string | null = null;
+    let sourceAvailabilityNote: string | null = null;
+    let groundingResult: GroundedSynthesisResult | null = null;
+    let groundingSourceIds: string[] = [];
+    let groundingProvider: string | null = null;
+    let groundingModel: string | null = null;
+    let groundingLatencyMs: number | null = null;
+
     try {
       const { buildSourceGroundedFinalAnswer } = await import("@/lib/paylabs/sources/source-final-answer");
-      const sourcesUsed = exitOutput.sources_used || [];
-      finalAnswer = buildSourceGroundedFinalAnswer({
+      const { synthesizeGroundedAnswerFromEvidencePack } = await import("@/lib/paylabs/sources/source-grounded-synthesis");
+      const sourcesUsed = result.sourceContext?.sources_used || [];
+      sourceAvailabilityNote = buildSourceGroundedFinalAnswer({
         goal: resolvedGoal,
         sourcesUsed,
         sourceConfidence: exitOutput.source_confidence || 0,
@@ -969,72 +1109,134 @@ export async function POST(req: NextRequest) {
           ? (sourcesUsed.some((s: { source_kind?: string }) => s.source_kind === "rsshub_live") ? "rsshub_live" : "db_fallback")
           : "none"),
       });
+
+      if (groundedEnabled) {
+        const startedAt = Date.now();
+        groundingResult = await synthesizeGroundedAnswerFromEvidencePack({
+          goal: resolvedGoal,
+          evidencePack: ragEvidencePack,
+        });
+        groundingSourceIds = groundingResult.availableSourceIds ?? [];
+        groundingLatencyMs = groundingResult.synthesisLatencyMs ?? (Date.now() - startedAt);
+        groundingProvider = groundingResult.synthesisProvider ?? null;
+        groundingModel = groundingResult.synthesisModel ?? null;
+        finalAnswer = groundingResult.answer;
+      } else {
+        // Feature flag off: preserve the existing availability-note behavior.
+        finalAnswer = sourceAvailabilityNote;
+      }
     } catch (e: unknown) {
-      console.error("[execute_locked] final_answer build failed", {
+      console.error("[execute_locked] final answer synthesis failed", {
+        groundedEnabled,
+        error: e instanceof Error ? e.message.slice(0, 160) : String(e).slice(0, 160),
+      });
+      if (groundedEnabled) {
+        finalAnswer = "PayLabs found relevant sources but could not complete evidence verification for this answer.";
+        groundingResult = {
+          status: "synthesis_failed",
+          answer: finalAnswer,
+          citations: [],
+          unsupportedClaims: [],
+          usedSourceIds: [],
+          errorSafe: "Grounded answer post-processing failed.",
+          unknownCitationIds: [],
+        };
+      }
+    }
+
+    const groundingDiagnostics = groundedEnabled
+      ? {
+          authoritative: true as const,
+          version: "grounded_answer_v2" as const,
+          status: groundingResult?.status ?? "synthesis_failed",
+          provenance: groundingResult?.citationValidationOk === true && groundingResult?.claimSupportValidationOk === true
+            ? "evidence_verified"
+            : groundedEnabled
+              ? "deterministic_failure_fallback"
+              : "brain_unverified",
+          source_ids_available: groundingResult?.availableSourceIds ?? groundingSourceIds,
+          source_ids_used: groundingResult?.usedSourceIds ?? [],
+          chunk_citation_ids_available: groundingResult?.availableChunkCitationIds ?? [],
+          chunk_citation_ids_used: groundingResult?.usedChunkCitationIds ?? [],
+          unsupported_claim_count: groundingResult?.unsupportedClaimCount ?? groundingResult?.unsupportedClaims.length ?? 0,
+          citation_validation_ok: groundingResult?.citationValidationOk === true,
+          claim_support_validation_ok: groundingResult?.claimSupportValidationOk === true,
+          unknown_citation_ids: groundingResult?.unknownCitationIds ?? [],
+          citation_binding_invalid_ids: groundingResult?.citationBindingInvalidIds ?? [],
+          citation_validation_failure_codes: groundingResult?.citationValidationFailureCodes ?? [],
+          synthesis_failure_code: groundingResult?.synthesisFailureCode ?? null,
+          synthesis_provider: groundingResult?.synthesisProvider ?? groundingProvider,
+          synthesis_model: groundingResult?.synthesisModel ?? groundingModel,
+          synthesis_latency_ms: groundingResult?.synthesisLatencyMs ?? groundingLatencyMs,
+          ...serializeGroundingSynthesisDiagnostics(groundingResult?.synthesisDiagnostics),
+          verification_provider: groundingResult?.verificationProvider ?? null,
+          verification_model: groundingResult?.verificationModel ?? null,
+          verification_latency_ms: groundingResult?.verificationLatencyMs ?? null,
+          verification_error_code: groundingResult?.verificationDiagnostics?.verificationErrorCode ?? null,
+          verification_mode: groundingResult?.verificationDiagnostics?.verificationMode ?? null,
+          verification_retry_count: groundingResult?.verificationDiagnostics?.verificationRetryCount ?? null,
+          verification_json_found: groundingResult?.verificationDiagnostics?.verificationJsonFound ?? null,
+          verification_validation_issue_paths: groundingResult?.verificationDiagnostics?.verificationValidationIssuePaths ?? [],
+          verification_content_type: groundingResult?.verificationDiagnostics?.verificationContentType ?? null,
+          verification_received_keys: groundingResult?.verificationDiagnostics?.verificationReceivedKeys ?? [],
+          verification_expected_keys: groundingResult?.verificationDiagnostics?.verificationExpectedKeys ?? [],
+          verification_structure_failure_codes: groundingResult?.verificationDiagnostics?.verificationStructureFailureCodes ?? [],
+          verification_expected_paragraph_ids: groundingResult?.verificationDiagnostics?.verificationExpectedParagraphIds ?? [],
+          verification_returned_paragraph_ids: groundingResult?.verificationDiagnostics?.verificationReturnedParagraphIds ?? [],
+          error_safe: groundingResult?.errorSafe ?? null,
+          source_refs: groundedSources,
+        }
+      : null;
+
+    // Persist source context, availability note, and the actual final answer.
+    // Grounding is post-processing only; payment graph/status/receipts are not touched here.
+    try {
+      const { data: existingRun } = await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .select("agent_trace")
+        .eq("id", discoveryRunId)
+        .single();
+      const trace = (existingRun?.agent_trace as Record<string, unknown>) || {};
+      const retrievalSourceContext = result.sourceContext;
+      const ragDiagnostics = buildRagDiagnostics({ ragEvidence, ragEvidencePack });
+      const sourceContextTrace = {
+        source_count: retrievalSourceContext?.source_count || 0,
+        source_confidence: retrievalSourceContext?.source_confidence || 0,
+        retrieval_mode: retrievalSourceContext?.retrieval_mode || "rsshub_live_empty",
+        sources_used: (retrievalSourceContext?.sources_used || []).slice(0, 20).map((s) => ({
+          title: s.title,
+          url: s.url,
+          domain: s.domain,
+          rank: s.rank,
+          source_kind: s.source_kind,
+          provider: s.provider,
+        })),
+      };
+      await supabaseAdmin()
+        .from("paylabs_discovery_runs")
+        .update({
+          final_answer: finalAnswer,
+          agent_trace: {
+            ...trace,
+            source_context: sourceContextTrace,
+            source_availability_note: sourceAvailabilityNote,
+            final_answer: finalAnswer,
+            ...(groundingDiagnostics
+              ? {
+                  grounding_authoritative: true,
+                  grounding_version: "grounded_answer_v2",
+                  grounding: groundingDiagnostics,
+                }
+              : {}),
+            ...ragDiagnostics,
+            exit_output: exitOutput,
+          },
+        })
+        .eq("id", discoveryRunId);
+    } catch (e: unknown) {
+      console.error("[execute_locked] final answer persistence failed", {
         error: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
       });
-    }
-
-    // Store source context + final_answer
-    if (exitOutput.source_retrieval_mode || (exitOutput.sources_used && exitOutput.sources_used.length > 0)) {
-      try {
-        const { data: existingRun } = await supabaseAdmin()
-          .from("paylabs_discovery_runs")
-          .select("agent_trace")
-          .eq("id", discoveryRunId)
-          .single();
-        const trace = (existingRun?.agent_trace as Record<string, unknown>) || {};
-
-        await supabaseAdmin()
-          .from("paylabs_discovery_runs")
-          .update({
-            agent_trace: {
-              ...trace,
-              source_context: {
-                source_count: exitOutput.source_count || 0,
-                source_confidence: exitOutput.source_confidence || 0,
-                retrieval_mode: exitOutput.source_retrieval_mode || "rsshub_live_empty",
-                sources_used: (exitOutput.sources_used || []).slice(0, 20).map((s) => ({
-                  title: s.title,
-                  url: s.url,
-                  domain: s.domain,
-                  rank: s.rank,
-                  source_kind: s.source_kind,
-                  provider: s.provider,
-                })),
-              },
-              final_answer: finalAnswer,
-              exit_output: exitOutput,
-            },
-          })
-          .eq("id", discoveryRunId);
-      } catch (e: unknown) {
-        console.error("[execute_locked] source snapshot store failed", {
-          error: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
-        });
-      }
-    }
-
-    // Persist exit_output unconditionally — recovery path reads agentTrace.exit_output
-    if (!exitOutput.source_retrieval_mode && !(exitOutput.sources_used && exitOutput.sources_used.length > 0)) {
-      try {
-        const { data: traceRow } = await supabaseAdmin()
-          .from("paylabs_discovery_runs")
-          .select("agent_trace")
-          .eq("id", discoveryRunId)
-          .single();
-        const mergedTrace = (traceRow?.agent_trace as Record<string, unknown>) || {};
-        await supabaseAdmin()
-          .from("paylabs_discovery_runs")
-          .update({
-            agent_trace: { ...mergedTrace, exit_output: exitOutput },
-          })
-          .eq("id", discoveryRunId);
-      } catch (e: unknown) {
-        console.error("[execute_locked] exit_output persist failed", {
-          error: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
-        });
-      }
     }
 
     // ── Write visibility ────────────────────────────────────
@@ -1059,6 +1261,19 @@ export async function POST(req: NextRequest) {
     const successResponse = NextResponse.json({
       ok: result.status === "completed",
       final_answer: finalAnswer,
+      source_availability_note: sourceAvailabilityNote,
+      ...(groundedEnabled && groundingDiagnostics
+        ? {
+            grounding_authoritative: true,
+            grounding_version: groundingDiagnostics.version,
+            grounding_status: groundingDiagnostics.status,
+            grounding_source_ids: groundingDiagnostics.source_ids_used,
+            grounding_chunk_citation_ids: groundingDiagnostics.chunk_citation_ids_used,
+            grounding_citation_validation_ok: groundingDiagnostics.citation_validation_ok,
+            grounding_claim_support_validation_ok: groundingDiagnostics.claim_support_validation_ok,
+            grounded_sources: groundedSources,
+          }
+        : {}),
       discovery_run_id: discoveryRunId,
       status: result.status,
       requested_route_tier: "auto",

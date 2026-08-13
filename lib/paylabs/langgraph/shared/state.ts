@@ -25,6 +25,7 @@ import type {
   BudgetSnapshot,
   BrainPlanningOutput,
 } from "../../delegated-runtime/types";
+import type { QueryRequirements } from "../../sources/query-requirements";
 
 // ─── Reducers ───────────────────────────────────────────────
 
@@ -37,6 +38,13 @@ function concatReducer<T>(existing: T[], update: T[]): T[] {
 function replaceReducer<T>(_existing: T[], update: T[]): T[] {
   return [...update];
 }
+
+export type StructuredEntity = {
+  text: string;
+  canonical: string;
+  type: string;
+  required: boolean;
+};
 
 // ─── Discovery Planner State ────────────────────────────────
 
@@ -78,9 +86,14 @@ export const DiscoveryPlannerState = Annotation.Root({
     default: () => [],
   }),
   entityTerms: Annotation<string[]>({
-    reducer: concatReducer<string>,
+    reducer: replaceReducer<string>,
     default: () => [],
   }),
+  primaryEntities: Annotation<StructuredEntity[]>({ reducer: replaceReducer<StructuredEntity>, default: () => [] }),
+  secondaryEntities: Annotation<StructuredEntity[]>({ reducer: replaceReducer<StructuredEntity>, default: () => [] }),
+  lockedPhrases: Annotation<string[]>({ reducer: replaceReducer<string>, default: () => [] }),
+  negativeEntities: Annotation<string[]>({ reducer: replaceReducer<string>, default: () => [] }),
+  topics: Annotation<string[]>({ reducer: replaceReducer<string>, default: () => [] }),
 
   // Signal Scout output
   rankedCandidates: Annotation<Array<{
@@ -111,13 +124,18 @@ export const DiscoveryPlannerState = Annotation.Root({
 
   // Filters and preferences (from query_builder)
   negativeFilters: Annotation<string[]>({
-    reducer: concatReducer<string>,
+    reducer: replaceReducer<string>,
     default: () => [],
   }),
   sourcePreferences: Annotation<string[]>({
-    reducer: concatReducer<string>,
+    reducer: replaceReducer<string>,
     default: () => [],
   }),
+  requestedAspects: Annotation<string[]>({
+    reducer: replaceReducer<string>,
+    default: () => [],
+  }),
+  queryRequirements: Annotation<QueryRequirements | undefined>,
 
   // Accumulated state
   serviceEvaluations: Annotation<ServiceEvaluation[]>({
@@ -139,6 +157,9 @@ export const DiscoveryPlannerState = Annotation.Root({
 
   // Retrieval mode from signal scout output
   retrievalMode: Annotation<string | undefined>,
+
+  // Canonical retrieval context (built by processQueryResult)
+  retrievalContext: Annotation<import("../../sources/types").RetrievalContext | undefined>,
 });
 
 export type DiscoveryPlannerStateType = typeof DiscoveryPlannerState.State;

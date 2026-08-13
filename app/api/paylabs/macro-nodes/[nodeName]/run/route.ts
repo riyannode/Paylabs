@@ -249,6 +249,7 @@ async function executeMacroNode(
         expandedQueries: graphResult.expandedQueries || [],
         negativeFilters: graphResult.negativeFilters || [],
         sourcePreferences: graphResult.sourcePreferences || [],
+        retrievalContext: graphResult.retrievalContext,
       };
 
     } else if (nodeName === "payment_decision") {

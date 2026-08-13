@@ -21,6 +21,12 @@ import type { ServiceName } from "../../agent-services/types";
 import type { BudgetSnapshot, DelegatedRouteTier, SafeSourceCard } from "../../delegated-runtime/types";
 import { isDelegatedRouteTier } from "../../delegated-runtime/types";
 import { DISCOVERY_PLANNER_SERVICE_PRESETS } from "../../delegated-runtime/tier-service-bundles";
+import {
+  extractQueryRequirements,
+  getRequestedAspectKeys,
+  projectRequiredSubjects,
+  type QueryRequirements,
+} from "../../sources/query-requirements";
 
 // ─── Claim Status Normalization ────────────────────────────
 // paylabs_feed_items uses 'claimed'/'unclaimed' (migration 12).
@@ -57,8 +63,10 @@ const queryBuilderNode = createServiceNode(
   "query_builder",
   "discovery_planner",
   (state) => ({
-    // Use normalizedGoal from intent_planner result if available
-    normalized_goal: (state as DiscoveryPlannerStateType).normalizedGoal || state.userGoal,
+    // The exact original request is authoritative for entity/aspect extraction.
+    user_goal: state.userGoal,
+    // Intent Planner output is advisory search context only.
+    intent_normalized_goal: (state as DiscoveryPlannerStateType).normalizedGoal || state.userGoal,
     topics: (state as DiscoveryPlannerStateType).constraints || [],
     routeTier: state.routeTier,
     brain_query_variants: (state as DiscoveryPlannerStateType).brainSuggestedQueryVariants || [],
@@ -78,6 +86,12 @@ const signalScoutNode = createServiceNode(
     entity_terms: (state as DiscoveryPlannerStateType).entityTerms || [],
     negative_filters: (state as DiscoveryPlannerStateType).negativeFilters || [],
     source_preferences: (state as DiscoveryPlannerStateType).sourcePreferences || [],
+    primary_entities: (state as DiscoveryPlannerStateType).primaryEntities || [],
+    secondary_entities: (state as DiscoveryPlannerStateType).secondaryEntities || [],
+    locked_phrases: (state as DiscoveryPlannerStateType).lockedPhrases || [],
+    negative_entities: (state as DiscoveryPlannerStateType).negativeEntities || [],
+    topics: (state as DiscoveryPlannerStateType).topics || [],
+    requestedAspects: (state as DiscoveryPlannerStateType).requestedAspects || [],
     routeTier: state.routeTier,
   }),
   { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: false, skipIfNotSelected: true }
@@ -93,6 +107,12 @@ const signalScoutBasicsNode = createServiceNode(
     entity_terms: (state as DiscoveryPlannerStateType).entityTerms || [],
     negative_filters: (state as DiscoveryPlannerStateType).negativeFilters || [],
     source_preferences: (state as DiscoveryPlannerStateType).sourcePreferences || [],
+    primary_entities: (state as DiscoveryPlannerStateType).primaryEntities || [],
+    secondary_entities: (state as DiscoveryPlannerStateType).secondaryEntities || [],
+    locked_phrases: (state as DiscoveryPlannerStateType).lockedPhrases || [],
+    negative_entities: (state as DiscoveryPlannerStateType).negativeEntities || [],
+    topics: (state as DiscoveryPlannerStateType).topics || [],
+    requestedAspects: (state as DiscoveryPlannerStateType).requestedAspects || [],
     routeTier: state.routeTier,
   }),
   { paymentLayer: "macro_to_child", paymentSchemeOverride: "circle_gateway_wallet_batched_per_child_fallback", required: false, skipIfNotSelected: true }
@@ -137,9 +157,35 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
   const queryEval = evals.find((e) => e.serviceName === "query_builder");
 
   if (!queryEval?.output) {
+    const queryRequirements = extractQueryRequirements(state.userGoal);
+    const primaryEntities = projectRequiredSubjects(queryRequirements);
+    const requestedAspects = getRequestedAspectKeys(queryRequirements);
     return {
       expandedQueries: [] as string[],
       entityTerms: [] as string[],
+      primaryEntities,
+      secondaryEntities: [],
+      lockedPhrases: [],
+      negativeEntities: [],
+      topics: [],
+      requestedAspects,
+      queryRequirements,
+      retrievalContext: {
+        originalGoal: state.userGoal,
+        normalizedGoal: state.userGoal,
+        intentType: state.intentType || "unknown",
+        primaryEntities,
+        secondaryEntities: [],
+        lockedPhrases: [],
+        negativeEntities: [],
+        topics: [],
+        requestedAspects,
+        queryRequirements,
+        entityTerms: primaryEntities.flatMap((entity) => [entity.canonical, entity.text]).slice(0, 15),
+        expandedQueries: [],
+        negativeFilters: [],
+        sourcePreferences: [],
+      },
       progressSummaries: ["Query builder returned no output — using empty queries"],
     };
   }
@@ -149,13 +195,61 @@ async function processQueryResult(state: DiscoveryPlannerStateType) {
     entity_terms?: string[];
     negative_filters?: string[];
     source_preferences?: string[];
+    primary_entities?: DiscoveryPlannerStateType["primaryEntities"];
+    secondary_entities?: DiscoveryPlannerStateType["secondaryEntities"];
+    locked_phrases?: string[];
+    negative_entities?: string[];
+    topics?: string[];
+    requested_aspects?: string[];
+    query_requirements?: QueryRequirements;
   };
 
+  const expandedQueries = data.expanded_queries ?? [];
+  const entityTerms = data.entity_terms ?? [];
+  const negativeFilters = data.negative_filters ?? [];
+  const sourcePreferences = data.source_preferences ?? [];
+  const rawSecondaryEntities = data.secondary_entities ?? [];
+  const lockedPhrases = data.locked_phrases ?? [];
+  const negativeEntities = data.negative_entities ?? [];
+  const topics = data.topics ?? [];
+  // The exact original goal is the authority. Service output is a compatibility
+  // projection and must not replace deterministic extraction here.
+  const queryRequirements = extractQueryRequirements(state.userGoal);
+  const primaryEntities = projectRequiredSubjects(queryRequirements);
+  const secondaryEntities = rawSecondaryEntities.filter(
+    (entity) => !primaryEntities.some((primary) => primary.canonical.toLowerCase() === entity.canonical.toLowerCase()),
+  );
+  const requestedAspects = getRequestedAspectKeys(queryRequirements);
+
   return {
-    expandedQueries: data.expanded_queries || [],
-    entityTerms: data.entity_terms || [],
-    negativeFilters: data.negative_filters || [],
-    sourcePreferences: data.source_preferences || [],
+    expandedQueries,
+    entityTerms,
+    negativeFilters,
+    sourcePreferences,
+    primaryEntities,
+    secondaryEntities,
+    lockedPhrases,
+    negativeEntities,
+    topics,
+    requestedAspects,
+    queryRequirements,
+    // Canonical retrieval context — single source of truth for downstream
+    retrievalContext: {
+      originalGoal: state.userGoal,
+      normalizedGoal: (state as DiscoveryPlannerStateType).normalizedGoal || state.userGoal,
+      intentType: (state as DiscoveryPlannerStateType).intentType || "unknown",
+      primaryEntities,
+      secondaryEntities,
+      lockedPhrases,
+      negativeEntities,
+      topics,
+      requestedAspects,
+      queryRequirements,
+      entityTerms,
+      expandedQueries,
+      negativeFilters,
+      sourcePreferences,
+    },
   };
 }
 
@@ -314,6 +408,7 @@ export interface RunDiscoveryPlannerGraphOutput {
   expandedQueries?: string[];
   negativeFilters?: string[];
   sourcePreferences?: string[];
+  retrievalContext?: import("../../sources/types").RetrievalContext;
   error: string | null;
 }
 
@@ -443,6 +538,7 @@ export async function runDiscoveryPlannerGraph(
       expandedQueries: result.expandedQueries || [],
       negativeFilters: result.negativeFilters || [],
       sourcePreferences: result.sourcePreferences || [],
+      retrievalContext: result.retrievalContext,
       error: result.error || null,
     };
   } catch (e: unknown) {

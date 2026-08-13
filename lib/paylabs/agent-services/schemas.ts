@@ -27,7 +27,10 @@ type IntentPlannerOutput = z.infer<typeof IntentPlannerOutput>;
 
 // ─── Query Builder ───────────────────────────────────────────
 export const QueryBuilderInput = z.object({
-  normalized_goal: z.string().min(1),
+  /** Exact original user request; authoritative for entity/aspect extraction. */
+  user_goal: z.string().min(1),
+  /** Intent Planner normalization; advisory search context only. */
+  intent_normalized_goal: z.string().optional(),
   topics: z.array(z.string()),
   routeTier: z.enum(["easy", "normal", "advanced"]).optional(),
   brain_query_variants: z.array(z.string()).optional(),
@@ -43,6 +46,22 @@ const StructuredEntityOutput = z.object({
   required: z.boolean(),
 });
 
+const QueryRequirementsOutput = z.object({
+  comparisonLike: z.boolean(),
+  explicitSubjects: z.array(z.object({
+    text: z.string(), canonical: z.string(), type: z.string(), required: z.boolean(), explicit: z.boolean(),
+  })),
+  requestedAspects: z.array(z.object({
+    key: z.string(), label: z.string(), sourceText: z.string(), matchTerms: z.array(z.string()), knownDefinitionKey: z.string().optional(),
+  })),
+  temporalConstraint: z.object({
+    kind: z.enum(["last_days", "last_weeks", "last_months", "since", "year", "between"]),
+    hard: z.boolean(), start: z.string().optional(), end: z.string().optional(), value: z.number().optional(), unit: z.string().optional(), sourceText: z.string(),
+  }).nullable(),
+  requirementsValid: z.boolean(),
+  extractionWarnings: z.array(z.string()),
+});
+
 export const QueryBuilderOutput = z.object({
   primary_entities: z.array(StructuredEntityOutput),
   secondary_entities: z.array(StructuredEntityOutput),
@@ -53,6 +72,8 @@ export const QueryBuilderOutput = z.object({
   expanded_queries: z.array(z.string()),
   negative_filters: z.array(z.string()),
   source_preferences: z.array(z.string()),
+  requested_aspects: z.array(z.string()),
+  query_requirements: QueryRequirementsOutput.optional(),
   safe_query_summary: z.string(),
 });
 type QueryBuilderOutput = z.infer<typeof QueryBuilderOutput>;
@@ -79,6 +100,8 @@ export const SignalScoutInput = z.object({
     required: z.boolean(),
   })).optional(),
   negative_entities: z.array(z.string()).optional(),
+  topics: z.array(z.string()).optional(),
+  requested_aspects: z.array(z.string()).optional(),
 });
 type SignalScoutInput = z.infer<typeof SignalScoutInput>;
 

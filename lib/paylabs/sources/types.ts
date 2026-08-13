@@ -1,3 +1,5 @@
+import type { QueryRequirements } from "./query-requirements";
+
 /**
  * Source Discovery Types
  *
@@ -14,6 +16,7 @@ export interface SourceItem {
   domain: string | null;
   summary: string;
   author: string;
+  publisher?: string;
   published_at: string | null;
   route_path: string | null;
   trust_status: string;
@@ -25,6 +28,13 @@ export interface SourceItem {
   rsshub_feed_url?: string | null;
   docs_url?: string | null;
   reason?: string;
+  matched_primary_entities?: string[];
+  matched_secondary_entities?: string[];
+  matched_locked_phrases?: string[];
+  selection_reason?: string;
+  /** Safe temporal evaluation for the canonical hard requirement, if present. */
+  temporal_in_window?: boolean;
+  temporal_metadata_valid?: boolean;
 }
 
 // ─── Source Context ────────────────────────────────────────
@@ -48,7 +58,80 @@ export interface SourceContext {
     warning?: string;
     detected_topic?: string;
   };
+  /** Entity coverage across the selected source set */
+  entity_coverage?: { covered: string[]; missing: string[] };
+  /** Aspect (requestedAspects) coverage across the selected source set */
+  aspect_coverage?: { covered: string[]; missing: string[] };
+  /** Overall evidence status derived from coverage + confidence */
+  evidence_status?: 'grounded' | 'partially_grounded' | 'insufficient_evidence' | 'synthesis_failed';
+  /** Source quality rating based on confidence */
+  source_quality?: 'high' | 'medium' | 'low';
+  /** Per-source rejection reasons collected during resolution */
+  rejection_reasons?: string[];
+  /** Canonical requirement diagnostics for downstream consumers */
+  requirements_valid?: boolean;
+  requirements_warnings?: string[];
+  temporal_coverage_ok?: boolean;
+  in_window_trusted_evidence_count?: number;
+  temporal_constraint?: {
+    kind: string;
+    hard: boolean;
+    value?: number;
+    unit?: string;
+    start?: string;
+    end?: string;
+  } | null;
 }
+
+
+// ─── Retrieval Context ──────────────────────────────────────
+// Canonical retrieval context flowing from Query Builder through
+// Discovery Planner into locked orchestration and source resolution.
+// Authority rules:
+//   originalGoal — exact user request, authoritative for entities/aspects/scope
+//   normalizedGoal — Intent Planner normalized representation for search/retrieval
+//   Brain normalized_goal / query variants — auxiliary search expansion only
+
+type StructuredEntity = {
+  text: string;
+  canonical: string;
+  type: string;
+  required: boolean;
+};
+
+export type RetrievalContext = {
+  /** Exact original user request. Authoritative for entities, aspects, scope. */
+  originalGoal: string;
+  /** Intent Planner normalized representation. Useful for search/retrieval. */
+  normalizedGoal: string;
+  /** Intent type hint from Intent Planner. */
+  intentType: string;
+
+  /** Required primary entities from Query Builder. */
+  primaryEntities: StructuredEntity[];
+  /** Contextual secondary entities from Query Builder. */
+  secondaryEntities: StructuredEntity[];
+
+  /** Multi-word phrases locked from user goal. */
+  lockedPhrases: string[];
+  /** Noise patterns to filter out. */
+  negativeEntities: string[];
+  /** Topic tags for domain-specific filtering. */
+  topics: string[];
+  /** Aspects the user wants covered. */
+  requestedAspects: string[];
+  /** Canonical structured requirements from the exact original goal. */
+  queryRequirements: QueryRequirements;
+
+  /** Flat entity terms for keyword matching. */
+  entityTerms: string[];
+  /** Expanded search queries. */
+  expandedQueries: string[];
+  /** Negative keyword filters. */
+  negativeFilters: string[];
+  /** Source type preferences. */
+  sourcePreferences: string[];
+};
 
 // ─── Source Resolver Input ─────────────────────────────────
 export interface SourceResolverInput {
@@ -75,6 +158,14 @@ export interface SourceResolverInput {
   secondaryEntities?: Array<{ text: string; canonical: string; type: string; required: boolean }>;
   /** Negative entities — noise to filter out (e.g. "price prediction", "trading signal") */
   negativeEntities?: string[];
+  lockedPhrases?: string[];
+  topics?: string[];
+  /** Aspects the user wants covered (e.g. "pricing", "api-reference", "getting-started") */
+  requestedAspects?: string[];
+  /** Canonical structured requirements; preferred over flat compatibility fields. */
+  queryRequirements?: QueryRequirements;
+  /** Canonical retrieval context — preferred over individual fields when present */
+  retrievalContext?: RetrievalContext;
 }
 
 // ─── Source Resolver Output ────────────────────────────────

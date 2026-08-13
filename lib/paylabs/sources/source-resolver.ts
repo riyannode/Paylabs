@@ -16,12 +16,111 @@ import type {
   SourceResolverOutput,
 } from "./types";
 import { sanitizeEntityTerms, hasBoundaryTerm } from "./source-term-matching";
+import { validateCandidateRelevance, computeAspectCoverage, getMatchedAspectsForText, matchesExactPhrase } from "./source-relevance";
+import { ASPECT_DEFINITIONS } from "./crypto-entity-registry";
 import { detectTopics } from "@/lib/paylabs/rsshub/topic-routes";
 import {
   passesAiSourceGuard,
   passesCryptoSourceGuard,
   isGenericCatchAllSource,
 } from "@/lib/paylabs/rsshub/topic-source-guards";
+import { evaluateTemporalConstraint, extractQueryRequirements } from "./query-requirements";
+
+const CANDIDATE_SCAN_LIMIT = 20;
+const FINAL_SOURCE_LIMIT = 5;
+
+// ─── Canonical URL helpers ─────────────────────────────────
+
+/**
+ * Canonicalize a URL for dedup purposes.
+ * Strips trailing slashes, fragments, common tracking params,
+ * and normalizes to lowercase hostname.
+ */
+export function canonicalizeUrl(raw: string): string {
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    // Remove common tracking params
+    const TRACKING_PARAMS = new Set(["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "ref", "source", "fbclid", "gclid"]);
+    for (const key of TRACKING_PARAMS) {
+      url.searchParams.delete(key);
+    }
+    url.hash = "";
+    // Normalize: lowercase host, strip trailing slash from pathname
+    let path = url.pathname.replace(/\/+$/, "") || "/";
+    return `${url.protocol}//${url.hostname.toLowerCase()}${path}${url.search}`;
+  } catch {
+    return raw.trim().toLowerCase();
+  }
+}
+
+/**
+ * Remove duplicate sources by canonical URL, keeping the one with higher relevance_score.
+ * Returns deduplicated array preserving rank order.
+ */
+export function deduplicateByCanonicalUrl(sources: SourceItem[]): SourceItem[] {
+  const byCanonical = new Map<string, SourceItem>();
+  for (const src of sources) {
+    const canon = canonicalizeUrl(src.url);
+    if (!canon) continue;
+    const existing = byCanonical.get(canon);
+    if (!existing || (src.relevance_score ?? 0) > (existing.relevance_score ?? 0)) {
+      byCanonical.set(canon, src);
+    }
+  }
+  return Array.from(byCanonical.values()).sort((a, b) => a.rank - b.rank);
+}
+
+// ─── Entity coverage validation ────────────────────────────
+
+/**
+ * Check which required primary entities are covered by the selected source set.
+ * Returns { covered, missing } listing canonical entity names.
+ */
+function validateEntityCoverage(
+  sources: SourceItem[],
+  primaryEntities: Array<{ text: string; canonical: string; type: string; required: boolean }>,
+): { covered: string[]; missing: string[] } {
+  const required = primaryEntities.filter((e) => e.required);
+  if (!required.length) return { covered: [], missing: [] };
+  const allMatched = new Set(
+    sources.flatMap((s) => s.matched_primary_entities || []),
+  );
+  const covered: string[] = [];
+  const missing: string[] = [];
+  for (const entity of required) {
+    if (allMatched.has(entity.canonical)) covered.push(entity.canonical);
+    else missing.push(entity.canonical);
+  }
+  return { covered, missing };
+}
+
+// ─── Evidence status computation ───────────────────────────
+
+/**
+ * Derive evidence_status from deterministic entity/aspect coverage.
+ *
+ * - grounded:             all entities covered AND all aspects covered
+ * - partially_grounded:   all entities covered, some aspects missing
+ * - insufficient_evidence: any required entity missing, or no sources
+ */
+function computeEvidenceStatus(
+  entityCoverage: { covered: string[]; missing: string[] },
+  aspectCoverage: { covered: string[]; missing: string[] },
+  sourceCount: number,
+  requirementsValid: boolean,
+  temporalCoverageOk: boolean,
+): "grounded" | "partially_grounded" | "insufficient_evidence" {
+  if (!requirementsValid) return "insufficient_evidence";
+  if (sourceCount === 0) return "insufficient_evidence";
+  // Any required primary entity missing → insufficient
+  if (entityCoverage.missing.length > 0) return "insufficient_evidence";
+  // All entities covered, some aspects missing → partial
+  if (aspectCoverage.missing.length > 0) return "partially_grounded";
+  if (!temporalCoverageOk) return "partially_grounded";
+  // All entities + aspects covered → grounded
+  return "grounded";
+}
 
 // ─── Topic-aware source validation ────────────────────────
 
@@ -103,6 +202,7 @@ async function enrichRankedCandidates(
       domain,
       summary: String(ext.summary || "").slice(0, 500),
       author: String(ext.author || ""),
+      publisher: String(ext.publisher || ""),
       published_at: ext.published_at ? String(ext.published_at) : null,
       route_path: typeof ext.route_path === "string" ? ext.route_path : null,
       trust_status: ext.source_kind === "rsshub_live" ? "rsshub_live" : "web_fallback",
@@ -154,6 +254,7 @@ async function enrichRankedCandidates(
           domain,
           summary: String(item.summary || "").slice(0, 500),
           author: String(item.author_name || item.publisher || ""),
+          publisher: String(item.publisher || ""),
           published_at: (item.published_at as string) ?? null,
           route_path: routePath,
           trust_status: String(item.trust_status || "unverified"),
@@ -245,7 +346,11 @@ function filterByRelevance(
   normalizedGoal: string,
   entityTerms?: string[],
   primaryEntities?: Array<{ text: string; canonical: string; type: string; required: boolean }>,
+  secondaryEntities?: Array<{ text: string; canonical: string; type: string; required: boolean }>,
   negativeEntities?: string[],
+  lockedPhrases?: string[],
+  topics?: string[],
+  intentType?: string,
 ): SourceItem[] {
   if (sources.length === 0) return sources;
 
@@ -285,8 +390,33 @@ function filterByRelevance(
     const routePath = (src.route_path || "").toLowerCase();
     const url = (src.url || "").toLowerCase();
     const reason = (src.reason || "").toLowerCase();
-    // Include reason in combined text so topic_route:ai/openai helps entity matching
-    const combined = `${title} ${summary} ${domain} ${routePath} ${url} ${reason}`;
+    const author = (src.author || "").toLowerCase();
+    const publisher = (src.publisher || "").toLowerCase();
+    const urlMetadata = (() => {
+      try {
+        const parsed = new URL(src.url);
+        return `${parsed.hostname} ${parsed.pathname}`.toLowerCase();
+      } catch {
+        return src.url.toLowerCase();
+      }
+    })();
+    // Include safe URL metadata, excluding query-string values.
+    const combined = `${title} ${summary} ${domain} ${routePath} ${urlMetadata} ${author} ${publisher} ${reason}`;
+
+    const sharedRelevance = validateCandidateRelevance(
+      {
+        title: src.title,
+        summary: src.summary,
+        domain: src.domain,
+        source_url: src.url,
+        route_path: src.route_path,
+        author: src.author,
+        publisher: src.publisher,
+        relevance_score: src.relevance_score,
+      },
+      { primaryEntities, secondaryEntities, lockedPhrases, negativeEntities, entityTerms, topics, intentType },
+    );
+    if (!sharedRelevance.accepted) return false;
 
     // Phase 3A: Negative entity filter — reject sources matching noise patterns
     if (negativePatterns.length > 0) {
@@ -314,9 +444,7 @@ function filterByRelevance(
       if (!hasEntity) return false;
     }
 
-    // Phase 3A: Primary entity boost — if primary entities defined, prefer sources matching them
-    // This is a soft filter: sources matching primary entities pass, others pass too but rank lower
-    // (ranking happens downstream — this is just the relevance gate)
+    // Shared relevance validation above is the hard final gate.
 
     // GitHub intent: must be from github.com (or subdomain) or have repo-related content
     if (isGitHubIntent) {
@@ -334,6 +462,13 @@ function filterByRelevance(
       if (!hasKeyword) return false;
     }
 
+    src.relevance_score = sharedRelevance.score;
+    src.matched_primary_entities = sharedRelevance.matchedPrimaryEntities;
+    src.matched_secondary_entities = sharedRelevance.matchedSecondaryEntities;
+    src.matched_locked_phrases = sharedRelevance.matchedLockedPhrases;
+    src.selection_reason = sharedRelevance.matchedPrimaryEntities.length > 0
+      ? `Matched ${sharedRelevance.matchedPrimaryEntities.join(", ")}`
+      : "Matched query terms";
     return true;
   });
 
@@ -349,34 +484,228 @@ function filterByRelevance(
 export async function resolveSources(
   input: SourceResolverInput
 ): Promise<SourceResolverOutput> {
-  const maxSources = input.maxSources ?? 10;
+  const maxSources = Math.min(input.maxSources ?? FINAL_SOURCE_LIMIT, FINAL_SOURCE_LIMIT);
+
+  // Prefer canonical retrievalContext fields over individual parameters
+  const rc = input.retrievalContext;
+  const normalizedGoal = rc?.normalizedGoal ?? input.normalizedGoal;
+  const intentType = rc?.intentType ?? input.intentType;
+  const entityTerms = rc?.entityTerms ?? input.entityTerms ?? [];
+  const primaryEntities = rc?.primaryEntities ?? input.primaryEntities ?? [];
+  const secondaryEntities = rc?.secondaryEntities ?? input.secondaryEntities ?? [];
+  const negativeEntities = rc?.negativeEntities ?? input.negativeEntities ?? [];
+  const lockedPhrases = rc?.lockedPhrases ?? input.lockedPhrases ?? [];
+  const topics = rc?.topics ?? input.topics ?? [];
+  const queryRequirements = rc?.queryRequirements
+    ?? input.queryRequirements
+    ?? extractQueryRequirements(rc?.originalGoal ?? normalizedGoal);
+  const requestedAspectConstraints = queryRequirements.requestedAspects;
+  const requestedAspects = requestedAspectConstraints.map((aspect) => aspect.key);
 
   try {
-    const rawSources = await enrichRankedCandidates(input.rankedCandidates, maxSources);
+    const rawSources = await enrichRankedCandidates(input.rankedCandidates, CANDIDATE_SCAN_LIMIT);
     // Apply relevance filter: reject sources that don't match the query
     // Pass entity_terms so short meaningful tokens (x402, ai, usdc) are used in matching
-    const rawEntityCount = (input.entityTerms || []).length;
-    const sources = filterByRelevance(
+    const rawEntityCount = entityTerms.length;
+    const validatedSources = filterByRelevance(
       rawSources,
-      input.normalizedGoal,
-      input.entityTerms,
-      input.primaryEntities,
-      input.negativeEntities,
+      normalizedGoal,
+      entityTerms,
+      primaryEntities,
+      secondaryEntities,
+      negativeEntities,
+      lockedPhrases,
+      topics,
+      intentType,
     );
-    const sanitizedEntityCount = sanitizeEntityTerms(input.entityTerms || []).length;
+
+    // Collect rejection reasons from candidates that didn't pass validation
+    const rejectionReasons: string[] = [];
+    for (const raw of rawSources) {
+      if (!validatedSources.includes(raw)) {
+        rejectionReasons.push(`${raw.url}: relevance_filter`);
+      }
+    }
+
+    // Coverage-aware source selection
+    const requiredEntities = primaryEntities.filter((entity) => entity.required).map((entity) => entity.canonical);
+    const rankedValidated = [...validatedSources].sort((a, b) => b.relevance_score - a.relevance_score);
+    const selected: SourceItem[] = [];
+
+    // Phase A: ensure each required primary entity is represented
+    for (const entity of requiredEntities) {
+      const candidate = rankedValidated.find((source) => (source.matched_primary_entities || []).includes(entity));
+      if (candidate && !selected.includes(candidate)) selected.push(candidate);
+    }
+
+    // Phase B: close remaining aspect gaps before filling by score
+    if (requestedAspectConstraints.length > 0) {
+      const missingAspects = new Set(requestedAspects);
+      // Remove aspects already covered by selected sources
+      for (const src of selected) {
+        const text = `${src.title || ''} ${src.summary || ''}`;
+        const matched = getMatchedAspectsForText(text, requestedAspectConstraints.filter((aspect) => missingAspects.has(aspect.key)));
+        for (const aspect of matched) missingAspects.delete(aspect);
+      }
+      // Select candidates that close the most missing aspects
+      while (missingAspects.size > 0 && selected.length < FINAL_SOURCE_LIMIT) {
+        let bestCandidate: SourceItem | null = null;
+        let bestCoverage = 0;
+        for (const src of rankedValidated) {
+          if (selected.includes(src)) continue;
+          const text = `${src.title || ''} ${src.summary || ''}`;
+          const matched = getMatchedAspectsForText(text, requestedAspectConstraints.filter((aspect) => missingAspects.has(aspect.key)));
+          const coverage = matched.length;
+          if (coverage > bestCoverage) {
+            bestCoverage = coverage;
+            bestCandidate = src;
+          }
+        }
+        if (!bestCandidate || bestCoverage === 0) break;
+        selected.push(bestCandidate);
+        // Update missing aspects
+        const bestText = `${bestCandidate.title || ''} ${bestCandidate.summary || ''}`;
+        const bestMatched = getMatchedAspectsForText(bestText, requestedAspectConstraints.filter((aspect) => missingAspects.has(aspect.key)));
+        for (const aspect of bestMatched) missingAspects.delete(aspect);
+      }
+    }
+
+    // Phase C: fill remaining slots by relevance score
+    for (const source of rankedValidated) {
+      if (selected.length >= FINAL_SOURCE_LIMIT) break;
+      if (!selected.includes(source)) selected.push(source);
+    }
+
+    // Canonical dedup: remove duplicate URLs, keep highest-scoring
+    const dedupedSources = deduplicateByCanonicalUrl(selected.slice(0, maxSources));
+    let sources = dedupedSources.map((source, index) => ({ ...source, rank: index + 1 }));
+
+    // Intent-aware source filtering for fundamentals/comparison/explanation/risk queries
+    const nonPriceIntents = new Set(['definition', 'explanation', 'comparison', 'troubleshooting', 'protocol comparison', 'implementation', 'risk analysis']);
+    // Intents where news/market noise should be rejected but docs/research/technical explainers are welcome
+    const technicalIntents = new Set(['definition', 'explanation', 'comparison', 'protocol comparison', 'risk analysis']);
+    // Intents where current-event news IS acceptable (incident, regulation, exploit)
+    const newsFriendlyIntents = new Set(['latest', 'current', 'incident', 'regulation', 'market conditions', 'etf', 'adoption', 'price', 'exploit', 'hack', 'attack', 'vulnerability']);
+    const intentLower = (intentType || '').toLowerCase();
+    if (intentType && nonPriceIntents.has(intentLower)) {
+      sources = sources.filter((src) => {
+        const title = (src.title || '').toLowerCase();
+        const summary = (src.summary || '').toLowerCase();
+        const combined = `${title} ${summary}`;
+        const domain = (src.domain || '').toLowerCase();
+        const routePath = (src.route_path || '').toLowerCase();
+
+        // Hard reject clear price/market noise for non-price queries
+        const pricePagePatterns = ['live price', 'price chart', 'market cap', 'daily price', 'etf inflow', 'etf outflow', 'etf flows', 'etf update', 'crypto market today', 'today\'s market', 'breaking news', 'market update'];
+        if (pricePagePatterns.some(p => combined.includes(p))) {
+          rejectionReasons.push(`${src.url}: intent_mismatch (price page for non-price query)`);
+          return false;
+        }
+
+        // Reject generic macro/political/treasury news that only mentions required entities
+        // but does not substantively match any requested aspect or technical concept
+        const genericNoisePatterns = [
+          'treasury holding', 'treasury buys', 'treasury purchase',
+          'political', 'election', 'regulation announcement',
+          'sec filing', 'sec approval', 'sec rejects',
+          'ai-threat', 'ai threat', 'quantum threat',
+          'institutional adoption', 'institutional invest',
+          'whale alert', 'whale moves', 'large transfer',
+          'market sentiment', 'fear and greed', 'bull bear',
+          'altcoin season', 'crypto winter', 'crypto summer',
+        ];
+        const isGenericNoise = genericNoisePatterns.some(p => combined.includes(p));
+        if (isGenericNoise) {
+          // Allow if it also matches a requested aspect signal term
+          const hasAspectMatch = (requestedAspects || []).some((aspect) => {
+            const def = ASPECT_DEFINITIONS[aspect];
+            if (!def) return combined.includes(aspect.replace(/_/g, ' '));
+            return def.signalTerms.some((term) => matchesExactPhrase(combined, term));
+          });
+          if (!hasAspectMatch) {
+            rejectionReasons.push(`${src.url}: intent_mismatch (generic noise for technical query)`);
+            return false;
+          }
+        }
+
+        // For technical intents: require at least one aspect or technical concept match
+        // Official docs/research/technical explainers pass without needing "comparison" words
+        if (technicalIntents.has(intentLower)) {
+          const isTechnicalSource = /docs|documentation|whitepaper|research|paper|technical|explainer|guide|tutorial|reference|spec|specification|developer/i.test(combined)
+            || /docs|whitepaper|research|technical|explainer|guide|reference/i.test(domain)
+            || /docs|whitepaper|research|technical|explainer/i.test(routePath);
+          if (isTechnicalSource) return true; // docs/research always pass
+
+          // For non-technical sources: require aspect or entity+concept match
+          const hasAspectMatch = (requestedAspects || []).some((aspect) => {
+            const def = ASPECT_DEFINITIONS[aspect];
+            if (!def) return combined.includes(aspect.replace(/_/g, ' '));
+            return def.signalTerms.some((term) => matchesExactPhrase(combined, term));
+          });
+          // Must have entity match AND at least one aspect/concept signal
+          const hasEntityMatch = primaryEntities.some((e) =>
+            matchesExactPhrase(combined, e.canonical) || combined.includes(e.canonical.toLowerCase())
+          );
+          if (!hasEntityMatch || !hasAspectMatch) {
+            rejectionReasons.push(`${src.url}: intent_mismatch (missing aspect/concept match for technical query)`);
+            return false;
+          }
+        }
+
+        return true;
+      });
+    }
+
+    const temporalConstraint = queryRequirements.temporalConstraint;
+    const temporallyEvaluatedSources = sources.map((source) => {
+      const temporal = evaluateTemporalConstraint(source.published_at, temporalConstraint);
+      return {
+        ...source,
+        temporal_in_window: temporal.inWindow,
+        temporal_metadata_valid: temporal.usable,
+      };
+    });
+    sources = temporallyEvaluatedSources;
+    const inWindowSourceCount = sources.filter((source) => source.temporal_in_window === true).length;
+    const temporalCoverageOk = !temporalConstraint?.hard || inWindowSourceCount > 0;
+
+    const sanitizedEntityCount = sanitizeEntityTerms(entityTerms).length;
     const sourceConfidence = computeSourceConfidence(sources);
+
+    // Entity coverage validation
+    const entityCoverage = validateEntityCoverage(sources, primaryEntities);
+
+    // Aspect coverage validation
+    const sourceTexts = sources.map((s) => `${s.title} ${s.summary}`);
+    const aspectCoverage = computeAspectCoverage(sourceTexts, requestedAspectConstraints);
+    if (aspectCoverage.missing.length > 0) {
+      for (const aspect of aspectCoverage.missing) {
+        rejectionReasons.push(`missing_requested_aspect: ${aspect}`);
+      }
+    }
+
+    // Evidence status computation (deterministic, coverage-based)
+    const evidenceStatus = computeEvidenceStatus(
+      entityCoverage,
+      aspectCoverage,
+      sources.length,
+      queryRequirements.requirementsValid,
+      temporalCoverageOk,
+    );
+    const sourceQuality = sourceConfidence >= 0.5 ? 'high' : sourceConfidence >= 0.3 ? 'medium' : 'low';
+
     // Safe diagnostic: entity term counts (no raw secrets)
     const entityDiagnostic = rawEntityCount > 0
       ? ` entity_terms_raw_count=${rawEntityCount} entity_terms_sanitized_count=${sanitizedEntityCount}`
       : "";
     const sourceSelectionSummary = buildSelectionSummary(
       sources,
-      input.normalizedGoal,
-      input.intentType
+      normalizedGoal,
+      intentType
     ) + entityDiagnostic;
 
     // Topic-aware validation: warn if AI/crypto topic but 0 sources
-    const sourceValidation = validateTopicSources(sources, input.normalizedGoal, input.entityTerms || []);
+    const sourceValidation = validateTopicSources(sources, normalizedGoal, entityTerms);
 
     return {
       ok: true,
@@ -386,6 +715,25 @@ export async function resolveSources(
         source_confidence: sourceConfidence,
         source_count: sources.length,
         source_validation: sourceValidation,
+        entity_coverage: entityCoverage,
+        aspect_coverage: aspectCoverage,
+        evidence_status: evidenceStatus,
+        source_quality: sourceQuality,
+        rejection_reasons: rejectionReasons.length > 0 ? rejectionReasons : undefined,
+        requirements_valid: queryRequirements.requirementsValid,
+        requirements_warnings: queryRequirements.extractionWarnings,
+        temporal_coverage_ok: temporalCoverageOk,
+        in_window_trusted_evidence_count: inWindowSourceCount,
+        temporal_constraint: temporalConstraint
+          ? {
+              kind: temporalConstraint.kind,
+              hard: temporalConstraint.hard,
+              value: temporalConstraint.value,
+              unit: temporalConstraint.unit,
+              start: temporalConstraint.start,
+              end: temporalConstraint.end,
+            }
+          : null,
       },
       error: null,
     };

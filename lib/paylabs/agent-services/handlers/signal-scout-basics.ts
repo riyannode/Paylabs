@@ -29,6 +29,7 @@ import {
   passesCryptoSourceGuard,
   isGenericCatchAllSource,
 } from "@/lib/paylabs/rsshub/topic-source-guards";
+import { scoreCandidateRelevance, matchesExactPhrase, computeAspectCoverage } from "@/lib/paylabs/sources/source-relevance";
 
 // ─── Stopwords — generic words that should never count as relevance signals ──
 const STOPWORDS = new Set([
@@ -328,6 +329,7 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
   // Phase 3A: extract primary entity canonicals for scoring weight
   const primaryEntityCanons = (primary_entities || []).map((e) => e.canonical);
   const negativeEnts = negative_entities || [];
+  const requestedAspects: string[] = (input.payload as { requestedAspects?: string[] }).requestedAspects || [];
 
   // ── Step 1: RSSHub live search (always live-only, never DB fallback) ──
   const liveEnabled = process.env.PAYLABS_RSSHUB_LIVE_ENABLED !== "false";
@@ -438,8 +440,15 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
         if ((queryHasAiTopic || queryHasCryptoTopic) && isGenericCatchAllSource({ domain, routePath, url })) {
           return false;
         }
-        // Topic candidates already passed topic-level acceptance — keep them
-        if (item._isTopicCandidate) return true;
+        const shared = scoreCandidateRelevance(item, {
+          primaryEntities: primary_entities || [],
+          secondaryEntities: secondary_entities || [],
+          lockedPhrases: (input.payload as { locked_phrases?: string[] }).locked_phrases || [],
+          negativeEntities: negativeEnts,
+          entityTerms: entity_terms || [],
+        });
+        // Topic origin is not an acceptance bypass: it still needs entity relevance.
+        if (!shared.accepted) return false;
         // Non-topic candidates: apply domain guard for AI/crypto queries
         if (queryHasAiTopic && !passesAiSourceGuard({ domain, routePath, title, summary })) {
           return false;
@@ -450,53 +459,90 @@ export const signalScoutBasicsHandler: ServiceHandler = async (
         // Non-topic candidates need entity match OR keyword score
         return item.entityHit || item.local_score >= MIN_SCORE;
       })
-      .sort((a, b) => {
-        // Topic candidates first, then by score
-        if (a._isTopicCandidate && !b._isTopicCandidate) return -1;
-        if (!a._isTopicCandidate && b._isTopicCandidate) return 1;
-        return b.local_score - a.local_score;
-      })
+      .sort((a, b) => b.local_score - a.local_score)
       .map((item, i) => ({
         ...item,
         rank: i + 1,
-        relevance_score: item._isTopicCandidate
-          ? Math.max(item.relevance_score, 0.35) // topic candidates get minimum 0.35
-          : item.local_score > 0
-            ? Math.min(item.local_score / 30, 1)
-            : item.relevance_score,
+        relevance_score: item.local_score > 0
+          ? Math.min(item.local_score / 30, 1)
+          : item.relevance_score,
       }));
 
-    // Only return if rescored has results; otherwise fall through to Tavily fallback
+    // Only return if rescored has results AND covers required entities;
+    // otherwise fall through to Tavily fallback to fill gaps
     if (rescored.length > 0) {
-      return {
-        ok: true,
-        serviceName: "signal_scout_basics",
-        data: {
-          ranked_candidates: rescored,
-          top_candidates: rescored.slice(0, 3).map((r) => r.feed_item_id),
-          quick_relevance_notes: rescored.slice(0, 5).map((r) => r.reason),
-          safe_signal_summary: `[basic] Live RSSHub: ${rescored.length} source(s) found${topicCandidates.length > 0 ? `, ${topicCandidates.length} from topic routes` : ""}.`,
-          retrieval_mode: "rsshub_live",
-          source_strategy: topicResult.candidates.length > 0 && liveResults.length > 0
-            ? "topic_routes_plus_catalog"
-            : topicResult.candidates.length > 0
-              ? "topic_routes"
-              : "catalog",
-          topic_routes_count: topicResult.diagnostics.topic_routes_count,
-          topic_candidates_count: topicResult.candidates.length,
-          live_diagnostics: diagnostics,
-        },
-        safeSummary: `[basic] Live RSSHub: ${rescored.length} source(s) found.`,
-        settled: false,
-        error: null,
-      };
+      // Check if rescored results cover all required primary entities
+      const requiredPrimaryEntities = (primary_entities || [])
+        .filter((e) => e.required)
+        .map((e) => e.canonical.toLowerCase());
+      const coveredEntities = new Set<string>();
+      for (const item of rescored) {
+        const title = (item.title || "").toLowerCase();
+        const summary = (item.summary || "").toLowerCase();
+        const url = (item.source_url || "").toLowerCase();
+        const combined = `${title} ${summary} ${url}`;
+        for (const entity of requiredPrimaryEntities) {
+          if (matchesExactPhrase(combined, entity)) coveredEntities.add(entity);
+        }
+      }
+      const missingEntities = requiredPrimaryEntities.filter(
+        (e) => !coveredEntities.has(e)
+      );
+
+      // Check aspect coverage using shared computeAspectCoverage
+      const rescoredTexts = rescored.map((r) => `${r.title || ""} ${r.summary || ""}`);
+      const aspectCoverage = computeAspectCoverage(rescoredTexts, requestedAspects);
+      const missingAspectKeys = aspectCoverage.missing;
+
+      // Return immediately only when:
+      //   - all required entities covered AND
+      //   - all requested aspects covered
+      if (missingEntities.length === 0 && missingAspectKeys.length === 0) {
+        return {
+          ok: true,
+          serviceName: "signal_scout_basics",
+          data: {
+            ranked_candidates: rescored,
+            top_candidates: rescored.slice(0, 3).map((r) => r.feed_item_id),
+            quick_relevance_notes: rescored.slice(0, 5).map((r) => r.reason),
+            safe_signal_summary: `[basic] Live RSSHub: ${rescored.length} source(s) found${topicCandidates.length > 0 ? `, ${topicCandidates.length} from topic routes` : ""}.`,
+            retrieval_mode: "rsshub_live",
+            source_strategy: topicResult.candidates.length > 0 && liveResults.length > 0
+              ? "topic_routes_plus_catalog"
+              : topicResult.candidates.length > 0
+                ? "topic_routes"
+                : "catalog",
+            topic_routes_count: topicResult.diagnostics.topic_routes_count,
+            topic_candidates_count: topicResult.candidates.length,
+            live_diagnostics: diagnostics,
+          },
+          safeSummary: `[basic] Live RSSHub: ${rescored.length} source(s) found.`,
+          settled: false,
+          error: null,
+        };
+      }
+      // Entities or aspects missing: log and fall through to Tavily fallback
+      console.log(JSON.stringify({
+        log: "[signal_scout_basics] coverage_gap",
+        rescored_count: rescored.length,
+        required_entities: requiredPrimaryEntities,
+        covered_entities: [...coveredEntities],
+        missing_entities: missingEntities,
+        requested_aspects: requestedAspects,
+        covered_aspects: aspectCoverage.covered,
+        missing_aspects: missingAspectKeys,
+        fallback_reason: missingEntities.length > 0
+          ? "Tavily fallback triggered due to entity coverage gap"
+          : "Tavily fallback triggered due to aspect coverage gap",
+      }));
     }
-    // rescored.length === 0: fall through to Tavily fallback below
+    // rescored.length === 0 or entities missing: fall through to Tavily fallback below
   }
 
-  // ── Step 2b: Tavily fallback for AI/Crypto when RSSHub returns 0 ──
+  // ── Step 2b: Tavily fallback for AI/Crypto when RSSHub returns 0 or has coverage gaps ──
   // Check after ALL RSSHub filtering (merged + rescored) to catch cases where
-  // merged had items but they were all filtered out by scoring/domain guards.
+  // merged had items but they were all filtered out by scoring/domain guards,
+  // or rescored had items but didn't cover all required entities.
   const hasRelevantTopic = queryHasAiTopic || queryHasCryptoTopic;
   if (hasRelevantTopic) {
     const tavilyEnabled = process.env.PAYLABS_TAVILY_ENABLED === "true";

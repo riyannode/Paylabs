@@ -33,6 +33,11 @@ import {
   FIXED_FEES_USDC,
 } from "./quote-engine";
 import { randomUUID } from "node:crypto";
+import {
+  extractQueryRequirements,
+  getRequestedAspectKeys,
+  projectRequiredSubjects,
+} from "../sources/query-requirements";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -87,6 +92,10 @@ export interface LockedOrchestrationParams {
 export interface LockedOrchestrationResult {
   output: OrchestratorOutput;
   _lockedPlan: ExecutionPlan;
+  /** Internal RAG evidence result — not exposed publicly */
+  _ragEvidence?: import("../rag/types").EvidenceRetrievalResult;
+  /** Internal RAG evidence pack — coverage-aware selection for synthesis */
+  _ragEvidencePack?: import("../rag/types").EvidencePack;
 }
 
 // ─── Reconstruct ExecutionPlan from preflight trace ──────────
@@ -351,6 +360,7 @@ export async function executeLockedMacroNodePipeline(
   // ── Source context resolution (mirrors inline/route.ts lines 545-616) ──
   let sourceContext: import("../sources/types").SourceContext | undefined;
   let serviceRetrievalMode: string | undefined;
+  let retrievalContextForEvidence: import("../sources/types").RetrievalContext | undefined;
   const discoveryMacroResult = macroNodeResults["discovery_planner"];
 
   if (discoveryMacroResult) {
@@ -379,20 +389,16 @@ export async function executeLockedMacroNodePipeline(
     if (rankedCandidates.length > 0) {
       try {
         const { resolveSources } = await import("../sources/source-resolver");
-        const normalizedGoal = brainData
-          ? String(brainData.normalized_goal || "")
-          : "";
 
-        let entityTerms =
-          (dData.entityTerms as string[]) ||
-          (dData.entity_terms as string[]) ||
-          [];
-        // Phase 3A: extract structured fields from QB output
-        let primaryEntities: Array<{ text: string; canonical: string; type: string; required: boolean }> = [];
-        let secondaryEntities: Array<{ text: string; canonical: string; type: string; required: boolean }> = [];
-        let negativeEntities: string[] = [];
+        // Use canonical retrievalContext from Discovery Planner output.
+        // This is the single source of truth for retrieval parameters.
+        const retrievalContext = dData.retrievalContext as import("../sources/types").RetrievalContext | undefined;
 
-        if (entityTerms.length === 0) {
+        // Capture for evidence retrieval (used after source resolution)
+        retrievalContextForEvidence = retrievalContext;
+
+        // Backward compat: extract from serviceEvaluations if retrievalContext missing
+        if (!retrievalContext) {
           const childEvals = dData.serviceEvaluations as Array<{
             serviceName: string;
             output?: Record<string, unknown>;
@@ -402,39 +408,72 @@ export async function executeLockedMacroNodePipeline(
               (e) => e.serviceName === "query_builder" && e.output,
             );
             if (qbEval?.output) {
-              entityTerms =
-                (qbEval.output.entity_terms as string[]) ||
-                (qbEval.output.entityTerms as string[]) ||
-                [];
+              // Build a retrievalContext from QB output as fallback
+              const queryRequirements = extractQueryRequirements(userGoal);
+              const primaryEntities = projectRequiredSubjects(queryRequirements);
+              const requestedAspects = getRequestedAspectKeys(queryRequirements);
+              const rcFallback: import("../sources/types").RetrievalContext = {
+                originalGoal: userGoal,
+                normalizedGoal: String(brainData?.normalized_goal || userGoal),
+                intentType: "unknown",
+                primaryEntities,
+                secondaryEntities: (qbEval.output.secondary_entities as import("../sources/types").RetrievalContext["secondaryEntities"]) || [],
+                lockedPhrases: (qbEval.output.locked_phrases as string[]) || [],
+                negativeEntities: (qbEval.output.negative_entities as string[]) || [],
+                topics: (qbEval.output.topics as string[]) || [],
+                requestedAspects,
+                queryRequirements,
+                entityTerms: (qbEval.output.entity_terms as string[]) || [],
+                expandedQueries: (qbEval.output.expanded_queries as string[]) || [],
+                negativeFilters: (qbEval.output.negative_filters as string[]) || [],
+                sourcePreferences: (qbEval.output.source_preferences as string[]) || [],
+              };
+              (dData as Record<string, unknown>).retrievalContext = rcFallback;
             }
           }
         }
 
-        // Extract structured fields from QB output (always, even if entityTerms was found directly)
-        {
-          const childEvals = dData.serviceEvaluations as Array<{
-            serviceName: string;
-            output?: Record<string, unknown>;
-          }> | undefined;
-          if (childEvals) {
-            const qbEval = childEvals.find(
-              (e) => e.serviceName === "query_builder" && e.output,
-            );
-            if (qbEval?.output) {
-              primaryEntities = (qbEval.output.primary_entities as typeof primaryEntities) || [];
-              secondaryEntities = (qbEval.output.secondary_entities as typeof secondaryEntities) || [];
-              negativeEntities = (qbEval.output.negative_entities as string[]) || [];
-            }
-          }
+        if (!(dData as Record<string, unknown>).retrievalContext) {
+          const queryRequirements = extractQueryRequirements(userGoal);
+          const primaryEntities = projectRequiredSubjects(queryRequirements);
+          const requestedAspects = getRequestedAspectKeys(queryRequirements);
+          (dData as Record<string, unknown>).retrievalContext = {
+            originalGoal: userGoal,
+            normalizedGoal: String(brainData?.normalized_goal || userGoal),
+            intentType: "unknown",
+            primaryEntities,
+            secondaryEntities: [],
+            lockedPhrases: [],
+            negativeEntities: [],
+            topics: [],
+            requestedAspects,
+            queryRequirements,
+            entityTerms: primaryEntities.flatMap((entity) => [entity.canonical, entity.text]).slice(0, 15),
+            expandedQueries: [],
+            negativeFilters: [],
+            sourcePreferences: [],
+          } satisfies import("../sources/types").RetrievalContext;
         }
+
+        const rc = dData.retrievalContext as import("../sources/types").RetrievalContext | undefined;
+        // After canonical rc is resolved, capture for evidence retrieval (item 8)
+        // This ensures fallback runs also get the correct retrieval context
+        if (rc) retrievalContextForEvidence = rc;
+        const resolvedNormalizedGoal = rc?.normalizedGoal
+          || (brainData ? String(brainData.normalized_goal || "") : "");
 
         const resolverResult = await resolveSources({
           rankedCandidates,
-          normalizedGoal,
-          entityTerms,
-          primaryEntities,
-          secondaryEntities,
-          negativeEntities,
+          retrievalContext: rc,
+          // Individual fields as fallback for backward compat
+          normalizedGoal: resolvedNormalizedGoal,
+          entityTerms: rc?.entityTerms || [],
+          primaryEntities: rc?.primaryEntities || [],
+          secondaryEntities: rc?.secondaryEntities || [],
+          negativeEntities: rc?.negativeEntities || [],
+          lockedPhrases: rc?.lockedPhrases || [],
+          topics: rc?.topics || [],
+          requestedAspects: rc?.requestedAspects || [],
         });
         if (resolverResult.ok) {
           sourceContext = resolverResult.sourceContext;
@@ -450,8 +489,8 @@ export async function executeLockedMacroNodePipeline(
             const _retrievalModeBefore = sourceContext.retrieval_mode;
             try {
               const { detectTopics } = await import("../rsshub/topic-routes");
-              const topics = detectTopics(normalizedGoal, entityTerms);
-              const hasAiOrCrypto = topics.some((t) => t.category === "ai" || t.category === "crypto");
+              const detectedTopics = detectTopics(resolvedNormalizedGoal, rc?.entityTerms || []);
+              const hasAiOrCrypto = detectedTopics.some((t) => t.category === "ai" || t.category === "crypto");
 
               if (hasAiOrCrypto) {
                 const { isTavilyEnabled, fetchTavilyLiveSources } = await import(
@@ -460,10 +499,10 @@ export async function executeLockedMacroNodePipeline(
                 const _tavilyEnabled = isTavilyEnabled();
 
                 if (_tavilyEnabled) {
-                  const primaryTopic = topics.find((t) => t.subcategory) || topics[0];
+                  const primaryTopic = detectedTopics.find((t) => t.subcategory) || detectedTopics[0];
                   const tavilyResult = await fetchTavilyLiveSources({
-                    userGoal: normalizedGoal,
-                    entityTerms,
+                    userGoal: resolvedNormalizedGoal,
+                    entityTerms: rc?.entityTerms || [],
                     topicCategory: primaryTopic.category,
                     topicSubcategory: primaryTopic.subcategory,
                     callerTag: "locked_orchestration",
@@ -486,32 +525,50 @@ export async function executeLockedMacroNodePipeline(
                   }));
 
                   if (tavilyResult.candidates.length > 0) {
-                    const tavilySources = tavilyResult.candidates.map((c) => ({
+                    // Route Tavily candidates through canonical resolveSources()
+                    const tavilyRankedCandidates = tavilyResult.candidates.map((c) => ({
                       feed_item_id: c.feed_item_id,
-                      title: c.title,
-                      url: c.source_url,
-                      domain: c.domain,
-                      summary: c.summary,
-                      author: c.author,
-                      published_at: c.published_at,
-                      route_path: c.route_path,
-                      trust_status: "unverified" as const,
-                      claim_status: "unclaimed" as const,
                       rank: c.rank,
                       relevance_score: c.relevance_score,
+                      // Preserve full live candidate metadata for enrichRankedCandidates
                       source_kind: "tavily_live" as const,
                       provider: "tavily" as const,
-                      reason: c.reason,
+                      source_url: c.source_url || "",
+                      title: c.title || "",
+                      domain: c.domain || null,
+                      summary: c.summary || "",
+                      author: c.author || "",
+                      published_at: c.published_at || null,
+                      route_path: c.route_path || null,
+                      reason: c.reason || "",
                     }));
-
-                    sourceContext = {
-                      sources_used: tavilySources,
-                      source_selection_summary: `RSSHub returned 0 ${primaryTopic.category} sources. Tavily web search found ${tavilySources.length} link(s).`,
-                      source_confidence: 0.50,
-                      source_count: tavilySources.length,
-                      retrieval_mode: "rsshub_empty_tavily_live",
-                      source_strategy: "tavily_links_only_after_rsshub_empty",
-                    };
+                    const tavilyResolverResult = await resolveSources({
+                      rankedCandidates: tavilyRankedCandidates,
+                      retrievalContext: rc,
+                      normalizedGoal: resolvedNormalizedGoal,
+                      entityTerms: rc?.entityTerms || [],
+                      primaryEntities: rc?.primaryEntities || [],
+                      secondaryEntities: rc?.secondaryEntities || [],
+                      negativeEntities: rc?.negativeEntities || [],
+                      lockedPhrases: rc?.lockedPhrases || [],
+                      topics: rc?.topics || [],
+                      requestedAspects: rc?.requestedAspects || [],
+                    });
+                    if (tavilyResolverResult.ok && tavilyResolverResult.sourceContext.source_count > 0) {
+                      sourceContext = tavilyResolverResult.sourceContext;
+                      sourceContext.retrieval_mode = "rsshub_empty_tavily_live";
+                      sourceContext.source_strategy = "tavily_resolved";
+                    } else {
+                      // Canonical resolver rejected all Tavily — return what we have
+                      sourceContext = {
+                        sources_used: [],
+                        source_selection_summary: `RSSHub returned 0 ${primaryTopic.category} sources. Tavily found ${tavilyResult.candidates.length} candidates but none passed canonical relevance.`,
+                        source_confidence: 0,
+                        source_count: 0,
+                        retrieval_mode: "rsshub_empty_tavily_live",
+                        source_strategy: "tavily_no_pass",
+                      };
+                    }
                   }
                 }
               }
@@ -537,30 +594,14 @@ export async function executeLockedMacroNodePipeline(
     } else if (serviceRetrievalMode) {
       // No ranked candidates — RSSHub returned 0.
       // Still try Tavily fallback for AI/Crypto topics.
-      const normalizedGoal = brainData
-        ? String(brainData.normalized_goal || "")
-        : "";
-      let entityTerms =
-        (dData.entityTerms as string[]) ||
-        (dData.entity_terms as string[]) ||
-        [];
-      if (entityTerms.length === 0) {
-        const childEvals = dData.serviceEvaluations as Array<{
-          serviceName: string;
-          output?: Record<string, unknown>;
-        }> | undefined;
-        if (childEvals) {
-          const qbEval = childEvals.find(
-            (e) => e.serviceName === "query_builder" && e.output,
-          );
-          if (qbEval?.output) {
-            entityTerms =
-              (qbEval.output.entity_terms as string[]) ||
-              (qbEval.output.entityTerms as string[]) ||
-              [];
-          }
-        }
-      }
+      // Use canonical retrievalContext if available
+      const { resolveSources: resolveSources2 } = await import("../sources/source-resolver");
+      const rc2 = dData.retrievalContext as import("../sources/types").RetrievalContext | undefined;
+      const normalizedGoal2 = rc2?.normalizedGoal
+        || (brainData ? String(brainData.normalized_goal || "") : "");
+
+      // Capture for evidence retrieval (used after source resolution)
+      if (rc2) retrievalContextForEvidence = rc2;
 
       sourceContext = {
         sources_used: [],
@@ -575,8 +616,8 @@ export async function executeLockedMacroNodePipeline(
       const _tavilyDebugEnabled0 = process.env.PAYLABS_TAVILY_DEBUG === "true";
       try {
         const { detectTopics } = await import("../rsshub/topic-routes");
-        const topics = detectTopics(normalizedGoal, entityTerms);
-        const hasAiOrCrypto = topics.some((t) => t.category === "ai" || t.category === "crypto");
+        const detectedTopics2 = detectTopics(normalizedGoal2, rc2?.entityTerms || []);
+        const hasAiOrCrypto = detectedTopics2.some((t) => t.category === "ai" || t.category === "crypto");
 
         if (hasAiOrCrypto) {
           const { isTavilyEnabled, fetchTavilyLiveSources } = await import(
@@ -585,10 +626,10 @@ export async function executeLockedMacroNodePipeline(
           const _tavilyEnabled0 = isTavilyEnabled();
 
           if (_tavilyEnabled0) {
-            const primaryTopic = topics.find((t) => t.subcategory) || topics[0];
+            const primaryTopic = detectedTopics2.find((t) => t.subcategory) || detectedTopics2[0];
             const tavilyResult = await fetchTavilyLiveSources({
-              userGoal: normalizedGoal,
-              entityTerms,
+              userGoal: normalizedGoal2,
+              entityTerms: rc2?.entityTerms || [],
               topicCategory: primaryTopic.category,
               topicSubcategory: primaryTopic.subcategory,
               callerTag: "locked_orchestration_empty",
@@ -611,32 +652,49 @@ export async function executeLockedMacroNodePipeline(
             }));
 
             if (tavilyResult.candidates.length > 0) {
-              const tavilySources = tavilyResult.candidates.map((c) => ({
+              // Route Tavily candidates through canonical resolveSources()
+              const tavilyRankedCandidates2 = tavilyResult.candidates.map((c) => ({
                 feed_item_id: c.feed_item_id,
-                title: c.title,
-                url: c.source_url,
-                domain: c.domain,
-                summary: c.summary,
-                author: c.author,
-                published_at: c.published_at,
-                route_path: c.route_path,
-                trust_status: "unverified" as const,
-                claim_status: "unclaimed" as const,
                 rank: c.rank,
                 relevance_score: c.relevance_score,
+                // Preserve full live candidate metadata for enrichRankedCandidates
                 source_kind: "tavily_live" as const,
                 provider: "tavily" as const,
-                reason: c.reason,
+                source_url: c.source_url || "",
+                title: c.title || "",
+                domain: c.domain || null,
+                summary: c.summary || "",
+                author: c.author || "",
+                published_at: c.published_at || null,
+                route_path: c.route_path || null,
+                reason: c.reason || "",
               }));
-
-              sourceContext = {
-                sources_used: tavilySources,
-                source_selection_summary: `RSSHub returned 0 ${primaryTopic.category} sources. Tavily web search found ${tavilySources.length} link(s).`,
-                source_confidence: 0.50,
-                source_count: tavilySources.length,
-                retrieval_mode: "rsshub_empty_tavily_live",
-                source_strategy: "tavily_links_only_after_rsshub_empty",
-              };
+              const tavilyResolverResult2 = await resolveSources2({
+                rankedCandidates: tavilyRankedCandidates2,
+                retrievalContext: rc2,
+                normalizedGoal: normalizedGoal2,
+                entityTerms: rc2?.entityTerms || [],
+                primaryEntities: rc2?.primaryEntities || [],
+                secondaryEntities: rc2?.secondaryEntities || [],
+                negativeEntities: rc2?.negativeEntities || [],
+                lockedPhrases: rc2?.lockedPhrases || [],
+                topics: rc2?.topics || [],
+                requestedAspects: rc2?.requestedAspects || [],
+              });
+              if (tavilyResolverResult2.ok && tavilyResolverResult2.sourceContext.source_count > 0) {
+                sourceContext = tavilyResolverResult2.sourceContext;
+                sourceContext.retrieval_mode = "rsshub_empty_tavily_live";
+                sourceContext.source_strategy = "tavily_resolved";
+              } else {
+                sourceContext = {
+                  sources_used: [],
+                  source_selection_summary: `RSSHub returned 0 ${primaryTopic.category} sources. Tavily found ${tavilyResult.candidates.length} candidates but none passed canonical relevance.`,
+                  source_confidence: 0,
+                  source_count: 0,
+                  retrieval_mode: "rsshub_empty_tavily_live",
+                  source_strategy: "tavily_no_pass",
+                };
+              }
             }
           }
         }
@@ -649,6 +707,52 @@ export async function executeLockedMacroNodePipeline(
           error: tavilyErr instanceof Error ? tavilyErr.message.slice(0, 100) : String(tavilyErr).slice(0, 100),
         });
       }
+    }
+  }
+
+  // ── Evidence retrieval with coverage retry (internal RAG, gated by feature flag) ──
+  let ragEvidence: import("../rag/types").EvidenceRetrievalResult | undefined;
+  try {
+    const { isGroundedAnswerEnabled } = await import("../feature-flags");
+    if (isGroundedAnswerEnabled() && retrievalContextForEvidence && sourceContext) {
+      const { runEvidenceRetrievalWithCoverage } = await import("../rag/evidence-retrieval");
+      ragEvidence = await runEvidenceRetrievalWithCoverage({
+        retrievalContext: retrievalContextForEvidence,
+        initialSources: sourceContext.sources_used || [],
+        delegatedRouteTier: lockedTier,
+      });
+
+      // Safe diagnostic — no raw chunks, no article text
+      console.log(JSON.stringify({
+        log: "[locked_orchestration] evidence_retrieval",
+        stopped_reason: ragEvidence.stoppedReason,
+        total_chunks: ragEvidence.gradedChunks.length,
+        total_sources: ragEvidence.resolvedSources.length,
+        retry_rounds: ragEvidence.retryRounds.length,
+        coverage_entities: `${ragEvidence.coverage.coveredEntities.length}/${ragEvidence.coverage.requiredEntities.length}`,
+        coverage_aspects: `${ragEvidence.coverage.coveredAspects.length}/${ragEvidence.coverage.requiredAspects.length}`,
+      }));
+    }
+  } catch (err: unknown) {
+    // Evidence retrieval failure must not fail the paid run
+    console.warn("[locked_orchestration] evidence retrieval failed", {
+      error: err instanceof Error ? err.message.slice(0, 150) : String(err).slice(0, 150),
+    });
+  }
+
+  // ── Evidence pack (deterministic, internal RAG) ──
+  let ragEvidencePack: import("../rag/types").EvidencePack | undefined;
+  if (ragEvidence) {
+    try {
+      const { buildEvidencePack } = await import("../rag/evidence-pack");
+      ragEvidencePack = buildEvidencePack({
+        retrievalContext: retrievalContextForEvidence!,
+        evidenceRetrieval: ragEvidence,
+      });
+    } catch (err: unknown) {
+      console.warn("[locked_orchestration] evidence pack build failed", {
+        error: err instanceof Error ? err.message.slice(0, 150) : String(err).slice(0, 150),
+      });
     }
   }
 
@@ -667,5 +771,5 @@ export async function executeLockedMacroNodePipeline(
     lockedPlan,
   );
 
-  return { output, _lockedPlan: lockedPlan };
+  return { output, _lockedPlan: lockedPlan, _ragEvidence: ragEvidence, _ragEvidencePack: ragEvidencePack };
 }
