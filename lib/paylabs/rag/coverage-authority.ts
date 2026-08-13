@@ -79,9 +79,10 @@ export function buildBalancedMissingCells(params: {
   requestedAspects: string[];
   coverage: AuthoritativeCoverage;
   priority?: MissingCoverageCell[];
+  attempted?: Set<string>;
   maxCells: number;
 }): MissingCoverageCell[] {
-  const { requiredEntities, requestedAspects, coverage, priority = [], maxCells } = params;
+  const { requiredEntities, requestedAspects, coverage, priority = [], attempted = new Set<string>(), maxCells } = params;
   if (!coverage.comparisonMatrixRequired) return [];
   const missing = new Set(coverage.missingEntityAspectCells.map((cell) => `${cell.entity.toLowerCase()}|${cell.aspect}`));
   const queues = new Map<string, string[]>();
@@ -95,18 +96,23 @@ export function buildBalancedMissingCells(params: {
     seen.add(key);
     ordered.push({ entity, aspect });
   };
-  for (const entity of requiredEntities) add(entity, queues.get(entity.toLowerCase())?.shift() ?? "");
-  while (ordered.length < maxCells) {
-    let added = false;
+  const schedule = (allowAttempted: boolean) => {
     for (const entity of requiredEntities) {
-      const aspect = queues.get(entity.toLowerCase())?.shift();
+      const queue = queues.get(entity.toLowerCase()) ?? [];
+      const aspect = queue.find((candidate) => allowAttempted || !attempted.has(`${entity.toLowerCase()}|${candidate}`));
       if (!aspect) continue;
+      queue.splice(queue.indexOf(aspect), 1);
       add(entity, aspect);
-      added = true;
-      if (ordered.length >= maxCells) break;
+      if (ordered.length >= maxCells) return;
     }
-    if (!added) break;
+  };
+  schedule(false);
+  while (ordered.length < maxCells) {
+    const before = ordered.length;
+    schedule(false);
+    if (ordered.length === before) break;
   }
+  if (ordered.length < maxCells) schedule(true);
   for (const cell of priority) add(cell.entity, cell.aspect);
   return ordered.slice(0, maxCells);
 }

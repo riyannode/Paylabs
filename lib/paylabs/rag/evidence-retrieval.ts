@@ -421,71 +421,32 @@ async function fetchRetryTavilyCandidates(
     const allCandidates: TavilyRetryCandidate[] = [];
     let hadSuccessfulSearch = false;
 
-    for (const query of queries) {
-      try {
-        // Build targeted entityTerms from the query itself
-        // Do NOT prepend generic retrievalContext.entityTerms — that defeats targeting
-        const queryTerms = query
-          .split(/\s+/)
-          .filter((t) => t.length > 2);
-
-        // Detect topic category from the targeted query
-        const { category, subcategory } = detectRetryTopicCategory(
-          query,
-          queryTerms,
-        );
-
-        // Propagate external delegated tier
-        // Do NOT pass internal tier values to Tavily
-        const isExternalAdvanced = delegatedRouteTier === "advanced";
-
-        const result = await fetchTavilyLiveSources({
-          userGoal: query,
-          entityTerms: queryTerms,
-          topicCategory: category,
-          topicSubcategory: subcategory,
-          callerTag,
-          routeTier: isExternalAdvanced ? "advanced" : delegatedRouteTier,
-        });
-
-        // A search is "successful" when Tavily returned a usable response.
-        // error_class null or all_results_filtered = search completed (may have zero results).
-        // tavily_disabled, empty_query, thrown errors = NOT successful.
-        if (
-          result.error_class === "tavily_disabled" ||
-          result.error_class === "empty_query"
-        ) {
-          continue;
-        }
-        // Any other error_class (e.g. network/timeout/API failure from the catch above)
-        // also means the search did not complete successfully.
-        if (result.error_class !== null && result.error_class !== "all_results_filtered") {
-          continue;
-        }
-
-        hadSuccessfulSearch = true;
-
-        allCandidates.push(
-          ...result.candidates.map((c) => ({
-            feed_item_id: c.feed_item_id,
-            title: c.title,
-            publisher: c.publisher,
-            source_kind: "tavily_live" as const,
-            provider: "tavily" as const,
-            source_url: c.source_url || "",
-            domain: c.domain || null,
-            summary: c.summary || "",
-            author: c.author || "",
-            published_at: c.published_at || null,
-            route_path: null as null,
-            reason: c.reason || "",
-            rank: c.rank,
-            relevance_score: c.relevance_score,
-          })),
-        );
-      } catch {
-        // Individual query failure — continue with others
-      }
+    const settled = await Promise.allSettled(queries.map(async (query) => {
+      const queryTerms = query.split(/\s+/).filter((t) => t.length > 2);
+      const { category, subcategory } = detectRetryTopicCategory(query, queryTerms);
+      const isExternalAdvanced = delegatedRouteTier === "advanced";
+      return fetchTavilyLiveSources({
+        userGoal: query,
+        entityTerms: queryTerms,
+        topicCategory: category,
+        topicSubcategory: subcategory,
+        callerTag,
+        routeTier: isExternalAdvanced ? "advanced" : delegatedRouteTier,
+      });
+    }));
+    for (const result of settled) {
+      if (result.status !== "fulfilled") continue;
+      const response = result.value;
+      if (response.error_class === "tavily_disabled" || response.error_class === "empty_query") continue;
+      if (response.error_class !== null && response.error_class !== "all_results_filtered") continue;
+      hadSuccessfulSearch = true;
+      allCandidates.push(...response.candidates.map((c) => ({
+        feed_item_id: c.feed_item_id, title: c.title, publisher: c.publisher,
+        source_kind: "tavily_live" as const, provider: "tavily" as const,
+        source_url: c.source_url || "", domain: c.domain || null, summary: c.summary || "",
+        author: c.author || "", published_at: c.published_at || null, route_path: null as null,
+        reason: c.reason || "", rank: c.rank, relevance_score: c.relevance_score,
+      })));
     }
 
     return {
@@ -573,6 +534,7 @@ export async function runEvidenceRetrievalWithCoverage(params: {
   const internalRouteTier = toInternalTier(delegatedRouteTier);
 
   const deadline = Date.now() + RETRIEVAL_CONFIG.retrievalDeadlineMs;
+  const firstPassDeadline = deadline - 20_000;
 
   // ── Hard-enforce source cap from initial input (item 5) ──
   // Canonical-dedupe initial sources first, then limit to maxTotalSources
@@ -588,6 +550,7 @@ export async function runEvidenceRetrievalWithCoverage(params: {
 
   const allGradedChunks: GradedEvidenceChunk[] = [];
   const allResolvedSources: SourceItem[] = [...dedupedInitialSources];
+  const attemptedCells = new Set<string>();
 
   // Use canonical URL for processedUrls tracking
   const processedUrls = new Set(
@@ -599,18 +562,18 @@ export async function runEvidenceRetrievalWithCoverage(params: {
   let stoppedReason: EvidenceRetrievalResult["stoppedReason"] = "deadline";
 
   // ── First pass: initial sources → documents → chunks → rank → grade ──
-  if (Date.now() < deadline) {
+  if (Date.now() < firstPassDeadline) {
     try {
       const documents = await buildEvidenceDocuments(dedupedInitialSources);
-      if (Date.now() >= deadline) {
+      if (Date.now() >= firstPassDeadline) {
         stoppedReason = "deadline";
       } else {
         const chunks = await chunkEvidenceDocuments(documents);
-        if (Date.now() >= deadline) {
+        if (Date.now() >= firstPassDeadline) {
           stoppedReason = "deadline";
         } else {
           const rankedChunks = await rankEvidenceChunks(retrievalContext, chunks);
-          if (Date.now() >= deadline) {
+          if (Date.now() >= firstPassDeadline) {
             stoppedReason = "deadline";
           } else {
             const gradingResult = await gradeEvidenceChunks({
@@ -677,12 +640,24 @@ export async function runEvidenceRetrievalWithCoverage(params: {
         canonicalRequirements.temporalConstraint,
       )];
     } else {
-      queries = generateTargetedRetryQueries(
-        coverage,
-        retrievalContext.originalGoal,
+      const authority = evaluateAuthoritativeCoverage({
+        requiredEntities: coverage.requiredEntities,
+        requestedAspects: coverage.requiredAspects,
+        comparisonLike: coverage.comparisonLike,
+        rows: coverage.entityAspectCoverage.map((row) => ({ entity: row.entity, coveredAspects: row.coveredAspects })),
+      });
+      const cells = buildBalancedMissingCells({
+        requiredEntities: coverage.requiredEntities,
+        requestedAspects: coverage.requiredAspects,
+        coverage: authority,
+        attempted: attemptedCells,
+        maxCells: RETRIEVAL_CONFIG.maxQueriesPerRound,
+      });
+      queries = cells.map((cell) => appendHardTemporalScope(
+        `${cell.entity} ${humanizeAspect(cell.aspect)}${extractFreshnessSignals(retrievalContext.originalGoal) ? ` ${extractFreshnessSignals(retrievalContext.originalGoal)}` : ""}`,
         canonicalRequirements.temporalConstraint,
-        RETRIEVAL_CONFIG.maxQueriesPerRound,
-      );
+      ));
+      for (const cell of cells) attemptedCells.add(`${cell.entity.toLowerCase()}|${cell.aspect}`);
     }
 
     retryQueries.push(...queries);

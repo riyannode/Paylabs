@@ -72,7 +72,20 @@ const NAMED_SUBJECT_TYPES = new Set<QuerySubjectType>([
 
 const ASPECT_ALIASES: Record<string, string> = {
   "reserve model": "reserve_model",
+  reserve: "reserve_model",
+  "reserve structure": "collateral_structure",
+  "collateral structure": "collateral_structure",
+  issuance: "issuance",
+  "issuance and redemption": "issuance",
   "redemption mechanism": "redemption_mechanism",
+  redemption: "redemption_mechanism",
+  "congestion behavior": "congestion",
+  "scalability approach": "scalability",
+  "scalability approaches": "scalability",
+  "congestion behaviors": "congestion",
+  "security assumption": "security_assumption",
+  "major tradeoff": "major_tradeoff",
+  "major tradeoffs": "major_tradeoff",
   transparency: "transparency",
   "depeg risk": "depeg_risk",
   "counterparty risk": "counterparty_risk",
@@ -218,7 +231,7 @@ function splitCoordinatedDimensions(text: string): string[] {
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
-  value = value.replace(/^their\s+|^the\s+|^major\s+|^respective\s+/i, "");
+  value = value.replace(/^(?:and\s+)?(?:their|the|major|respective|each one|explain)\s+/i, "");
   value = value.replace(/\band\s+how\b.*$/i, "");
   if (!value) return [];
 
@@ -241,6 +254,7 @@ function extractExplicitAspectPhrases(goal: string): string[] {
     /\b(?:differ|differs|differences?)\s+in\s+([^.!?]+)/gi,
 
     /\b(?:regarding|concerning|in terms of|with respect to)\s+(?!how\b)([^.!?]+)/gi,
+    /\bfor\s+(fees?)\b/gi,
     /\b(?:cover|covering)\s+([^.!?]+)/gi,
     /\bexplain\s+(?!how\b)([^.!?]+)/gi,
   ];
@@ -263,7 +277,7 @@ function extractExplicitAspectPhrases(goal: string): string[] {
       const trailingDimensions = comparison[1].slice(secondSubject.length).trim();
       if (
         trailingDimensions
-        && !/^as\b/i.test(trailingDimensions)
+        && !/^(?:as|for)\b/i.test(trailingDimensions)
         && !/^(?:regarding|concerning|in terms of|with respect to)\b/i.test(trailingDimensions)
         && !/\baffects?\b/i.test(trailingDimensions)
       ) {
@@ -315,6 +329,7 @@ function allKnownEntityEntries(): Array<{ canonical: string; aliases: string[]; 
 
 function trimSubjectCandidate(candidate: string): string {
   let value = normalizeText(candidate).trim();
+  value = value.replace(/^\s*and\s+/i, "");
   value = value.replace(/^\s*(?:the|their|its)\s+/i, "");
   value = value.split(/\s+as\s+/i)[0].trim();
   value = value.split(SUBJECT_STOP_WORDS)[0].trim();
@@ -339,7 +354,7 @@ function trimSubjectCandidate(candidate: string): string {
 
 function comparisonSubjectCandidates(goal: string): { comparisonLike: boolean; candidates: string[] } {
   const patterns = [
-    /\bcompare\s+(.+?)\s+(?:and|with)\s+(.+?)(?=[.!?]|$)/i,
+    /\bcompare\s+(.+?)(?=[.!?]|$)/i,
     /\b(?:difference|differences)\s+between\s+(.+?)\s+and\s+(.+?)(?=[.!?]|$)/i,
     /\bhow\s+do\s+(.+?)\s+and\s+(.+?)\s+differ\b/i,
     /\b(.+?)\s+(?:vs\.?|versus)\s+(.+?)(?=[.!?]|$)/i,
@@ -348,16 +363,24 @@ function comparisonSubjectCandidates(goal: string): { comparisonLike: boolean; c
   for (const pattern of patterns) {
     const match = goal.match(pattern);
     if (!match) continue;
-    const left = trimSubjectCandidate(match[1]);
-    const right = trimSubjectCandidate(match[2]);
-    const candidates = [left, right].filter((candidate) => candidate.length > 0);
+    const clause = match[1];
+    const subjectSpan = clause
+      .split(/\s+(?:for|as|regarding|concerning|in terms of|with respect to)\b/i)[0]
+      .replace(/\s+and\s*$/i, "");
+    const candidates = splitSubjectVariants(subjectSpan);
+    if (candidates.length < 2 && match[2]) {
+      candidates.push(trimSubjectCandidate(match[2]));
+    }
     return { comparisonLike: true, candidates };
   }
   return { comparisonLike: false, candidates: [] };
 }
 
 function splitSubjectVariants(candidate: string): string[] {
-  return candidate.split(/\s*\/\s*|\s+or\s+/i).map((part) => part.trim()).filter(Boolean);
+  return candidate
+    .split(/\s*\/\s*|\s+or\s+|\s*,\s*|\s+and\s+/i)
+    .map((part) => trimSubjectCandidate(part))
+    .filter(Boolean);
 }
 
 function resolveSubject(text: string, goal: string): QuerySubjectConstraint {
