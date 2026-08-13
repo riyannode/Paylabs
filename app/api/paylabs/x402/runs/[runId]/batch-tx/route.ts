@@ -194,7 +194,7 @@ export async function GET(
     let gatewayUpdatedAt: string | null = null;
     let gatewayTxHash: string | null = null;
     let gatewayTxHashSource: "official" | "legacy" | null = null;
-    let officialTxHashMalformed = false;
+
 
     try {
       const gwResp = await fetch(
@@ -236,7 +236,17 @@ export async function GET(
           gatewayTxHash = gwData.txHash;
           gatewayTxHashSource = "official";
         }
-        else officialTxHashMalformed = true;
+        else {
+          console.warn("[batch-tx-resolver] malformed top-level Gateway txHash; using legacy fallback", {
+            hasSettlementId: true,
+            txHashType: typeof gwData?.txHash,
+          });
+          const legacyTxHash = gwData?.transaction?.txHash ?? gwData?.transaction;
+          if (isEvmTxHash(legacyTxHash)) {
+            gatewayTxHash = legacyTxHash;
+            gatewayTxHashSource = "legacy";
+          }
+        }
       } else {
         const legacyTxHash = gwData?.transaction?.txHash ?? gwData?.transaction;
         if (isEvmTxHash(legacyTxHash)) {
@@ -309,7 +319,7 @@ export async function GET(
       : "gateway_txhash_field";
 
     // If Gateway didn't expose txHash, scan Arc explorer (paginated)
-    if (!batchTxHash && !officialTxHashMalformed) {
+    if (!batchTxHash) {
       try {
         const updatedAtMs = gatewayUpdatedAt
           ? new Date(gatewayUpdatedAt).getTime()

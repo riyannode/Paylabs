@@ -88,6 +88,9 @@ export async function GET(
     const amount = typeof gwData?.amount === "string" ? gwData.amount : null;
     const officialTxHashPresent = Object.prototype.hasOwnProperty.call(gwData ?? {}, "txHash");
     const officialTxHash = isEvmTxHash(gwData?.txHash) ? gwData.txHash : null;
+    const legacyTxHash = isEvmTxHash(gwData?.transaction?.txHash ?? gwData?.transaction)
+      ? (gwData.transaction?.txHash ?? gwData.transaction)
+      : null;
 
     // ── 2. If not completed/confirmed, return no batch link ──
     const completedStatuses = new Set(["completed", "confirmed"]);
@@ -104,13 +107,19 @@ export async function GET(
     }
 
     // ── 3. Prefer Circle's authoritative top-level txHash mapping. ──
-    let finalHash: string | null = officialTxHash;
+    let finalHash: string | null = officialTxHash || legacyTxHash;
     let bestTs = Infinity;
-    let matchedBy: string | null = officialTxHash ? "gateway_txhash_field" : null;
+    let matchedBy: string | null = officialTxHash
+      ? "gateway_txhash_field"
+      : legacyTxHash
+        ? "gateway_legacy_txhash_field"
+        : null;
 
-    // A non-null malformed official field must not be replaced by an explorer guess.
     if (officialTxHashPresent && gwData?.txHash !== null && !officialTxHash) {
-      return NextResponse.json({ ok: true, settlementId, status: "unresolved", batchTxHash: null, batchExplorerUrl: null, matchedBy: null, updatedAt: new Date().toISOString() });
+      console.warn("[batch-tx-resolver] malformed top-level Gateway txHash; using legacy fallback", {
+        hasSettlementId: true,
+        txHashType: typeof gwData?.txHash,
+      });
     }
 
     if (!finalHash) {
