@@ -20,6 +20,7 @@ const ALLOWED_EXPLORER_HOSTS = new Set([
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EVM_TX_RE = /^0x[a-fA-F0-9]{64}$/;
+const EIP3009_NONCE_RE = /^0x[a-fA-F0-9]{64}$/;
 
 export function isUuid(value: unknown): value is string {
   return typeof value === "string" && UUID_RE.test(value);
@@ -27,6 +28,10 @@ export function isUuid(value: unknown): value is string {
 
 export function isEvmTxHash(value: unknown): value is string {
   return typeof value === "string" && EVM_TX_RE.test(value);
+}
+
+export function isEip3009Nonce(value: unknown): value is string {
+  return typeof value === "string" && EIP3009_NONCE_RE.test(value);
 }
 
 /**

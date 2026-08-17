@@ -193,6 +193,8 @@ export async function GET(
     let gatewayStatus: string;
     let gatewayUpdatedAt: string | null = null;
     let gatewayTxHash: string | null = null;
+    let gatewayTxHashSource: "official" | "legacy" | null = null;
+
 
     try {
       const gwResp = await fetch(
@@ -226,11 +228,31 @@ export async function GET(
         typeof gwData?.status === "string" ? gwData.status.toLowerCase() : "unknown";
       gatewayUpdatedAt =
         typeof gwData?.updatedAt === "string" ? gwData.updatedAt : null;
-      // Some Gateway responses include txHash directly
-      const candidateTx =
-        gwData?.transaction?.txHash ?? gwData?.txHash ?? gwData?.transaction;
-      if (typeof candidateTx === "string" && isEvmTxHash(candidateTx)) {
-        gatewayTxHash = candidateTx;
+      // Circle's official top-level txHash is authoritative. Compatibility
+      // shapes are considered only when the official field is absent/null.
+      const officialTxHashPresent = Object.prototype.hasOwnProperty.call(gwData ?? {}, "txHash");
+      if (officialTxHashPresent && gwData?.txHash !== null) {
+        if (isEvmTxHash(gwData.txHash)) {
+          gatewayTxHash = gwData.txHash;
+          gatewayTxHashSource = "official";
+        }
+        else {
+          console.warn("[batch-tx-resolver] malformed top-level Gateway txHash; using legacy fallback", {
+            hasSettlementId: true,
+            txHashType: typeof gwData?.txHash,
+          });
+          const legacyTxHash = gwData?.transaction?.txHash ?? gwData?.transaction;
+          if (isEvmTxHash(legacyTxHash)) {
+            gatewayTxHash = legacyTxHash;
+            gatewayTxHashSource = "legacy";
+          }
+        }
+      } else {
+        const legacyTxHash = gwData?.transaction?.txHash ?? gwData?.transaction;
+        if (isEvmTxHash(legacyTxHash)) {
+          gatewayTxHash = legacyTxHash;
+          gatewayTxHashSource = "legacy";
+        }
       }
     } catch (e) {
       console.log("[batch-tx-resolver] gateway fetch error", {
@@ -292,7 +314,9 @@ export async function GET(
     }
 
     let batchTxHash: string | null = gatewayTxHash;
-    let matchedBy = "gateway_txhash_field";
+    let matchedBy = gatewayTxHashSource === "legacy"
+      ? "gateway_legacy_txhash_field"
+      : "gateway_txhash_field";
 
     // If Gateway didn't expose txHash, scan Arc explorer (paginated)
     if (!batchTxHash) {
