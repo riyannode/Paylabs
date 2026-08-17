@@ -88,9 +88,6 @@ export async function GET(
     const amount = typeof gwData?.amount === "string" ? gwData.amount : null;
     const officialTxHashPresent = Object.prototype.hasOwnProperty.call(gwData ?? {}, "txHash");
     const officialTxHash = isEvmTxHash(gwData?.txHash) ? gwData.txHash : null;
-    const legacyTxHash = isEvmTxHash(gwData?.transaction?.txHash ?? gwData?.transaction)
-      ? (gwData.transaction?.txHash ?? gwData.transaction)
-      : null;
 
     // ── 2. If not completed/confirmed, return no batch link ──
     const completedStatuses = new Set(["completed", "confirmed"]);
@@ -107,67 +104,65 @@ export async function GET(
     }
 
     // ── 3. Prefer Circle's authoritative top-level txHash mapping. ──
-    let finalHash: string | null = officialTxHash || legacyTxHash;
+    let finalHash: string | null = officialTxHash;
     let bestTs = Infinity;
-    let matchedBy: string | null = officialTxHash
-      ? "gateway_txhash_field"
-      : legacyTxHash
-        ? "gateway_legacy_txhash_field"
-        : null;
+    let matchedBy: string | null = officialTxHash ? "gateway_txhash_field" : null;
 
     if (officialTxHashPresent && gwData?.txHash !== null && !officialTxHash) {
-      console.warn("[batch-tx-resolver] malformed top-level Gateway txHash; using legacy fallback", {
+      console.warn("[batch-tx-resolver] malformed top-level Gateway txHash; using submitBatch timestamp fallback", {
         hasSettlementId: true,
         txHashType: typeof gwData?.txHash,
       });
     }
 
     if (!finalHash) {
+      // Preserve the current-main submitBatch timestamp fallback when the
+      // official top-level Gateway txHash is absent or malformed.
       const settlementUpdatedAtMs = updatedAt ? new Date(updatedAt).getTime() : Date.now();
       try {
-      let nextPage: Record<string, string> | null = null;
+        let nextPage: Record<string, string> | null = null;
 
-      for (let page = 0; page < 10; page++) {
-        let url: string;
-        if (nextPage) {
-          const qs = new URLSearchParams(nextPage).toString();
-          url = `${ARC_EXPLORER}/api/v2/addresses/${GATEWAY_WALLET}/transactions?${qs}`;
-        } else {
-          url = `${ARC_EXPLORER}/api/v2/addresses/${GATEWAY_WALLET}/transactions`;
-        }
+        for (let page = 0; page < 10; page++) {
+          let url: string;
+          if (nextPage) {
+            const qs = new URLSearchParams(nextPage).toString();
+            url = `${ARC_EXPLORER}/api/v2/addresses/${GATEWAY_WALLET}/transactions?${qs}`;
+          } else {
+            url = `${ARC_EXPLORER}/api/v2/addresses/${GATEWAY_WALLET}/transactions`;
+          }
 
-        let resp: Response;
-        try {
-          resp = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-        } catch {
-          break;
-        }
-        if (!resp.ok) break;
+          let resp: Response;
+          try {
+            resp = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+          } catch {
+            break;
+          }
+          if (!resp.ok) break;
 
-        const data = (await resp.json()) as {
-          items: { hash: string; timestamp: string; method: string | null }[];
-          next_page_params: Record<string, string> | null;
-        };
+          const data = (await resp.json()) as {
+            items: { hash: string; timestamp: string; method: string | null }[];
+            next_page_params: Record<string, string> | null;
+          };
 
-        for (const tx of data.items) {
-          if (tx.method === "submitBatch" && isEvmTxHash(tx.hash)) {
-            const txMs = new Date(tx.timestamp).getTime();
-            // Batch is submitted AFTER settlement is marked completed
-            if (txMs >= settlementUpdatedAtMs && (!finalHash || txMs < bestTs)) {
-              finalHash = tx.hash;
-              matchedBy = "submitBatch_timestamp_match";
-              bestTs = txMs;
+          for (const tx of data.items) {
+            if (tx.method === "submitBatch" && isEvmTxHash(tx.hash)) {
+              const txMs = new Date(tx.timestamp).getTime();
+              // Batch is submitted AFTER settlement is marked completed
+              if (txMs >= settlementUpdatedAtMs && (!finalHash || txMs < bestTs)) {
+                finalHash = tx.hash;
+                matchedBy = "submitBatch_timestamp_match";
+                bestTs = txMs;
+              }
             }
           }
-        }
 
-        if (finalHash) break;
-        nextPage = data.next_page_params;
-        if (!nextPage) break;
+          if (finalHash) break;
+          nextPage = data.next_page_params;
+          if (!nextPage) break;
+        }
+      } catch (e: unknown) {
+        console.error("[batch-tx-resolver] explorer scan error:", e instanceof Error ? e.message : e);
       }
-    } catch (e: unknown) {
-      console.error("[batch-tx-resolver] explorer scan error:", e instanceof Error ? e.message : e);
-    }
     }
 
     const batchExplorerUrl = buildTxExplorerUrl(finalHash);
