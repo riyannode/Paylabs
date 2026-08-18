@@ -382,7 +382,10 @@ export default async function DashboardPage() {
     // Preflight / Entry payments
     getRecentPreflightPayments(25),
     // Counts
-    safeCount("paylabs_service_payment_events"),
+    safeCount(
+      "paylabs_service_payment_events",
+      (q) => q.eq("status", "paid").eq("mode", "x402")
+    ),
     safeCount("paylabs_receipts"),
     // Last TX
     getLastTx(),
