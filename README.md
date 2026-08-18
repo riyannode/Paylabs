@@ -112,18 +112,19 @@ PayLabs uses Circle Gateway's `settle()` endpoint directly for standard seller f
 
 PayLabs also ships alongside standalone open-source SDKs for builders working with Arc, Circle Gateway, x402 payments, agent wallets, and batch proof visibility.
 
-All of 4 sdk below is in here [`X402 SDK`](https://github.com/riyannode/arc-x402sdk)
+All 5 SDKs below are indexed here: [`X402 SDK`](https://github.com/riyannode/arc-x402sdk)
 
-These SDKs are reusable companion packages. They are not required to run the PayLabs web app, and each package can be used independently.
+These SDK are reusable companion projects. They are not required to run the PayLabs web app, and each package can be used independently.
 
 | SDK | Purpose | Install |
 |-----|---------|---------|
 | [`x402-batch-codec`](https://github.com/riyannode/x402-batch-codec)  | TypeScript codec for decoding Circle Gateway x402 `submitBatch` transactions on Arc, verifying buyer/seller batch presence, and generating explorer payment proof objects. Codec-only: no signing, no wallet execution, no raw payment headers. | `npm install github:riyannode/x402-batch-codec` |
 | [`x402-batch-codec-py`](https://github.com/riyannode/x402-batch-codec-py) | Python codec for decoding Circle Gateway x402 `submitBatch` transactions on Arc, verifying buyer/seller batch presence, and generating explorer payment proof objects. Codec-only: no signing, no wallet execution, no raw payment headers. | `pip install git+https://github.com/riyannode/x402-batch-codec-py.git` |
-| [`x402-header-agent`](https://github.com/riyannode/x402-header-agent) | TypeScript + native Python SDK for Circle Gateway x402 header payments. Includes buyer/seller helpers, LangChain/CrewAI/custom agent adapters, batch payment helpers, Circle DCW signing, and a dual-role agent wrapper for services that need to receive x402 payments as a seller and spend x402 payments as a buyer. No raw buyer private keys. | `npm install github:riyannode/x402-header-agent` |
+| [`arc-dcw-gateway-kit`](https://github.com/riyannode/arc-dcw-gateway-kit) | TypeScript infrastructure kit for durable per-user Circle DCW + Gateway wallet flows on Arc, including wallet mapping, balances, resumable deposits, withdrawals, persisted idempotency, and ambiguous-outcome recovery. Generalized from the wallet and Gateway lifecycle used in PayLabs. | `git clone https://github.com/riyannode/arc-dcw-gateway-kit.git` |
+| [`x402-header-agent`](https://github.com/riyannode/x402-header-agent) | TypeScript + native Python SDK for Circle Gateway x402 header payments. Includes buyer/seller helpers, LangChain/CrewAI/custom agent adapters, batch payment helpers, Circle DCW signing, and a dual-role agent wrapper for services that need to receive x402 payments as a seller and spend x402 payments as a buyer. No raw buyer private keys. | `npm install github:riyannode/x402-header-agent`<br>`pip install "git+https://github.com/riyannode/x402-header-agent.git#subdirectory=python"` |
 | [`deepagent-x402-kit`](https://github.com/riyannode/deepagent-x402-kit) | Python LangChain / Deep Agents kit for ERC-8004 agent identity on Arc plus optional policy-gated Circle x402 tools. One Circle DCW wallet maps to one ERC-8004 agent identity. | `pip install "git+https://github.com/riyannode/deepagent-x402-kit.git"` |
 
-These packages are currently installed directly from GitHub and are not published to npm/PyPI yet. For reproducible installs, pin a commit SHA.
+These projects are currently installed or checked out directly from GitHub and are not published to npm/PyPI yet. For reproducible installs pinned to specific commit SHAs, see [`INSTALL.md`](https://github.com/riyannode/arc-x402sdk/blob/main/INSTALL.md).
 
 ---
 
