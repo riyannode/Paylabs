@@ -67,6 +67,7 @@ type ReceiptDetail = {
   whyTwoSourcesNeeded: string | null;
   lastBatchExplorerUrl: string | null;
   lastBatchTxHash: string | null;
+  lastSettlementId: string | null;
   displayStatus: DisplayStatus;
   batchStatus: BatchStatus;
   userCostUsdc?: number | null;
@@ -263,6 +264,7 @@ function BatchSection({ detail }: { detail: ReceiptDetail }) {
       </dl>
       <BatchPaymentLink
         runId={detail.discoveryRunId}
+        settlementId={detail.lastSettlementId}
         initialBatchExplorerUrl={detail.lastBatchExplorerUrl}
         initialBatchTxHash={detail.lastBatchTxHash}
         batchStatus={detail.batchStatus}

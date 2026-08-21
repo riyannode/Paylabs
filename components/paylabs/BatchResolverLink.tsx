@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { hrefFromTx } from "@/lib/paylabs/x402/payment-links";
 
 type BatchResolverLinkProps = {
   runId: string;
+  paymentEventId?: string;
   initialBatchExplorerUrl?: string | null;
   initialBatchTxHash?: string | null;
   directExplorerUrl?: string | null;
@@ -17,8 +18,17 @@ type ResolverResult = {
   direct_explorer_url?: string | null;
   batch_tx_hash?: string | null;
   batch_explorer_url?: string | null;
+  batchTxHash?: string | null;
+  batchExplorerUrl?: string | null;
   matched_by?: string | null;
+  matchedBy?: string | null;
 };
+
+function batchLinkTitle(matchedBy: string | null): string {
+  if (matchedBy === "circle_official_txhash") return "Circle-confirmed Gateway batch transaction";
+  if (matchedBy === "legacy_arc_submitBatch_corroborated") return "Gateway batch resolved from on-chain evidence";
+  return "Open the Arc Gateway batch transaction linked to this x402 payment";
+}
 
 /**
  * Map resolver status to user-facing label.
@@ -36,16 +46,16 @@ function statusLabel(status: string | null, batchResolved: boolean): string | nu
     case "queued":
       return "Batch pending";
     case "unresolved":
-      return "Batch tx not found yet";
+      return "Batch pending";
     case "gateway_fetch_failed":
     case "gateway_fetch_error":
       return "Gateway lookup failed";
     case "completed":
     case "confirmed":
     case "settled":
-      return "Batch tx not found yet";
+      return "Batch pending";
     default:
-      return status;
+      return "Batch pending";
   }
 }
 
@@ -61,6 +71,7 @@ function statusLabel(status: string | null, batchResolved: boolean): string | nu
  */
 export default function BatchResolverLink({
   runId,
+  paymentEventId,
   initialBatchExplorerUrl,
   initialBatchTxHash,
   directExplorerUrl,
@@ -73,6 +84,7 @@ export default function BatchResolverLink({
     initialBatchTxHash ?? null,
   );
   const [resolverStatus, setResolverStatus] = useState<string | null>(null);
+  const [matchedBy, setMatchedBy] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
 
   const handleResolverClick = useCallback(async () => {
@@ -80,39 +92,33 @@ export default function BatchResolverLink({
     setFetching(true);
     try {
       const res = await fetch(
-        `/api/paylabs/x402/runs/${encodeURIComponent(runId)}/batch-tx`,
+        paymentEventId
+          ? `/api/paylabs/x402/payment-events/${encodeURIComponent(paymentEventId)}/batch-tx`
+          : `/api/paylabs/x402/runs/${encodeURIComponent(runId)}/batch-tx`,
         { cache: "no-store" },
       );
       if (!res.ok) return;
       const data: ResolverResult = await res.json();
       setResolverStatus(data.status ?? null);
-      if (data.batch_explorer_url && data.batch_tx_hash) {
-        setBatchUrl(data.batch_explorer_url);
-        setBatchHash(data.batch_tx_hash);
+      setMatchedBy(data.matched_by ?? data.matchedBy ?? null);
+      const resolvedBatchUrl = data.batch_explorer_url ?? data.batchExplorerUrl;
+      const resolvedBatchHash = data.batch_tx_hash ?? data.batchTxHash;
+      if (resolvedBatchUrl && resolvedBatchHash) {
+        setBatchUrl(resolvedBatchUrl);
+        setBatchHash(resolvedBatchHash);
       }
     } catch {
       // silent — dashboard stays quiet
     } finally {
       setFetching(false);
     }
-  }, [runId, fetching]);
+  }, [runId, paymentEventId, fetching]);
 
   // Validate URLs against explorer allowlist via shared helper
   const directHref = hrefFromTx(directExplorerUrl, directTxHash);
   const batchHref = hrefFromTx(batchUrl, batchHash);
   const label = statusLabel(resolverStatus, !!batchHref);
 
-  // Auto-trigger resolve on mount if not yet resolved, with random jitter
-  // (0-3s) so many pending rows on the same page don't all fire at once.
-  useEffect(() => {
-    if (batchHref) return;
-    const delay = Math.random() * 3000;
-    const timer = setTimeout(() => {
-      void handleResolverClick();
-    }, delay);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   return (
     <div
@@ -170,6 +176,8 @@ export default function BatchResolverLink({
       {batchHref && (
         <a
           href={batchHref}
+          title={batchLinkTitle(matchedBy)}
+          aria-label={`${batchLinkTitle(matchedBy)} ↗️`}
           target="_blank"
           rel="noopener noreferrer"
           style={{
@@ -178,19 +186,21 @@ export default function BatchResolverLink({
             whiteSpace: "nowrap",
           }}
         >
-          Batch payment ↗
+          Batch payment ↗️
         </a>
       )}
 
       {/* Status text */}
-      {!batchHref && label && (
+      {!batchHref && (label || resolverStatus || resolverStatus === null) && (
         <span
+          title="Waiting for the on-chain Gateway batch transaction"
+          aria-label="paid Batch pending. Waiting for the on-chain Gateway batch transaction"
           style={{
             fontSize: 10,
             color: "var(--muted, #888)",
           }}
         >
-          {label}
+          {label || "Batch pending"}
         </span>
       )}
     </div>
