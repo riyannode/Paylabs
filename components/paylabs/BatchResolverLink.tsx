@@ -26,7 +26,7 @@ type ResolverResult = {
 };
 
 function batchLinkTitle(matchedBy: string | null): string {
-  if (matchedBy === "circle_official_txhash") return "Circle-confirmed Gateway batch transaction";
+  if (matchedBy === "circle_official_txhash") return "Circle-linked Gateway batch transaction";
   if (matchedBy === "legacy_arc_submitBatch_corroborated") return "Gateway batch resolved from on-chain evidence";
   return "Open the Arc Gateway batch transaction linked to this x402 payment";
 }
@@ -51,6 +51,8 @@ function statusLabel(status: string | null, batchResolved: boolean): string | nu
     case "gateway_fetch_failed":
     case "gateway_fetch_error":
       return "Gateway lookup failed";
+    case "failed":
+      return "Batch unavailable";
     case "completed":
     case "confirmed":
     case "settled":

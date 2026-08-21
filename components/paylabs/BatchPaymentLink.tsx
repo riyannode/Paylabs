@@ -29,6 +29,7 @@ function batchStatusLabel(status?: string | null, fallback?: BatchStatus): strin
   if (status === "gateway_fetch_failed" || status === "gateway_fetch_error") {
     return "Batch lookup unavailable";
   }
+  if (status === "failed") return "Batch unavailable";
   if (status === "missing_settlement_id") return "Batch pending";
   if (status === "unresolved" || status === "completed" || status === "confirmed" || status === "settled") {
     return "Batch pending";
