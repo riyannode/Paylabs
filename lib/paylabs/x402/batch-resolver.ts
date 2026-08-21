@@ -162,15 +162,6 @@ export async function persistSettlementBatch(settlementId: string, batchTxHash: 
   ]);
 }
 
-export async function clearSettlementBatch(settlementId: string): Promise<void> {
-  const db = supabaseAdmin();
-  await Promise.all([
-    db.from("paylabs_service_payment_events").update({ batch_tx_hash: null, batch_explorer_url: null }).eq("settlement_id", settlementId),
-    db.from("paylabs_run_events").update({ batch_tx_hash: null, batch_explorer_url: null }).eq("settlement_id", settlementId),
-    db.from("paylabs_receipts").update({ last_batch_tx_hash: null, last_batch_explorer_url: null }).eq("last_settlement_id", settlementId),
-  ]);
-}
-
 export async function resolveSettlementBatch(
   settlementId: string,
   options: { persist?: boolean } = {},
@@ -211,7 +202,9 @@ export async function resolveSettlementBatch(
   return {
     ok: true,
     settlementId,
-    status: batchTxHash ? "completed" : "unresolved",
+    // Preserve Circle's transfer lifecycle status. Proof availability is
+    // represented independently by batchTxHash/batchExplorerUrl.
+    status: transfer.status,
     batchTxHash,
     batchExplorerUrl: buildTxExplorerUrl(batchTxHash),
     matchedBy,

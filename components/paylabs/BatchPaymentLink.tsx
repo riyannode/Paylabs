@@ -7,7 +7,6 @@ type BatchStatus = "settled" | "queued" | "pending";
 
 type BatchPaymentLinkProps = {
   runId: string;
-  settlementId?: string | null;
   initialBatchExplorerUrl?: string | null;
   initialBatchTxHash?: string | null;
   batchStatus?: BatchStatus;
@@ -40,7 +39,6 @@ function batchStatusLabel(status?: string | null, fallback?: BatchStatus): strin
 
 export default function BatchPaymentLink({
   runId,
-  settlementId,
   initialBatchExplorerUrl,
   initialBatchTxHash,
   batchStatus,
@@ -58,9 +56,7 @@ export default function BatchPaymentLink({
 
     try {
       const res = await fetch(
-        settlementId
-          ? `/api/paylabs/x402/batch-tx/${encodeURIComponent(settlementId)}`
-          : `/api/paylabs/x402/runs/${encodeURIComponent(runId)}/batch-tx`,
+        `/api/paylabs/runs/${encodeURIComponent(runId)}/receipt/batch-tx`,
         {
         cache: "no-store",
         },
@@ -85,7 +81,7 @@ export default function BatchPaymentLink({
     } finally {
       setChecking(false);
     }
-  }, [checking, href, runId, settlementId]);
+  }, [checking, href, runId]);
 
   if (href) {
     return (

@@ -6,6 +6,7 @@ import { hrefFromTx } from "@/lib/paylabs/x402/payment-links";
 type BatchResolverLinkProps = {
   runId: string;
   paymentEventId?: string;
+  paymentScope?: "preflight";
   initialBatchExplorerUrl?: string | null;
   initialBatchTxHash?: string | null;
   directExplorerUrl?: string | null;
@@ -72,6 +73,7 @@ function statusLabel(status: string | null, batchResolved: boolean): string | nu
 export default function BatchResolverLink({
   runId,
   paymentEventId,
+  paymentScope,
   initialBatchExplorerUrl,
   initialBatchTxHash,
   directExplorerUrl,
@@ -94,7 +96,9 @@ export default function BatchResolverLink({
       const res = await fetch(
         paymentEventId
           ? `/api/paylabs/x402/payment-events/${encodeURIComponent(paymentEventId)}/batch-tx`
-          : `/api/paylabs/x402/runs/${encodeURIComponent(runId)}/batch-tx`,
+          : paymentScope === "preflight"
+            ? `/api/paylabs/runs/${encodeURIComponent(runId)}/preflight-batch-tx`
+            : `/api/paylabs/x402/runs/${encodeURIComponent(runId)}/batch-tx`,
         { cache: "no-store" },
       );
       if (!res.ok) return;
@@ -112,7 +116,7 @@ export default function BatchResolverLink({
     } finally {
       setFetching(false);
     }
-  }, [runId, paymentEventId, fetching]);
+  }, [runId, paymentEventId, paymentScope, fetching]);
 
   // Validate URLs against explorer allowlist via shared helper
   const directHref = hrefFromTx(directExplorerUrl, directTxHash);

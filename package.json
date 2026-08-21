@@ -9,8 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test:office": "tsx scripts/test-office.ts",
-    "repair:x402-batch": "tsx scripts/repair-x402-batch-visibility.ts"
+    "test:office": "tsx scripts/test-office.ts"
   },
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "^10.6.0",

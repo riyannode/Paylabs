@@ -574,6 +574,7 @@ export default async function DashboardPage() {
                       <BatchResolverLink
                         runId={r.discovery_run_id}
                         paymentEventId={r.source === "service" ? r.id : undefined}
+                        paymentScope={r.source === "preflight" ? "preflight" : undefined}
                         initialBatchExplorerUrl={r.batch_explorer_url}
                         initialBatchTxHash={r.batch_tx_hash}
                         directExplorerUrl={r.explorer_url}

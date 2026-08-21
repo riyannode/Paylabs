@@ -28,7 +28,6 @@ const RECEIPT_SAFE_FIELDS = [
   "why_two_sources_needed",
   "last_batch_tx_hash",
   "last_batch_explorer_url",
-  "last_settlement_id",
 ].join(",");
 
 const RECEIPT_LIST_FIELDS = [
@@ -378,7 +377,6 @@ function mapReceiptDetail(
     whyTwoSourcesNeeded: row.why_two_sources_needed ?? null,
     lastBatchTxHash: row.last_batch_tx_hash ?? null,
     lastBatchExplorerUrl: row.last_batch_explorer_url ?? null,
-    lastSettlementId: row.last_settlement_id ?? null,
     displayStatus: displayStatus(row),
     batchStatus: batchStatus(row),
     // Derived from agent_trace.auto_tier_preflight (no DB column)
