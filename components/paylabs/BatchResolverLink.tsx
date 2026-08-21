@@ -197,7 +197,7 @@ export default function BatchResolverLink({
       )}
 
       {/* Status text */}
-      {!batchHref && (label || resolverStatus || resolverStatus === null) && (
+      {!batchHref && resolverStatus !== null && (label || resolverStatus) && (
         <span
           title="Waiting for the on-chain Gateway batch transaction"
           aria-label="paid Batch pending. Waiting for the on-chain Gateway batch transaction"
