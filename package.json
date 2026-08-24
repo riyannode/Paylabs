@@ -12,8 +12,8 @@
     "test:office": "tsx scripts/test-office.ts"
   },
   "dependencies": {
-    "@circle-fin/developer-controlled-wallets": "^10.6.0",
-    "@circle-fin/user-controlled-wallets": "^10.6.0",
+    "@circle-fin/developer-controlled-wallets": "^10.8.0",
+    "@circle-fin/user-controlled-wallets": "^10.8.0",
     "@circle-fin/w3s-pw-web-sdk": "^1.1.11",
     "@circle-fin/x402-batching": "^3.3.0",
     "@langchain/core": "^1.2.0",
