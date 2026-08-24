@@ -601,15 +601,17 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 
 ## Known Limitations / Next Patch
 
-- **Citation & Retrieval Hardening:** Improving citation grounding and retrieval quality through better source coverage, semantic ranking, query expansion, URL normalization, source reliability, retry handling, and broader RSSHub coverage beyond AI and crypto. citation currently focuses on AI and crypto topic categories.
+- **Citation & Retrieval Hardening:** Improving citation grounding and retrieval quality through broader source coverage, semantic ranking, query expansion, URL normalization, source reliability checks, retry handling, and wider RSSHub coverage beyond AI and crypto. Citation coverage currently focuses mainly on AI and crypto topics.
 
-- **Current limitation:** In some cases, the generated LLM answer is factually correct, but the displayed source links may not directly support the final response because answer generation and source discovery currently follow independent pipelines. but The Brain routing and the complete x402 pipeline for each agent are stable and working as expected.
+- **Citation Alignment:** In some cases, the generated LLM answer may be factually correct while the displayed source links do not directly support every claim in the final response, because answer generation and source discovery still follow partially independent pipelines. The Brain routing and current x402 execution flow are functional, but citation alignment remains an active improvement area.
 
-- **Route Check:** x402 fee can settle before Brain/LLM availability is known.
-If Brain/LLM fails afterward, the run fails safely as 504 brain_failed and cannot execute, but the 0.000001 USDC Route Check fee is not refunded.
-Accepted for now because the amount is minimal.
+- **x402 Buyer Hardening:** The current Circle x402 flow is functional and uses real Gateway settlement, but buyer-side validation still needs stricter challenge binding, retry URL validation, and stronger PAYMENT-RESPONSE enforcement before the payment layer is considered fully production-hardened.
 
-- **Wallet:** Login email OTP in backend for UCW and DCW remains due to testing needs, and have so many UCW inline stale and dead code not clean up yet
+- **Post-Payment Recovery:** Settlement metadata and result recovery exist for several paths, but durable recovery for uncertain settlement states is not yet complete. A crash after Circle accepts a payment but before local persistence can still require manual recovery handling. Durable nonce-based reconciliation and stronger idempotency are planned.
+
+- **Route Check:** The x402 Route Check fee can settle before Brain/LLM availability is known. If Brain/LLM fails afterward, the run fails safely as `504 brain_failed` and does not continue execution, but the `0.000001 USDC` Route Check fee is currently not refunded. This is accepted for now because the fee is intentionally minimal.
+
+- **Wallet Cleanup:** Email OTP login remains enabled in the backend for UCW and DCW testing. Some legacy UCW inline paths and stale wallet-related code also remain and are scheduled for cleanup.
 
 ## Runtime Notes
 
