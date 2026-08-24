@@ -18,8 +18,8 @@ importers:
         specifier: ^1.1.11
         version: 1.1.11
       '@circle-fin/x402-batching':
-        specifier: ^3.2.0
-        version: 3.2.0(@x402/core@2.16.0)(@x402/evm@2.16.0(typescript@5.9.3))(viem@2.52.2(typescript@5.9.3)(zod@3.25.76))
+        specifier: ^3.3.0
+        version: 3.3.0(@x402/core@2.23.0)(@x402/evm@2.23.0(typescript@5.9.3))(viem@2.52.2(typescript@5.9.3)(zod@3.25.76))
       '@langchain/core':
         specifier: ^1.2.0
         version: 1.2.0(openai@6.44.0(ws@8.20.1)(zod@3.25.76))(ws@8.20.1)
@@ -45,8 +45,8 @@ importers:
         specifier: ^2.49.4
         version: 2.108.2
       '@x402/core':
-        specifier: ^2.16.0
-        version: 2.16.0
+        specifier: ^2.23.0
+        version: 2.23.0
       cheerio:
         specifier: ^1.0.0
         version: 1.2.0
@@ -154,8 +154,8 @@ packages:
     resolution: {integrity: sha512-EPiIE+Os+atMHUUIodPQz6CSunSAQsClvqxBpxXNPW1CsvdNE5rnyhWDkiik8z53zgiXLtksYo0sek241edO2A==}
     engines: {node: '>=10.0.0'}
 
-  '@circle-fin/x402-batching@3.2.0':
-    resolution: {integrity: sha512-ft+ynAsYIGGQNAeud8v73GKyg1qonycMVqEK8Gt+ATwtrNBikYhfMtO9l7zMZCOTA1hJ1NJOnGWBFUR/gvDHjw==}
+  '@circle-fin/x402-batching@3.3.0':
+    resolution: {integrity: sha512-xEgluhpqdexSrEhQ8nSPzhx6UNbZOybZrmJKZPVNhEQVW1r3IuLROJEDApdLgAI8kb0APm+kAUYOxSFQVSTruw==}
     engines: {node: '>=18'}
     peerDependencies:
       '@x402/core': ^2.3.0
@@ -1338,11 +1338,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@x402/core@2.16.0':
-    resolution: {integrity: sha512-7MjwOEiE6ICAYtOsK9vQl66Ho4jERDuuoRg/No2Nc2GQ7y/M/yu4DJ65LzeBycQE+Qrg2RqQG7KR51tyT+hzjQ==}
+  '@x402/core@2.23.0':
+    resolution: {integrity: sha512-EFeV0nXbTPPe5FXaD6y9vMgqc+k/ujLXCrUPrQXkmHjHyjC3Ir5tTL1e2FPSkx2+GUGzfpt1wVZb36639ygkWw==}
 
-  '@x402/evm@2.16.0':
-    resolution: {integrity: sha512-DGcwATWosIb3hmO/CfWASrn+xbxp7KQyzmMPcIW23XuDjo9YPVRElZWtHBur3euakdM021Hl8SPF1zR0G+W4hw==}
+  '@x402/evm@2.23.0':
+    resolution: {integrity: sha512-Ikaya5c0/qV/pdFRGfGSdlUX3ELZaUgrddsmmXZHPANtIAQ5uFH15+O+9Bt4PqdAXqCuS43WskJ7HgiLn/uW2g==}
 
   abitype@1.2.3:
     resolution: {integrity: sha512-Ofer5QUnuUdTFsBRwARMoWKOH1ND5ehwYhJ3OJ/BQO+StkwQjHw0XyVh4vDttzHB7QOFhPHa/o413PJ82gU/Tg==}
@@ -3043,12 +3043,12 @@ snapshots:
     transitivePeerDependencies:
       - '@react-native-async-storage/async-storage'
 
-  '@circle-fin/x402-batching@3.2.0(@x402/core@2.16.0)(@x402/evm@2.16.0(typescript@5.9.3))(viem@2.52.2(typescript@5.9.3)(zod@3.25.76))':
+  '@circle-fin/x402-batching@3.3.0(@x402/core@2.23.0)(@x402/evm@2.23.0(typescript@5.9.3))(viem@2.52.2(typescript@5.9.3)(zod@3.25.76))':
     dependencies:
-      '@x402/core': 2.16.0
+      '@x402/core': 2.23.0
       viem: 2.52.2(typescript@5.9.3)(zod@3.25.76)
     optionalDependencies:
-      '@x402/evm': 2.16.0(typescript@5.9.3)
+      '@x402/evm': 2.23.0(typescript@5.9.3)
 
   '@emnapi/core@1.10.0':
     dependencies:
@@ -4232,13 +4232,13 @@ snapshots:
   '@unrs/resolver-binding-win32-x64-msvc@1.12.2':
     optional: true
 
-  '@x402/core@2.16.0':
+  '@x402/core@2.23.0':
     dependencies:
       zod: 3.25.76
 
-  '@x402/evm@2.16.0(typescript@5.9.3)':
+  '@x402/evm@2.23.0(typescript@5.9.3)':
     dependencies:
-      '@x402/core': 2.16.0
+      '@x402/core': 2.23.0
       viem: 2.52.2(typescript@5.9.3)(zod@3.25.76)
       zod: 3.25.76
     transitivePeerDependencies:
