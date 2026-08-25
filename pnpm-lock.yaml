@@ -9,17 +9,17 @@ importers:
   .:
     dependencies:
       '@circle-fin/developer-controlled-wallets':
-        specifier: ^10.6.0
-        version: 10.6.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
+        specifier: ^10.8.0
+        version: 10.8.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
       '@circle-fin/user-controlled-wallets':
-        specifier: ^10.6.0
-        version: 10.6.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
+        specifier: ^10.8.0
+        version: 10.8.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
       '@circle-fin/w3s-pw-web-sdk':
         specifier: ^1.1.11
         version: 1.1.11
       '@circle-fin/x402-batching':
-        specifier: ^3.2.0
-        version: 3.2.0(@x402/core@2.16.0)(@x402/evm@2.16.0(typescript@5.9.3))(viem@2.52.2(typescript@5.9.3)(zod@3.25.76))
+        specifier: ^3.3.0
+        version: 3.3.0(@x402/core@2.23.0)(@x402/evm@2.23.0(typescript@5.9.3))(viem@2.52.2(typescript@5.9.3)(zod@3.25.76))
       '@langchain/core':
         specifier: ^1.2.0
         version: 1.2.0(openai@6.44.0(ws@8.20.1)(zod@3.25.76))(ws@8.20.1)
@@ -45,8 +45,8 @@ importers:
         specifier: ^2.49.4
         version: 2.108.2
       '@x402/core':
-        specifier: ^2.16.0
-        version: 2.16.0
+        specifier: ^2.23.0
+        version: 2.23.0
       cheerio:
         specifier: ^1.0.0
         version: 1.2.0
@@ -133,8 +133,9 @@ packages:
   '@cfworker/json-schema@4.1.1':
     resolution: {integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==}
 
-  '@circle-fin/developer-controlled-wallets@10.6.0':
-    resolution: {integrity: sha512-EVXVaJ1lNRznJ7osyL4DQDm3RQmwLiCyWqr8Rs/m0RsdKwmcykossyLycXeyQZvsj5ExUS8iVDlHzNqUjs5FKg==}
+  '@circle-fin/developer-controlled-wallets@10.8.0':
+    resolution: {integrity: sha512-eOqhUj6H8FrLh0803DAui15a2qikiqX5e4hzlTVAamq7MQnvPfIbTblO4av+wT499ld4+NWXgxKgAUjV1ouwsw==}
+    engines: {node: '>=22'}
     peerDependencies:
       '@solana/codecs-strings': ^2.0.0
       '@solana/kit': ^2.1.0 || ^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0
@@ -147,15 +148,16 @@ packages:
       '@solana/web3.js':
         optional: true
 
-  '@circle-fin/user-controlled-wallets@10.6.0':
-    resolution: {integrity: sha512-aBqAjrIueSQiFaqiL595AG7uJ/K9TrEPSVfeqeV94CSHlpYlnw8ViTjNb+6UbNVLWAUNsYsorcoMH01JQR1LGg==}
+  '@circle-fin/user-controlled-wallets@10.8.0':
+    resolution: {integrity: sha512-V4cD6/D5JUvpTCSSCMZ3F9W/alXHDpihgvuHKXF/2qzpE6+ZJPW8HFuA94ijM65nJKhCtsORdfnZmmV3efJCGQ==}
+    engines: {node: '>=22'}
 
   '@circle-fin/w3s-pw-web-sdk@1.1.11':
     resolution: {integrity: sha512-EPiIE+Os+atMHUUIodPQz6CSunSAQsClvqxBpxXNPW1CsvdNE5rnyhWDkiik8z53zgiXLtksYo0sek241edO2A==}
     engines: {node: '>=10.0.0'}
 
-  '@circle-fin/x402-batching@3.2.0':
-    resolution: {integrity: sha512-ft+ynAsYIGGQNAeud8v73GKyg1qonycMVqEK8Gt+ATwtrNBikYhfMtO9l7zMZCOTA1hJ1NJOnGWBFUR/gvDHjw==}
+  '@circle-fin/x402-batching@3.3.0':
+    resolution: {integrity: sha512-xEgluhpqdexSrEhQ8nSPzhx6UNbZOybZrmJKZPVNhEQVW1r3IuLROJEDApdLgAI8kb0APm+kAUYOxSFQVSTruw==}
     engines: {node: '>=18'}
     peerDependencies:
       '@x402/core': ^2.3.0
@@ -1338,11 +1340,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@x402/core@2.16.0':
-    resolution: {integrity: sha512-7MjwOEiE6ICAYtOsK9vQl66Ho4jERDuuoRg/No2Nc2GQ7y/M/yu4DJ65LzeBycQE+Qrg2RqQG7KR51tyT+hzjQ==}
+  '@x402/core@2.23.0':
+    resolution: {integrity: sha512-EFeV0nXbTPPe5FXaD6y9vMgqc+k/ujLXCrUPrQXkmHjHyjC3Ir5tTL1e2FPSkx2+GUGzfpt1wVZb36639ygkWw==}
 
-  '@x402/evm@2.16.0':
-    resolution: {integrity: sha512-DGcwATWosIb3hmO/CfWASrn+xbxp7KQyzmMPcIW23XuDjo9YPVRElZWtHBur3euakdM021Hl8SPF1zR0G+W4hw==}
+  '@x402/evm@2.23.0':
+    resolution: {integrity: sha512-Ikaya5c0/qV/pdFRGfGSdlUX3ELZaUgrddsmmXZHPANtIAQ5uFH15+O+9Bt4PqdAXqCuS43WskJ7HgiLn/uW2g==}
 
   abitype@1.2.3:
     resolution: {integrity: sha512-Ofer5QUnuUdTFsBRwARMoWKOH1ND5ehwYhJ3OJ/BQO+StkwQjHw0XyVh4vDttzHB7QOFhPHa/o413PJ82gU/Tg==}
@@ -3020,14 +3022,14 @@ snapshots:
 
   '@cfworker/json-schema@4.1.1': {}
 
-  '@circle-fin/developer-controlled-wallets@10.6.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)':
+  '@circle-fin/developer-controlled-wallets@10.8.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)':
     dependencies:
       axios: 1.18.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@circle-fin/user-controlled-wallets@10.6.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)':
+  '@circle-fin/user-controlled-wallets@10.8.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)':
     dependencies:
       axios: 1.18.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
     transitivePeerDependencies:
@@ -3043,12 +3045,12 @@ snapshots:
     transitivePeerDependencies:
       - '@react-native-async-storage/async-storage'
 
-  '@circle-fin/x402-batching@3.2.0(@x402/core@2.16.0)(@x402/evm@2.16.0(typescript@5.9.3))(viem@2.52.2(typescript@5.9.3)(zod@3.25.76))':
+  '@circle-fin/x402-batching@3.3.0(@x402/core@2.23.0)(@x402/evm@2.23.0(typescript@5.9.3))(viem@2.52.2(typescript@5.9.3)(zod@3.25.76))':
     dependencies:
-      '@x402/core': 2.16.0
+      '@x402/core': 2.23.0
       viem: 2.52.2(typescript@5.9.3)(zod@3.25.76)
     optionalDependencies:
-      '@x402/evm': 2.16.0(typescript@5.9.3)
+      '@x402/evm': 2.23.0(typescript@5.9.3)
 
   '@emnapi/core@1.10.0':
     dependencies:
@@ -4232,13 +4234,13 @@ snapshots:
   '@unrs/resolver-binding-win32-x64-msvc@1.12.2':
     optional: true
 
-  '@x402/core@2.16.0':
+  '@x402/core@2.23.0':
     dependencies:
       zod: 3.25.76
 
-  '@x402/evm@2.16.0(typescript@5.9.3)':
+  '@x402/evm@2.23.0(typescript@5.9.3)':
     dependencies:
-      '@x402/core': 2.16.0
+      '@x402/core': 2.23.0
       viem: 2.52.2(typescript@5.9.3)(zod@3.25.76)
       zod: 3.25.76
     transitivePeerDependencies:

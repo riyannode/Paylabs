@@ -12,10 +12,10 @@
     "test:office": "tsx scripts/test-office.ts"
   },
   "dependencies": {
-    "@circle-fin/developer-controlled-wallets": "^10.6.0",
-    "@circle-fin/user-controlled-wallets": "^10.6.0",
+    "@circle-fin/developer-controlled-wallets": "^10.8.0",
+    "@circle-fin/user-controlled-wallets": "^10.8.0",
     "@circle-fin/w3s-pw-web-sdk": "^1.1.11",
-    "@circle-fin/x402-batching": "^3.2.0",
+    "@circle-fin/x402-batching": "^3.3.0",
     "@langchain/core": "^1.2.0",
     "@langchain/langgraph": "^1.4.4",
     "@langchain/openai": "^1.5.0",
@@ -23,7 +23,7 @@
     "@simplewebauthn/server": "^13.3.1",
     "@simplewebauthn/types": "^12.0.0",
     "@supabase/supabase-js": "^2.49.4",
-    "@x402/core": "^2.16.0",
+    "@x402/core": "^2.23.0",
     "cheerio": "^1.0.0",
     "clsx": "^2.1.1",
     "jose": "^6.2.3",
