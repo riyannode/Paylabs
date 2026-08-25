@@ -3,6 +3,38 @@ import { supabaseAdmin } from "@/lib/paylabs/db/server";
 import { isUuid } from "@/lib/paylabs/x402/payment-links";
 import { resolveSettlementBatch } from "@/lib/paylabs/x402/batch-resolver";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Persist only the two manual preflight proof fields, preserving the trace. */
+async function persistPreflightBatchProof(
+  runId: string,
+  trace: Record<string, unknown>,
+  batchTxHash: string | null,
+  batchExplorerUrl: string | null,
+): Promise<Error | null> {
+  const preflight = isRecord(trace.auto_tier_preflight) ? trace.auto_tier_preflight : {};
+  const routingPayment = isRecord(preflight.routing_payment) ? preflight.routing_payment : {};
+  const nextTrace: Record<string, unknown> = {
+    ...trace,
+    auto_tier_preflight: {
+      ...preflight,
+      routing_payment: {
+        ...routingPayment,
+        batch_tx_hash: batchTxHash,
+        batch_explorer_url: batchExplorerUrl,
+      },
+    },
+  };
+
+  const { error } = await supabaseAdmin()
+    .from("paylabs_discovery_runs")
+    .update({ agent_trace: nextTrace })
+    .eq("id", runId);
+  return error ? new Error(error.message) : null;
+}
+
 /** Public preflight adapter: run -> routing settlement -> safe batch metadata. */
 export async function GET(
   _req: NextRequest,
@@ -43,7 +75,16 @@ export async function GET(
     });
   }
 
-  const result = await resolveSettlementBatch(settlementId);
+  const result = await resolveSettlementBatch(settlementId, { persist: false });
+  const persistError = await persistPreflightBatchProof(
+    runId,
+    trace,
+    result.batchTxHash,
+    result.batchExplorerUrl,
+  );
+  if (persistError) {
+    return NextResponse.json({ ok: false, error: "preflight batch proof persistence failed" }, { status: 500 });
+  }
   return NextResponse.json({
     ok: true,
     status: result.status,

@@ -44,8 +44,10 @@ export default function BatchPaymentLink({
   initialBatchTxHash,
   batchStatus,
 }: BatchPaymentLinkProps) {
-  const [batchUrl, setBatchUrl] = useState<string | null>(initialBatchExplorerUrl ?? null);
-  const [batchHash, setBatchHash] = useState<string | null>(initialBatchTxHash ?? null);
+  // Historical cached links are not settlement proof. The receipt resolver
+  // must establish the link for the current settlement before rendering it.
+  const [batchUrl, setBatchUrl] = useState<string | null>(null);
+  const [batchHash, setBatchHash] = useState<string | null>(null);
   const [resolverStatus, setResolverStatus] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
 

@@ -211,7 +211,7 @@ async function getRecentPreflightPayments(limit = 50) {
   const { data } = await supabaseAdmin()
     .from("paylabs_discovery_runs")
     .select(
-      "id, created_at, agent_trace, entry_payment_amount_usdc, entry_payment_status, entry_payment_tx_hash, entry_payment_explorer_url, entry_payment_batch_tx_hash, entry_payment_batch_explorer_url"
+      "id, created_at, agent_trace, entry_payment_amount_usdc, entry_payment_status, entry_payment_settlement_id, entry_payment_tx_hash, entry_payment_explorer_url, entry_payment_batch_tx_hash, entry_payment_batch_explorer_url"
     )
     .not("entry_payment_amount_usdc", "is", null)
     .order("created_at", { ascending: false })
@@ -278,7 +278,7 @@ function normalizePreflightRows(rows: any[]): NormalizedPaymentRow[] {
         explorer_url: r.entry_payment_explorer_url ?? null,
         batch_tx_hash: r.entry_payment_batch_tx_hash ?? null,
         batch_explorer_url: r.entry_payment_batch_explorer_url ?? null,
-        settlement_id: null,
+        settlement_id: r.entry_payment_settlement_id ?? null,
         error: null,
         source: "entry",
         discovery_run_id: r.id,

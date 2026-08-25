@@ -82,10 +82,12 @@ export default function BatchResolverLink({
   directTxHash,
 }: BatchResolverLinkProps) {
   const [batchUrl, setBatchUrl] = useState<string | null>(
-    initialBatchExplorerUrl ?? null,
+    // Historical cached links are not settlement proof. A settlement-scoped
+    // resolver response must establish the link for this row.
+    null,
   );
   const [batchHash, setBatchHash] = useState<string | null>(
-    initialBatchTxHash ?? null,
+    null,
   );
   const [resolverStatus, setResolverStatus] = useState<string | null>(null);
   const [matchedBy, setMatchedBy] = useState<string | null>(null);

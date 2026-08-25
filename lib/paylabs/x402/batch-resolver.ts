@@ -4,7 +4,7 @@ import {
   isEvmTxHash,
   isUuid,
 } from "./payment-links";
-import { decodeBatchTx, buyerInBatch, sellerInBatch } from "./decode-batch";
+import { decodeBatchTx, buyerInBatch, sellerInBatch, type BatchEntry } from "./decode-batch";
 import { usdcDecimalToAtomic } from "./usdc";
 
 const GATEWAY_API = process.env.CIRCLE_GATEWAY_API_URL || "https://gateway-api-testnet.circle.com";
@@ -14,10 +14,16 @@ const EXPECTED_DOMAIN = 26;
 const EXPECTED_USDC = (process.env.PAYLABS_USDC_CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_ARC_USDC_ADDRESS || "0x3600000000000000000000000000000000000000").toLowerCase();
 const MAX_PAGES = 10;
 
+/**
+ * Circle's transfer authorization validity is bounded. Keep the legacy scan
+ * bounded even when an older transfer response has no createdAt field.
+ */
+const LEGACY_MAX_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 const FALLBACK_ELIGIBLE_STATUSES = new Set(["confirmed", "completed"]);
 
 type GatewayTransfer = {
   status: string;
+  createdAt: string | null;
   updatedAt: string | null;
   txHash: string | null;
   fromAddress: string | null;
@@ -42,6 +48,7 @@ function safeGatewayTransfer(data: unknown): GatewayTransfer {
   const row = data as Record<string, unknown> | null;
   return {
     status: typeof row?.status === "string" ? row.status.toLowerCase() : "unknown",
+    createdAt: typeof row?.createdAt === "string" ? row.createdAt : null,
     updatedAt: typeof row?.updatedAt === "string" ? row.updatedAt : null,
     txHash: isEvmTxHash(row?.txHash) ? row.txHash : null,
     fromAddress: typeof row?.fromAddress === "string" ? row.fromAddress : null,
@@ -65,6 +72,12 @@ async function fetchTransfer(settlementId: string): Promise<GatewayTransfer | nu
 
 type ExplorerTx = { hash: string; timestamp: string; method: string | null };
 
+export type CorroboratedLegacyCandidate = {
+  hash: string;
+  buyerEntry: BatchEntry;
+  sellerEntry: BatchEntry;
+};
+
 export function chooseBatchResolution(officialHash: string | null, legacyHash: string | null): {
   hash: string | null;
   matchedBy: BatchResolution["matchedBy"];
@@ -87,8 +100,38 @@ export function legacyCandidateHasEvidence(input: {
     && input.sellerVerified;
 }
 
+function parseTimestamp(value: string | null): number {
+  if (!value) return Number.NaN;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : Number.NaN;
+}
+
+/**
+ * A confirmed transfer is already confirmed onchain and a completed transfer
+ * is fully complete. Therefore a legacy submitBatch must not be in the future
+ * relative to updatedAt. The lower bound is the transfer creation time when
+ * available, capped by a finite lookback for older records.
+ */
+export function isLegacyBatchTimestampInWindow(
+  txTimestamp: string,
+  transfer: Pick<GatewayTransfer, "createdAt" | "updatedAt" | "status">,
+): boolean {
+  if (!FALLBACK_ELIGIBLE_STATUSES.has(transfer.status)) return false;
+  const txMs = parseTimestamp(txTimestamp);
+  const updatedAtMs = parseTimestamp(transfer.updatedAt);
+  if (!Number.isFinite(txMs) || !Number.isFinite(updatedAtMs)) return false;
+
+  const createdAtMs = parseTimestamp(transfer.createdAt);
+  const boundedStart = updatedAtMs - LEGACY_MAX_LOOKBACK_MS;
+  const startMs = Number.isFinite(createdAtMs)
+    ? Math.max(createdAtMs, boundedStart)
+    : boundedStart;
+
+  return startMs <= updatedAtMs && txMs >= startMs && txMs <= updatedAtMs;
+}
+
 async function listSubmitBatches(): Promise<ExplorerTx[]> {
-  const result: ExplorerTx[] = [];
+  const result = new Map<string, ExplorerTx>();
   let nextPage: Record<string, string> | null = null;
   for (let page = 0; page < MAX_PAGES; page++) {
     const query = nextPage ? `?${new URLSearchParams(nextPage).toString()}` : "";
@@ -99,7 +142,7 @@ async function listSubmitBatches(): Promise<ExplorerTx[]> {
       if (!response.ok) break;
       const data = await response.json() as { items?: ExplorerTx[]; next_page_params?: Record<string, string> | null };
       for (const tx of data.items ?? []) {
-        if (tx.method === "submitBatch" && isEvmTxHash(tx.hash)) result.push(tx);
+        if (tx.method === "submitBatch" && isEvmTxHash(tx.hash)) result.set(tx.hash, tx);
       }
       nextPage = data.next_page_params ?? null;
       if (!nextPage) break;
@@ -107,7 +150,7 @@ async function listSubmitBatches(): Promise<ExplorerTx[]> {
       break;
     }
   }
-  return result;
+  return [...result.values()];
 }
 
 function atomicAmountMatches(expectedAtomic: string | null, actualDecimal: string): boolean {
@@ -119,36 +162,60 @@ function atomicAmountMatches(expectedAtomic: string | null, actualDecimal: strin
   }
 }
 
-async function findCorroboratedLegacyBatch(transfer: GatewayTransfer): Promise<string | null> {
-  if (!transfer.fromAddress || !transfer.toAddress) return null;
-  const completedAt = transfer.updatedAt ? new Date(transfer.updatedAt).getTime() : Number.NaN;
-  const candidates = await listSubmitBatches();
-  const ordered = candidates
-    .filter((tx) => !Number.isNaN(new Date(tx.timestamp).getTime()))
-    .filter((tx) => Number.isNaN(completedAt) || new Date(tx.timestamp).getTime() >= completedAt)
-    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+function amountMatchedEntry(
+  entries: BatchEntry[],
+  address: string,
+  sign: "negative" | "positive",
+  expectedAtomic: string | null,
+): BatchEntry | null {
+  const normalizedAddress = address.toLowerCase();
+  return entries.find((entry) => {
+    const correctSign = sign === "negative" ? entry.delta < BigInt(0) : entry.delta > BigInt(0);
+    return correctSign
+      && entry.address.toLowerCase() === normalizedAddress
+      && atomicAmountMatches(expectedAtomic, entry.usdc.replace(/^[-+]/, ""));
+  }) ?? null;
+}
 
-  for (const candidate of ordered) {
+export function chooseUniqueCorroboratedLegacyCandidate(
+  candidates: CorroboratedLegacyCandidate[],
+): CorroboratedLegacyCandidate | null {
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+async function findCorroboratedLegacyBatch(transfer: GatewayTransfer): Promise<CorroboratedLegacyCandidate | null> {
+  if (
+    !transfer.fromAddress
+    || !transfer.toAddress
+    || transfer.token?.toUpperCase() !== "USDC"
+    || !FALLBACK_ELIGIBLE_STATUSES.has(transfer.status)
+  ) return null;
+
+  const candidates: CorroboratedLegacyCandidate[] = [];
+  for (const candidate of await listSubmitBatches()) {
+    if (!isLegacyBatchTimestampInWindow(candidate.timestamp, transfer)) continue;
+
     const decoded = await decodeBatchTx(candidate.hash);
     if (
-      transfer.token?.toUpperCase() !== "USDC"
+      !legacyCandidateHasEvidence({
+        decoded,
+        expectedToken: EXPECTED_USDC,
+        buyerVerified: !!decoded && buyerInBatch(decoded, transfer.fromAddress).found,
+        sellerVerified: !!decoded && sellerInBatch(decoded, transfer.toAddress).found,
+      })
       || !decoded
-      || decoded.domain !== EXPECTED_DOMAIN
-      || decoded.token.toLowerCase() !== EXPECTED_USDC
     ) continue;
-    const buyer = buyerInBatch(decoded, transfer.fromAddress);
-    const seller = sellerInBatch(decoded, transfer.toAddress);
-    if (!legacyCandidateHasEvidence({
-      decoded,
-      expectedToken: EXPECTED_USDC,
-      buyerVerified: buyer.found,
-      sellerVerified: seller.found,
-    }) || !buyer.entry || !seller.entry) continue;
-    if (!atomicAmountMatches(transfer.amount, buyer.entry.usdc.replace(/^[-+]/, ""))) continue;
-    if (!atomicAmountMatches(transfer.amount, seller.entry.usdc.replace(/^[-+]/, ""))) continue;
-    return candidate.hash;
+
+    const buyerEntry = amountMatchedEntry(decoded.entries, transfer.fromAddress, "negative", transfer.amount);
+    const sellerEntry = amountMatchedEntry(decoded.entries, transfer.toAddress, "positive", transfer.amount);
+    if (!buyerEntry || !sellerEntry) continue;
+
+    candidates.push({ hash: candidate.hash, buyerEntry, sellerEntry });
   }
-  return null;
+
+  // A legacy hash is proof only when all corroborating evidence identifies one
+  // transaction. Never select the first equivalent candidate.
+  return chooseUniqueCorroboratedLegacyCandidate(candidates);
 }
 
 export async function persistSettlementBatch(settlementId: string, batchTxHash: string): Promise<void> {
@@ -173,8 +240,8 @@ export async function resolveSettlementBatch(
   if (!transfer) {
     return { ok: true, settlementId, status: "gateway_fetch_failed", batchTxHash: null, batchExplorerUrl: null, matchedBy: null, gatewayStatus: "unknown", buyerVerified: false, sellerVerified: false };
   }
-  // Circle's valid top-level txHash is authoritative regardless of whether
-  // the transfer has advanced from batched to confirmed/completed yet.
+  // Circle's valid top-level txHash is authoritative. Legacy scanning is only
+  // allowed for the documented confirmed/completed lifecycle states.
   if (!transfer.txHash && !FALLBACK_ELIGIBLE_STATUSES.has(transfer.status)) {
     return { ok: true, settlementId, status: transfer.status, batchTxHash: null, batchExplorerUrl: null, matchedBy: null, gatewayStatus: transfer.status, buyerVerified: false, sellerVerified: false };
   }
@@ -185,17 +252,12 @@ export async function resolveSettlementBatch(
   let sellerVerified = false;
 
   if (!batchTxHash) {
-    const legacyHash = await findCorroboratedLegacyBatch(transfer);
-    const selected = chooseBatchResolution(null, legacyHash);
+    const legacyCandidate = await findCorroboratedLegacyBatch(transfer);
+    const selected = chooseBatchResolution(null, legacyCandidate?.hash ?? null);
     batchTxHash = selected.hash;
     matchedBy = selected.matchedBy;
-    if (batchTxHash) {
-      const decoded = await decodeBatchTx(batchTxHash);
-      if (decoded && transfer.fromAddress && transfer.toAddress) {
-        buyerVerified = buyerInBatch(decoded, transfer.fromAddress).found;
-        sellerVerified = sellerInBatch(decoded, transfer.toAddress).found;
-      }
-    }
+    buyerVerified = !!legacyCandidate;
+    sellerVerified = !!legacyCandidate;
   }
 
   if (batchTxHash && options.persist !== false) await persistSettlementBatch(settlementId, batchTxHash);
