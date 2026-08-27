@@ -347,6 +347,13 @@ async function executeMacroNode(
         safeSummary: e.safeSummary,
         txHash: e.paymentMeta?.txHash ?? null,
         explorerUrl: e.paymentMeta?.explorerUrl ?? null,
+        settlementId: e.paymentMeta?.settlementId ?? null,
+        settlementUrl: e.paymentMeta?.settlementUrl ?? null,
+        batchTxHash: e.paymentMeta?.batchTxHash ?? null,
+        batchExplorerUrl: e.paymentMeta?.batchExplorerUrl ?? null,
+        batchResolverUrl: e.paymentMeta?.batchResolverUrl ?? null,
+        gatewayAccepted: e.paymentMeta?.gatewayAccepted ?? null,
+        transferStatus: e.paymentMeta?.transferStatus ?? null,
       })),
       paymentEdges: state.paymentEdges.map((e) => ({
         buyer: e.buyerServiceName,
