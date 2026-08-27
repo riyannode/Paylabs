@@ -48,6 +48,13 @@ export interface X402CallResult {
   paymentMetadata?: {
     txHash?: string | null;
     explorerUrl?: string | null;
+    settlementId?: string | null;
+    settlementUrl?: string | null;
+    batchTxHash?: string | null;
+    batchExplorerUrl?: string | null;
+    batchResolverUrl?: string | null;
+    gatewayAccepted?: boolean;
+    transferStatus?: "received" | "batched" | "confirmed" | "completed" | "failed" | null;
   } | null;
 }
 
@@ -285,6 +292,13 @@ export async function executeLockedMacroNodePipeline(
       paymentRef: null,
       txHash: nodeResult.paymentMetadata?.txHash ?? null,
       explorerUrl: nodeResult.paymentMetadata?.explorerUrl ?? null,
+      settlementId: nodeResult.paymentMetadata?.settlementId ?? null,
+      settlementUrl: nodeResult.paymentMetadata?.settlementUrl ?? null,
+      batchTxHash: nodeResult.paymentMetadata?.batchTxHash ?? null,
+      batchExplorerUrl: nodeResult.paymentMetadata?.batchExplorerUrl ?? null,
+      batchResolverUrl: nodeResult.paymentMetadata?.batchResolverUrl ?? null,
+      gatewayAccepted: nodeResult.paymentMetadata?.gatewayAccepted,
+      transferStatus: nodeResult.paymentMetadata?.transferStatus ?? null,
     });
 
     macroNodeResults[node] = nodeResult.data;
@@ -299,6 +313,13 @@ export async function executeLockedMacroNodePipeline(
       txHash?: string | null;
       explorerUrl?: string | null;
       error?: string | null;
+      settlementId?: string | null;
+      settlementUrl?: string | null;
+      batchTxHash?: string | null;
+      batchExplorerUrl?: string | null;
+      batchResolverUrl?: string | null;
+      gatewayAccepted?: boolean;
+      transferStatus?: "received" | "batched" | "confirmed" | "completed" | "failed" | null;
     }> | undefined;
 
     if (childEvals) {
@@ -317,6 +338,13 @@ export async function executeLockedMacroNodePipeline(
           paymentRef: null,
           txHash: ev.txHash ?? null,
           explorerUrl: ev.explorerUrl ?? null,
+          settlementId: ev.settlementId ?? null,
+          settlementUrl: ev.settlementUrl ?? null,
+          batchTxHash: ev.batchTxHash ?? null,
+          batchExplorerUrl: ev.batchExplorerUrl ?? null,
+          batchResolverUrl: ev.batchResolverUrl ?? null,
+          gatewayAccepted: ev.gatewayAccepted,
+          transferStatus: ev.transferStatus ?? null,
           error: ev.error ?? null,
           mode: ev.mode,
         });

@@ -7,6 +7,7 @@ import { getVisitorStats } from "@/lib/paylabs/analytics/visitor-stats";
 
 const PAYMENT_SAFE_FIELDS = [
   "event_id",
+  "settlement_id",
   "discovery_run_id",
   "buyer",
   "seller",
@@ -210,7 +211,7 @@ async function getRecentPreflightPayments(limit = 50) {
   const { data } = await supabaseAdmin()
     .from("paylabs_discovery_runs")
     .select(
-      "id, created_at, agent_trace, entry_payment_amount_usdc, entry_payment_status, entry_payment_tx_hash, entry_payment_explorer_url, entry_payment_batch_tx_hash, entry_payment_batch_explorer_url"
+      "id, created_at, agent_trace, entry_payment_amount_usdc, entry_payment_status, entry_payment_settlement_id, entry_payment_tx_hash, entry_payment_explorer_url, entry_payment_batch_tx_hash, entry_payment_batch_explorer_url"
     )
     .not("entry_payment_amount_usdc", "is", null)
     .order("created_at", { ascending: false })
@@ -231,6 +232,7 @@ type NormalizedPaymentRow = {
   explorer_url: string | null;
   batch_tx_hash: string | null;
   batch_explorer_url: string | null;
+  settlement_id: string | null;
   error: string | null;
   source: "service" | "preflight" | "entry";
   discovery_run_id: string;
@@ -249,6 +251,7 @@ function normalizeServiceRows(rows: any[]): NormalizedPaymentRow[] {
     explorer_url: r.explorer_url ?? null,
     batch_tx_hash: r.batch_tx_hash ?? null,
     batch_explorer_url: r.batch_explorer_url ?? null,
+    settlement_id: r.settlement_id ?? null,
     error: r.error ?? null,
     source: "service" as const,
     discovery_run_id: r.discovery_run_id,
@@ -275,6 +278,7 @@ function normalizePreflightRows(rows: any[]): NormalizedPaymentRow[] {
         explorer_url: r.entry_payment_explorer_url ?? null,
         batch_tx_hash: r.entry_payment_batch_tx_hash ?? null,
         batch_explorer_url: r.entry_payment_batch_explorer_url ?? null,
+        settlement_id: r.entry_payment_settlement_id ?? null,
         error: null,
         source: "entry",
         discovery_run_id: r.id,
@@ -297,6 +301,7 @@ function normalizePreflightRows(rows: any[]): NormalizedPaymentRow[] {
           explorer_url: (rp.explorer_url as string) ?? null,
           batch_tx_hash: (rp.batch_tx_hash as string) ?? null,
           batch_explorer_url: (rp.batch_explorer_url as string) ?? null,
+          settlement_id: (rp.settlement_id as string) ?? null,
           error: null,
           source: "preflight",
           discovery_run_id: r.id,
@@ -568,6 +573,8 @@ export default async function DashboardPage() {
                     <td>
                       <BatchResolverLink
                         runId={r.discovery_run_id}
+                        paymentEventId={r.source === "service" ? r.id : undefined}
+                        paymentScope={r.source === "preflight" ? "preflight" : undefined}
                         initialBatchExplorerUrl={r.batch_explorer_url}
                         initialBatchTxHash={r.batch_tx_hash}
                         directExplorerUrl={r.explorer_url}
