@@ -601,10 +601,6 @@ Sessions: JWT via `jose` (Edge-compatible), 7-day httpOnly cookie.
 
 ## Known Limitations / Next Patch
 
-- **Citation & Retrieval Hardening:** Improving citation grounding and retrieval quality through broader source coverage, semantic ranking, query expansion, URL normalization, source reliability checks, retry handling, and wider RSSHub coverage beyond AI and crypto. Citation coverage currently focuses mainly on AI and crypto topics.
-
-- **Citation Alignment:** In some cases, the generated LLM answer may be factually correct while the displayed source links do not directly support every claim in the final response, because answer generation and source discovery still follow partially independent pipelines. The Brain routing and current x402 execution flow are functional, but citation alignment remains an active improvement area.
-
 - **x402 Buyer Hardening:** The current Circle x402 flow is functional and uses real Gateway settlement, but buyer-side validation still needs stricter challenge binding, retry URL validation, and stronger PAYMENT-RESPONSE enforcement before the payment layer is considered fully production-hardened.
 
 - **Post-Payment Recovery:** Settlement metadata and result recovery exist for several paths, but durable recovery for uncertain settlement states is not yet complete. A crash after Circle accepts a payment but before local persistence can still require manual recovery handling. Durable nonce-based reconciliation and stronger idempotency are planned.
