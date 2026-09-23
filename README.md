@@ -1,12 +1,10 @@
 # PayLabs
 
-## Built for Canteen × Circle Lepton Agents Hackathon
-
 PayLabs is an autonomous multi agent system where a Budget Controller allocates budgets, orchestrates specialized AI agents, executes x402 nanopayments on Arc, and automatically settles USDC micropayments to verified creators.
 
 ---
 
-AI search/RSSHub discovery + creator monetization platform. Every search is budgeted, every source is paid, every verified creator gets their share.
+AI search/RSSHub discovery + creator monetization platform. Every paid run is budgeted, each agent capability is executed within a locked payment plan, and eligible verified creators can receive USDC when their sources materially contribute to the result.
 
 **For users:** AI-powered source discovery. Ask a question, get answers backed by real sources from across the RSShub, with full transparency on what was searched, which sources were used, and what it cost.
 
@@ -44,12 +42,6 @@ The Creator Wallet is separate from the PayLabs Wallet. It is used for creator i
 ---
 **PayLabs is live and actively processing x402-paid searches on Arc testnet.  
 Real micropayments flow through the agent runtime, with automatic USDC distribution to verified creators.**
-
-| Metric | Count |
-|---|---:|
-| Receipts generated across Easy / Normal / Advanced routes | **500+** |
-| x402 service payment processed | **3,000+** |
-| Users / testers onboarded | **50+** |
 
 - **Live Production:** [Live](https://paylabs.vercel.app/)
 - **Receipt**: [Receipt](https://paylabs.vercel.app/receipts) 
@@ -266,6 +258,9 @@ Watch PayLabs agents coordinate tasks, move between service desks, process payme
 
 `x402 Service Edge`
 = Paid invocation of individual agent services.
+Each x402 service edge represents a separately accountable capability boundary, not a transaction counter. A paid seller endpoint executes only after x402 settlement and returns a distinct output consumed by the next stage, such as live source discovery, trust evaluation, budget allocation, creator attribution, or payout execution.
+
+Internal x402 payments represent delegated units of work inside the agent runtime, while the economic loop ultimately exits the internal graph through real USDC payouts to eligible verified creators.
 
 **Note:** Settlement has 2 services on Normal (`creator_attribution`, `creator_payout_router`) and 3 services on Advanced, where `advanced_evidence_evaluator` is added for deeper source comparison.
 
